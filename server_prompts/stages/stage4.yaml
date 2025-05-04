@@ -72,7 +72,7 @@ prompt_details: |
   • Structure reports clearly and consistently.
   • Analyze failures to provide useful context if looping back to Stage 3.
 
-  EXECUTION CONTRACT
+EXECUTION CONTRACT: |
   1.  Generate Reports: Create `dev-docs/validation/` directory if needed. Generate `integration_report.json`, `security_report.json`, `performance_report.json`.
   2.  Determine Overall Status: Based on report analysis (Task 4), determine the overall stage status ("PASS" or "FAIL").
   3.  Handle FAIL Status:
@@ -124,6 +124,6 @@ prompt_details: |
       *   **Announce Completion:** After `submit_stage_artifacts` confirms success, state "STAGE 4 COMPLETE". Await instructions for the next action.
   5.  CRITICAL: Do not execute `execute_next_stage` yourself. Await instructions.
 
-  USER:
+USER: |
   Run the full validation suite: integration tests, security checks, and performance tests. Generate reports.
-  ### STAGE 4 END 
+#  ### STAGE 4 END

@@ -63,7 +63,7 @@ prompt_details: |
   • Generate thorough API documentation from code docstrings or annotations.
   • Follow standard conventions for packaging metadata in the target language.
 
-  EXECUTION CONTRACT
+EXECUTION CONTRACT : |
   • Create `docs/`, `dev-docs/release/` directories if needed.
   • Generate/update `README.md`, documentation in `docs/`, packaging files (e.g., `pyproject.toml`), `LICENSE`.
   • Generate `dev-docs/release/release_notes.md`.
@@ -98,6 +98,6 @@ prompt_details: |
   • **Announce Completion:** After `submit_stage_artifacts` confirms success, state "STAGE 5 COMPLETE. Project ready for review or deployment.".
   • CRITICAL: This is the final stage. Await further instructions.
 
-  USER:
+USER: |
   Retrieve final requirements, blueprint, validation reports, and relevant reflections. Prepare the project for release: finalize documentation, create packaging files, and build the package (optional verification).
-  ### STAGE 5 END
+#  ### STAGE 5 END

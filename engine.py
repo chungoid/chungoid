@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
+import inspect
 
 # Add project root to path to allow importing project modules
 # Adjust based on actual execution context if needed
@@ -28,6 +29,14 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 # TODO: Configure logging properly (e.g., inheriting from a central config)
+
+# <<< ADDED LOGGING FOR IMPORT PATH >>>
+try:
+    pm_file_path = inspect.getfile(PromptManager)
+    logging.getLogger(__name__).info(f"DEBUG ENGINE: Imported PromptManager class from: {pm_file_path}")
+except Exception as inspect_err:
+    logging.getLogger(__name__).error(f"DEBUG ENGINE: Error inspecting PromptManager file path: {inspect_err}")
+# <<< END ADDED LOGGING >>>
 
 class ChungoidEngine:
     """Manages the execution lifecycle of a Chungoid project."""

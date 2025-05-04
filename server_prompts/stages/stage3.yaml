@@ -65,7 +65,7 @@ prompt_details: |
   • Ensure unit tests provide meaningful coverage of the implemented logic.
   • Fix all static analysis issues and unit test failures before proceeding to the next task or completing the stage.
   
-  EXECUTION CONTRACT
+EXECUTION CONTRACT: |
   • Create/update source code files in `src/` (or language equivalent).
   • Create/update unit tests in `tests/unit/`.
   • Create `dev-docs/analysis/` and `dev-docs/testing/` directories if needed.
@@ -103,6 +103,6 @@ prompt_details: |
   • **Announce Completion (only if status is PASS):** After `submit_stage_artifacts` confirms success, state "STAGE 3 COMPLETE". Await instructions for the next action.
   • CRITICAL: Do not execute `execute_next_stage` yourself. Await instructions.
 
-  USER:
+USER: |
   Implement the planned modules/interfaces according to the detailed design. Write unit tests and perform static analysis.
-  ### STAGE 3 END 
+#  ### STAGE 3 END

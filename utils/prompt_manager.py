@@ -73,28 +73,16 @@ class PromptManager:
                 f"Resolved common template file not found: {self.common_template_path}"
             )
 
-        self.stage_definitions: Dict[Union[str, int, float], Dict[str, Any]] = {}
-        self.common_template: Dict[str, str] = {}
+        self.common_template_env = self._create_jinja_environment()
+        self.stage_definitions: Dict[float, Dict[str, Any]] = {}
+        self.stage_jinja_envs: Dict[float, Environment] = {}
 
-        # Initialize Jinja2 environment
-        self.jinja_env = Environment(
-            loader=None,  # We load templates manually
-            autoescape=select_autoescape(
-                disabled_extensions=("txt", "yaml", "md")
-            ),  # Disable autoescaping for prompt text
-            trim_blocks=True,  # Helps control whitespace
-            lstrip_blocks=True,
-        )
-        # Add custom filters
-        self.jinja_env.filters["format_as_bullets"] = format_as_bullets
-        self.jinja_env.filters["to_json"] = to_json_filter
+        # <<< ADDED DIAGNOSTIC LOGGING >>>
+        self.logger.info(f"DEBUG PromptManager: Initializing with server_stages_dir='{self.stages_dir}'")
+        # <<< END DIAGNOSTIC LOGGING >>>
 
-        self.logger.info(
-            "PromptManager initialized. Server Stages Dir: '%s', Common Template: '%s'",
-            self.stages_dir,
-            self.common_template_path,
-        )
-        self._load_common_template()  # Load common template first
+        # Load templates immediately upon initialization
+        self._load_common_template()
         self._load_stage_definitions()  # Load and cache stage files
 
     def _load_yaml_file(self, file_path: Path) -> Dict[str, Any]:
@@ -103,15 +91,33 @@ class PromptManager:
         if not file_path.is_file():
             raise PromptLoadError(f"YAML file not found: {file_path}")
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+            content = file_path.read_text(encoding="utf-8") # Read content first
+            # <<< ADDED DIAGNOSTIC LOGGING (Moved here for context) >>>
+            filename = file_path.name
+            if filename in ["stage0.yaml", "stage1.yaml"]:
+                 self.logger.info(f"DEBUG PromptManager: Reading {filename} in _load_yaml_file. Content repr(): {repr(content)}")
+            # <<< END DIAGNOSTIC LOGGING >>>
+
+            try:
+                # Attempt standard YAML load
+                data = yaml.safe_load(content)
+            except yaml.YAMLError as yaml_err:
+                self.logger.warning(f"Standard YAML parsing failed for {file_path}: {yaml_err}. Attempting JSON fallback after Jinja removal.")
+                try:
+                    # Fallback: Remove Jinja and try JSON
+                    import re
+                    import json
+                    content_no_jinja = re.sub(r"\{\{.*?\}\}", '""', content)
+                    data = json.loads(content_no_jinja)
+                    self.logger.info(f"Successfully loaded {file_path} using JSON fallback after Jinja removal.")
+                except (json.JSONDecodeError, Exception) as fallback_err:
+                    self.logger.error(f"JSON fallback also failed for {file_path}: {fallback_err}")
+                    raise PromptLoadError(f"Invalid YAML format in {file_path} (and JSON fallback failed): {yaml_err}") from yaml_err
+
             if not isinstance(data, dict):
-                raise PromptLoadError(f"YAML content is not a dictionary: {file_path}")
-            self.logger.debug("Successfully loaded and parsed YAML: %s", file_path)
+                raise PromptLoadError(f"YAML/JSON content is not a dictionary: {file_path}")
+            self.logger.debug("Successfully loaded and parsed YAML (or JSON fallback): %s", file_path)
             return data
-        except yaml.YAMLError as e:
-            self.logger.error("Failed to parse YAML file '%s': %s", file_path, e)
-            raise PromptLoadError(f"Invalid YAML format in {file_path}: {e}") from e
         except IOError as e:
             self.logger.error("Failed to read YAML file '%s': %s", file_path, e)
             raise PromptLoadError(f"Could not read YAML file {file_path}: {e}") from e
@@ -143,6 +149,19 @@ class PromptManager:
             stage_number = self._extract_stage_number(file_path.name)
             if stage_number is not None:
                 try:
+                    self.logger.info(f"Attempting to load stage definition from {file_path.name}")
+                    # <<< ADDED DEBUG LOGGING: Read file content directly >>>
+                    debug_content_snippet = "ERROR READING SNIPPET"
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f_debug:
+                            # Read first few lines for logging
+                            debug_lines = [next(f_debug) for _ in range(10)]
+                            debug_content_snippet = "".join(debug_lines)
+                        self.logger.debug(f"DEBUG: Content snippet read directly from '{file_path}' before parsing:\\n{debug_content_snippet}")
+                    except Exception as e_debug:
+                        self.logger.error(f"DEBUG: Failed to read snippet directly from '{file_path}': {e_debug}")
+                    # <<< END ADDED DEBUG LOGGING >>>
+
                     stage_data = self._load_yaml_file(file_path)
                     # Basic validation of required keys
                     required_keys = ['system_prompt', 'user_prompt']
@@ -284,11 +303,11 @@ class PromptManager:
             rendered_user = ""
 
             if system_prompt_template_str:
-                system_template = self.jinja_env.from_string(system_prompt_template_str)
+                system_template = self.common_template_env.from_string(system_prompt_template_str)
                 rendered_system = system_template.render(render_context)
 
             if user_prompt_template_str:
-                user_template = self.jinja_env.from_string(user_prompt_template_str)
+                user_template = self.common_template_env.from_string(user_prompt_template_str)
                 rendered_user = user_template.render(render_context)
 
             # Combine parts (ensure some spacing)
@@ -313,3 +332,31 @@ class PromptManager:
             raise PromptRenderError(
                 f"Unexpected error rendering prompt for stage {stage_number}: {e}"
             ) from e
+
+    def _create_jinja_environment(self) -> Environment:
+        """Creates and configures the Jinja2 environment."""
+        env = Environment(
+            loader=None, # Using from_string, so no loader needed here
+            autoescape=select_autoescape(['html', 'xml']), # Basic autoescape
+            trim_blocks=True,
+            lstrip_blocks=True
+        )
+        # Add custom filters (ensure filter functions are defined)
+        env.filters['to_json'] = to_json_filter
+        env.filters['as_bullets'] = format_as_bullets
+        self.logger.info("Jinja2 environment created.")
+        return env
+
+    def _load_single_stage_definition(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Loads and parses a single YAML stage definition file. (Now simplified, main logic in _load_yaml_file)"""
+        try:
+            # Directly use the enhanced _load_yaml_file method
+            stage_data = self._load_yaml_file(file_path)
+            return stage_data
+        except PromptLoadError as e:
+            # Log the error specifically for this context if needed, but re-raise
+            self.logger.error(f"Failed to load single stage definition from {file_path}: {e}")
+            raise
+        except Exception as e:
+            self.logger.exception("Unexpected error loading single stage definition from %s: %s", file_path, e)
+            raise PromptLoadError(f"Unexpected error loading {file_path}: {e}") from e

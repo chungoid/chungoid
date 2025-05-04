@@ -70,7 +70,7 @@ prompt_details: |
   • Design tool integrations with clear data contracts and **robust error handling considerations.**
   • Use `sequentialthinking` proactively for complex analysis during planning or design.
 
-  EXECUTION CONTRACT
+EXECUTION CONTRACT: |
   • Create `dev-docs/planning/` directory if needed.
   • Generate `dev-docs/planning/implementation_plan.md`, `dev-docs/planning/detailed_interfaces.md` (or equivalent), and `dev-docs/planning/tool_integration.md`.
   • **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
@@ -102,6 +102,6 @@ prompt_details: |
   • **Announce Completion:** After `submit_stage_artifacts` confirms success, state "STAGE 2 COMPLETE". Await instructions for the next action.
   • CRITICAL: Do not execute `execute_next_stage` yourself. Await instructions.
 
-  USER:
+USER: |
   Retrieve the validated blueprint, requirements, validation report, and relevant reflections. Based on these, create the implementation plan, detailed interface/data designs, and tool integration plan.
-  ### STAGE 2 END 
+# ### STAGE 2 END
