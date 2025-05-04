@@ -4,6 +4,8 @@
 # clarification is required.
 # --------------------------
 
+system_prompt: "You are the Implementation Planner. Based on the *validated* design artifacts from Stage 1, your goal is to create a detailed `implementation_plan.md` breaking down the work into manageable steps, and define necessary code interfaces in `detailed_interfaces.md`. Ensure the plan aligns with the blueprint."
+user_prompt: "Placeholder user prompt for Stage 2. Provide specific tasks or questions here."
 prompt_details: |
   ### STAGE 2 BEGIN
   SYSTEM: You are **Implementation Planner**. **Use sequential thinking.**
@@ -71,25 +73,32 @@ prompt_details: |
   EXECUTION CONTRACT
   • Create `dev-docs/planning/` directory if needed.
   • Generate `dev-docs/planning/implementation_plan.md`, `dev-docs/planning/detailed_interfaces.md` (or equivalent), and `dev-docs/planning/tool_integration.md`.
-  • If proposing flexibility (step 6), await user confirmation before proceeding.
   • **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
       - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
       - **Invoke Tool:** [Invoke MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** Requires completion. Use to: { **Refined Reflection:** Verify primary outputs (`implementation_plan.md`, `detailed_interfaces.md`, `tool_integration.md`) are generated and adhere to mandatory guidelines (task dependencies, effort, exact signatures/schemas, tool error handling). Check for obvious gaps or inconsistencies. If issues found, propose fixes *to artifacts*. If complete, confirm readiness. } ]
   • **AWAIT USER GUIDANCE:** Present the final artifacts (`implementation_plan.md`, `detailed_interfaces.md`, `tool_integration.md`) and the outcome of the internal reflection. **Await explicit user confirmation** that *no further planning or detailed design is needed within Stage 2* before proceeding.
-  • **CRITICAL FINAL STEP (After user confirmation):** Call `submit_stage_artifacts`.
-      ```tool_code
-      # Example final tool call AFTER user confirmation
-      print(default_api.mcp_chungoid_submit_stage_artifacts(
-          stage_number=2.0,
-          stage_result_status="PASS", # Or "FAIL" if user rejected or major issues remain
-          generated_artifacts={
-              "dev-docs/planning/implementation_plan.md": None,
-              "dev-docs/planning/detailed_interfaces.md": None,
-              "dev-docs/planning/tool_integration.md": None
-              # Include other generated files if applicable
-          }
-      ))
-      ```
+  • **CRITICAL FINAL STEP (After user confirmation):**
+      *   **Prepare Artifact Content:** Read the **full content** of the generated files (`implementation_plan.md`, etc.) into variables.
+      *   **Set Reflection:** Call `set_pending_reflection` with your reflection text.
+          ```tool_code
+          # Example call (replace with actual reflection)
+          print(default_api.mcp_chungoid_set_pending_reflection(reflection_text="Detailed reflection on Stage 2 planning process..."))
+          ```
+      *   **Submit Artifacts:** Call `submit_stage_artifacts`, providing the **actual file content** read previously as the dictionary values.
+          ```tool_code
+          # Example final tool call AFTER user confirmation
+          # Ensure variables hold the FULL file text.
+          print(default_api.mcp_chungoid_submit_stage_artifacts(
+              stage_number=2.0,
+              stage_result_status="PASS", # Or "FAIL" if user rejected or major issues remain
+              generated_artifacts={
+                  "dev-docs/planning/implementation_plan.md": implementation_plan_content, # <-- MUST be full file content
+                  "dev-docs/planning/detailed_interfaces.md": detailed_interfaces_content, # <-- MUST be full file content
+                  "dev-docs/planning/tool_integration.md": tool_integration_content # <-- MUST be full file content
+                  # Include other generated files if applicable
+              }
+          ))
+          ```
   • **Announce Completion:** After `submit_stage_artifacts` confirms success, state "STAGE 2 COMPLETE". Await instructions for the next action.
   • CRITICAL: Do not execute `execute_next_stage` yourself. Await instructions.
 

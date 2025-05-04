@@ -8,6 +8,11 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# <<< Define Custom Exception >>>
+class ConfigError(Exception):
+    """Custom exception for critical configuration loading errors."""
+    pass
+
 # Define the default configuration structure
 DEFAULT_CONFIG = {
     "logging": {

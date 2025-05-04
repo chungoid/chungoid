@@ -24,3 +24,4 @@ bandit>=1.7.0
 sphinx>=8.0.0
 build>=1.0.0
 sphinx-rtd-theme>=3.0.0
+onnxruntime

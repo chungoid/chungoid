@@ -9,6 +9,8 @@ from pathlib import Path
 import chromadb
 from chromadb.utils import embedding_functions
 from logging.handlers import RotatingFileHandler
+import hashlib
+import uuid
 
 import filelock  # Ensure filelock is installed
 from . import chroma_utils
@@ -577,19 +579,37 @@ class StateManager:
             f"Attempting to upsert artifact context to Chroma '{self._CONTEXT_COLLECTION_NAME}': ID={doc_id}, Path={rel_path[:50]}..."
         )
         try:
-            collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
-            self.logger.info(
-                f"Successfully stored artifact context for '{rel_path}' (Stage {stage_number}) in Chroma."
+            # <<< Use chroma_utils wrapper instead of direct collection call >>>
+            # Using add_or_update_document which handles upsert logic and collection access
+            success = chroma_utils.add_or_update_document(
+                collection_name=self._CONTEXT_COLLECTION_NAME,
+                doc_id=doc_id,
+                document_content=content,
+                metadata=metadata
             )
-            return True
+            # <<< Check success from utility function >>>
+            if success:
+                self.logger.info(
+                    f"Successfully stored artifact context for '{rel_path}' (Stage {stage_number}) in Chroma."
+                )
+                return True
+            else:
+                # Error should have been logged in chroma_utils
+                raise ChromaOperationError(
+                    f"chroma_utils.add_or_update_document failed for artifact '{rel_path}' in collection '{self._CONTEXT_COLLECTION_NAME}'"
+                )
+
         except Exception as e:
             self.logger.exception(
                 f"Failed to store artifact context for '{rel_path}' in Chroma collection '{self._CONTEXT_COLLECTION_NAME}': {e}"
             )
-            # Re-raise as specific error
-            raise ChromaOperationError(
-                f"Failed to upsert artifact context to collection '{self._CONTEXT_COLLECTION_NAME}'"
-            ) from e
+            # Re-raise as specific error, ensuring original exception context is kept if applicable
+            if not isinstance(e, ChromaOperationError):
+                raise ChromaOperationError(
+                    f"Failed to store artifact context for '{rel_path}' in collection '{self._CONTEXT_COLLECTION_NAME}'"
+                ) from e
+            else:
+                raise e # Re-raise original ChromaOperationError
 
     def get_artifact_context_from_chroma(
         self,
@@ -604,13 +624,13 @@ class StateManager:
         Raises:
             ChromaOperationError: If the ChromaDB query operation fails.
         """
-        client = self._get_chroma_client()
-        if not client:
-            raise ChromaOperationError("ChromaDB client is not available.")
-
-        collection = client.get_or_create_collection(name=self._CONTEXT_COLLECTION_NAME)
-        if not collection:
-             raise ChromaOperationError(f"Could not get or create collection '{self._CONTEXT_COLLECTION_NAME}'.")
+        # <<< REMOVED client/collection getting - Handled by chroma_utils.query_documents >>>
+        # client = self._get_chroma_client()
+        # if not client:
+        #     raise ChromaOperationError("ChromaDB client is not available.")
+        # collection = client.get_or_create_collection(name=self._CONTEXT_COLLECTION_NAME)
+        # if not collection:
+        #      raise ChromaOperationError(f"Could not get or create collection '{self._CONTEXT_COLLECTION_NAME}'.")
 
         # Handle empty filter case for ChromaDB
         final_where = where_filter if where_filter else None
@@ -619,31 +639,39 @@ class StateManager:
             f"Querying Chroma collection '{self._CONTEXT_COLLECTION_NAME}' for artifact context: '{query[:50]}...' (n={n_results}, filter={final_where})"
         )
         try:
-            # Use the underlying utility function which now returns list or None
-            results = collection.query(
+            # <<< Use the chroma_utils.query_documents function >>>
+            # This function handles client/collection access and formats the results
+            results = chroma_utils.query_documents(
+                collection_name=self._CONTEXT_COLLECTION_NAME,
                 query_texts=[query],
                 n_results=n_results,
-                where=final_where,
-                include=["metadatas", "documents", "distances"],
+                where_filter=final_where,
+                include=["metadatas", "documents", "distances"], # Ensure required fields included
             )
-            # If the utility returned None due to an internal error (already logged there)
+
+            # Check if the utility function returned None (indicating an error)
             if results is None:
-                 # We interpret None return from query_documents as an operational failure
+                 # Error should have been logged in chroma_utils
                  raise ChromaOperationError(f"ChromaDB query operation failed for collection '{self._CONTEXT_COLLECTION_NAME}'. Check logs for details.")
 
+            # <<< Results are already formatted correctly by chroma_utils.query_documents >>>
             self.logger.info(
-                f"Retrieved {len(results.get('ids', [[]])[0])} artifact context results from Chroma for query '{query[:50]}...'"
+                f"Retrieved {len(results)} artifact context results from Chroma for query '{query[:50]}...'"
             )
-            return results.get("results", [])
+            return results
+
         except Exception as e:
             # Catch any unexpected errors here or re-raised errors from query_documents
             self.logger.exception(
                 f"Failed to get artifact context from Chroma collection '{self._CONTEXT_COLLECTION_NAME}': {e}"
             )
-            # Re-raise as specific error
-            raise ChromaOperationError(
-                f"Failed to query artifact context from collection '{self._CONTEXT_COLLECTION_NAME}'"
-            ) from e
+            # Re-raise as specific error, ensuring original context
+            if not isinstance(e, ChromaOperationError):
+                 raise ChromaOperationError(
+                     f"Failed to query artifact context from collection '{self._CONTEXT_COLLECTION_NAME}'"
+                 ) from e
+            else:
+                 raise e # Re-raise original ChromaOperationError
 
     def persist_reflections_to_chroma(
         self, run_id: int, stage_number: float, reflections: str
@@ -655,13 +683,13 @@ class StateManager:
         Raises:
             ChromaOperationError: If the ChromaDB operation fails.
         """
-        client = self._get_chroma_client()
-        if not client:
-            raise ChromaOperationError("ChromaDB client is not available.")
-
-        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
-        if not collection:
-            raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+        # <<< REMOVED client/collection getting - Handled by chroma_utils.add_documents >>>
+        # client = self._get_chroma_client()
+        # if not client:
+        #     raise ChromaOperationError("ChromaDB client is not available.")
+        # collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
+        # if not collection:
+        #     raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
 
         # Create a unique ID for this reflection entry
         doc_id = f"run{run_id}_stage{stage_number}_{uuid.uuid4()}"
@@ -675,19 +703,36 @@ class StateManager:
             f"Attempting to add reflection to Chroma '{self._REFLECTIONS_COLLECTION_NAME}': ID={doc_id}, Stage={stage_number}"
         )
         try:
-            collection.add(ids=[doc_id], documents=[reflections], metadatas=[metadata])
-            self.logger.info(
-                f"Successfully persisted reflection for Run {run_id}, Stage {stage_number} in Chroma."
+            # <<< Use chroma_utils.add_documents >>>
+            success = chroma_utils.add_documents(
+                collection_name=self._REFLECTIONS_COLLECTION_NAME,
+                ids=[doc_id],
+                documents=[reflections],
+                metadatas=[metadata]
             )
-            return True
+            # <<< Check success from utility function >>>
+            if success:
+                self.logger.info(
+                    f"Successfully persisted reflection for Run {run_id}, Stage {stage_number} in Chroma."
+                )
+                return True
+            else:
+                 # Error logged in chroma_utils
+                 raise ChromaOperationError(
+                    f"chroma_utils.add_documents failed for reflection Run {run_id}, Stage {stage_number} in collection '{self._REFLECTIONS_COLLECTION_NAME}'"
+                 )
+
         except Exception as e:
             self.logger.exception(
                 f"Failed to persist reflection for Run {run_id}, Stage {stage_number} in Chroma collection '{self._REFLECTIONS_COLLECTION_NAME}': {e}"
             )
             # Re-raise as specific error
-            raise ChromaOperationError(
-                f"Failed to add reflection to collection '{self._REFLECTIONS_COLLECTION_NAME}'"
-            ) from e
+            if not isinstance(e, ChromaOperationError):
+                raise ChromaOperationError(
+                    f"Failed to add reflection to collection '{self._REFLECTIONS_COLLECTION_NAME}'"
+                ) from e
+            else:
+                raise e # Re-raise original ChromaOperationError
 
     def get_reflection_context_from_chroma(
         self,
@@ -702,13 +747,13 @@ class StateManager:
         Raises:
             ChromaOperationError: If the ChromaDB query operation fails.
         """
-        client = self._get_chroma_client()
-        if not client:
-             raise ChromaOperationError("ChromaDB client is not available.")
-
-        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
-        if not collection:
-            raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+        # <<< REMOVED client/collection getting - Handled by chroma_utils.query_documents >>>
+        # client = self._get_chroma_client()
+        # if not client:
+        #      raise ChromaOperationError("ChromaDB client is not available.")
+        # collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
+        # if not collection:
+        #     raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
 
         where_filter = {}
         if filter_stage_min is not None:
@@ -722,26 +767,37 @@ class StateManager:
             f"Querying Chroma collection '{self._REFLECTIONS_COLLECTION_NAME}' for reflections: '{query[:50]}...' (n={n_results}, filter={final_where})"
         )
         try:
-            results = collection.query(
-                query_texts=[query],
-                n_results=n_results,
-                where=final_where,
-                include=["metadatas", "documents", "distances"],
-            )
+            # <<< Use the chroma_utils.query_documents function >>>
+            results = chroma_utils.query_documents(
+                 collection_name=self._REFLECTIONS_COLLECTION_NAME,
+                 query_texts=[query],
+                 n_results=n_results,
+                 where_filter=final_where,
+                 include=["metadatas", "documents", "distances"],
+             )
+
+            # Check if the utility function returned None (indicating an error)
             if results is None:
+                 # Error logged in chroma_utils
                  raise ChromaOperationError(f"ChromaDB query operation failed for collection '{self._REFLECTIONS_COLLECTION_NAME}'. Check logs for details.")
 
+            # <<< Results are already formatted correctly by chroma_utils.query_documents >>>
             self.logger.info(
-                f"Retrieved {len(results.get('ids', [[]])[0])} reflection context results from Chroma for query '{query[:50]}...'"
+                f"Retrieved {len(results)} reflection context results from Chroma for query '{query[:50]}...'"
             )
-            return results.get("results", [])
+            return results
+
         except Exception as e:
             self.logger.exception(
                 f"Failed to get reflection context from Chroma collection '{self._REFLECTIONS_COLLECTION_NAME}': {e}"
             )
-            raise ChromaOperationError(
-                f"Failed to query reflection context from collection '{self._REFLECTIONS_COLLECTION_NAME}'"
-            ) from e
+            # Re-raise as specific error
+            if not isinstance(e, ChromaOperationError):
+                 raise ChromaOperationError(
+                     f"Failed to query reflection context from collection '{self._REFLECTIONS_COLLECTION_NAME}'"
+                 ) from e
+            else:
+                 raise e # Re-raise original ChromaOperationError
 
     def list_artifact_metadata(
         self,
@@ -811,11 +867,11 @@ class StateManager:
         Raises:
             ChromaOperationError: If the ChromaDB get operation fails.
         """
-        client = self._get_chroma_client()
+        client = self._get_chroma_client() # <<< Keep client check here for get() >>>
         if not client:
             raise ChromaOperationError("ChromaDB client is not available.")
 
-        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
+        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME) # <<< Keep collection getting here for get() >>>
         if not collection:
             raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
 

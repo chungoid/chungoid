@@ -18,10 +18,13 @@ import pprint
 from fastmcp import FastMCP, Context
 from utils.logger_setup import setup_logging
 from utils.state_manager import StateManager, StatusFileError, ChromaOperationError
-from stage_executor import StageExecutor, StageExecutionError  # <<< UNCOMMENTED
+# from stage_executor import StageExecutor, StageExecutionError  # <<< UNCOMMENTED
 from utils.chroma_utils import ChromaOperationError
 from utils.exceptions import StageExecutionError, ToolExecutionError, PromptRenderError
 from utils.prompt_manager import PromptManager
+from utils.prompt_manager import PromptLoadError # <<< ADDED IMPORT
+from engine import ChungoidEngine # <<< ADDED IMPORT
+from utils.config_loader import ConfigError # <<< ADDED IMPORT for helper
 
 # <<< EARLY EXECUTION LOGGING >>>
 EARLY_PID = os.getpid()
@@ -173,6 +176,10 @@ def _get_target_directory(
     2. Session context (if ctx or stdio_client_id exists)
     3. Global environment variable fallback.
     """
+    # <<< START ENHANCED LOGGING >>>
+    logger.debug(f"_get_target_directory called with: arg='{target_directory_arg}', ctx='{ctx}'")
+    # <<< END ENHANCED LOGGING >>>
+
     # 1. Prioritize the explicit argument if it's valid
     if target_directory_arg:
         logger.debug(f"Explicit target_directory argument provided: {target_directory_arg}")
@@ -199,43 +206,62 @@ def _get_target_directory(
 
     # Determine the effective client ID (handle stdio case)
     original_client_id = ctx.client_id if ctx else None
+    # <<< START ENHANCED LOGGING >>>
+    logger.debug(f"Original client_id from ctx: {original_client_id}")
+    # <<< END ENHANCED LOGGING >>>
     if not original_client_id:
         # Likely stdio transport, use the stored stdio_client_id
         if stdio_client_id:
             effective_client_id = stdio_client_id
+            # <<< START ENHANCED LOGGING >>>
             logger.debug(f"Using stored stdio_client_id for session lookup: {stdio_client_id}")
+            # <<< END ENHANCED LOGGING >>>
         else:
+            # <<< START ENHANCED LOGGING >>>
             logger.debug(
                 "No original client_id and no stored stdio_client_id, cannot check session."
             )
+            # <<< END ENHANCED LOGGING >>>
     else:
         effective_client_id = original_client_id
+        # <<< START ENHANCED LOGGING >>>
         logger.debug(f"Using original client_id for session lookup: {original_client_id}")
+        # <<< END ENHANCED LOGGING >>>
 
     # Look up the directory in the session if we have an ID
-    if effective_client_id and effective_client_id in client_sessions:
-        session_target_dir = client_sessions[effective_client_id].get("target_directory")
-        if session_target_dir:
-            # Validate the path stored in the session
-            if Path(session_target_dir).is_dir():
-                logger.info(
-                    f"Using project directory from session context for client {effective_client_id}: {session_target_dir}"
-                )
-                return session_target_dir
+    if effective_client_id:
+        # <<< START ENHANCED LOGGING >>>
+        session_data = client_sessions.get(effective_client_id, "SessionNotFound")
+        logger.debug(f"Looking up session for effective_client_id '{effective_client_id}'. Session data: {session_data}")
+        # <<< END ENHANCED LOGGING >>>
+        if effective_client_id in client_sessions:
+            session_target_dir = client_sessions[effective_client_id].get("target_directory")
+            if session_target_dir:
+                # Validate the path stored in the session
+                if Path(session_target_dir).is_dir():
+                    logger.info(
+                        f"Using project directory from session context for client {effective_client_id}: {session_target_dir}"
+                    )
+                    return session_target_dir
+                else:
+                    logger.warning(
+                        f"Path from session context for client {effective_client_id} ('{session_target_dir}') is not a valid directory. Ignoring."
+                    )
             else:
-                logger.warning(
-                    f"Path from session context for client {effective_client_id} ('{session_target_dir}') is not a valid directory. Ignoring."
+                logger.debug(
+                    f"No 'target_directory' found in session context for client {effective_client_id}."
                 )
-        else:
-            logger.debug(
-                f"No 'target_directory' found in session context for client {effective_client_id}."
-            )
+        else: # This else corresponds to 'if effective_client_id in client_sessions:'
+             logger.debug(f"No session found in client_sessions dict for client {effective_client_id}.")
     elif effective_client_id:
         logger.debug(f"No session found in client_sessions for client {effective_client_id}.")
     # End Session Check
 
     # 3. Fallback to the global environment variable if no valid argument or session context found
     logger.debug("Checking environment variable fallback for target directory.")
+    # <<< START ENHANCED LOGGING >>>
+    logger.debug(f"Value of GLOBAL_PROJECT_DIR: {GLOBAL_PROJECT_DIR}")
+    # <<< END ENHANCED LOGGING >>>
     if GLOBAL_PROJECT_DIR:
         logger.info(
             f"Using project directory from environment variable fallback: {GLOBAL_PROJECT_DIR}"
@@ -246,6 +272,9 @@ def _get_target_directory(
         logger.error(
             "Could not determine project directory from argument, session, or environment variable. Check setup."
         )
+        # <<< START ENHANCED LOGGING >>>
+        logger.debug("Returning None because explicit arg invalid/missing, session lookup failed, and GLOBAL_PROJECT_DIR is not set.")
+        # <<< END ENHANCED LOGGING >>>
         return None
 
 
@@ -298,56 +327,84 @@ def handle_errors(func):
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
-        except (StateManager.ProjectNotFoundError, FileNotFoundError) as e:
+        except FileNotFoundError as e:
             logger.warning(f"Resource not found error: {e}", exc_info=True)
-            raise HTTPException(status_code=404, detail=str(e))
+            # Return error dict instead of raising HTTPException for MCP
+            return {"status": "error", "message": f"Resource not found: {e}"}
         except ChromaOperationError as e:
             logger.error(f"ChromaDB operation failed: {e}", exc_info=True)
             # Return 503 Service Unavailable as the DB backend has issues
-            raise HTTPException(status_code=503, detail=f"Database operation failed: {e}")
+            return {"status": "error", "message": f"Database operation failed: {e}"}
         except (PromptLoadError, PromptRenderError) as e:
             logger.error(f"Prompt loading/rendering failed: {e}", exc_info=True)
-            # Return 500 as it's a server configuration/internal error
-            raise HTTPException(status_code=500, detail=f"Prompt configuration error: {e}")
-        except StageExecutionError as e:
-            logger.error(f"Stage execution failed: {e}", exc_info=True)
-            # Return 500 as the core logic failed
-            raise HTTPException(status_code=500, detail=f"Stage execution error: {e}")
-        except ToolExecutionError as e:
-            logger.error(f"Tool execution failed: {e}", exc_info=True)
-            # Use 400 Bad Request if it's likely due to bad input (e.g., invalid path),
-            # 404 for not found, or 500 if it's an internal server issue (e.g., permissions).
-            status_code = 500 # Default to internal server error
-            err_str = str(e).lower() # Lowercase for case-insensitive check
-
-            if "access denied" in err_str or "outside the project boundary" in err_str:
-                 status_code = 400 # Bad request due to invalid path
-            elif "corrupted or not valid json" in err_str:
-                status_code = 500 # Indicate server-side data corruption issue
-            elif "not found" in err_str or "could not find" in err_str:
-                 status_code = 404 # Resource not found
-
-            # Keep 500 for filesystem errors like permissions, disk full etc.
-            # The error message `e` provides specifics.
-
-            raise HTTPException(status_code=status_code, detail=f"Tool execution error: {e}")
-        except ValueError as e: # Catch general value errors (e.g., invalid JSON in request body)
-            logger.warning(f"Value error during request processing: {e}", exc_info=True)
-            raise HTTPException(status_code=400, detail=str(e))
-        except HTTPException: # Re-raise HTTPExceptions
-            raise
+            return {"status": "error", "message": f"Prompt handling error: {e}"}
+        except (StageExecutionError, ToolExecutionError) as e:
+            logger.error(f"Tool execution specific error: {e}", exc_info=True)
+            status_code = 400  # Bad Request for invalid tool use/state
+            return {"status": "error", "message": f"Tool execution error: {e}"}
         except Exception as e:
-            logger.exception(f"Unhandled exception during request: {e}") # Log full traceback
-            # Return 500 for any other unexpected errors
-            raise HTTPException(status_code=500, detail=f"An internal server error occurred: {type(e).__name__}")
+            logger.exception(f"An unexpected internal server error occurred: {e}")
+            return {"status": "error", "message": f"An unexpected server error occurred: {e}"}
     # Preserve original signature for FastAPI documentation
     import functools
     functools.update_wrapper(wrapper, func)
     return wrapper
 
 
+# --- Helper function to initialize engine ---
+# This centralizes engine creation for tool handlers
+def _initialize_engine(target_dir: str) -> ChungoidEngine:
+    """Initializes and returns a ChungoidEngine instance for the target directory."""
+    logger.debug(f"Initializing ChungoidEngine for target directory: {target_dir}")
+    try:
+        # Ensure engine import is accessible here
+        # Assuming 'from engine import ChungoidEngine' is at the top
+        engine = ChungoidEngine(project_directory=target_dir)
+        logger.debug(f"ChungoidEngine initialized successfully for {target_dir}.")
+        return engine
+    except (ValueError, RuntimeError, ConfigError) as e:
+        # Log the specific initialization error
+        logger.error(f"Failed to initialize ChungoidEngine for {target_dir}: {e}", exc_info=True)
+        # Re-raise as a ToolExecutionError to be caught by the handler decorator
+        raise ToolExecutionError(f"Engine initialization failed: {e}") from e
+    except Exception as e:
+        logger.error(f"Unexpected error initializing ChungoidEngine for {target_dir}: {e}", exc_info=True)
+        raise ToolExecutionError(f"Unexpected engine initialization error: {e}") from e
+
+
+# --- Tool Definitions ---
+
+@handle_errors
+@mcp.tool(
+    name="prepare_next_stage",
+    description="Determines the next stage, gathers context, and renders the prompt for the agent to execute.",
+)
+async def handle_prepare_next_stage(
+    target_directory: Optional[str] = None, ctx: Optional[Context] = None
+) -> dict:
+    """Handles the MCP call to prepare the next stage for execution."""
+    logger.info("Tool 'prepare_next_stage' called.")
+    effective_target_dir = _get_target_directory(target_directory, ctx)
+    if not effective_target_dir:
+        raise ToolExecutionError(
+            "Target project directory could not be determined. Set CHUNGOID_PROJECT_DIR env var or provide target_directory."
+        )
+
+    # Initialize the engine for this specific call
+    # Note: _initialize_engine is sync, but the handler is async as per FastMCP convention
+    engine = _initialize_engine(effective_target_dir)
+
+    # Run the stage preparation logic (engine method is synchronous)
+    result = engine.run_next_stage()
+
+    # The result dictionary already contains status, message, next_stage, prompt, context
+    logger.info(f"'prepare_next_stage' completed with status: {result.get('status')}")
+    return result
+
+
 # --- MCP Tool Handlers (Top-Level Async Functions) ---
 # <<< Restore original handlers with deferred StateManager init >>>
+@handle_errors
 @mcp.tool(
     name="set_project_context",
     description="Sets the target project directory for the current client session, removing the need to specify it in subsequent calls.",
@@ -358,9 +415,11 @@ async def set_project_context(target_directory: str, ctx: Context) -> dict:
     original_client_id = ctx.client_id  # <<< Use original_client_id
     effective_client_id: Optional[str] = None  # <<< Define effective_client_id
 
-    logger.info(
-        f"set_project_context called for original_client_id: {original_client_id}, target_directory: '{target_directory}'"
+    # <<< START ENHANCED LOGGING >>>
+    logger.debug(
+        f"set_project_context called. Target='{target_directory}'. Received ctx.client_id='{original_client_id}'"
     )
+    # <<< END ENHANCED LOGGING >>>
 
     if not original_client_id:
         # Client ID missing from context (likely stdio transport)
@@ -368,13 +427,20 @@ async def set_project_context(target_directory: str, ctx: Context) -> dict:
         if stdio_client_id is None:
             # Generate and store a persistent ID for this stdio server instance
             stdio_client_id = str(uuid.uuid4())
-            logger.info(f"Generated and stored new stdio_client_id: {stdio_client_id}")
+            # <<< START ENHANCED LOGGING >>>
+            logger.debug(f"Generated NEW stdio_client_id: {stdio_client_id}")
+            # <<< END ENHANCED LOGGING >>>
         else:
-            logger.info(f"Using existing stdio_client_id: {stdio_client_id}")
+            # <<< START ENHANCED LOGGING >>>
+            logger.debug(f"Using EXISTING stdio_client_id: {stdio_client_id}")
+            # <<< END ENHANCED LOGGING >>>
         effective_client_id = stdio_client_id
     else:
         # Client ID provided by context (e.g., websocket transport)
         effective_client_id = original_client_id
+        # <<< START ENHANCED LOGGING >>>
+        logger.debug(f"Using provided ctx.client_id as effective_client_id: {effective_client_id}")
+        # <<< END ENHANCED LOGGING >>>
 
     # Now, proceed using the effective_client_id
     if not effective_client_id:
@@ -420,6 +486,12 @@ async def set_project_context(target_directory: str, ctx: Context) -> dict:
     stored_path = client_sessions[effective_client_id][
         "target_directory"
     ]  # <<< Use effective_client_id
+    # <<< START ENHANCED LOGGING >>>
+    logger.debug(
+        f"Stored target='{stored_path}' in client_sessions for key='{effective_client_id}'."
+    )
+    logger.debug(f"Current client_sessions keys: {list(client_sessions.keys())}")
+    # <<< END ENHANCED LOGGING >>>
     logger.info(
         f"Set target_directory for client {effective_client_id} to: {stored_path}"
     )  # <<< Use effective_client_id
@@ -652,126 +724,34 @@ async def handle_get_initialization_context(**kwargs) -> dict:
     return response
 
 
-@mcp.tool(
-    name="execute_next_stage",
-    description="Executes the next pending stage. Uses environment variable for project dir if target_directory not provided.",
-)
-async def handle_execute_next_stage(
-    target_directory: Optional[str] = None, ctx: Optional[Context] = None
-) -> dict:
-    """Handler for the 'execute_next_stage' tool."""
-    logger.info(f"Received 'execute_next_stage' request (explicit target: '{target_directory}')")
-    # Pass target_directory_arg explicitly now
-    effective_target_directory = _get_target_directory(
-        target_directory_arg=target_directory, ctx=ctx
-    )
-    if not effective_target_directory:
-        return {
-            "status": "error",
-            "message": "Could not determine project directory. Ensure client is configured with CHUNGOID_PROJECT_DIR or set session context.",
-        }
-
-    logger.info(f"Executing next stage for effective target: '{effective_target_directory}'")
-
-    try:
-        # <<< Initialize StateManager within the handler >>>
-        context_state_manager = _initialize_state_manager_for_target(effective_target_directory)
-
-        # --- Get Next Stage --- #
-        next_stage_num = context_state_manager.get_next_stage()
-        last_status = context_state_manager.get_last_status()  # Get last status for context
-
-        # --- Prepare arguments for StageExecutor --- #
-        decision_config = {}
-        # <<< REMOVE context retrieval/formatting block >>>
-        # reflections_context_str = ...
-        # artifacts_context_str = ...
-        # try...except block for context retrieval... REMOVE
-        # <<< END REMOVE >>>
-
-        # <<< Calculate server prompt paths >>>
-        script_dir = Path(__file__).parent
-        server_stages_dir = str((script_dir / "server_prompts" / "stages").resolve())
-        common_template_path = str(
-            (script_dir / "server_prompts" / "common_template.yaml").resolve()
-        )
-        logger.debug(f"Calculated server_stages_dir: {server_stages_dir}")
-        logger.debug(f"Calculated common_template_path: {common_template_path}")
-
-        # --- Stage Loading & Execution --- #
-        stage_executor = StageExecutor(
-            state_manager=context_state_manager,
-            decision_logic_config=decision_config,
-            project_root_dir=effective_target_directory,
-            reflections_summary="",  # <<< Pass empty string for now
-            server_stages_dir=server_stages_dir,
-            common_template_path=common_template_path,
-        )
-
-        # <<< ADDED DEBUGGING >>>
-        logger.debug(f"StageExecutor prompt_manager initialized: {hasattr(stage_executor, 'prompt_manager')}")
-        if hasattr(stage_executor, 'prompt_manager') and stage_executor.prompt_manager:
-            logger.debug(f"PromptManager instance: {stage_executor.prompt_manager}")
-            logger.debug(f"PromptManager stage_definitions keys: {list(stage_executor.prompt_manager.stage_definitions.keys())}")
-            # <<< Simplified check for key type >>>
-            stage_1_key = next((k for k in stage_executor.prompt_manager.stage_definitions if k == 1 or k == 1.0), None)
-            if stage_1_key is not None:
-                 logger.debug(f"Type of stage 1 key found: {type(stage_1_key).__name__}")
-            else:
-                 logger.debug("Stage 1 key (1 or 1.0) not found in stage_definitions.")
-            # <<< End Simplified check >>>
-        else:
-            logger.error("PromptManager not found or not initialized on StageExecutor!")
-        # <<< END ADDED DEBUGGING >>>
-
-        # Pass EMPTY context_data to the prompt rendering initially.
-        # Agent is now responsible for using tools to get context.
-        prompt_content = stage_executor.prompt_manager.get_rendered_prompt(
-            stage_number=next_stage_num,
-            context_data={},  # <<< Pass empty dictionary
-        )
-
-        logger.info(f"Returning prompt for stage {next_stage_num}")
-        return {"status": "success", "next_stage": next_stage_num, "prompt": prompt_content}
-
-    # <<< Catch StateManager init errors specifically >>>
-    except (StatusFileError, ValueError, FileNotFoundError) as sm_init_error:
-        err_msg = f"Failed to initialize project state for next stage: {sm_init_error}. Project might be uninitialized. Try running 'initialize_project' first."
-        logger.error(
-            f"StateManager initialization failed for next stage execution in '{effective_target_directory}': {sm_init_error}"
-        )
-        return {"status": "error", "message": err_msg}
-    except StageExecutionError as e:
-        logger.error(f"Stage execution error in '{effective_target_directory}': {e}")
-        return {"status": "error", "message": str(e)}
-    except RuntimeError as e:
-        # Catch specific errors from StateManager like cannot determine next stage
-        logger.error(
-            f"Runtime error during next stage execution in '{effective_target_directory}': {e}"
-        )
-        return {"status": "error", "message": str(e)}
-    except Exception as e:
-        logger.exception(
-            f"Unexpected error during next stage execution in '{effective_target_directory}': {e}"
-        )
-        return {"status": "error", "message": f"An unexpected server error occurred: {e}"}
-
-
+@handle_errors
 @mcp.tool(
     name="get_project_status",
-    description="Retrieves project status. Uses environment variable for project dir if target_directory not provided.",
+    description="Retrieves the current status and history of the project.",
 )
 async def handle_get_project_status(
     target_directory: Optional[str] = None, ctx: Optional[Context] = None
 ) -> Dict[str, Any]:
     """Retrieves the project status from .chungoid/project_status.json."""
-    logger.info(f"Getting project status for: {target_directory}")
-    target_path = Path(target_directory).resolve()
+    logger.info(
+        f"handle_get_project_status called (explicit target: '{target_directory}')"
+    )
+    effective_target_directory = _get_target_directory(target_directory, ctx)
+    if not effective_target_directory:
+        # Raise error if no valid directory could be determined
+        raise ToolExecutionError(
+            "Could not determine project directory. Provide valid 'target_directory' argument or set CHUNGOID_PROJECT_DIR env var."
+        )
+
+    logger.info(f"Getting project status for effective target: {effective_target_directory}")
+    # Use the determined effective directory
+    target_path = Path(effective_target_directory).resolve()
     project_status_file = target_path / ".chungoid" / "project_status.json"
 
     try:
         if not target_path.is_dir():
-             raise FileNotFoundError(f"Target project directory not found: {target_directory}")
+             # Use the effective directory name in the error message
+             raise FileNotFoundError(f"Target project directory not found: {effective_target_directory}")
         if not project_status_file.is_file():
             # If the status file specifically is missing, maybe return a default or indicate initialization needed?
             # For now, treat as an error requiring explicit initialization.
@@ -792,8 +772,68 @@ async def handle_get_project_status(
         logger.error(f"Filesystem error reading project status file {project_status_file}: {e}", exc_info=True)
         raise ToolExecutionError(f"Could not read project status file {project_status_file}: {e}") from e
     except Exception as e: # Catch any other unexpected error
-        logger.error(f"Unexpected error getting project status for {target_directory}: {e}", exc_info=True)
+        # Use the effective directory name in the error message
+        logger.error(f"Unexpected error getting project status for {effective_target_directory}: {e}", exc_info=True)
         raise ToolExecutionError(f"An unexpected error occurred while getting project status: {e}") from e
+
+
+@mcp.tool(
+    name="set_pending_reflection",
+    description="Stores reflection text temporarily in the session context before submitting artifacts.",
+)
+async def handle_set_pending_reflection(reflection_text: str, ctx: Context) -> dict:
+    """Stores the provided reflection text in the server's session state for the calling client, intended for immediate use by submit_stage_artifacts."""
+    global stdio_client_id
+    original_client_id = ctx.client_id
+    effective_client_id: Optional[str] = None
+
+    logger.debug(
+        f"handle_set_pending_reflection called. Received ctx.client_id='{original_client_id}'"
+    )
+
+    # Determine effective client ID (copied from set_project_context)
+    if not original_client_id:
+        logger.info("Original client_id missing from context. Handling as potential stdio session.")
+        if stdio_client_id is None:
+            stdio_client_id = str(uuid.uuid4())
+            logger.debug(f"Generated NEW stdio_client_id: {stdio_client_id}")
+        else:
+            logger.debug(f"Using EXISTING stdio_client_id: {stdio_client_id}")
+        effective_client_id = stdio_client_id
+    else:
+        effective_client_id = original_client_id
+        logger.debug(f"Using provided ctx.client_id as effective_client_id: {effective_client_id}")
+
+    if not effective_client_id:
+        logger.error("Critical error: Effective client ID is still missing after handling.")
+        return {
+            "status": "error",
+            "message": "Internal server error: Could not determine client identifier.",
+        }
+
+    # Validate reflection_text is a string (basic check)
+    if not isinstance(reflection_text, str):
+         return {
+            "status": "error",
+            "message": "Invalid reflection_text provided. It must be a string.",
+        }
+
+    # Ensure session exists
+    if effective_client_id not in client_sessions:
+        client_sessions[effective_client_id] = {}
+        logger.info(f"Initialized new session for client_id: {effective_client_id}")
+
+    # Store the reflection text
+    client_sessions[effective_client_id]["pending_reflection"] = reflection_text
+    logger.debug(
+        f"Stored pending_reflection in client_sessions for key='{effective_client_id}'."
+    )
+    logger.debug(f"Current client_sessions keys: {list(client_sessions.keys())}")
+
+    return {
+        "status": "success",
+        "message": "Reflection text stored successfully for next submission.",
+    }
 
 
 @mcp.tool(
@@ -808,9 +848,34 @@ async def handle_submit_stage_artifacts(
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """Handler for the 'submit_stage_artifacts' tool."""
+    # <<< Get effective client ID >>>
+    global stdio_client_id # Need this for stdio case
+    original_client_id = ctx.client_id if ctx else None
+    effective_client_id: Optional[str] = None
+    if not original_client_id:
+        if stdio_client_id:
+            effective_client_id = stdio_client_id
+        # else: remains None if stdio_client_id is also None
+    else:
+        effective_client_id = original_client_id
+    # <<< End Get effective client ID >>>
+
     logger.info(
-        f"Received 'submit_stage_artifacts' (explicit target: '{target_directory}') for stage='{stage_number}', status='{stage_result_status}'"
+        # Updated log message
+        f"Received 'submit_stage_artifacts' (explicit target: '{target_directory}') for stage='{stage_number}', status='{stage_result_status}'. Effective client ID: {effective_client_id}"
     )
+    # <<< Retrieve (and remove) pending reflection from session >>>
+    reflection_to_process: Optional[str] = None
+    if effective_client_id and effective_client_id in client_sessions:
+        reflection_to_process = client_sessions[effective_client_id].pop('pending_reflection', None)
+        if reflection_to_process:
+            logger.info(f"Retrieved pending reflection from session for client {effective_client_id}.")
+        else:
+             logger.info(f"No pending reflection found in session for client {effective_client_id}.")
+    else:
+        logger.warning(f"Cannot retrieve pending reflection: No valid session context found for client ID '{effective_client_id}'.")
+    # <<< End Retrieve pending reflection >>>
+
     effective_target_directory = _get_target_directory(target_directory, ctx)
     if not effective_target_directory:
         return {
@@ -830,7 +895,8 @@ async def handle_submit_stage_artifacts(
             "message": "Invalid stage_number. Must be a non-negative number.",
         }
     if not isinstance(generated_artifacts, dict):
-        return {"status": "error", "message": "Invalid generated_artifacts. Must be a dictionary."}
+        # Agent MUST provide artifacts as a dict (can be empty if none generated)
+        return {"status": "error", "message": "Invalid generated_artifacts. Must be a dictionary (can be empty)."}
     if not target_dir_path.is_dir():
         return {
             "status": "error",
@@ -843,66 +909,38 @@ async def handle_submit_stage_artifacts(
             "message": f"Invalid stage_result_status '{stage_result_status}'. Use {valid_statuses}.",
         }
     final_status = stage_result_status.upper()
-    # --- End Input Validation --- #
 
     # --- Determine Artifacts to Process --- #
-    artifacts_to_process: Dict[str, Optional[str]] = {}
-    if generated_artifacts:
-        logger.info("Processing artifacts explicitly provided in the tool call.")
-        # Validate provided content is string
-        for path, content in generated_artifacts.items():
-            if not isinstance(content, str):
-                logger.error(
-                    f"Invalid content type for provided artifact '{path}'. Expected string, got {type(content)}. Skipping artifact writing."
-                )
-                return {
-                    "status": "error",
-                    "message": f"Invalid content type for provided artifact '{path}'.",
-                }
-        artifacts_to_process = generated_artifacts  # Use provided dict
-    else:
-        # Infer artifacts from expected stage output (simple hardcoded example for Stage 0 for now)
-        # TODO: Load this dynamically from stage prompt yaml or previous status
-        logger.warning(
-            "No artifacts provided in tool call. Inferring artifacts based on hardcoded Stage 0 expectation."
-        )
-        expected_artifacts = []
-        if stage_number == 0:
-            expected_artifacts = [
-                "dev-docs/design/requirements.md",
-                "dev-docs/design/research_notes.md",
-                "dev-docs/design/blueprint.md",
-            ]
-        elif stage_number == 1:
-            expected_artifacts = ["dev-docs/design/validation_report.json"]
-        # Add other stages as needed
-        else:
-            logger.warning(
-                f"No hardcoded expected artifacts found for stage {stage_number}. Will only update status."
-            )
-
-        if expected_artifacts:
-            logger.info(f"Inferred artifacts for stage {stage_number}: {expected_artifacts}")
-            for path in expected_artifacts:
-                artifacts_to_process[path] = None  # Mark for reading, content is None initially
-        else:
-            logger.info(
-                f"No artifacts inferred for stage {stage_number}. Only status will be updated."
-            )
+    artifacts_to_process = generated_artifacts
+    if not artifacts_to_process:
+        logger.info(f"No artifacts provided by the agent for stage {stage_number}. Only status and reflection will be updated.")
     # --- End Determine Artifacts --- #
 
     written_files = []
     errors = []
     # --- Artifact Handling Loop --- #
-    for rel_path_str, content_or_none in artifacts_to_process.items():
+    for rel_path_str, content in artifacts_to_process.items():
+        # <<< Add logging for key and content value type/snippet >>>
+        content_snippet = (content[:75] + '...') if isinstance(content, str) and len(content) > 75 else content
+        logger.debug(f"Processing artifact. Key: '{rel_path_str}', Value Type: {type(content)}, Value Snippet: '{content_snippet}'")
+        # <<< End logging >>>
+
         if not isinstance(rel_path_str, str) or not rel_path_str:
             msg = f"Invalid artifact path key (must be non-empty string): {rel_path_str}"
             logger.error(msg)
             errors.append(msg)
             continue
 
-        if ".." in rel_path_str or rel_path_str.startswith("/"):
+        # Security: Basic check for path traversal
+        if ".." in rel_path_str or Path(rel_path_str).is_absolute():
             msg = f"Security risk: Invalid relative path '{rel_path_str}'"
+            logger.error(msg)
+            errors.append(msg)
+            continue
+
+        # Security: Ensure content is string (already validated for explicit, but good practice)
+        if not isinstance(content, str):
+            msg = f"Invalid content for artifact '{rel_path_str}'. Must be a string. Got: {type(content)}."
             logger.error(msg)
             errors.append(msg)
             continue
@@ -917,28 +955,14 @@ async def handle_submit_stage_artifacts(
                 errors.append(msg)
                 continue
 
-            if content_or_none is not None:
-                # Content was provided explicitly, write it
-                if not isinstance(content_or_none, str):
-                    msg = f"Invalid explicit content for '{rel_path_str}' (must be string). Type: {type(content_or_none)}"
-                    logger.error(msg)
-                    errors.append(msg)
-                    continue
-                logger.info(f"Writing explicitly provided artifact content to: {abs_path}")
-                abs_path.parent.mkdir(parents=True, exist_ok=True)
-                abs_path.write_text(content_or_none, encoding="utf-8")
-                written_files.append(rel_path_str)  # Mark as written
-            else:
-                # Content not provided, assume file exists (was generated by agent)
-                logger.info(f"Artifact '{rel_path_str}' was inferred. Assuming it exists on disk.")
-                if not abs_path.is_file():
-                    msg = f"Inferred artifact file not found: {abs_path}"
-                    logger.error(msg)
-                    errors.append(msg)  # Report error if inferred file doesn't exist
-                    continue
-                else:
-                    # File exists, mark it as 'written' (or processed) for status update/ChromaDB
-                    written_files.append(rel_path_str)
+            # Write the artifact content provided by the agent
+            logger.info(f"Writing artifact content to: {abs_path}")
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            # <<< Log content AGAIN right before writing >>>
+            logger.debug(f"Writing content (type: {type(content)}): {content}")
+            # <<< End logging >>>
+            abs_path.write_text(content, encoding="utf-8")
+            written_files.append(rel_path_str)  # Mark as written
 
         except OSError as e:
             msg = f"OS Error handling artifact '{rel_path_str}' at '{abs_path}': {e}"
@@ -952,24 +976,42 @@ async def handle_submit_stage_artifacts(
 
     status_updated = False
     status_update_error = None
+    reflection_stored = False
+    reflection_storage_error = None
     # --- Status Update (includes ChromaDB persistence) --- #
     if not errors:
         try:
             # <<< Initialize StateManager within the handler >>>
             context_state_manager = _initialize_state_manager_for_target(effective_target_directory)
 
-            # Store reflections if provided
-            reflection_data = getattr(ctx, "reflection_data", None) if ctx else None
-            if isinstance(reflection_data, dict):
-                logger.info(f"Storing reflection data for stage {stage_number}...")
-                reflection_stored = context_state_manager.store_reflection(reflection_data)
-                if not reflection_stored:
-                    logger.warning("Failed to store reflection data.")
-            else:
-                if reflection_data is not None:  # Log if present but not a dict
-                    logger.warning(
-                        f"Received reflection_data but it was not a dictionary (type: {type(reflection_data)}). Skipping storage."
+            # --- Store Reflection if Provided --- #
+            if reflection_to_process:
+                logger.info(f"Attempting to persist reflection for stage {stage_number}...")
+                try:
+                    # Need run_id - get it from the latest run
+                    latest_status = context_state_manager.get_last_status()
+                    run_id = latest_status.get('run_id') if latest_status else 0 # Default to run 0 if no status yet
+                    # TODO: Consider how run_id increments or is managed
+
+                    reflection_stored = context_state_manager.persist_reflections_to_chroma(
+                        run_id=run_id, # Get current run ID
+                        stage_number=float(stage_number),
+                        reflections=reflection_to_process
                     )
+                    if not reflection_stored:
+                        reflection_storage_error = "StateManager failed to store reflection (returned False)."
+                        logger.warning(reflection_storage_error)
+                    else:
+                        logger.info(f"Successfully persisted reflection for stage {stage_number}.")
+                except ChromaOperationError as chroma_e:
+                    reflection_storage_error = f"ChromaDB Error storing reflection: {chroma_e}"
+                    logger.error(reflection_storage_error)
+                except Exception as reflect_err:
+                    reflection_storage_error = f"Unexpected error storing reflection: {reflect_err}"
+                    logger.exception(reflection_storage_error)
+            else:
+                logger.info("No reflection text provided or found in session, skipping persistence.")
+            # --- End Reflection Storage --- #
 
             # <<< NEW: Store written artifacts in ChromaDB >>>
             if written_files:
@@ -1035,28 +1077,26 @@ async def handle_submit_stage_artifacts(
                                     f"StateManager reported failure storing artifact context for {rel_path_str}. Check StateManager logs."
                                 )
                                 # Optionally add to errors list if this should halt the overall submission:
-                                errors.append(f"StateManager failed to store {rel_path_str} context in ChromaDB (returned False).")
+                                # errors.append(f"StateManager failed to store {rel_path_str} context in ChromaDB (returned False).") # Not adding to main errors for now
                         except ChromaOperationError as chroma_e:
                             logger.error(
                                 f"ChromaDB Error storing artifact context for '{rel_path_str}': {chroma_e}"
                             )
-                            errors.append(f"ChromaDB Error storing {rel_path_str}: {chroma_e}")
+                            # errors.append(f"ChromaDB Error storing {rel_path_str}: {chroma_e}") # Not adding to main errors for now
                         # --- End wrap ChromaDB call --- #
 
                     except FileNotFoundError:
                         logger.error(
                             f"ChromaDB Store Error: File '{rel_path_str}' not found after writing, cannot store context."
                         )
-                        errors.append(
-                            f"File not found for ChromaDB storage: {rel_path_str}"
-                        )  # Add to errors
+                        # errors.append(f"File not found for ChromaDB storage: {rel_path_str}")  # Add to errors
                     except Exception as chroma_err:
                         logger.exception(
                             f"ChromaDB Store Error: Failed to store artifact '{rel_path_str}' context: {chroma_err}"
                         )
                         # Decide if this should prevent status update
                         # Adding to errors for now to make it visible
-                        errors.append(f"Error storing {rel_path_str} context: {chroma_err}")
+                        # errors.append(f"Error storing {rel_path_str} context: {chroma_err}") # Not adding to main errors for now
 
             # Update the main status file
             status_updated = context_state_manager.update_status(
@@ -1078,40 +1118,55 @@ async def handle_submit_stage_artifacts(
             logger.exception(f"Unexpected error during status update for stage {stage_number}")
             status_update_error = f"Unexpected error during status update: {type(e).__name__}"
     else:
-        status_update_error = "Status update skipped due to artifact writing errors."
+        status_update_error = "Status update skipped due to errors during artifact processing."
+        reflection_storage_error = "Reflection storage skipped due to errors during artifact processing."
         logger.warning(status_update_error)
     # --- End Status Update --- #
 
     # --- Construct Response --- #
+    final_message_parts = []
     if errors:
-        return {
-            "status": "error",
-            "message": "Errors occurred during artifact writing.",
-            "errors": errors,
-            "written_files": written_files,
-        }
+        final_message_parts.append(f"Errors occurred during artifact processing: {len(errors)} found.")
+        # Status update and reflection storage were skipped
+        status_updated = False
+        reflection_stored = False
     elif status_update_error:
         # Artifacts might have been written even if status update failed
-        return {
-            "status": "error",
-            "message": f"Artifacts partially/fully written, but status update failed: {status_update_error}",
-            "written_files": written_files,
-            "errors": errors,
-        }
+        final_message_parts.append(f"Artifacts processed ({len(written_files)}), but status update failed: {status_update_error}")
+        status_updated = False # Ensure status reflects failure
+        # Check reflection status
+        if reflection_to_process and not reflection_stored:
+            final_message_parts.append(f"Reflection storage also failed: {reflection_storage_error or 'Unknown reason'}")
     elif not status_updated:
         # Should ideally be covered by status_update_error, but as a fallback
-        return {
-            "status": "error",
-            "message": "Artifacts written, but status update failed for an unknown reason.",
-            "written_files": written_files,
-        }
+        final_message_parts.append(f"Artifacts processed ({len(written_files)}), but status update failed for an unknown reason.")
+        status_updated = False
+        if reflection_to_process and not reflection_stored:
+            final_message_parts.append(f"Reflection storage also failed: {reflection_storage_error or 'Unknown reason'}")
+    elif reflection_to_process and not reflection_stored:
+        # Status update succeeded, but reflection failed
+        final_message_parts.append(f"Stage {stage_number} status updated to {final_status}, but reflection storage failed: {reflection_storage_error or 'Unknown reason'}")
+        reflection_stored = False # Ensure status reflects partial failure
     else:
-        return {
-            "status": "success",
-            "message": f"Stage {stage_number} artifacts submitted and status updated to {final_status}.",
-            "written_files": written_files,
-            "next_action_hint": "execute_next_stage",
-        }
+        # Everything succeeded (or no reflection was provided)
+        final_message_parts.append(f"Stage {stage_number} artifacts submitted ({len(written_files)}) and status updated to {final_status}.")
+        if reflection_to_process:
+            final_message_parts.append("Reflection persisted successfully.")
+
+    # Determine overall status based on outcomes
+    overall_status = "error" if errors or not status_updated else "success"
+    # Consider if reflection failure should make overall status 'partial_success' or 'warning'? Sticking to error/success for now.
+
+    return {
+        "status": overall_status,
+        "message": " ".join(final_message_parts),
+        "written_files": written_files,
+        "reflection_stored": reflection_stored if reflection_to_process else None, # Indicate None if no reflection provided
+        "errors": errors if errors else None, # Include errors if they occurred
+        "status_update_error": status_update_error if status_update_error else None,
+        "reflection_storage_error": reflection_storage_error if reflection_storage_error else None,
+        "next_action_hint": "execute_next_stage" if overall_status == "success" else None # Only hint next if fully successful
+    }
 
 
 @mcp.tool(
@@ -1214,6 +1269,7 @@ async def handle_load_reflections(
         }
 
 
+@handle_errors
 @mcp.tool(
     name="get_file",
     description="Reads the content of a specific file within the project directory. Path must be relative to the project root.",
@@ -1384,6 +1440,12 @@ except Exception as inspect_err:
 
 # Run the MCP server using the stdio transport
 if __name__ == "__main__":
+    # <<< ADDED STARTUP LOG TEST >>>
+    try:
+        logger.critical("!!!! SERVER PROCESS STARTED AND LOGGING TO FILE !!!!")
+    except Exception as log_err:
+        print(f"CRITICAL ERROR: Failed to write initial log message: {log_err}", file=sys.stderr)
+    # <<< END STARTUP LOG TEST >>>
     logger.info(
         "Starting Chungoid MCP Server via STDIO (Restored Full Script / Renamed Tool Mode)..."
     )  # Updated message

@@ -1,0 +1,79 @@
+# Chungoid Core MCP Server - User Guide
+
+Welcome to the Chungoid Core MCP (Meta-Cognitive Project) Server! This system facilitates an AI-driven, stage-based workflow for software project development.
+
+## What it Does
+
+The server manages a multi-stage process where an AI agent (like you!) interacts via defined tools to perform tasks like design, planning, implementation, validation, and release preparation for a target software project.
+
+## Getting Started: Initializing a Project
+
+To begin a new project managed by Chungoid:
+
+1.  **Navigate:** Open your terminal *in the directory* where you want your new project to reside.
+2.  **Initialize:** Use the Chungoid client (e.g., Cursor chat) connected to this server and run the initialization:
+    ```
+    @chungoid initialize_project target_directory="."
+    ```
+    *   (Replace `.` with the full path if you aren't running the client from the target directory itself).
+    *   This creates a `.chungoid/` directory containing essential state files (`project_status.json`).
+    *   It also automatically sets the project context for your current session.
+
+## The Workflow: Stages 0-5
+
+Chungoid uses a sequential, stage-based workflow. Each stage focuses on a specific part of development and has defined goals and expected outputs (artifacts).
+
+1.  **Stage 0: Discovery & Design:** Understand the goal, research, create `requirements.md` and `blueprint.md`.
+2.  **Stage 1: Design Validation:** Review Stage 0 artifacts, ensure feasibility/clarity, produce `validation_report.json`.
+3.  **Stage 2: Implementation Planning:** Create `implementation_plan.md` and `detailed_interfaces.md` based on the validated design.
+4.  **Stage 3: Implementation & Unit Testing:** Write code incrementally according to the plan, add unit tests, run static analysis. Produce code artifacts and reports (`static_analysis_report.json`, `unit_test_report.json`).
+5.  **Stage 4: Validation & QA:** Perform integration testing, security checks, etc., on the implemented code. Produce reports (`integration_report.json`, etc.).
+6.  **Stage 5: Release Preparation:** Finalize `README.md`, `docs/`, packaging files, and `release_notes.md`.
+
+## Interaction: Using the Tools
+
+You interact with the server using specific tools via your client (e.g., `@chungoid tool_name ...`). Key tools include:
+
+*   **`initialize_project target_directory="..."`**: (As shown above) Sets up a new project directory.
+*   **`set_project_context target_directory="..."`**: Tells the server which project directory subsequent commands should apply to for your session. Useful if managing multiple projects or if context is lost.
+*   **`get_project_status`**: Retrieves the current status, including completed stages and runs.
+*   **`load_reflections`**: Loads reflections/notes stored from previous stages.
+*   **`retrieve_reflections query="..."`**: Searches stored reflections for specific information.
+*   **`prepare_next_stage`**: Determines the next stage based on the project status and provides you with the prompt (role, goals, tasks) for that stage.
+*   **`get_file relative_path="..."`**: Reads the content of a file within the *currently set project context*.
+*   **`set_pending_reflection reflection_text="..."`**: *Required before submitting.* Stages your reflection text temporarily.
+*   **`submit_stage_artifacts stage_number=X.Y stage_result_status="PASS|FAIL|..." generated_artifacts={...}`**: Submits the results of a stage. This updates the project status and stores artifact/reflection context. *Note: The `reflection_text` is picked up automatically from the previous `set_pending_reflection` call.*
+
+**Typical Flow:**
+
+1.  `initialize_project` or `set_project_context`.
+2.  `prepare_next_stage` -> Receive prompt.
+3.  Perform tasks defined in the prompt (may involve `get_file`, `retrieve_reflections`, etc.).
+4.  `set_pending_reflection reflection_text="..."`
+5.  `submit_stage_artifacts stage_number=... stage_result_status=... generated_artifacts={...}`
+6.  Repeat from step 2.
+
+## Key Concepts
+
+*   **Project Status (`.chungoid/project_status.json`):** Tracks the history of stage runs and their outcomes (PASS/FAIL).
+*   **Artifacts:** Files generated or modified during a stage (code, documents, reports).
+*   **Reflections:** Your thoughts, analysis, or rationale recorded during a stage, stored for context.
+*   **Context:** Information (status, artifacts, reflections) gathered and potentially passed into stage prompts.
+
+## Development
+
+This `chungoid-core/` directory contains the server implementation. Development *of* the server (meta-development) typically occurs in the parent `chungoid-mcp` repository structure. See the `dev/` directory in that repository for details if contributing to the core server itself.
+
+## Origin Story
+
+In the early days, ambitious AI projects were often chaotic. Developers faced a swirling vortex of high-level goals, vague requirements, shifting dependencies, and endless potential paths. Progress stalled in "analysis paralysis," the sheer complexity overwhelming any attempt at structured development. They needed a new paradigm.
+
+The breakthrough came from a simple observation: even the most complex system could be broken down. Like eating an elephant one bite at a time, the team realized they needed to isolate manageable "chunks" of the problem – a specific feature, a single module, a defined stage of development. This wasn't just task breakdown; it was about creating self-contained units of work with clear inputs and outputs.
+
+Just chunking wasn't enough. They needed a *process* to handle each chunk consistently: define it (Stage 0), validate it (Stage 1), plan its implementation (Stage 2), build and test it (Stage 3), validate the build (Stage 4), and prepare it for integration (Stage 5). Crucially, the system needed to *learn* from each chunk – reflections stored in a persistent memory (like ChromaDB) to inform the next. This meta-cognitive loop was vital.
+
+They weren't just creating *chunks*; they were designing a system *that operated on chunks*. This system had its own lifecycle, its own internal state, its own memory, and distinct operational phases (the stages). It felt less like a static plan and more like an autonomous entity designed specifically to *process* these chunks. The suffix "-oid" came to mind – signifying something "like" or "resembling" a self-contained, purposeful entity. It wasn't just *a* chunk; it was the **Chunk-Processor**, the **Chunk-Handler**, the **Chunk-oid**.
+
+During a late-night whiteboard session, mapping out the flow between stages, agents, and the reflection database, someone drew a box around the entire process – the State Manager, the Prompt Manager, the Stage Executor, the Memory. "This whole thing," they declared, gesturing at the diagram, "it's the... the *Chungoid*. It takes the big messy goal, breaks it into chunks, digests each one through the stages, learns, and moves on."
+
+The name stuck. "Chungoid" came to represent not just the act of chunking, but the entire **meta-cognitive, agent-driven framework** designed to systematically consume complexity through sequential, reflective stages. It embodied the structured approach, the learning capability, and the staged progression – the intelligent system that brings order to the chaos of creation. 
