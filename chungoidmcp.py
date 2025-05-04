@@ -8,10 +8,20 @@ import inspect
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Optional, Any
+import json
 
 # <<< ADDED DIAGNOSTICS >>>
 import sys
 import pprint
+
+# --- MCP and Project Imports ---
+from fastmcp import FastMCP, Context
+from utils.logger_setup import setup_logging
+from utils.state_manager import StateManager, StatusFileError, ChromaOperationError
+from stage_executor import StageExecutor, StageExecutionError  # <<< UNCOMMENTED
+from utils.chroma_utils import ChromaOperationError
+from utils.exceptions import StageExecutionError, ToolExecutionError, PromptRenderError
+from utils.prompt_manager import PromptManager
 
 # <<< EARLY EXECUTION LOGGING >>>
 EARLY_PID = os.getpid()
@@ -32,13 +42,6 @@ class SecurityError(Exception):
     """Custom exception for security-related errors, like path traversal."""
 
     pass
-
-
-# --- MCP and Project Imports ---
-from fastmcp import FastMCP, Context
-from utils.logger_setup import setup_logging
-from utils.state_manager import StateManager, StatusFileError  # <<< UNCOMMENTED
-from stage_executor import StageExecutor, StageExecutionError  # <<< UNCOMMENTED
 
 # Load environment variables from .env file
 load_dotenv()
@@ -288,6 +291,59 @@ def _initialize_state_manager_for_target(target_dir_path_str: str) -> StateManag
         traceback.print_exc(file=sys.stderr)
         # <<< END REPLACEMENT >>>
         raise  # Re-raise the exception to be caught by the calling tool handler
+
+
+# Define a function to handle common error types and return JSONResponse
+def handle_errors(func):
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except (StateManager.ProjectNotFoundError, FileNotFoundError) as e:
+            logger.warning(f"Resource not found error: {e}", exc_info=True)
+            raise HTTPException(status_code=404, detail=str(e))
+        except ChromaOperationError as e:
+            logger.error(f"ChromaDB operation failed: {e}", exc_info=True)
+            # Return 503 Service Unavailable as the DB backend has issues
+            raise HTTPException(status_code=503, detail=f"Database operation failed: {e}")
+        except (PromptLoadError, PromptRenderError) as e:
+            logger.error(f"Prompt loading/rendering failed: {e}", exc_info=True)
+            # Return 500 as it's a server configuration/internal error
+            raise HTTPException(status_code=500, detail=f"Prompt configuration error: {e}")
+        except StageExecutionError as e:
+            logger.error(f"Stage execution failed: {e}", exc_info=True)
+            # Return 500 as the core logic failed
+            raise HTTPException(status_code=500, detail=f"Stage execution error: {e}")
+        except ToolExecutionError as e:
+            logger.error(f"Tool execution failed: {e}", exc_info=True)
+            # Use 400 Bad Request if it's likely due to bad input (e.g., invalid path),
+            # 404 for not found, or 500 if it's an internal server issue (e.g., permissions).
+            status_code = 500 # Default to internal server error
+            err_str = str(e).lower() # Lowercase for case-insensitive check
+
+            if "access denied" in err_str or "outside the project boundary" in err_str:
+                 status_code = 400 # Bad request due to invalid path
+            elif "corrupted or not valid json" in err_str:
+                status_code = 500 # Indicate server-side data corruption issue
+            elif "not found" in err_str or "could not find" in err_str:
+                 status_code = 404 # Resource not found
+
+            # Keep 500 for filesystem errors like permissions, disk full etc.
+            # The error message `e` provides specifics.
+
+            raise HTTPException(status_code=status_code, detail=f"Tool execution error: {e}")
+        except ValueError as e: # Catch general value errors (e.g., invalid JSON in request body)
+            logger.warning(f"Value error during request processing: {e}", exc_info=True)
+            raise HTTPException(status_code=400, detail=str(e))
+        except HTTPException: # Re-raise HTTPExceptions
+            raise
+        except Exception as e:
+            logger.exception(f"Unhandled exception during request: {e}") # Log full traceback
+            # Return 500 for any other unexpected errors
+            raise HTTPException(status_code=500, detail=f"An internal server error occurred: {type(e).__name__}")
+    # Preserve original signature for FastAPI documentation
+    import functools
+    functools.update_wrapper(wrapper, func)
+    return wrapper
 
 
 # --- MCP Tool Handlers (Top-Level Async Functions) ---
@@ -708,125 +764,36 @@ async def handle_execute_next_stage(
 async def handle_get_project_status(
     target_directory: Optional[str] = None, ctx: Optional[Context] = None
 ) -> Dict[str, Any]:
-    """Handler for the 'get_project_status' tool."""
-    logger.info(
-        f"Received 'get_project_status' request (explicit target: '{target_directory}') with args: {ctx}"
-    )
-    effective_target_directory = _get_target_directory(target_directory, ctx)
-    if not effective_target_directory:
-        return {
-            "status": "error",
-            "message": "Could not determine project directory. Provide valid 'target_directory' argument or set CHUNGOID_PROJECT_DIR env var and restart server.",
-        }
+    """Retrieves the project status from .chungoid/project_status.json."""
+    logger.info(f"Getting project status for: {target_directory}")
+    target_path = Path(target_directory).resolve()
+    project_status_file = target_path / ".chungoid" / "project_status.json"
 
-    logger.info(f"Getting project status for effective target: '{effective_target_directory}'")
     try:
-        # <<< Wrap main logic in try...finally >>>
-        try:
-            # <<< Initialize StateManager within the handler >>>
-            context_state_manager = _initialize_state_manager_for_target(effective_target_directory)
+        if not target_path.is_dir():
+             raise FileNotFoundError(f"Target project directory not found: {target_directory}")
+        if not project_status_file.is_file():
+            # If the status file specifically is missing, maybe return a default or indicate initialization needed?
+            # For now, treat as an error requiring explicit initialization.
+            # Consider if `.chungoid` dir missing vs only the file missing warrants different handling.
+            raise FileNotFoundError(f"Project status file not found: {project_status_file}. Project may need initialization.")
 
-            target_dir_path = Path(effective_target_directory)
-            # project_status_file check removed, handled by StateManager init
-
-            project_initialized = True  # Assume initialized if StateManager loaded
-            last_stage_info = {"stage": None, "status": None, "artifacts": []}
-            full_status_data = []
-
-            try:
-                full_status_data = context_state_manager.get_full_status()
-                last_status = context_state_manager.get_last_status()
-
-                # <<< RESTORE last_status calculation >>>
-                if last_status:
-                    last_stage_info["stage"] = last_status.get("stage")
-                    last_stage_info["status"] = last_status.get("status")
-                    last_stage_info["artifacts"] = last_status.get("artifacts", [])
-                else:
-                    last_stage_info["stage"] = 0
-                    last_stage_info["status"] = "PENDING"
-                    last_stage_info["artifacts"] = []
-            except StatusFileError as sfe:
-                logger.error(
-                    f"Error reading status file via StateManager for target {effective_target_directory}: {sfe}"
-                )
-                # If StateManager init succeeded but reading status failed later
-                return {"status": "error", "message": f"Failed to read project status file: {sfe}"}
-
-            # <<< UNCOMMENTING the session logic block >>>
-            # Attempt to get context-specific data if ctx is available
-            client_id = ctx.client_id if ctx else None  # Safely access client_id
-            session_data = None
-            # <<< Simplified session access for stdio >>>
-            # <<< ADD DEBUG LOGS >>>
-            logger.debug(
-                f"Checking session data: stdio_client_id='{stdio_client_id}', client_id='{client_id}', client_sessions keys: {list(client_sessions.keys())}"
-            )
-            if stdio_client_id and stdio_client_id in client_sessions:
-                logger.debug(
-                    f"Attempting to get session data using stdio_client_id: {stdio_client_id}"
-                )
-                session_data = client_sessions[stdio_client_id].get(
-                    "target_directory"
-                )  # <<< Assigns to session_data
-                logger.debug(f"Got session_data: {session_data}")
-            elif client_id and client_id in client_sessions:
-                logger.debug(f"Attempting to get session data using client_id: {client_id}")
-                session_data = client_sessions[client_id].get(
-                    "target_directory"
-                )  # <<< Assigns to session_data
-                logger.debug(f"Got session_data: {session_data}")
-            else:
-                logger.debug("No matching client ID found in sessions to retrieve session_data.")
-            # <<< END ADD DEBUG LOGS >>>
-
-            # <<< Partially restore summary dictionary >>>
-            summary = {
-                "message": "Status retrieved successfully.",
-                "target_directory": str(target_dir_path),
-                "project_initialized": project_initialized,
-                "last_status": last_stage_info,
-                "full_history": full_status_data,  # <<< UNCOMMENTED >>>
-                "session_context": session_data,  # Include session context if available # <<< UNCOMMENTED >>>
-            }
-
-            # <<< Return the partially restored summary >>>
-            # NOTE: The final logger.info call is moved to the finally block
-            return {"status": "success", "data": summary}
-
-        # <<< Catch StateManager init errors specifically >>>
-        except (StatusFileError, ValueError, FileNotFoundError) as sm_init_error:
-            logger.warning(
-                f"StateManager initialization failed retrieving status for target '{effective_target_directory}': {sm_init_error}. Assuming project is uninitialized."
-            )
-            # Project likely uninitialized if StateManager fails here
-            return {
-                "status": "success",  # Return success, but indicate not initialized
-                "data": {
-                    "message": "Project status checked. Project appears uninitialized.",
-                    "target_directory": effective_target_directory,
-                    "project_initialized": False,
-                    "last_status": {"stage": None, "status": "UNINITIALIZED", "artifacts": []},
-                    "full_history": [],
-                    "session_context": None,
-                    "error_note": f"Could not read status file: {sm_init_error}",
-                    "next_action_hint": "initialize_project",
-                },
-            }
-        except Exception as e:
-            logger.exception(
-                f"Unexpected error retrieving project status for target '{effective_target_directory}': {e}"
-            )
-            error_client_id = (
-                ctx.client_id if ctx else stdio_client_id if stdio_client_id else "N/A"
-            )
-            return {
-                "status": "error",
-                "message": f"Failed to retrieve project status due to unexpected server error: {e} (Client: {error_client_id})",
-            }
-    finally:
-        # <<< This log should now ALWAYS execute before the function truly exits >>>
-        logger.info(f"Exiting handle_get_project_status for target {effective_target_directory}.")
+        with open(project_status_file, "r", encoding="utf-8") as f:
+            status_data = json.load(f)
+        logger.info(f"Successfully retrieved project status from {project_status_file}")
+        return status_data
+    except FileNotFoundError as e:
+        logger.error(f"Error getting project status: {e}", exc_info=False) # Don't need full trace for FileNotFoundError usually
+        raise ToolExecutionError(f"Could not find project directory or status file: {e}") from e
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding project status JSON in {project_status_file}: {e}", exc_info=True)
+        raise ToolExecutionError(f"Project status file ({project_status_file}) is corrupted or not valid JSON: {e}") from e
+    except (OSError, IOError) as e:
+        logger.error(f"Filesystem error reading project status file {project_status_file}: {e}", exc_info=True)
+        raise ToolExecutionError(f"Could not read project status file {project_status_file}: {e}") from e
+    except Exception as e: # Catch any other unexpected error
+        logger.error(f"Unexpected error getting project status for {target_directory}: {e}", exc_info=True)
+        raise ToolExecutionError(f"An unexpected error occurred while getting project status: {e}") from e
 
 
 @mcp.tool(
@@ -1052,29 +1019,30 @@ async def handle_submit_stage_artifacts(
                                 "reflection_doc"  # Separate from structured reflection
                             )
 
-                        # <<< ADDED DIAGNOSTIC LOGGING >>>
                         logger.info(
-                            f"Attempting to store artifact '{rel_path_str}' (Type: {artifact_type_guess}, Stage: {stage_number}) via StateManager..."
-                        )
-                        # <<< END DIAGNOSTIC LOGGING >>>
-                        logger.debug(
                             f"Storing artifact '{rel_path_str}' (type: {artifact_type_guess}) in ChromaDB for stage {stage_number}"
                         )
-                        # Call StateManager to store
-                        stored_ok = context_state_manager.store_artifact_context_in_chroma(
-                            rel_path=rel_path_str,
-                            content=content,
-                            stage_number=float(stage_number),
-                            artifact_type=artifact_type_guess,
-                        )
-                        # <<< ADDED CHECK >>>
-                        if not stored_ok:
-                            logger.error(
-                                f"StateManager reported failure storing artifact context for {rel_path_str}. Check StateManager logs."
+                        # --- Wrap ChromaDB call in try...except --- #
+                        try:
+                            stored_ok = context_state_manager.store_artifact_context_in_chroma(
+                                rel_path=rel_path_str,
+                                content=content,
+                                stage_number=float(stage_number),
+                                artifact_type=artifact_type_guess,
                             )
-                            # Optionally add to errors list if this should halt the overall submission:
-                            # errors.append(f"Failed to store {rel_path_str} context in ChromaDB.")
-                        # <<< END ADDED CHECK >>>
+                            if not stored_ok:
+                                logger.warning(
+                                    f"StateManager reported failure storing artifact context for {rel_path_str}. Check StateManager logs."
+                                )
+                                # Optionally add to errors list if this should halt the overall submission:
+                                errors.append(f"StateManager failed to store {rel_path_str} context in ChromaDB (returned False).")
+                        except ChromaOperationError as chroma_e:
+                            logger.error(
+                                f"ChromaDB Error storing artifact context for '{rel_path_str}': {chroma_e}"
+                            )
+                            errors.append(f"ChromaDB Error storing {rel_path_str}: {chroma_e}")
+                        # --- End wrap ChromaDB call --- #
+
                     except FileNotFoundError:
                         logger.error(
                             f"ChromaDB Store Error: File '{rel_path_str}' not found after writing, cannot store context."
@@ -1087,6 +1055,8 @@ async def handle_submit_stage_artifacts(
                             f"ChromaDB Store Error: Failed to store artifact '{rel_path_str}' context: {chroma_err}"
                         )
                         # Decide if this should prevent status update
+                        # Adding to errors for now to make it visible
+                        errors.append(f"Error storing {rel_path_str} context: {chroma_err}")
 
             # Update the main status file
             status_updated = context_state_manager.update_status(
@@ -1168,52 +1138,78 @@ async def handle_load_reflections(
         # <<< Initialize StateManager within the handler >>>
         context_state_manager = _initialize_state_manager_for_target(effective_target_directory)
 
-        reflections = context_state_manager.get_recent_reflections()
+        # TODO: Refine reflection loading...
+        # query_string = "reflection" # No longer needed
+        reflections_data = None
+        limit_to_load = 20 # Set a reasonable default limit
+        # --- Wrap ChromaDB call in try...except --- #
+        try:
+            # <<< CALL NEW METHOD >>>
+            logger.info(f"Calling get_all_reflections with limit={limit_to_load}")
+            reflections_data = context_state_manager.get_all_reflections(limit=limit_to_load)
+        except ChromaOperationError as chroma_e:
+            logger.error(f"ChromaDB operation failed while loading reflections: {chroma_e}")
+            return {
+                "status": "error",
+                "message": f"Failed to load reflections from database: {chroma_e}",
+                "summary": "",
+            }
+        # --- End wrap ChromaDB call --- #
         summary = ""
 
-        if reflections:
-            # ... (Keep reflection summarization logic) ...
-            num_to_summarize = len(reflections)
-            summary_parts = [f"Summary of last {num_to_summarize} reflections:"]
-            for reflection in reflections:
-                stage = reflection.get("stage_completed", "Unknown Stage")
-                challenges = reflection.get("encountered_challenges", [])
-                suggestions = reflection.get("improvement_suggestions", [])
-                part = f"  - Stage {stage}:"
-                if challenges:
-                    part += f" Challenges: {', '.join(challenges)}."
-                if suggestions:
-                    part += f" Suggestions: {', '.join(suggestions)}."
-                if not challenges and not suggestions:
-                    part += " No specific challenges or suggestions noted."
-                summary_parts.append(part)
-            summary = "\n".join(summary_parts)
-            logger.info(
-                f"Successfully loaded and summarized {num_to_summarize} reflections via StateManager."
-            )
-        else:
-            summary = "No recent reflections found."
-            logger.info("No recent reflections found via StateManager.")
+        # --- Processing and Summarization --- #
+        if reflections_data: # Now check reflections_data (the list of dicts)
+            # The data is already in the desired list format from get_all_reflections
+            # Format: [{'id': ..., 'metadata': {...}, 'document': ..., 'timestamp': ...}, ...]
+            processed_reflections = reflections_data # Use the data directly
+
+            # --- Summarization --- #
+            if processed_reflections:
+                num_to_summarize = len(processed_reflections)
+                # Update summary message to reflect non-query based retrieval
+                summary_parts = [f"Summary of last {num_to_summarize} reflections (up to limit {limit_to_load}):"]
+                for reflection_entry in processed_reflections:
+                    # Extract info directly from the reflection entry dictionary
+                    stage = reflection_entry.get("metadata", {}).get("stage_number", "Unknown Stage")
+                    timestamp = reflection_entry.get("timestamp", "No Timestamp")
+                    # Simple summary: Stage and Timestamp
+                    part = f"  - Stage {stage} (Timestamp: {timestamp}): Retrieved." # Adjust summary
+                    # TODO: Enhance summary based on reflection document content if needed
+                    summary_parts.append(part)
+                summary = "\n".join(summary_parts)
+                logger.info(
+                    f"Successfully loaded and summarized {num_to_summarize} reflections via StateManager (get_all_reflections)."
+                )
+            # This case should ideally not be hit if reflections_data was non-empty
+            # but processed_reflections became empty (e.g., due to future filtering)
+            elif not summary:
+                summary = "No reflections found."
+                logger.info("No reflections found via StateManager (get_all_reflections).")
+        # --- End Processing and Summarization --- #
+        else: # Handles case where get_all_reflections returned empty list
+             if not summary:
+                summary = f"No reflections found (limit: {limit_to_load})."
+                logger.info(f"No reflections found via StateManager (get_all_reflections, limit: {limit_to_load}).")
 
         return {"status": "success", "summary": summary}
 
     # <<< Catch StateManager init errors specifically >>>
     except (StatusFileError, ValueError, FileNotFoundError) as sm_init_error:
         logger.error(
-            f"StateManager initialization failed loading reflections for target '{effective_target_directory}': {sm_init_error}"
+            f"StateManager initialization failed retrieving reflections for target '{effective_target_directory}': {sm_init_error}"
         )
         return {
             "status": "error",
-            "message": f"Failed to initialize project state to load reflections: {sm_init_error}",
+            "message": f"Failed to initialize project state for reflection retrieval: {sm_init_error}",
             "summary": "",
         }
     except Exception as e:
         logger.exception(
-            f"Error loading reflections via StateManager for target '{effective_target_directory}': {e}"
+            f"Error retrieving reflections via ChromaDB for target '{effective_target_directory}': {e}"
         )
         return {
             "status": "error",
-            "message": f"An unexpected error occurred while loading reflections: {e}",
+            "message": f"An unexpected error occurred while retrieving reflections: {e}",
             "summary": "",
         }
 
@@ -1222,98 +1218,58 @@ async def handle_load_reflections(
     name="get_file",
     description="Reads the content of a specific file within the project directory. Path must be relative to the project root.",
 )
-async def handle_get_file(
-    relative_path: str,
-    target_directory: Optional[str] = None,
-    ctx: Optional[Context] = None,
-) -> Dict[str, Any]:
-    """Handler for the 'get_file' tool. Reads a file after security checks."""
-    logger.info(
-        f"Received 'get_file' request for path: '{relative_path}' (explicit target: '{target_directory}')"
-    )
-    effective_target_directory = _get_target_directory(target_directory, ctx)
-    if not effective_target_directory:
-        return {"status": "error", "message": "Could not determine project directory."}
-
-    if not relative_path or not isinstance(relative_path, str):
-        return {
-            "status": "error",
-            "message": "Invalid 'relative_path'. Must be a non-empty string.",
-        }
-
-    # Security: Basic check for path traversal attempts in the input string itself
-    if ".." in Path(relative_path).parts:
-        msg = f"Security risk: Path traversal detected in relative path argument: '{relative_path}'"
-        logger.error(msg)
-        return {"status": "error", "message": msg}
+async def handle_get_file(target_directory: str, relative_path: str) -> Dict[str, str]:
+    """Reads the content of a specific file within the project directory."""
+    logger.info(f"Getting file content for: {relative_path} in {target_directory}")
+    target_path = Path(target_directory).resolve()
 
     try:
-        target_dir_path = Path(effective_target_directory)
-        # Resolve the absolute path
-        absolute_path = (target_dir_path / relative_path).resolve()
+        # Resolve the potential file path *before* checking directory existence
+        # This helps prevent race conditions where the dir exists but the path escapes it.
+        potential_file_path = (target_path / relative_path).resolve()
 
-        # --- CRUCIAL SECURITY CHECK ---
-        # Ensure the resolved path is strictly within the target project directory
-        if not absolute_path.is_relative_to(target_dir_path):
-            msg = f"Security risk: Resolved path '{absolute_path}' is outside target project directory '{target_dir_path}'"
-            logger.error(msg)
-            # Optionally raise SecurityError(msg) or return error dict
-            return {
-                "status": "error",
-                "message": "Access denied: Path is outside the project boundary.",
-            }
-        # --- END SECURITY CHECK ---
+        # Ensure target directory exists *after* resolving potential path to avoid errors
+        if not target_path.is_dir():
+            raise FileNotFoundError(f"Target project directory not found: {target_directory}")
 
-        if not absolute_path.is_file():
-            msg = f"File not found or is not a file at resolved path: {absolute_path}"
-            logger.error(msg)
-            return {"status": "error", "message": msg}
+        # Security Check: Ensure the resolved path is strictly within the target directory
+        # Use Path.is_relative_to() available in Python 3.9+
+        # For older Python, a more manual check might be needed.
+        if not potential_file_path.is_relative_to(target_path):
+             logger.error(f"Security Alert: Path traversal attempt blocked. Requested: '{relative_path}', Resolved outside target: '{potential_file_path}', Target: '{target_path}'")
+             raise ToolExecutionError(f"Access denied: Path '{relative_path}' points outside the project directory.")
 
-        logger.info(f"Attempting to read file: {absolute_path}")
-        # Read file content
-        # Handle potential encoding issues if necessary, but start with default
+        # Now that we know it's safe, assign the validated path
+        file_path = potential_file_path
+
+        if not file_path.is_file():
+            raise FileNotFoundError(f"File not found at resolved path: {file_path}")
+
+        # Read as bytes to avoid encoding issues initially
+        with open(file_path, "rb") as f:
+            content_bytes = f.read()
+
+        # Attempt to decode as UTF-8, fallback to lossy representation for safety
         try:
-            content = absolute_path.read_text(encoding="utf-8")
-            logger.info(f"Successfully read file: {absolute_path} ({len(content)} bytes)")
-            return {
-                "status": "success",
-                "path": relative_path,  # Return the requested relative path
-                "content": content,
-            }
-        except UnicodeDecodeError as ude:
-            logger.error(f"Encoding error reading file {absolute_path}: {ude}. Trying 'latin-1'.")
-            try:
-                content = absolute_path.read_text(encoding="latin-1")
-                logger.info(
-                    f"Successfully read file with latin-1: {absolute_path} ({len(content)} bytes)"
-                )
-                return {
-                    "status": "success",
-                    "path": relative_path,
-                    "content": content,
-                    "encoding_note": "File read using latin-1 encoding due to UTF-8 error.",
-                }
-            except Exception as e_fallback:
-                logger.exception(
-                    f"Failed to read file {absolute_path} even with latin-1 fallback: {e_fallback}"
-                )
-                return {
-                    "status": "error",
-                    "message": f"Failed to read file '{relative_path}' due to encoding or other read error.",
-                }
-        except Exception as e:
-            logger.exception(f"Failed to read file {absolute_path}: {e}")
-            return {"status": "error", "message": f"Failed to read file '{relative_path}': {e}"}
+            content_str = content_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning(f"Could not decode file {file_path} as UTF-8. Returning lossy representation.")
+            content_str = content_bytes.decode("utf-8", errors="replace") # Replace invalid chars
 
-    except ValueError as ve:  # Catch potential errors from Path construction if input is weird
-        logger.error(f"Invalid path specified: {ve}")
-        return {"status": "error", "message": f"Invalid path specified: {ve}"}
-    except Exception as e:
-        logger.exception(f"Unexpected error in handle_get_file for path '{relative_path}': {e}")
-        return {
-            "status": "error",
-            "message": f"An unexpected server error occurred processing get_file: {e}",
-        }
+        logger.info(f"Successfully read file content from {file_path}")
+        return {"status": "success", "content": content_str}
+
+    except FileNotFoundError as e:
+        logger.error(f"Error getting file: {e}", exc_info=False)
+        raise ToolExecutionError(f"Could not find the requested file: {relative_path} (resolved path: {potential_file_path})") from e
+    except (OSError, IOError) as e:
+        logger.error(f"Filesystem error reading file {potential_file_path}: {e}", exc_info=True)
+        raise ToolExecutionError(f"Could not read file {relative_path}: {e}") from e
+    except ToolExecutionError: # Re-raise the security/validation error
+        raise
+    except Exception as e: # Catch any other unexpected error
+        logger.error(f"Unexpected error getting file {relative_path} in {target_directory}: {e}", exc_info=True)
+        raise ToolExecutionError(f"An unexpected error occurred while reading the file: {e}") from e
 
 
 @mcp.tool(
@@ -1327,7 +1283,6 @@ async def handle_retrieve_reflections_tool(
     target_directory: Optional[str] = None,
     ctx: Optional[Context] = None,
 ) -> dict:
-    # <<< RESTORING ORIGINAL IMPLEMENTATION >>>
     logger.info(
         f"Received 'retrieve_reflections' request for query: '{query}' (explicit target: '{target_directory}')"
     )
@@ -1344,29 +1299,50 @@ async def handle_retrieve_reflections_tool(
         # Initialize StateManager within the handler
         context_state_manager = _initialize_state_manager_for_target(effective_target_directory)
 
-        # <<< Call the CORRECT StateManager method >>>
-        results = context_state_manager.get_reflection_context_from_chroma(
-            query=query,
-            n_results=n_results,
-            filter_stage_min=filter_stage_min,  # <<< CORRECTED KEYWORD ARGUMENT NAME
-        )
+        # Convert filter_stage_min to float if provided
+        stage_filter_float: Optional[float] = None
+        if filter_stage_min:
+            try:
+                stage_filter_float = float(filter_stage_min)
+            except ValueError:
+                logger.warning(f"Invalid filter_stage_min '{filter_stage_min}', expected number. Ignoring filter.")
 
-        # Structure the results for the client
-        # Assuming results is a list of tuples/dicts like: [{'document': text, 'metadata': {...}}, ...]
+        # --- Wrap ChromaDB call in try...except --- #
+        results = None
+        try:
+            results = context_state_manager.get_reflection_context_from_chroma(
+                query=query,
+                n_results=n_results,
+                filter_stage_min=stage_filter_float, # Pass converted float
+            )
+        except ChromaOperationError as chroma_e:
+            logger.error(f"ChromaDB operation failed while retrieving reflections: {chroma_e}")
+            return {
+                "status": "error",
+                "message": f"Failed to retrieve reflections from database: {chroma_e}",
+                "reflections": [],
+            }
+        # --- End wrap ChromaDB call --- #
+
+        # --- Processing (only if results were retrieved) --- #
         reflections_list = []
         if results:
+            # ... (Existing processing logic remains the same) ...
+            # Structure the results for the client
+            # Assuming results is a list of tuples/dicts like: [{'document': text, 'metadata': {...}}, ...]
             for item in results:
                 # Adapt based on actual structure returned by get_reflection_context_from_chroma
                 doc = item.get("document", "No document found")
                 meta = item.get("metadata", {})
                 reflections_list.append({"metadata": meta, "document": doc})
+        # --- End Processing --- #
 
         logger.info(
             f"Successfully retrieved {len(reflections_list)} reflections using ChromaDB query."
         )
         return {"status": "success", "reflections": reflections_list}
 
-    # Catch StateManager init errors specifically
+    # <<< Catch StateManager init errors specifically >>>
     except (StatusFileError, ValueError, FileNotFoundError) as sm_init_error:
         logger.error(
             f"StateManager initialization failed retrieving reflections for target '{effective_target_directory}': {sm_init_error}"
@@ -1385,7 +1361,6 @@ async def handle_retrieve_reflections_tool(
             "message": f"An unexpected error occurred while retrieving reflections: {e}",
             "reflections": [],
         }
-    # <<< END RESTORING ORIGINAL IMPLEMENTATION >>>
 
 
 # --- Log Registered Tools (DEBUG) ---

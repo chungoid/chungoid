@@ -13,28 +13,42 @@ prompt_details: |
   {{ artifacts_context }}
 
   PREREQUISITE CHECK
-  • Verify that STAGE 3 is complete (status "PASS" in project_status.json).
+  • Verify that STAGE 3 is complete (use `get_project_status`, check for status "PASS").
   • If prerequisites are not met, inform user: "STAGE 3 (Implementation & Unit Testing) must be completed with PASS status first." DO NOT proceed.
-  
+
   TOOL & ENVIRONMENT CHECK
   • Confirm necessary tools are available: language runtime, build/package tools, integration/security/performance testing frameworks.
   • Ensure environment is configured for comprehensive testing (e.g., test database setup, external service mocks).
-  
+
   TASK CHECKLIST
   0.  **Orientation:**
-      *   Use `get_project_status` to confirm Stage 3 is DONE.
-      - tool_name: retrieve_reflections
-        arguments:
-          query: "Learnings from Stage 3 implementation, bugs encountered, or context for testing and validation"
-          filter_stage_min: "3"
-          n_results: 5
-      *   Use `get_file` to read `WORKFLOW_OVERVIEW.md`.
+      *   Use `get_project_status` to confirm Stage 3 is PASS.
+      *   Retrieve context from Stage 3 implementation.
+          ```tool_code
+          # Example call
+          print(default_api.mcp_chungoid_retrieve_reflections(query="Learnings from Stage 3 implementation, bugs encountered, or context for testing and validation", filter_stage_min="3", n_results=5))
+          ```
+      *   Use `get_file` to read `WORKFLOW_OVERVIEW.md` (if it exists).
+          ```tool_code
+          # Example call
+          print(default_api.mcp_chungoid_get_file(relative_path="WORKFLOW_OVERVIEW.md"))
+          ```
       *   Synthesize this status and context before proceeding.
   1.  **Retrieve Context & Artifacts:**
-      *   Use `find_artifacts` (query="project requirements", stage_filter=0) and `get_file` (for acceptance criteria).
-      *   Use `find_artifacts` (query="unit test report", stage_filter=3) and `get_file`. Verify status is PASS.
-      *   Use `find_artifacts` (query="static analysis report", stage_filter=3) and `get_file`. Verify status is PASS.
-      *   If looping back, use `find_artifacts` (query="previous validation reports", stage_filter=4) and `get_file` to get failure details.
+      *   Use `get_file` to read the Stage 0 requirements and the Stage 3 reports:
+          ```tool_code
+          # Example calls
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/design/requirements.md"))
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/analysis/static_analysis_report.json"))
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/testing/unit_test_report.json"))
+          ```
+      *   Verify Stage 3 reports show PASS status.
+      *   If looping back from a previous Stage 4 failure, retrieve the previous validation reports:
+          ```tool_code
+          # Example call (if needed)
+          # print(default_api.mcp_chungoid_retrieve_reflections(query="Previous Stage 4 failure details", filter_stage_min="4", n_results=1))
+          # May need to use get_file if path is known from retrieved metadata
+          ```
       *   If necessary files cannot be located/read or prerequisites not met, report error and stop.
   2.  **Run Validation Suite:**
       *   Based on retrieved context and test strategy (from blueprint/plan), execute integration, security, performance tests.
@@ -42,36 +56,60 @@ prompt_details: |
       *   Execute security tests/scans.
       *   Execute performance tests/benchmarks.
   3.  **Generate Reports:**
-      *   Create `dev-docs/validation/integration_report.json` (e.g., `{ "tests_run": <int>, "tests_passed": <int>, "status": "PASS"|"FAIL", "failures": [...] }`).
-      *   Create `dev-docs/validation/security_report.json` (e.g., `{ "scan_type": "<tool_name>", "issues_found": <int>, "high_severity": <int>, "status": "PASS"|"WARN"|"FAIL", ... }`).
-      *   Create `dev-docs/validation/performance_report.json` (e.g., `{ "metric": "latency_ms", "value": <float>, "threshold": <float>, "status": "PASS"|"FAIL", ... }`).
-  4.  **Analyze Results & Decide Next Step:**
+      *   Create `dev-docs/validation/integration_report.json` (e.g., `{ "tests_run": <int>, ..., "status": "PASS"|"FAIL" }`).
+      *   Create `dev-docs/validation/security_report.json` (e.g., `{ "scan_type": "...", ..., "status": "PASS"|"WARN"|"FAIL" }`).
+      *   Create `dev-docs/validation/performance_report.json` (e.g., `{ "metric": "...", ..., "status": "PASS"|"FAIL" }`).
+  4.  **Analyze Results & Determine Stage Status:**
       *   Review all generated reports (`integration`, `security`, `performance`).
-      *   If ALL checks pass (status: PASS, potentially WARN for security if non-critical): Proceed to Stage 5.
-      *   If ANY check fails (status: FAIL): Initiate loop back to Stage 3.
-  5.  **Context Persistence:** Store validation report summaries/hashes in the Project Context Store.
-  
+      *   Set overall stage status to "FAIL" if ANY report shows status "FAIL".
+      *   Set overall stage status to "PASS" if ALL reports show status "PASS" (allowing "WARN" for security).
+  5.  **Context Persistence & Status Update (FINAL STEP):** This is handled by the `submit_stage_artifacts` tool call below.
+
   GUIDELINES
   • Run validation checks comprehensively.
   • Structure reports clearly and consistently.
   • Analyze failures to provide useful context if looping back to Stage 3.
-  
+
   EXECUTION CONTRACT
-  • Create `dev-docs/validation/` directory if needed.
-  • **Generate `dev-docs/validation/integration_report.json` (timestamp placeholder).**
-  • **Generate `dev-docs/validation/security_report.json` (timestamp placeholder).**
-  • **Generate `dev-docs/validation/performance_report.json` (timestamp placeholder).**
-  • **As separate steps, update the generated JSON reports with correct timestamps.**
-  • Update Project Context Store.
-  • If any report status is "FAIL", the overall stage status is "FAIL".
-  • If status is "FAIL", update project_status.json and trigger loop back to STAGE 3 (no user confirmation needed).
-  - **INTERNAL THOROUGHNESS CHECK & REFLECTION (Only if overall status is PASS):**
-      - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection. This involves multiple steps; please await the *complete* output, which concludes only when the result shows `nextThoughtNeeded=False`."
-      - **Invoke Tool:** [Invoke the MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** This tool operates in multiple steps, returning `nextThoughtNeeded=True` for each intermediate thought. You MUST allow the entire chain of thoughts to complete, indicated *only* by `nextThoughtNeeded=False` in the final step's result. **DO NOT act on intermediate steps where `nextThoughtNeeded=True`.** Interrupting before the final step breaks the chain of thought. Use the tool to: { **Refined Reflection:** Verify the primary outputs of Stage 4 (`integration_report.json`, `security_report.json`, `performance_report.json`) have been generated and show PASS status (allowing WARN for security). Are there any obvious inconsistencies within the reports or contradictions with Stage 3 outputs? If issues are found *within the report generation* or the PASS status seems unjustified by the data within, propose specific actions to fix the reports or re-run specific tests before proceeding. If the reports appear correct and justify a PASS, confirm internal readiness to present them to the user for final Stage 4 confirmation. (If FAIL, this reflection step is skipped, and loopback to Stage 3 occurs automatically). } ]
-  - **AWAIT USER GUIDANCE:** Present the final validation reports and the outcome of the internal reflection (readiness confirmation or proposed fixes) to the user. Await explicit user confirmation that *no further work is needed within this stage* before proceeding. Only after receiving this confirmation, state "STAGE 4 COMPLETE" and await instructions for the next action.
-  • If status is "PASS", state "STAGE 4 COMPLETE" and request user confirmation to proceed to STAGE 5.
-  • CRITICAL FINAL STEP (After user confirmation, only if status is PASS): Update project_status.json LAST: { \"stage\": 4, \"status\": \"PASS\", \"timestamp\": \"<ISO-8601>\", \"artifacts\": [\"dev-docs/validation/integration_report.json\", \"dev-docs/validation/security_report.json\", \"dev-docs/validation/performance_report.json\"] }`
-  
+  1.  Generate Reports: Create `dev-docs/validation/` directory if needed. Generate `integration_report.json`, `security_report.json`, `performance_report.json`.
+  2.  Determine Overall Status: Based on report analysis (Task 4), determine the overall stage status ("PASS" or "FAIL").
+  3.  Handle FAIL Status:
+      *   If overall status is "FAIL": Present the reports to the user, clearly state the stage failed and why (referencing specific report failures). **Then, call `submit_stage_artifacts` with status FAIL.** Await further instructions (likely involving returning to Stage 3).
+          ```tool_code
+          # Example final tool call for FAIL status
+          print(default_api.mcp_chungoid_submit_stage_artifacts(
+              stage_number=4.0,
+              stage_result_status="FAIL",
+              generated_artifacts={
+                  "dev-docs/validation/integration_report.json": None,
+                  "dev-docs/validation/security_report.json": None,
+                  "dev-docs/validation/performance_report.json": None
+              }
+          ))
+          ```
+      *   **Do not proceed further if status is FAIL.**
+  4.  Handle PASS Status:
+      *   If overall status is "PASS": Proceed to internal reflection.
+      *   **Internal Reflection:**
+          - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
+          - **Invoke Tool:** [Invoke MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** Requires completion. Use to: { **Refined Reflection:** Verify validation reports were generated and show PASS/WARN status. Any inconsistencies? If issues found *in report generation*, propose fixes. If okay, confirm readiness. } ]
+      *   **Present & Await User Confirmation:** Present the PASS reports and internal reflection outcome. **Await explicit user confirmation** that *no further validation is needed*. 
+      *   **CRITICAL FINAL STEP (After user confirmation for PASS):** Call `submit_stage_artifacts` with status PASS.
+          ```tool_code
+          # Example final tool call AFTER user confirmation (for PASS status)
+          print(default_api.mcp_chungoid_submit_stage_artifacts(
+              stage_number=4.0,
+              stage_result_status="PASS",
+              generated_artifacts={
+                  "dev-docs/validation/integration_report.json": None,
+                  "dev-docs/validation/security_report.json": None,
+                  "dev-docs/validation/performance_report.json": None
+              }
+          ))
+          ```
+      *   **Announce Completion:** After `submit_stage_artifacts` confirms success, state "STAGE 4 COMPLETE". Await instructions for the next action.
+  5.  CRITICAL: Do not execute `execute_next_stage` yourself. Await instructions.
+
   USER:
   Run the full validation suite: integration tests, security checks, and performance tests. Generate reports.
   ### STAGE 4 END 

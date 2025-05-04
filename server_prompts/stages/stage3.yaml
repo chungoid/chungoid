@@ -13,7 +13,7 @@ prompt_details: |
   {{ artifacts_context }}
   
   PREREQUISITE CHECK
-  • Verify that STAGE 2 is complete (status "DONE" in project_status.json).
+  • Verify that STAGE 2 is complete (use `get_project_status`, check for status "DONE"/"PASS").
   • If prerequisites are not met, inform user: "STAGE 2 (Implementation Planning & Detailed Design) must be completed first." DO NOT proceed.
   
   TOOL & ENVIRONMENT CHECK
@@ -22,30 +22,39 @@ prompt_details: |
   
   TASK CHECKLIST
   0.  **Orientation:**
-      *   Use `get_project_status` to confirm Stage 2 is DONE.
-      - tool_name: retrieve_reflections
-        arguments:
-          query: "Learnings from Stage 2 planning, detailed design decisions, or identified implementation risks"
-          filter_stage_min: "2"
-          n_results: 5
-      *   Use `get_file` to read `WORKFLOW_OVERVIEW.md`.
+      *   Use `get_project_status` to confirm Stage 2 is DONE/PASS.
+      *   Retrieve context from Stage 2 planning.
+          ```tool_code
+          # Example call
+          print(default_api.mcp_chungoid_retrieve_reflections(query="Learnings from Stage 2 planning, detailed design decisions, or identified implementation risks", filter_stage_min="2", n_results=5))
+          ```
+      *   Use `get_file` to read `WORKFLOW_OVERVIEW.md` (if it exists).
+          ```tool_code
+          # Example call
+          print(default_api.mcp_chungoid_get_file(relative_path="WORKFLOW_OVERVIEW.md"))
+          ```
       *   Synthesize this status and context before proceeding.
   1.  **Retrieve Context & Artifacts:**
-      *   Use `find_artifacts` (e.g., query="implementation plan", stage_filter=2) to locate the primary plan document, then use `get_file` to read its content.
-      *   Use `find_artifacts` (e.g., query="detailed interfaces", stage_filter=2) to locate interface definitions, then use `get_file` to read their content.
-      *   If needed, use `find_artifacts` (e.g., query="relevant blueprint sections", stage_filter=0) and `get_file` for blueprint details.
+      *   Use `get_file` to read the plans and designs from Stage 2:
+          ```tool_code
+          # Example calls
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/planning/implementation_plan.md"))
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/planning/detailed_interfaces.md")) # Or equivalent file
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/planning/tool_integration.md"))
+          ```
+      *   If needed, use `get_file` to re-read relevant parts of the blueprint (`dev-docs/design/blueprint.md`).
       *   If necessary files cannot be located or read, report error and stop.
   2.  **Iterative Implementation & Analysis:**
       *   Follow the retrieved implementation plan. For each task:
-          *   Implement code based on retrieved interface definitions.
+          *   Implement code based on retrieved interface definitions (in `src/` or language equivalent).
           *   **Run Static Analysis:** Execute linter and type checker on the newly created/modified code. Fix reported errors/warnings.
-          *   **Generate Unit Tests:** Create unit tests covering the core logic of the implemented code.
+          *   **Generate Unit Tests:** Create unit tests (in `tests/unit/`) covering the core logic of the implemented code.
           *   **Run Unit Tests:** Execute the unit tests. Fix implementation or test code until all tests pass.
       *   Implement decision logic framework components as specified in the plan.
   3.  **Generate Reports:**
-      *   Consolidate static analysis results into `dev-docs/analysis/static_analysis_report.json` (e.g., `{ "linter_status": "PASS"|"FAIL", "linter_issues": [...], "typechecker_status": "PASS"|"FAIL"... }`).
-      *   Consolidate unit test results into `dev-docs/testing/unit_test_report.json` (e.g., using standard JUnit XML output parsed into JSON, or a custom format: `{ "tests_run": <int>, "tests_passed": <int>, "tests_failed": <int>, "failures": [...], "status": "PASS"|"FAIL" }`).
-  4.  **Context Persistence:** Store information about implemented modules/interfaces in the Project Context Store.
+      *   Consolidate static analysis results into `dev-docs/analysis/static_analysis_report.json` (e.g., `{ "linter_status": "PASS"|"FAIL", "linter_issues": [...], "typechecker_status": "PASS"|"FAIL"... }`). Ensure status is PASS overall.
+      *   Consolidate unit test results into `dev-docs/testing/unit_test_report.json` (e.g., using standard JUnit XML output parsed into JSON, or a custom format: `{ "tests_run": <int>, "tests_passed": <int>, "tests_failed": <int>, "failures": [...], "status": "PASS"|"FAIL" }`). Ensure status is PASS overall.
+  4.  **Context Persistence & Status Update (FINAL STEP):** This is handled by the `submit_stage_artifacts` tool call below.
   
   GUIDELINES
   • Implement code incrementally, focusing on one task/component at a time.
@@ -57,19 +66,32 @@ prompt_details: |
   EXECUTION CONTRACT
   • Create/update source code files in `src/` (or language equivalent).
   • Create/update unit tests in `tests/unit/`.
-  • **Generate `dev-docs/analysis/static_analysis_report.json` (timestamp placeholder).**
-  • **Generate `dev-docs/testing/unit_test_report.json` (timestamp placeholder).**
-  • **As separate steps, update the generated JSON reports with correct timestamps.**
-  • Update Project Context Store.
-  • If tests fail or analysis shows critical issues, status should be "FAIL".
-  # <<< INSERTED REFLECTION BLOCK >>>
-    - **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
-        - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection. This involves multiple steps; please await the *complete* output, which concludes only when the result shows `nextThoughtNeeded=False`."
-        - **Invoke Tool:** [Invoke the MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** This tool operates in multiple steps, returning `nextThoughtNeeded=True` for each intermediate thought. You MUST allow the entire chain of thoughts to complete, indicated *only* by `nextThoughtNeeded=False` in the final step's result. **DO NOT act on intermediate steps where `nextThoughtNeeded=True`.** Interrupting before the final step breaks the chain of thought. Use the tool to: { **Refined Reflection:** Verify the primary outputs of Stage 3 (implemented code changes, `static_analysis_report.json`, `unit_test_report.json`) have been generated and meet the guidelines. Does the code implement the detailed interfaces? Do the reports show PASS status? Are there any obvious gaps in unit test coverage based on the plan? If significant gaps/failures are found, propose specific actions to fix the code or tests before proceeding. If the outputs appear complete and passing according to guidelines, confirm internal readiness to present the results to the user for final Stage 3 confirmation. } ]
-    - **AWAIT USER GUIDANCE:** Present the generated reports and a summary of implemented code changes, along with the outcome of the internal reflection (readiness confirmation or proposed fixes), to the user. Await explicit user confirmation that *no further work is needed within this stage* before proceeding. Only after receiving this confirmation, state "STAGE 3 COMPLETE" and await instructions for the next action.
-  # <<< END INSERTED REFLECTION BLOCK >>>
-  • State "STAGE 3 COMPLETE" when finished and ready for STAGE 4.
-  • CRITICAL FINAL STEP (After user confirmation): Update project_status.json LAST: { \"stage\": 3, \"status\": \"PASS|FAIL\", \"timestamp\": \"<ISO-8601>\", \"artifacts\": [\"<list_of_modified_src_files>\", \"dev-docs/reports/static_analysis_report.json\", \"dev-docs/reports/unit_test_report.json\"] }`
+  • Create `dev-docs/analysis/` and `dev-docs/testing/` directories if needed.
+  • Generate `dev-docs/analysis/static_analysis_report.json`.
+  • Generate `dev-docs/testing/unit_test_report.json`.
+  • **Determine overall stage status:** Set to "PASS" only if all static analysis checks and unit tests passed for all implemented code. Otherwise, set to "FAIL".
+  • If status is "FAIL", present reports and halt for user intervention. Do not proceed to reflection/submission.
+  • **INTERNAL THOROUGHNESS CHECK & REFLECTION (only if status is PASS):**
+      - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
+      - **Invoke Tool:** [Invoke MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** Requires completion. Use to: { **Refined Reflection:** Verify primary outputs (code changes, `static_analysis_report.json`, `unit_test_report.json`) were generated and reports show PASS. Does code implement interfaces? Any obvious gaps in tests per plan? If issues found, propose fixes *to code/tests/reports*. If complete/passing, confirm readiness. } ]
+  • **AWAIT USER GUIDANCE (only if status is PASS):** Present the generated reports, a summary of implemented code changes, and the internal reflection outcome. **Await explicit user confirmation** that *no further work is needed within Stage 3* before proceeding.
+  • **CRITICAL FINAL STEP (After user confirmation & only if status is PASS):** Call `submit_stage_artifacts`.
+      ```tool_code
+      # Example final tool call AFTER user confirmation (for PASS status)
+      print(default_api.mcp_chungoid_submit_stage_artifacts(
+          stage_number=3.0,
+          stage_result_status="PASS", # Should be PASS if this step is reached
+          generated_artifacts={
+              "dev-docs/analysis/static_analysis_report.json": None,
+              "dev-docs/testing/unit_test_report.json": None
+              # Optionally list key source/test files modified, or reference commit hash if integrated with VCS
+              # "src/module1.py": None,
+              # "tests/unit/test_module1.py": None
+          }
+      ))
+      ```
+  • **Announce Completion (only if status is PASS):** After `submit_stage_artifacts` confirms success, state "STAGE 3 COMPLETE". Await instructions for the next action.
+  • CRITICAL: Do not execute `execute_next_stage` yourself. Await instructions.
 
   USER:
   Implement the planned modules/interfaces according to the detailed design. Write unit tests and perform static analysis.

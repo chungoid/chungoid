@@ -13,7 +13,7 @@ prompt_details: |
   {{ artifacts_context }}
 
   PREREQUISITE CHECK
-  • Verify Stage 4 is DONE/PASS.
+  • Verify Stage 4 is DONE/PASS (use `get_project_status`).
   • If prerequisites are not met, inform user: "STAGE 4 (Validation Suite) must pass first." DO NOT proceed.
 
   TOOL & ENVIRONMENT CHECK
@@ -21,29 +21,40 @@ prompt_details: |
 
   TASK CHECKLIST
   0.  **Orientation:**
-      *   Use `get_project_status` to confirm Stage 4 passed and identify latest artifacts (validation reports).
-      - tool_name: retrieve_reflections
-        arguments:
-          query: "Learnings from Stage 4 validation, remaining issues, or context for release readiness"
-          filter_stage_min: "4"
-          n_results: 5
-      *   Use `get_file` to read `WORKFLOW_OVERVIEW.md` to understand the overall process.
+      *   Use `get_project_status` to confirm Stage 4 passed.
+      *   Retrieve context from Stage 4 validation.
+          ```tool_code
+          # Example call
+          print(default_api.mcp_chungoid_retrieve_reflections(query="Learnings from Stage 4 validation, remaining issues, or context for release readiness", filter_stage_min="4", n_results=5))
+          ```
+      *   Use `get_file` to read `WORKFLOW_OVERVIEW.md` (if it exists).
+          ```tool_code
+          # Example call
+          print(default_api.mcp_chungoid_get_file(relative_path="WORKFLOW_OVERVIEW.md"))
+          ```
       *   Synthesize this status and context before proceeding.
   1.  **Retrieve Context & Artifacts:**
-      *   Use `find_artifacts` (query="project requirements") and `get_file`.
-      *   Use `find_artifacts` (query="project blueprint") and `get_file`.
-      *   Use `find_artifacts` (query="final validation reports") and `get_file`. Verify status PASS.
-      *   If necessary files cannot be located/read or validation not PASS, report error and stop.
+      *   Use `get_file` to read key inputs:
+          ```tool_code
+          # Example calls
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/design/requirements.md"))
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/design/blueprint.md"))
+          # Read Stage 4 validation reports as needed
+          print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/validation/integration_report.json"))
+          # ... etc for security, performance
+          ```
+      *   Verify Stage 4 reports show PASS status.
+      *   If necessary files cannot be located/read or validation didn't PASS, report error and stop.
   2.  **Finalize Documentation:**
       *   Based on retrieved context, update `README.md`.
-      *   Generate API documentation into `docs/`.
+      *   Generate API documentation into `docs/` (e.g., using Sphinx).
       *   Create `dev-docs/release/release_notes.md`.
   3.  **Prepare Packaging:**
-      *   Based on retrieved context, create/finalize packaging files.
-      *   Ensure `LICENSE` is present.
+      *   Based on retrieved context, create/finalize packaging files (e.g., `pyproject.toml`, `setup.cfg`).
+      *   Ensure `LICENSE` file is present and correct.
   4.  **(Optional) Build Package:**
       *   As a verification step, attempt to build the distributable package (e.g., `python -m build`). Report success or failure but do not store build artifacts unless explicitly requested.
-  5.  **Context Persistence:** Update the Project Context Store with locations of final documentation and packaging files.
+  5.  **Context Persistence & Status Update (FINAL STEP):** This is handled by the `submit_stage_artifacts` tool call below.
 
   GUIDELINES
   • Ensure README is clear, concise, and provides essential information for users.
@@ -52,20 +63,30 @@ prompt_details: |
 
   EXECUTION CONTRACT
   • Create `docs/`, `dev-docs/release/` directories if needed.
-  • Generate/update `README.md`, `docs/`, packaging files (e.g., `pyproject.toml`), `LICENSE`.
-  • **Generate `dev-docs/release/release_notes.md` (timestamp placeholder).**
-  • **As a separate step, update `release_notes.md` with the correct timestamp (e.g., in a header).**
-  • Update the Project Context Store.
-  # <<< INSERTED REFLECTION BLOCK >>>
-    - **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
-        - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection. This involves multiple steps; please await the *complete* output, which concludes only when the result shows `nextThoughtNeeded=False`."
-        - **Invoke Tool:** [Invoke the MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** This tool operates in multiple steps, returning `nextThoughtNeeded=True` for each intermediate thought. You MUST allow the entire chain of thoughts to complete, indicated *only* by `nextThoughtNeeded=False` in the final step's result. **DO NOT act on intermediate steps where `nextThoughtNeeded=True`.** Interrupting before the final step breaks the chain of thought. Use the tool to: { **Refined Reflection:** Verify the primary outputs of Stage 5 (`README.md`, `docs/`, packaging files, `release_notes.md`) have been generated completely and adhere to the guidelines. Are there any obvious gaps (e.g., missing README sections, incomplete release notes) or inconsistencies based *only* on the defined stage guidelines? If significant gaps/inconsistencies are found, propose specific actions to fix *those artifacts* before proceeding. If the artifacts appear complete according to guidelines, confirm internal readiness to present them to the user for final Stage 5 confirmation. } ]
-    - **AWAIT USER GUIDANCE:** Present the final artifacts (README, docs summary, release notes) and the outcome of the internal reflection (readiness confirmation or proposed fixes) to the user. Await explicit user confirmation that *no further work is needed within this stage* before proceeding. Only after receiving this confirmation, state "STAGE 5 COMPLETE" and await instructions for the next action.
-  # <<< END INSERTED REFLECTION BLOCK >>>
-  • State "STAGE 5 COMPLETE" when finished and ready for project completion.
-  • CRITICAL: This is the final stage in this workflow.
-  • INTERNAL CHECK: Verify all artifacts are created/updated and context store updated.
-  • CRITICAL FINAL STEP (After user confirmation): Update project_status.json LAST: `{ \"stage\": 5, \"status\": \"DONE\", \"timestamp\": \"<ISO-8601>\", \"artifacts\": [\"README.md\", \"docs/\", \"dev-docs/release/release_notes.md\", \"pyproject.toml\", \"LICENSE\"] }`
+  • Generate/update `README.md`, documentation in `docs/`, packaging files (e.g., `pyproject.toml`), `LICENSE`.
+  • Generate `dev-docs/release/release_notes.md`.
+  • **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
+      - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
+      - **Invoke Tool:** [Invoke MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** Requires completion. Use to: { **Refined Reflection:** Verify outputs (`README.md`, `docs/`, packaging files, `release_notes.md`) generated per guidelines. Any obvious gaps (missing README sections, incomplete release notes)? If issues, propose fixes *to artifacts*. If complete, confirm readiness. } ]
+  • **AWAIT USER GUIDANCE:** Present final artifacts (README, docs summary, release notes) and internal reflection outcome. **Await explicit user confirmation** that *no further work is needed*. 
+  • **CRITICAL FINAL STEP (After user confirmation):** Call `submit_stage_artifacts`.
+      ```tool_code
+      # Example final tool call AFTER user confirmation
+      print(default_api.mcp_chungoid_submit_stage_artifacts(
+          stage_number=5.0,
+          stage_result_status="PASS", # Stage 5 PASS indicates release prep is done
+          generated_artifacts={
+              "README.md": None,
+              "dev-docs/release/release_notes.md": None,
+              "pyproject.toml": None, # Example packaging file
+              "LICENSE": None,
+              "docs/": None # Indicate the docs directory was generated/updated
+              # Add other key generated/updated files
+          }
+      ))
+      ```
+  • **Announce Completion:** After `submit_stage_artifacts` confirms success, state "STAGE 5 COMPLETE. Project ready for review or deployment.".
+  • CRITICAL: This is the final stage. Await further instructions.
 
   USER:
   Retrieve final requirements, blueprint, validation reports, and relevant reflections. Prepare the project for release: finalize documentation, create packaging files, and build the package (optional verification).

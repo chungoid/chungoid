@@ -20,6 +20,12 @@ class StatusFileError(Exception):
     pass
 
 
+class ChromaOperationError(Exception):
+    """Custom exception for errors during ChromaDB operations within StateManager."""
+
+    pass
+
+
 class DummyFileLock:
     """A dummy lock object that does nothing, for testing or when locking is disabled."""
 
@@ -525,25 +531,12 @@ class StateManager:
             return False
 
     def _get_chroma_client(self) -> Optional[chromadb.ClientAPI]:
-        """Internal helper to get the *already initialized* ChromaDB client synchronously."""
-        # This method might now just return self.chroma_client if init always runs
-        # Or it could retain the logic as a fallback/check, but it shouldn't re-initialize.
-        # For now, let's just return the instance variable.
-        if self.chroma_client is None:
-            self.logger.warning(
-                "_get_chroma_client called, but self.chroma_client is None (initialization might have failed)."
+        """Internal helper to get the initialized client or log error."""
+        if not self.chroma_client:
+            self.logger.error(
+                "ChromaDB client was not initialized successfully. Cannot perform DB operations."
             )
         return self.chroma_client
-        # Original logic commented out, as init should handle it now.
-        # try:
-        #     client = chroma_utils.get_chroma_client() # <--- Removed await
-        #     if client is None:
-        #         self.logger.error("Failed to get ChromaDB client from chroma_utils.")
-        #         return None
-        #     return client
-        # except Exception as e:
-        #     self.logger.error(f"Exception while getting ChromaDB client: {e}", exc_info=True)
-        #     return None
 
     def store_artifact_context_in_chroma(
         self,
@@ -552,101 +545,51 @@ class StateManager:
         content: str,
         artifact_type: str = "unknown",
     ) -> bool:
-        """Stores a single artifact's content and metadata in ChromaDB synchronously."""
+        """Stores artifact content as context in ChromaDB.
+
+        Returns:
+            True if successful.
+        Raises:
+            ChromaOperationError: If the ChromaDB operation fails.
+        """
+        client = self._get_chroma_client()
+        if not client:
+            # Raise an error if client is unavailable, as operation cannot succeed
+            raise ChromaOperationError("ChromaDB client is not available.")
+
+        collection = client.get_or_create_collection(name=self._CONTEXT_COLLECTION_NAME)
+        if not collection:
+            # Raise error if collection cannot be accessed
+            raise ChromaOperationError(f"Could not get or create collection '{self._CONTEXT_COLLECTION_NAME}'.")
+
+        # Generate a stable ID based on relative path and potentially stage?
+        # Using hash for now, consider if stage needs to be included for uniqueness across stages
+        doc_id = hashlib.sha1(rel_path.encode()).hexdigest()
+
+        metadata = {
+            "stage_number": stage_number,
+            "relative_path": rel_path,
+            "artifact_type": artifact_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "artifact_context", # Added source type
+        }
         self.logger.debug(
-            f"Storing artifact context. Stage: {stage_number}, Path: {rel_path}, Type: {artifact_type}"
+            f"Attempting to upsert artifact context to Chroma '{self._CONTEXT_COLLECTION_NAME}': ID={doc_id}, Path={rel_path[:50]}..."
         )
         try:
-            # Get client synchronously first
-            client = self._get_chroma_client()
-            if not client:
-                self.logger.error("ChromaDB client not available. Cannot store artifact context.")
-                return False
-
+            collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
             self.logger.info(
-                f"Getting or creating collection: {self._CONTEXT_COLLECTION_NAME} with default embedding function."
+                f"Successfully stored artifact context for '{rel_path}' (Stage {stage_number}) in Chroma."
             )
-            # Use the default embedding function from sentence-transformers
-            embed_func = embedding_functions.DefaultEmbeddingFunction()
-            collection = client.get_or_create_collection(
-                name=self._CONTEXT_COLLECTION_NAME,
-                embedding_function=embed_func,
-            )
-            self.logger.info("Collection obtained.")
-
-            doc_id = f"artifact_{stage_number}_{rel_path}"
-
-            # --- Generate Description and Keywords --- #
-            description = (
-                f"Artifact of type '{artifact_type}' for stage {stage_number}. Path: {rel_path}"
-            )
-            keywords = ["artifact", artifact_type, f"stage_{stage_number}"]
-            # Add keywords based on path components if desired
-            try:
-                keywords.extend(Path(rel_path).parts)
-                keywords.append(Path(rel_path).name)
-            except Exception:  # Catch potential path parsing errors
-                pass
-            # --- End Generation --- #
-
-            metadata = {
-                "type": "artifact",  # Core type for filtering
-                "stage": stage_number,
-                "path": rel_path,
-                "artifact_type": artifact_type,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "description": description,  # Added field
-                # Convert keywords list to space-separated string for storage
-                "keywords": " ".join(sorted(list(set(kw.lower() for kw in keywords if kw)))),
-            }
-            self.logger.debug(f"Prepared doc_id: {doc_id}, metadata keys: {list(metadata.keys())}")
-
-            # <<< ADDED DIAGNOSTIC LOGGING >>>
-            self.logger.debug(f"Preparing to call collection.add() for doc_id: {doc_id}")
-            self.logger.debug(f"  Metadata keys: {list(metadata.keys())}")
-            # Log content snippet or length for verification
-            content_log = content[:100] + "..." if len(content) > 100 else content
-            self.logger.debug(f"  Content length: {len(content)}, Snippet: '{content_log}'")
-            # <<< END DIAGNOSTIC LOGGING >>>
-
-            # --- Specific logging and error handling for collection.add() ---
-            add_successful = False
-            try:
-                self.logger.info(f"Attempting collection.add() for doc_id: {doc_id}")
-                # The actual add call - Pass single values
-                collection.add(
-                    documents=content,  # Pass single string
-                    metadatas=metadata,  # Pass single dict
-                    ids=doc_id,  # Pass single string
-                )
-                self.logger.info(f"collection.add() completed for doc_id: {doc_id}")
-                add_successful = True  # Mark success
-            except Exception as add_err:
-                # Log the specific error from collection.add()
-                self.logger.error(
-                    f"Error during collection.add() for doc_id {doc_id}: {add_err}",
-                    exc_info=True,
-                )
-                # Do not proceed, failure will be returned below
-            # --- End specific handling ---
-
-            if add_successful:
-                self.logger.info(f"Successfully stored artifact context for {doc_id}")
-                return True
-            else:
-                # Error already logged in the inner except block
-                self.logger.warning(
-                    f"Returning False from store_artifact_context_in_chroma due to collection.add() error for {doc_id}."
-                )
-                return False
-
+            return True
         except Exception as e:
-            # Catch other errors (getting client, getting collection, etc.)
-            self.logger.error(
-                f"Outer exception in store_artifact_context_in_chroma for {rel_path}: {e}",
-                exc_info=True,
+            self.logger.exception(
+                f"Failed to store artifact context for '{rel_path}' in Chroma collection '{self._CONTEXT_COLLECTION_NAME}': {e}"
             )
-            return False
+            # Re-raise as specific error
+            raise ChromaOperationError(
+                f"Failed to upsert artifact context to collection '{self._CONTEXT_COLLECTION_NAME}'"
+            ) from e
 
     def get_artifact_context_from_chroma(
         self,
@@ -654,103 +597,97 @@ class StateManager:
         n_results: int = 5,
         where_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieves artifact context from ChromaDB based on a semantic query (synchronous)."""
-        self.logger.debug(
-            f"Attempting to retrieve artifact context from ChromaDB. Query: '{query}', n_results: {n_results}, filter: {where_filter}"
-        )
-        results = []
-        # Get client synchronously first
+        """Retrieves relevant artifact context from ChromaDB based on a query.
+
+        Returns:
+            A list of results (dictionaries with document, metadata, distance).
+        Raises:
+            ChromaOperationError: If the ChromaDB query operation fails.
+        """
         client = self._get_chroma_client()
         if not client:
-            self.logger.warning("ChromaDB client not available. Cannot retrieve artifact context.")
-            return results
+            raise ChromaOperationError("ChromaDB client is not available.")
 
-        final_where_filter = {"type": "artifact"}  # Always filter by type=artifact
-        if where_filter:
-            final_where_filter.update(where_filter)
-        self.logger.debug(f"Using where filter: {final_where_filter}")
+        collection = client.get_or_create_collection(name=self._CONTEXT_COLLECTION_NAME)
+        if not collection:
+             raise ChromaOperationError(f"Could not get or create collection '{self._CONTEXT_COLLECTION_NAME}'.")
 
+        # Handle empty filter case for ChromaDB
+        final_where = where_filter if where_filter else None
+
+        self.logger.debug(
+            f"Querying Chroma collection '{self._CONTEXT_COLLECTION_NAME}' for artifact context: '{query[:50]}...' (n={n_results}, filter={final_where})"
+        )
         try:
-            self.logger.info("Getting collection with embedding function for query...")
-            embed_func = embedding_functions.DefaultEmbeddingFunction()
-            collection = client.get_or_create_collection(
-                name=self._CONTEXT_COLLECTION_NAME, embedding_function=embed_func
-            )
-            self.logger.info(f"Querying collection '{self._CONTEXT_COLLECTION_NAME}'...")
-            query_results = collection.query(
+            # Use the underlying utility function which now returns list or None
+            results = collection.query(
                 query_texts=[query],
                 n_results=n_results,
-                where=final_where_filter,
+                where=final_where,
                 include=["metadatas", "documents", "distances"],
             )
+            # If the utility returned None due to an internal error (already logged there)
+            if results is None:
+                 # We interpret None return from query_documents as an operational failure
+                 raise ChromaOperationError(f"ChromaDB query operation failed for collection '{self._CONTEXT_COLLECTION_NAME}'. Check logs for details.")
+
             self.logger.info(
-                f"Query completed. Found {len(query_results.get('ids', [[]])[0])} results."
+                f"Retrieved {len(results.get('ids', [[]])[0])} artifact context results from Chroma for query '{query[:50]}...'"
             )
-
-            # Process results
-            ids = query_results.get("ids", [[]])[0]
-            documents = query_results.get("documents", [[]])[0]
-            metadatas = query_results.get("metadatas", [[]])[0]
-            distances = query_results.get("distances", [[]])[0]
-
-            for i, doc_id in enumerate(ids):
-                results.append(
-                    {
-                        "id": doc_id,
-                        "content": documents[i],
-                        "metadata": metadatas[i],
-                        "distance": distances[i],
-                    }
-                )
-
+            return results.get("results", [])
         except Exception as e:
-            self.logger.error(
-                f"Failed to retrieve artifact context from ChromaDB: {e}", exc_info=True
+            # Catch any unexpected errors here or re-raised errors from query_documents
+            self.logger.exception(
+                f"Failed to get artifact context from Chroma collection '{self._CONTEXT_COLLECTION_NAME}': {e}"
             )
-            # Return empty list on error
-
-        return results
+            # Re-raise as specific error
+            raise ChromaOperationError(
+                f"Failed to query artifact context from collection '{self._CONTEXT_COLLECTION_NAME}'"
+            ) from e
 
     def persist_reflections_to_chroma(
         self, run_id: int, stage_number: float, reflections: str
     ) -> bool:
-        """Persists reflections for a given stage to ChromaDB synchronously."""
-        self.logger.debug(
-            f"Attempting to persist reflections for run {run_id}, stage {stage_number}"
-        )
+        """Persists reflection text to ChromaDB.
+
+        Returns:
+            True if successful.
+        Raises:
+            ChromaOperationError: If the ChromaDB operation fails.
+        """
         client = self._get_chroma_client()
         if not client:
-            self.logger.warning("ChromaDB client not available. Cannot persist reflections.")
-            return False
+            raise ChromaOperationError("ChromaDB client is not available.")
 
+        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
+        if not collection:
+            raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+
+        # Create a unique ID for this reflection entry
+        doc_id = f"run{run_id}_stage{stage_number}_{uuid.uuid4()}"
+        metadata = {
+            "run_id": run_id,
+            "stage_number": stage_number,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "reflection", # Added source type
+        }
+        self.logger.debug(
+            f"Attempting to add reflection to Chroma '{self._REFLECTIONS_COLLECTION_NAME}': ID={doc_id}, Stage={stage_number}"
+        )
         try:
-            self.logger.info("Getting or creating reflection collection with embedding function...")
-            embed_func = embedding_functions.DefaultEmbeddingFunction()
-            collection = client.get_or_create_collection(
-                name=self._REFLECTIONS_COLLECTION_NAME,  # Use dedicated collection
-                embedding_function=embed_func,
+            collection.add(ids=[doc_id], documents=[reflections], metadatas=[metadata])
+            self.logger.info(
+                f"Successfully persisted reflection for Run {run_id}, Stage {stage_number} in Chroma."
             )
-            self.logger.info("Reflection collection obtained.")
-
-            doc_id = f"reflection_{run_id}_{stage_number}"
-            metadata = {
-                "type": "reflection",
-                "run_id": run_id,
-                "stage": stage_number,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-
-            self.logger.info(f"Adding reflection document: {doc_id}")
-            collection.add(documents=[reflections], metadatas=[metadata], ids=[doc_id])
-            self.logger.info(f"Successfully persisted reflection for {doc_id}")
             return True
-
         except Exception as e:
-            self.logger.error(
-                f"Failed to persist reflections to ChromaDB for run {run_id}, stage {stage_number}: {e}",
-                exc_info=True,
+            self.logger.exception(
+                f"Failed to persist reflection for Run {run_id}, Stage {stage_number} in Chroma collection '{self._REFLECTIONS_COLLECTION_NAME}': {e}"
             )
-            return False
+            # Re-raise as specific error
+            raise ChromaOperationError(
+                f"Failed to add reflection to collection '{self._REFLECTIONS_COLLECTION_NAME}'"
+            ) from e
 
     def get_reflection_context_from_chroma(
         self,
@@ -758,61 +695,53 @@ class StateManager:
         n_results: int = 3,
         filter_stage_min: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieves relevant reflections from ChromaDB based on a semantic query (synchronous)."""
-        self.logger.debug(
-            f"Attempting to retrieve reflection context. Query: '{query}', n_results: {n_results}, stage_min: {filter_stage_min}"
-        )
-        results = []
+        """Retrieves relevant reflection context from ChromaDB based on a query.
+
+        Returns:
+            A list of results (dictionaries with document, metadata, distance).
+        Raises:
+            ChromaOperationError: If the ChromaDB query operation fails.
+        """
         client = self._get_chroma_client()
         if not client:
-            self.logger.warning("ChromaDB client not available. Cannot retrieve reflections.")
-            return results
+             raise ChromaOperationError("ChromaDB client is not available.")
 
-        where_filter = {"type": "reflection"}  # Always filter by type=reflection
+        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
+        if not collection:
+            raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+
+        where_filter = {}
         if filter_stage_min is not None:
-            where_filter["stage"] = {"$gte": filter_stage_min}
-        self.logger.debug(f"Using where filter for reflections: {where_filter}")
+            # Assuming stage_number is stored as float in metadata
+            where_filter = {"stage_number": {"$gte": filter_stage_min}}
 
+        # Handle empty filter case for ChromaDB
+        final_where = where_filter if where_filter else None
+
+        self.logger.debug(
+            f"Querying Chroma collection '{self._REFLECTIONS_COLLECTION_NAME}' for reflections: '{query[:50]}...' (n={n_results}, filter={final_where})"
+        )
         try:
-            self.logger.info("Getting reflection collection with embedding function for query...")
-            embed_func = embedding_functions.DefaultEmbeddingFunction()
-            collection = client.get_or_create_collection(
-                name=self._REFLECTIONS_COLLECTION_NAME, embedding_function=embed_func
-            )
-            self.logger.info(
-                f"Querying reflection collection '{self._REFLECTIONS_COLLECTION_NAME}'..."
-            )
-            query_results = collection.query(
+            results = collection.query(
                 query_texts=[query],
                 n_results=n_results,
-                where=where_filter,
+                where=final_where,
                 include=["metadatas", "documents", "distances"],
             )
+            if results is None:
+                 raise ChromaOperationError(f"ChromaDB query operation failed for collection '{self._REFLECTIONS_COLLECTION_NAME}'. Check logs for details.")
+
             self.logger.info(
-                f"Reflection query completed. Found {len(query_results.get('ids', [[]])[0])} results."
+                f"Retrieved {len(results.get('ids', [[]])[0])} reflection context results from Chroma for query '{query[:50]}...'"
             )
-
-            # Process results
-            ids = query_results.get("ids", [[]])[0]
-            documents = query_results.get("documents", [[]])[0]
-            metadatas = query_results.get("metadatas", [[]])[0]
-            distances = query_results.get("distances", [[]])[0]
-
-            for i, doc_id in enumerate(ids):
-                results.append(
-                    {
-                        "id": doc_id,
-                        "reflection": documents[i],
-                        "metadata": metadatas[i],
-                        "distance": distances[i],
-                    }
-                )
-
+            return results.get("results", [])
         except Exception as e:
-            self.logger.error(f"Failed to retrieve reflections from ChromaDB: {e}", exc_info=True)
-            # Return empty list on error
-
-        return results
+            self.logger.exception(
+                f"Failed to get reflection context from Chroma collection '{self._REFLECTIONS_COLLECTION_NAME}': {e}"
+            )
+            raise ChromaOperationError(
+                f"Failed to query reflection context from collection '{self._REFLECTIONS_COLLECTION_NAME}'"
+            ) from e
 
     def list_artifact_metadata(
         self,
@@ -820,140 +749,206 @@ class StateManager:
         artifact_type_filter: Optional[str] = None,
         limit: Optional[int] = None,  # Optional limit on number of results
     ) -> List[Dict[str, Any]]:
-        """Retrieves artifact metadata based on filters, without semantic search."""
-        self.logger.debug(
-            f"Attempting to list artifact metadata. Stage Filter: {stage_filter}, Type Filter: {artifact_type_filter}, Limit: {limit}"
-        )
-        results_metadata = []
+        """Lists metadata of stored artifacts, optionally filtering.
+
+        Returns:
+            List of metadata dictionaries for matching artifacts.
+        Raises:
+            ChromaOperationError: If the ChromaDB get operation fails.
+        """
         client = self._get_chroma_client()
         if not client:
-            self.logger.warning("ChromaDB client not available. Cannot list artifact metadata.")
-            return results_metadata
+            raise ChromaOperationError("ChromaDB client is not available.")
 
-        where_filter = {"type": "artifact"}  # Base filter
+        collection = client.get_or_create_collection(name=self._CONTEXT_COLLECTION_NAME)
+        if not collection:
+            raise ChromaOperationError(f"Could not get or create collection '{self._CONTEXT_COLLECTION_NAME}'.")
+
+        where_filter = {}
         if stage_filter is not None:
-            where_filter["stage"] = stage_filter
+            where_filter["stage_number"] = stage_filter
         if artifact_type_filter:
             where_filter["artifact_type"] = artifact_type_filter
 
-        # <<< REMOVING DIAGNOSTIC LOGGING >>>
-        # self.logger.debug(f"Constructed where filter for collection.get(): {where_filter}")
-        self.logger.debug(f"Using where filter for listing: {where_filter}")
+        # Handle empty filter case for ChromaDB
+        final_where = where_filter if where_filter else None
+
+        self.logger.debug(
+            f"Listing artifact metadata from '{self._CONTEXT_COLLECTION_NAME}' with filter: {final_where}, limit: {limit}"
+        )
 
         try:
-            collection = client.get_collection(name=self._CONTEXT_COLLECTION_NAME)
-            # <<< REMOVING DIAGNOSTIC LOGGING >>>
-            # self.logger.info(f"Attempting collection.get(where={where_filter}, limit={limit}, include=['metadatas']) for collection '{self._CONTEXT_COLLECTION_NAME}'...")
-            self.logger.info(
-                f"Attempting collection.get() for collection '{self._CONTEXT_COLLECTION_NAME}'..."
-            )
-
-            get_results = collection.get(
-                where=where_filter,
+            results = collection.get(
+                where=final_where,
                 limit=limit,
-                include=["metadatas"],  # Fetch only metadata
+                include=["metadatas"] # Only fetch metadata
             )
-            # <<< REMOVING DIAGNOSTIC LOGGING >>>
-            # self.logger.info(f"Raw results from collection.get(): {get_results}")
+            metadata_list = results.get("metadatas", [])
             self.logger.info(
-                f"Raw get_results from collection.get(): {get_results}"
-            )  # <<< KEEPING ONE >>>
-
-            self.logger.info(
-                f"collection.get() completed. Found {len(get_results.get('ids', []))} matching artifacts."
+                f"Retrieved {len(metadata_list)} artifact metadata entries matching filter {final_where}"
             )
-
-            # Process results more carefully
-            ids = get_results.get("ids", [])
-            metadatas = get_results.get("metadatas", [])
-
-            for i, doc_id in enumerate(ids):
-                # Start with the full metadata dictionary if available
-                meta = metadatas[i] if metadatas and i < len(metadatas) else {}
-                # Ensure base fields are present even if metadata retrieval was partial/empty
-                meta["_id"] = doc_id  # Add the internal ID for reference
-                meta["type"] = meta.get("type", "artifact")  # Default if missing
-                meta["path"] = meta.get("path", "unknown_path")
-                meta["stage"] = meta.get("stage", None)
-                # Explicitly add description and keywords if they exist in the source metadata
-                meta["description"] = meta.get("description", "")  # Add default empty string
-                meta["keywords"] = meta.get("keywords", [])  # Add default empty list
-
-                self.logger.info(f"Processed metadata for doc_id '{doc_id}': {meta}")
-
-                results_metadata.append(meta)
-
-        except ValueError as e:  # <<< REVERTED TO ValueError
-            # Handle case where collection doesn't exist (expected behavior for this version)
-            if "does not exist" in str(e).lower():
-                self.logger.info(
-                    f"Collection '{self._CONTEXT_COLLECTION_NAME}' not found during list_artifact_metadata (ValueError check). Returning empty list."
-                )
-            else:
-                # Log other ValueErrors differently
-                self.logger.warning(
-                    f"ValueError occurred while accessing collection '{self._CONTEXT_COLLECTION_NAME}': {e}. Returning empty list."
-                )
-            # Return empty list if collection doesn't exist or other ValueError
+            return metadata_list
         except Exception as e:
-            self.logger.error(f"Failed to list artifact metadata from ChromaDB: {e}", exc_info=True)
-            # Return empty list on other errors
+            self.logger.exception(
+                f"Failed to list artifact metadata from collection '{self._CONTEXT_COLLECTION_NAME}': {e}"
+            )
+            raise ChromaOperationError(
+                f"Failed to list artifact metadata from collection '{self._CONTEXT_COLLECTION_NAME}'"
+            ) from e
 
-        return results_metadata
+    def get_all_reflections(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Retrieves all reflections, up to a limit, without semantic search.
+
+        Uses collection.get() which retrieves based on internal order or filters (not used here),
+        not semantic similarity.
+
+        Args:
+            limit: The maximum number of reflections to return.
+
+        Returns:
+            A list of reflection dictionaries (metadata and document).
+
+        Raises:
+            ChromaOperationError: If the ChromaDB get operation fails.
+        """
+        client = self._get_chroma_client()
+        if not client:
+            raise ChromaOperationError("ChromaDB client is not available.")
+
+        collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
+        if not collection:
+            raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+
+        self.logger.debug(
+            f"Getting all reflections from '{self._REFLECTIONS_COLLECTION_NAME}' (limit: {limit})"
+        )
+
+        try:
+            # Use collection.get() to retrieve documents without a query
+            results = collection.get(
+                limit=limit,
+                include=["metadatas", "documents"] # Only fetch metadata and documents
+            )
+
+            # Reformat results into a simpler list of dictionaries
+            formatted_results = []
+            if results and results.get("ids"):
+                num_results = len(results["ids"])
+                ids = results["ids"]
+                metadatas = results.get("metadatas", [None] * num_results)
+                documents = results.get("documents", [None] * num_results)
+
+                for i in range(num_results):
+                    formatted_results.append(
+                        {
+                            "id": ids[i],
+                            "metadata": metadatas[i],
+                            "document": documents[i],
+                            # Add other relevant fields if needed, like timestamp from metadata
+                            "timestamp": metadatas[i].get("timestamp") if metadatas[i] else None
+                        }
+                    )
+                # Sort by timestamp descending if possible (best effort)
+                try:
+                    formatted_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                except Exception as sort_err:
+                    self.logger.warning(f"Could not sort reflections by timestamp: {sort_err}")
+
+            self.logger.info(
+                f"Retrieved {len(formatted_results)} reflections from collection '{self._REFLECTIONS_COLLECTION_NAME}' (limit: {limit})."
+            )
+            return formatted_results
+
+        except Exception as e:
+            self.logger.exception(
+                f"Failed to get all reflections from collection '{self._REFLECTIONS_COLLECTION_NAME}': {e}"
+            )
+            raise ChromaOperationError(
+                f"Failed to get all reflections from collection '{self._REFLECTIONS_COLLECTION_NAME}'"
+            ) from e
 
 
-# Example usage (for testing purposes)
+# Example usage (for testing or demonstration)
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    test_file = "./temp_project_status.json"
+    # Setup basic logging for standalone testing
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    test_proj_dir = Path("./test_project")
+    test_proj_dir.mkdir(exist_ok=True)
+    # Create a dummy stages dir for init
+    dummy_stages = Path("./dummy_stages")
+    dummy_stages.mkdir(exist_ok=True)
 
-    # Clean up previous test file if exists
-    if os.path.exists(test_file):
-        os.remove(test_file)
-    if os.path.exists(f"{test_file}.lock"):
-        os.remove(f"{test_file}.lock")
+    sm = StateManager(str(test_proj_dir), str(dummy_stages), use_locking=True)
 
-    # --- Test Initialization ---
-    sm = StateManager(test_file)
-    print(f"Initial next stage: {sm.get_next_stage()}")  # Should be 0
+    # Test basic status update
+    print("\n--- Testing Status Update ---")
+    update_success = sm.update_status(0, "PASS", ["artifact1.txt"], "Initial setup")
+    print(f"Update 1 successful: {update_success}")
+    update_success = sm.update_status(1, "FAIL", ["artifact2.py"], "Failed validation")
+    print(f"Update 2 successful: {update_success}")
 
-    # --- Test Update ---
-    success = sm.update_status(stage=0, status="DONE", artifacts=["goal.txt"])
-    print(f"Update Stage 0 success: {success}")
-    print(f"Next stage after 0: {sm.get_next_stage()}")  # Should be 0.5
-
-    success = sm.update_status(stage=0.5, status="DONE", artifacts=["doc.txt"])
-    print(f"Update Stage 0.5 success: {success}")
-    print(f"Next stage after 0.5: {sm.get_next_stage()}")  # Should be 1
-
-    success = sm.update_status(stage=1, status="FAIL", artifacts=[], reason="Blueprint invalid")
-    print(f"Update Stage 1 success: {success}")
-    print(f"Next stage after 1 (FAIL): {sm.get_next_stage()}")  # Should be None
-
-    # --- Test Reading ---
+    # Test status retrieval
+    print("\n--- Testing Status Retrieval ---")
+    last_status = sm.get_last_status()
+    print(f"Last Status: {last_status}")
     full_status = sm.get_full_status()
-    print("\nFull Status:")
-    print(json.dumps(full_status, indent=2))
+    print(f"Full Status: {json.dumps(full_status, indent=2)}")
 
-    last = sm.get_last_status()
-    print("\nLast Status:")
-    print(json.dumps(last, indent=2))
+    # Test next stage logic
+    print("\n--- Testing Next Stage Logic ---")
+    next_stage = sm.get_next_stage()
+    print(f"Next Stage: {next_stage}") # Expected: 1 (retry after fail)
 
-    # --- Test Overwrite ---
-    success = sm.update_status(stage=1, status="DONE", artifacts=["bp.txt"])
-    print(f"\nOverwrite Stage 1 success: {success}")
-    print(f"Next stage after 1 (DONE): {sm.get_next_stage()}")  # Should be 2
+    # Clean up dummy files/dirs if needed (example)
+    # import shutil
+    # shutil.rmtree(test_proj_dir)
+    # shutil.rmtree(dummy_stages)
 
-    full_status = sm.get_full_status()
-    print("\nFull Status after overwrite:")
-    print(json.dumps(full_status, indent=2))
+    # Test ChromaDB interactions (requires running ChromaDB server)
+    print("\n--- Testing ChromaDB Interactions (Ensure Chroma Server is running) ---")
+    try:
+        # Store artifact
+        store_success = sm.store_artifact_context_in_chroma(
+            stage_number=0.0,
+            rel_path="src/main.py",
+            content="print('Hello World')",
+            artifact_type="code"
+        )
+        print(f"Store Artifact Success: {store_success}")
+
+        # Store reflection
+        reflect_success = sm.persist_reflections_to_chroma(
+            run_id=1, # Assuming first run
+            stage_number=1.0,
+            reflections="Stage 1 validation failed due to unclear requirements."
+        )
+        print(f"Persist Reflection Success: {reflect_success}")
+
+        # Get artifact context
+        print("\nQuerying Artifact Context:")
+        context_results = sm.get_artifact_context_from_chroma(query="hello world code")
+        pprint(context_results)
+
+        # Get reflection context
+        print("\nQuerying Reflection Context:")
+        reflection_results = sm.get_reflection_context_from_chroma(query="validation failure")
+        pprint(reflection_results)
+
+        # List metadata
+        print("\nListing Artifact Metadata:")
+        metadata_list = sm.list_artifact_metadata(artifact_type_filter="code")
+        pprint(metadata_list)
+
+    except ChromaOperationError as coe:
+        print(f"ChromaDB Operation Error: {coe}")
+    except Exception as e:
+        print(f"General error during ChromaDB test: {e}")
 
     # Clean up
-    if os.path.exists(test_file):
-        os.remove(test_file)
-    if os.path.exists(f"{test_file}.lock"):
-        os.remove(f"{test_file}.lock")
-    print("\nCleanup complete.")
+    try:
+        import shutil
+        shutil.rmtree(test_proj_dir)
+        shutil.rmtree(dummy_stages)
+        print("\nCleaned up test directories.")
+    except Exception as e:
+        print(f"Error during cleanup: {e}")

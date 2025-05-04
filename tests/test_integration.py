@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 import chromadb
 import logging
+import json
 
 # Add project root to sys.path to allow importing project modules
 project_root = Path(__file__).parent.parent
@@ -20,9 +21,14 @@ from chungoidmcp import (
     handle_get_project_status,
     handle_execute_next_stage,
     handle_submit_stage_artifacts,
+    handle_load_reflections,
+    handle_retrieve_reflections_tool,
+    handle_get_file,
     # We'll need a way to simulate the context or pass necessary args
 )
-from utils.state_manager import StateManager  # Assuming state_manager might be needed directly
+from utils.state_manager import StateManager, StatusFileError  # Import error class
+from utils.chroma_utils import ChromaOperationError # <<< IMPORT FROM CORRECT MODULE
+from utils.exceptions import StageExecutionError, ToolExecutionError # Import other exceptions
 
 
 class TestIntegration(unittest.TestCase):
@@ -628,208 +634,404 @@ class TestIntegration(unittest.TestCase):
 
     # Test ChromaDB interactions (add/get context/artifacts)
     def test_07_chromadb_operations(self):
-        """Test adding and retrieving data via StateManager's ChromaDB interactions."""
+        """Test direct interaction with ChromaDB via utils (assuming sync utils)."""
+        # NOTE: This test assumes chroma_utils functions are synchronous or handled appropriately.
+        # If chroma_utils functions are async, this test needs adjustment (e.g., run in async loop).
         print(f"\nRunning test: test_07_chromadb_operations in {os.getcwd()}")
 
+        # We need a real or mock ChromaDB client accessible for this.
+        # Let's bypass the singleton getter and directly instantiate for isolation,
+        # perhaps using a temporary persistent client.
+        temp_chroma_dir = self.TEST_DIR / "temp_chroma"
+        try:
+            shutil.rmtree(temp_chroma_dir, ignore_errors=True)
+            test_client = chromadb.PersistentClient(path=str(temp_chroma_dir))
+            self.assertIsNotNone(test_client, "Failed to create temporary PersistentClient")
+
+            collection_name = "test_integration_coll"
+            # Mock get_chroma_client to return our test_client instance
+            with patch('utils.chroma_utils.get_chroma_client', return_value=test_client):
+
+                # Test get_or_create_collection
+                # <<< Assuming get_or_create_collection itself is now ASYNC >>>
+                async def run_create():
+                    collection = await chroma_utils.get_or_create_collection(collection_name)
+                    self.assertIsNotNone(collection, "Failed to get/create collection")
+                    self.assertEqual(collection.name, collection_name)
+                asyncio.run(run_create())
+
+                # Test add_documents (assuming it's async)
+                docs = ["doc1", "doc2"]
+                ids = ["id1", "id2"]
+                metadatas = [{"type": "test"}, {"type": "test"}]
+                async def run_add():
+                    success = await chroma_utils.add_documents(collection_name, docs, metadatas, ids)
+                    self.assertTrue(success, "Failed to add documents")
+                asyncio.run(run_add())
+
+                # Test query_documents (assuming it's async)
+                async def run_query():
+                    results = await chroma_utils.query_documents(collection_name, query_texts=["doc1"], n_results=1)
+                    self.assertIsNotNone(results)
+                    self.assertEqual(len(results), 1)
+                    self.assertEqual(results[0]["id"], "id1")
+                asyncio.run(run_query())
+
+        finally:
+            # Clean up temp ChromaDB directory
+            shutil.rmtree(temp_chroma_dir, ignore_errors=True)
+            print("Cleaned up temp ChromaDB directory.")
+
+    # --- Tests for ChromaDB Error Handling and New Reflection Loading ---
+
+    @patch('utils.chroma_utils.get_chroma_client', return_value=None)
+    def test_08_load_reflections_chroma_unavailable(self, mock_get_client):
+        """Test handle_load_reflections when ChromaDB client fails to initialize."""
+        print(f"\nRunning test: test_08_load_reflections_chroma_unavailable in {os.getcwd()}")
+
         async def run_async_test():
-            # <<< Apply patch manually within the test using a context manager >>>
-            with patch(
-                "utils.chroma_utils.get_chroma_client", new_callable=AsyncMock
-            ) as mock_get_chroma_client:
-                # --- Setup Mock Chroma Client (inside context manager) --- #
-                mock_client_instance = AsyncMock(spec=chromadb.ClientAPI)  # Client getter IS async
-                mock_get_chroma_client.return_value = mock_client_instance
-                # Collection methods are SYNCHRONOUS, use MagicMock
-                mock_collection_artifacts = MagicMock(spec=chromadb.Collection)
-                mock_collection_reflections = MagicMock(spec=chromadb.Collection)
+            # Need to initialize the project first so StateManager can try to load status
+            print(f"Initializing project in: {self.TEST_DIR.resolve()}")
+            init_result = await handle_initialize_project(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
+            self.assertEqual(init_result.get("status"), "success", msg="Initialization failed")
 
-                # Mock get_or_create_collection AND get_collection based on name
-                def collection_factory(name, **kwargs):
-                    self.logger.info(f"Mock collection_factory called for name: {name}")  # Add log
-                    if name == state_manager._CONTEXT_COLLECTION_NAME:
-                        return mock_collection_artifacts
-                    elif name == state_manager._REFLECTIONS_COLLECTION_NAME:
-                        return mock_collection_reflections
-                    else:
-                        # Return a default mock if name doesn't match expected,
-                        # or raise error depending on desired test strictness.
-                        # Raising error is stricter:
-                        raise ValueError(
-                            f"Mock collection_factory received unexpected collection name: {name}"
-                        )
+            # Attempt to load reflections
+            print("Attempting to load reflections with mocked unavailable Chroma client...")
+            load_result = await handle_load_reflections(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
+            print(f"Load reflections result: {load_result}")
 
-                mock_client_instance.get_or_create_collection.side_effect = collection_factory
-                mock_client_instance.get_collection.side_effect = (
-                    collection_factory  # <<< Mock get_collection too
-                )
+            # Assertions
+            mock_get_client.assert_called_once() # Check if the mock was used
+            self.assertEqual(load_result.get("status"), "error")
+            self.assertIn("ChromaDB client is not available", load_result.get("message", ""))
+            self.assertEqual(load_result.get("summary", "not_empty"), "") # Summary should be empty on error
 
-                # Mock add/get/query methods on the *collection* mocks
-                mock_collection_artifacts.add = MagicMock(return_value=None)
-                mock_collection_artifacts.get = MagicMock(
-                    return_value={  # Mock return value for get
-                        "ids": [
-                            "stage_1.0_dev-docs/design/interface.yaml",
-                            "stage_1.0_src/module.py",
-                        ],
-                        "documents": ["content: interface details", "# Python code"],
-                        "metadatas": [
-                            {"stage": 1.0, "filename": "dev-docs/design/interface.yaml"},
-                            {"stage": 1.0, "filename": "src/module.py"},
-                        ],
-                    }
-                )
-                mock_collection_reflections.add = MagicMock(return_value=None)
-                mock_collection_reflections.query = MagicMock(
-                    return_value={  # Mock return value for query
-                        "ids": [["some_id"]],
-                        "documents": [["Stage 1 reflection content."]],
-                        "metadatas": [[{"stage": 1.0, "status": "PASS"}]],
-                        "distances": [[0.1]],
-                    }
-                )
+        asyncio.run(run_async_test())
 
-                # --- Setup: Initialize Project (needed for StateManager init) ---
-                await handle_initialize_project(
-                    target_directory=str(self.TEST_DIR.resolve()), ctx=None
-                )
-                print("Project initialized for ChromaDB test.")
+    @patch('utils.state_manager.StateManager') # Patch StateManager used within the handler
+    def test_09_load_reflections_success_empty(self, MockStateManager):
+        """Test handle_load_reflections success path when ChromaDB returns no reflections."""
+        print(f"\nRunning test: test_09_load_reflections_success_empty in {os.getcwd()}")
 
-                # --- Initialize StateManager pointing to test directory --- #
-                server_stages_dir = project_root / "server_prompts" / "stages"
-                state_manager = StateManager(
-                    target_directory=str(self.TEST_DIR.resolve()),
-                    server_stages_dir=str(server_stages_dir),
-                )
+        # Configure the mock StateManager instance that will be created inside the handler
+        mock_state_manager_instance = MockStateManager.return_value
+        # Make the get_all_reflections method return an empty list
+        mock_state_manager_instance.get_all_reflections = AsyncMock(return_value=[])
 
-                # --- Test Persist Artifacts --- #
-                print("Testing store_artifact_context_in_chroma...")
-                stage_num = 1.0
-                artifacts_to_persist = {
-                    "dev-docs/design/interface.yaml": "content: interface details",
-                    "src/module.py": "# Python code",
-                }
-                # Call the correct method store_artifact_context_in_chroma individually
-                for rel_path, content in artifacts_to_persist.items():
-                    await state_manager.store_artifact_context_in_chroma(
-                        stage_number=stage_num,
-                        rel_path=rel_path,
-                        content=content,
-                        # artifact_type can be inferred or passed explicitly if needed by test
-                    )
+        async def run_async_test():
+            # Initialize project (needed for directory structure, though StateManager is mocked)
+            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
+            # We don't need the real init side effects here as StateManager is mocked
+            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
+            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
+            print("Mock project initialized.")
 
-                mock_get_chroma_client.assert_called_once()
-                # Assert using the correct collection name
-                mock_client_instance.get_or_create_collection.assert_called_with(
-                    name=state_manager._CONTEXT_COLLECTION_NAME
-                )
-                self.assertTrue(mock_collection_artifacts.add.called)
-                self.assertEqual(mock_collection_artifacts.add.call_count, 2)
-                call_args, call_kwargs = mock_collection_artifacts.add.call_args
-                self.assertEqual(len(call_kwargs.get("ids", [])), 2)
-                self.assertEqual(len(call_kwargs.get("documents", [])), 2)
-                self.assertEqual(len(call_kwargs.get("metadatas", [])), 2)
-                print("store_artifact_context_in_chroma assertions passed.")
+            # Call load_reflections
+            print("Calling load_reflections with mocked StateManager (empty result)...")
+            # Need to make handle_load_reflections use the patched StateManager
+            # One way is to patch StateManager globally or use dependency injection if available
+            # Assuming the handler instantiates StateManager internally for this test setup:
+            load_result = await handle_load_reflections(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
+            print(f"Load reflections result: {load_result}")
 
-                # --- Test Get Artifacts by ID --- #
-                mock_collection_artifacts.add.reset_mock()
-                mock_collection_artifacts.get.reset_mock()
-                mock_client_instance.get_or_create_collection.reset_mock()
-                mock_client_instance.get_collection.reset_mock()  # <<< Reset get_collection mock too
-                # DO NOT reset mock_get_chroma_client yet - it should be cached now
+            # Check that StateManager was instantiated correctly within the handler call scope
+            MockStateManager.assert_called_once()
+            # Check that get_all_reflections was called on the instance
+            mock_state_manager_instance.get_all_reflections.assert_called_once()
 
-                print("Testing get_artifact_context_from_chroma_by_ids...")
-                doc_ids_to_get = [
-                    "stage_1.0_dev-docs/design/interface.yaml",
-                    "stage_1.0_src/module.py",
-                ]
-                # Don't need to mock get return value here anymore, done above
+            # Expect success response with empty data
+            self.assertEqual(load_result.status_code, 200, "Expected HTTP 200 status code")
+            body = json.loads(load_result.body.decode())
+            self.assertEqual(body.get("status"), "success", "Expected success status in response")
+            self.assertEqual(body.get("reflections"), [], "Expected empty reflections list")
+            print("Load reflections succeeded with empty data.")
 
-                retrieved_context = await state_manager.get_artifact_context_from_chroma_by_ids(
-                    doc_ids_to_get
-                )
+        asyncio.run(run_async_test())
 
-                # Assertions
-                mock_get_chroma_client.assert_called_once()  # Check it *still* has only been called once
-                # Assert using the correct collection name (StateManager uses get_collection here)
-                mock_client_instance.get_collection.assert_called_once_with(
-                    name=state_manager._CONTEXT_COLLECTION_NAME
-                )
-                # Now this assertion should pass because get_collection returned the correct mock collection
-                mock_collection_artifacts.get.assert_called_once_with(
-                    ids=doc_ids_to_get, include=["documents", "metadatas"]
-                )
-                # Fix assertion: check if it's a list, not a string
-                self.assertIsInstance(retrieved_context, list)
-                # Check the contents of the list
-                self.assertEqual(len(retrieved_context), 2)
-                self.assertEqual(retrieved_context[0]["id"], doc_ids_to_get[0])
-                self.assertEqual(retrieved_context[0]["document"], "content: interface details")
-                self.assertEqual(retrieved_context[1]["id"], doc_ids_to_get[1])
-                self.assertEqual(retrieved_context[1]["document"], "# Python code")
-                # Removed the string containment checks as they are less specific
-                print("get_artifact_context_from_chroma_by_ids assertions passed.")
+    @patch('utils.state_manager.StateManager') # Patch StateManager used within the handler
+    def test_10_load_reflections_success_with_data(self, MockStateManager):
+        """Test handle_load_reflections success path when ChromaDB returns reflections."""
+        print(f"\nRunning test: test_10_load_reflections_success_with_data in {os.getcwd()}")
 
-                # --- Test Add/Get Reflection --- #
-                print("Testing add_reflection and get_reflections...")
-                # Reset mocks specifically for reflection tests
-                mock_collection_reflections.add.reset_mock()
-                mock_collection_reflections.query.reset_mock()
-                mock_client_instance.get_or_create_collection.reset_mock()
-                mock_client_instance.get_collection.reset_mock()  # <<< Reset get_collection mock here too
-                # get_chroma_client should still be cached
+        # Sample data that get_all_reflections would return
+        sample_reflections = [
+            {
+                'id': 'uuid1',
+                'metadata': {'stage_number': 1.0, 'timestamp': '2025-01-01T10:00:00Z'},
+                'document': 'Reflection from stage 1',
+                'timestamp': '2025-01-01T10:00:00Z' # Added by get_all_reflections
+            },
+            {
+                'id': 'uuid2',
+                'metadata': {'stage_number': 0.0, 'timestamp': '2025-01-01T09:00:00Z'},
+                'document': 'Reflection from stage 0',
+                'timestamp': '2025-01-01T09:00:00Z' # Added by get_all_reflections
+            }
+        ]
 
-                reflection_text = "Stage 1 reflection content."
-                reflection_stage = 1.0
-                reflection_status = "PASS"
-                # Don't need to mock add return value here anymore, done above
+        # Configure the mock StateManager instance
+        mock_state_manager_instance = MockStateManager.return_value
+        mock_state_manager_instance.get_all_reflections = AsyncMock(return_value=sample_reflections)
 
-                reflection_id = await state_manager.add_reflection(
-                    reflection_stage, reflection_status, reflection_text
-                )
+        async def run_async_test():
+            # Initialize project
+            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
+            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
+            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
+            print("Mock project initialized.")
 
-                mock_get_chroma_client.assert_called_once()  # Still only called once overall
-                # Assert using the correct collection name (StateManager uses get_or_create_collection here)
-                mock_client_instance.get_or_create_collection.assert_called_once_with(
-                    name=state_manager._REFLECTIONS_COLLECTION_NAME
-                )
-                self.assertTrue(mock_collection_reflections.add.called)
-                call_args_refl, call_kwargs_refl = mock_collection_reflections.add.call_args
-                self.assertIsNotNone(call_kwargs_refl.get("ids"))
-                self.assertIn(reflection_text, call_kwargs_refl.get("documents", ["missing"])[0])
-                self.assertEqual(
-                    call_kwargs_refl.get("metadatas", [{}])[0].get("stage"), reflection_stage
-                )
-                print("add_reflection assertions passed.")
+            # Call load_reflections
+            print("Calling load_reflections with mocked StateManager (with data)...")
+            load_result = await handle_load_reflections(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
+            print(f"Load reflections result: {load_result}")
 
-                # Test get_reflections
-                query_text = "reflection content"
-                # Don't need to mock query return value here anymore, done above
+            MockStateManager.assert_called()
+            mock_state_manager_instance.get_all_reflections.assert_called_once_with(limit=20)
+            self.assertEqual(load_result.status_code, 200, "Expected HTTP 200 status code")
+            body = json.loads(load_result.body.decode())
+            self.assertEqual(body.get("status"), "success", "Expected success status in response")
+            summary = load_result.get("summary", "")
+            self.assertIn(f"Summary of last {len(sample_reflections)} reflections", summary)
+            self.assertIn("(limit: 20)", summary)
+            self.assertIn("Stage 1.0", summary)
+            self.assertIn("Stage 0.0", summary)
+            self.assertIn("2025-01-01T10:00:00Z", summary)
+            self.assertIn("2025-01-01T09:00:00Z", summary)
 
-                retrieved_reflections = await state_manager.get_reflections(
-                    query=query_text, n_results=1
-                )
+        asyncio.run(run_async_test())
 
-                # Assert using the correct collection name (StateManager uses get_collection here)
-                mock_client_instance.get_collection.assert_called_with(
-                    name=state_manager._REFLECTIONS_COLLECTION_NAME
-                )
-                mock_collection_reflections.query.assert_called_once()
-                # Check some query args (be careful with embedding mocks if applicable)
-                call_args_q, call_kwargs_q = mock_collection_reflections.query.call_args
-                self.assertEqual(call_kwargs_q.get("query_texts"), [query_text])
-                self.assertEqual(call_kwargs_q.get("n_results"), 1)
+    # --- Tests for handle_retrieve_reflections_tool --- #
 
-                self.assertIsInstance(retrieved_reflections, list)
-                self.assertEqual(len(retrieved_reflections), 1)
-                self.assertEqual(retrieved_reflections[0].get("document"), reflection_text)
-                self.assertEqual(
-                    retrieved_reflections[0].get("metadata", {}).get("stage"), reflection_stage
-                )
-                print("get_reflections assertions passed.")
+    @patch('utils.chroma_utils.get_chroma_client', return_value=None)
+    def test_11_retrieve_reflections_chroma_unavailable(self, mock_get_client):
+        """Test retrieve_reflections handles ChromaDB unavailable."""
+        print(f"\nRunning test: test_11_retrieve_reflections_chroma_unavailable in {os.getcwd()}")
+        async def run_async_test():
+            # Initialize project
+            init_result = await handle_initialize_project(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
+            self.assertEqual(init_result.get("status"), "success", msg="Initialization failed")
 
-        # Run the async test function
+            # Attempt to retrieve reflections
+            print("Attempting to retrieve reflections with mocked unavailable Chroma client...")
+            retrieve_result = await handle_retrieve_reflections_tool(
+                target_directory=str(self.TEST_DIR.resolve()),
+                query="test query",
+                ctx=None
+            )
+            print(f"Retrieve reflections result: {retrieve_result}")
+
+            # Expect an error response (check dict content, not status_code)
+            # <<< MODIFIED ASSERTIONS >>>
+            self.assertIsInstance(retrieve_result, dict, "Expected dict response on error")
+            self.assertEqual(retrieve_result.get("status"), "error", "Expected error status in response dict")
+            self.assertIn("ChromaDB operation failed", retrieve_result.get("error", ""), "Expected ChromaDB error message")
+            print("Retrieve reflections correctly handled ChromaDB unavailability.")
+
+        asyncio.run(run_async_test())
+
+    @patch('utils.state_manager.StateManager')
+    def test_12_retrieve_reflections_success_empty(self, MockStateManager):
+        """Test handle_retrieve_reflections_tool success path with no results."""
+        print(f"\nRunning test: test_12_retrieve_reflections_success_empty in {os.getcwd()}")
+        mock_sm_instance = MockStateManager.return_value
+        mock_sm_instance.get_reflection_context_from_chroma.return_value = [] # Empty list
+
+        async def run_async_test():
+            # Initialize project (structure only)
+            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
+            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
+            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
+            print("Mock project initialized.")
+
+            # Call retrieve_reflections
+            print("Calling retrieve_reflections with mocked StateManager (empty result)...")
+            retrieve_result = await handle_retrieve_reflections_tool(
+                target_directory=str(self.TEST_DIR.resolve()),
+                query="test query",
+                n_results=3,
+                ctx=None
+            )
+            print(f"Retrieve reflections result: {retrieve_result}")
+
+            MockStateManager.assert_called_once()
+            mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
+                query="test query", n_results=3, filter_stage_min=None
+            )
+
+            # Expect success response with empty list
+            self.assertEqual(retrieve_result.status_code, 200, "Expected HTTP 200 status code")
+            body = json.loads(retrieve_result.body.decode())
+            self.assertEqual(body.get("status"), "success", "Expected success status in response")
+            self.assertEqual(body.get("results"), [], "Expected empty results list")
+            print("Retrieve reflections succeeded with empty data.")
+
+        asyncio.run(run_async_test())
+
+    @patch('utils.state_manager.StateManager')
+    def test_13_retrieve_reflections_success_with_data(self, MockStateManager):
+        """Test handle_retrieve_reflections_tool success path with sample data."""
+        print(f"\nRunning test: test_13_retrieve_reflections_success_with_data in {os.getcwd()}")
+        mock_sm_instance = MockStateManager.return_value
+        mock_retrieved_data = [
+            {"id": "r1", "metadata": {"stage": 0.0}, "document": "Retrieved 1"}
+        ]
+        mock_sm_instance.get_reflection_context_from_chroma.return_value = mock_retrieved_data
+
+        async def run_async_test():
+            # Initialize project (structure only)
+            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
+            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
+            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
+            print("Mock project initialized.")
+
+            # Call retrieve_reflections
+            print("Calling retrieve_reflections with mocked StateManager (with data)...")
+            retrieve_result = await handle_retrieve_reflections_tool(
+                target_directory=str(self.TEST_DIR.resolve()),
+                query="another query",
+                n_results=1,
+                filter_stage_min="0.0",
+                ctx=None
+            )
+            print(f"Retrieve reflections result: {retrieve_result}")
+
+            MockStateManager.assert_called_once()
+            mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
+                query="another query", n_results=1, filter_stage_min=0.0 # Should convert str to float
+            )
+
+            # Expect success response with data
+            self.assertEqual(retrieve_result.status_code, 200, "Expected HTTP 200 status code")
+            body = json.loads(retrieve_result.body.decode())
+            self.assertEqual(body.get("status"), "success", "Expected success status in response")
+            self.assertEqual(body.get("results"), mock_retrieved_data, "Expected retrieved data")
+            print("Retrieve reflections succeeded with data.")
+
+        asyncio.run(run_async_test())
+
+    # --- Tests for handle_submit_stage_artifacts --- #
+
+    @patch('utils.state_manager.StateManager')
+    def test_14_submit_artifacts_chroma_error_on_store(self, MockStateManager):
+        """Test handle_submit_stage_artifacts when storing artifact context fails."""
+        print(f"\nRunning test: test_14_submit_artifacts_chroma_error_on_store in {os.getcwd()}")
+        mock_sm_instance = MockStateManager.return_value
+        # Simulate _store_reflections_in_chroma raising an error
+        mock_sm_instance._store_reflections_in_chroma.side_effect = ChromaOperationError("Test Chroma Store Error")
+        # Make update_status succeed so we reach the chroma part
+        mock_sm_instance.update_status.return_value = True
+
+        async def run_async_test():
+            # Initialize project (structure only)
+            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
+            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
+            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
+            print("Mock project initialized.")
+
+            # Call submit_artifacts
+            print("Calling submit_artifacts with mock causing Chroma store error...")
+            artifacts = {"dev-docs/reflections.md": "Some reflections"}
+            submit_result = await handle_submit_stage_artifacts(
+                target_directory=str(self.TEST_DIR.resolve()),
+                stage_number=1,
+                generated_artifacts=artifacts,
+                stage_result_status="PASS",
+                ctx=None
+            )
+            print(f"Submit artifacts result: {submit_result}")
+
+            MockStateManager.assert_called_once()
+            mock_sm_instance.update_status.assert_called_once()
+            # Check _store_reflections_in_chroma was called before it raised the error
+            mock_sm_instance._store_reflections_in_chroma.assert_called_once()
+
+            # Expect an error response because the decorator catches ChromaOperationError
+            self.assertEqual(submit_result.status_code, 500, "Expected HTTP 500 status code")
+            body = json.loads(submit_result.body.decode())
+            self.assertEqual(body.get("status"), "error", "Expected error status in response")
+            self.assertIn("ChromaDB operation failed", body.get("error", ""), "Expected ChromaDB error message")
+            print("Submit artifacts handled Chroma store error correctly.")
+
+        asyncio.run(run_async_test())
+
+    # --- Tests for handle_get_file --- #
+
+    def test_15_get_file(self):
+        """Test the get_file tool handler for success and failure cases."""
+        print(f"\nRunning test: test_15_get_file in {os.getcwd()}")
+
+        async def run_async_test():
+            # --- Setup: Initialize Project and Create Test File ---
+            print(f"Initializing project in: {self.TEST_DIR.resolve()}")
+            init_result = await handle_initialize_project(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
+            self.assertEqual(init_result.get("status"), "success", msg="Initialization failed")
+            print("Project initialized.")
+
+            # Create a dummy file
+            docs_dir = self.TEST_DIR / "docs"
+            docs_dir.mkdir(exist_ok=True)
+            test_file_path = docs_dir / "myfile.txt"
+            test_content = "This is the content of the test file.\nLine 2."
+            with open(test_file_path, "w") as f:
+                f.write(test_content)
+            print(f"Created test file: {test_file_path}")
+
+            # --- Test Success Case ---
+            print("Testing get_file success case...")
+            success_result = await handle_get_file(
+                target_directory=str(self.TEST_DIR.resolve()),
+                relative_path="docs/myfile.txt",
+                ctx=None,
+            )
+            print(f"Success result: {success_result}")
+            self.assertEqual(success_result.get("status"), "success", msg="Get file should succeed")
+            self.assertEqual(
+                success_result.get("content"),
+                test_content,
+                msg="File content does not match",
+            )
+            print("Get file success case passed.")
+
+            # --- Test File Not Found Case ---
+            print("Testing get_file not found case...")
+            not_found_result = await handle_get_file(
+                target_directory=str(self.TEST_DIR.resolve()),
+                relative_path="docs/nosuchfile.txt",
+                ctx=None,
+            )
+            print(f"Not found result: {not_found_result}")
+            self.assertEqual(not_found_result.get("status"), "error", msg="Get file should fail")
+            self.assertIn(
+                "File not found",
+                not_found_result.get("error", ""),
+                msg="Expected 'File not found' error",
+            )
+            print("Get file not found case passed.")
+
+            # --- Test Path Traversal Attempt ---
+            print("Testing get_file path traversal case...")
+            # Need handle_get_file definition to call it
+            from chungoidmcp import handle_get_file # Ensure imported
+
+            traversal_result = await handle_get_file(
+                target_directory=str(self.TEST_DIR.resolve()),
+                relative_path="../outside.txt", # Attempt to go outside project dir
+                ctx=None,
+            )
+            print(f"Traversal result: {traversal_result}")
+            self.assertEqual(traversal_result.get("status"), "error", msg="Path traversal should fail")
+            self.assertIn(
+                "Invalid path", # Check for generic invalid path error
+                traversal_result.get("error", ""),
+                msg="Expected invalid path error message",
+            )
+            print("Get file path traversal case passed.")
+
         asyncio.run(run_async_test())
 
 
+# This allows running the tests from the command line
 if __name__ == "__main__":
+    # Configure logging for tests (optional, might be useful)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     unittest.main()

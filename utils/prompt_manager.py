@@ -10,9 +10,15 @@ from jinja2 import Environment, TemplateError, select_autoescape
 
 # Custom Exception for Prompt Loading/Rendering Errors
 class PromptLoadError(Exception):
-    """Custom exception for errors during prompt loading, parsing, or rendering."""
+    """Custom exception for errors during prompt loading or parsing."""
 
     pass  # No additional logic needed
+
+
+class PromptRenderError(PromptLoadError):
+    """Custom exception specifically for errors during Jinja2 template rendering."""
+
+    pass
 
 
 # --- Jinja Filters (Example - needs implementation if used) ---
@@ -131,13 +137,19 @@ class PromptManager:
         self.logger.info("Loading stage definitions from %s", self.stages_dir)
         self.stage_definitions = {}
         loaded_count = 0
-        error_count = 0
+        errors = [] # Collect errors
 
         for file_path in self.stages_dir.glob("stage*.yaml"):
             stage_number = self._extract_stage_number(file_path.name)
             if stage_number is not None:
                 try:
                     stage_data = self._load_yaml_file(file_path)
+                    # Basic validation of required keys
+                    required_keys = ['system_prompt', 'user_prompt']
+                    missing_keys = [k for k in required_keys if k not in stage_data or not isinstance(stage_data[k], str)]
+                    if missing_keys:
+                        raise PromptLoadError(f"Stage {stage_number} definition missing required string keys: {missing_keys}")
+
                     # Store the entire loaded data under the stage number key
                     self.stage_definitions[stage_number] = stage_data
                     loaded_count += 1
@@ -149,28 +161,29 @@ class PromptManager:
                     self.logger.error(
                         "Failed to load stage definition from %s: %s", file_path.name, e
                     )
-                    error_count += 1
+                    errors.append(f"{file_path.name}: {e}") # Add error details
                 except Exception as e:  # Catch unexpected errors during loading
                     self.logger.exception(
                         "Unexpected error loading stage definition from %s: %s", file_path.name, e
                     )
-                    error_count += 1
+                    errors.append(f"{file_path.name}: Unexpected error - {e}") # Add error details
             else:
                 self.logger.warning("Skipping file with non-standard name: %s", file_path.name)
 
-        if error_count > 0:
+        if errors:
+            error_details = "\n".join(errors)
             self.logger.error(
-                "Encountered %d error(s) while loading stage definitions.", error_count
+                f"Encountered {len(errors)} error(s) while loading stage definitions:\n{error_details}"
             )
-            # Decide if this should be a critical error preventing startup
-            # raise PromptLoadError(f"Failed to load {error_count} stage definition files.")
+            # Raise an error if any stage failed to load
+            raise PromptLoadError(f"Failed to load {len(errors)} stage definition file(s). See logs for details.")
 
         if not self.stage_definitions:
-            # Consider if this is an error or just means no stages defined yet
-            self.logger.warning(
+            # If no errors occurred but still no definitions, it's a different issue
+            self.logger.error(
                 "No valid stage definition files (stage*.yaml) found in %s", self.stages_dir
             )
-            # raise PromptLoadError(f"No stage definition files found in {self.stages_dir}")
+            raise PromptLoadError(f"No valid stage definition files found in {self.stages_dir}")
 
         self.logger.info(
             "Finished loading stage definitions. Found %d stages.", len(self.stage_definitions)
@@ -243,58 +256,60 @@ class PromptManager:
             The fully rendered prompt string for the specified stage.
 
         Raises:
-            PromptLoadError: If stage definition, YAML files, or templates have issues.
+            PromptLoadError: If stage definition cannot be loaded.
+            PromptRenderError: If there is an error during template rendering.
         """
         self.logger.info("Generating rendered prompt for stage %s", stage_number)
         context_data = context_data or {}
 
-        # 1. Get stage definition (already loaded from stageN.yaml)
-        stage_data = self.get_stage_definition(stage_number)
-
-        # 2. Prepare the full context for Jinja rendering
-        render_context = {}
-        # Add common template parts FIRST (so stage can potentially override if needed)
-        render_context.update(self.common_template)
-        # Add external context passed in (e.g., reflections)
-        render_context.update(context_data)
-        # Add specific stage details from stageN.yaml
-        render_context.update(stage_data)
-        # Ensure reflections_summary exists, even if empty, for the template
-        render_context.setdefault("reflections_summary", "")
-        # Add stage number directly for convenience
-        render_context["stage_number"] = stage_number
-        # Add stage name if available in the YAML
-        render_context.setdefault("stage_name", stage_data.get("name", f"Stage {stage_number}"))
-
-        # 3. Construct the template string
-        preamble = self.common_template.get("preamble", "")
-        postamble = self.common_template.get("postamble", "")
-        details = stage_data.get("prompt_details", "")
-        if not details:
-            self.logger.warning(
-                "Stage %s YAML is missing 'prompt_details'. Details section will be empty.",
-                stage_number,
-            )
-
-        # Assemble the full template string
-        full_template_string = f"{preamble}\n\n{details}\n\n{postamble}"
-
-        # 4. Render the template
         try:
-            template = self.jinja_env.from_string(full_template_string)
-            rendered_prompt = template.render(render_context)
-            self.logger.info("Successfully rendered prompt for stage %s", stage_number)
-            self.logger.debug(
-                "Rendered prompt length for stage %s: %d chars", stage_number, len(rendered_prompt)
+            # Get stage definition (raises PromptLoadError if not found)
+            stage_def = self.get_stage_definition(stage_number)
+
+            # Safely get template strings
+            system_prompt_template_str = stage_def.get("system_prompt", "")
+            user_prompt_template_str = stage_def.get("user_prompt", "")
+            common_preamble = self.common_template.get("preamble", "")
+            common_postamble = self.common_template.get("postamble", "")
+
+            if not system_prompt_template_str and not user_prompt_template_str:
+                 raise PromptLoadError(f"Stage {stage_number} definition is missing both 'system_prompt' and 'user_prompt'.")
+
+            # Merge context: Stage-specific context overrides common context if keys conflict
+            # For now, just pass the provided context_data
+            render_context = context_data
+
+            # Render parts
+            rendered_system = ""
+            rendered_user = ""
+
+            if system_prompt_template_str:
+                system_template = self.jinja_env.from_string(system_prompt_template_str)
+                rendered_system = system_template.render(render_context)
+
+            if user_prompt_template_str:
+                user_template = self.jinja_env.from_string(user_prompt_template_str)
+                rendered_user = user_template.render(render_context)
+
+            # Combine parts (ensure some spacing)
+            full_prompt = f"{common_preamble}\n\n{rendered_system}\n\n{rendered_user}\n\n{common_postamble}".strip()
+
+            self.logger.debug("Successfully rendered prompt for stage %s", stage_number)
+            return full_prompt
+
+        except PromptLoadError: # Re-raise errors from get_stage_definition
+            raise
+        except (TemplateError, TypeError, KeyError) as e:
+            self.logger.error(
+                "Failed to render prompt template for stage %s: %s", stage_number, e, exc_info=True # Log traceback
             )
-            return rendered_prompt
-        except TemplateError as e:
-            self.logger.exception("Jinja2 rendering error for stage %s: %s", stage_number, e)
-            raise PromptLoadError(f"Template rendering failed for stage {stage_number}: {e}") from e
+            raise PromptRenderError(
+                f"Error rendering prompt for stage {stage_number}: {type(e).__name__} - {e}"
+            ) from e
         except Exception as e:
             self.logger.exception(
-                "Unexpected error during prompt rendering for stage %s: %s", stage_number, e
+                "Unexpected error rendering prompt for stage %s: %s", stage_number, e
             )
-            raise PromptLoadError(
-                f"Unexpected rendering error for stage {stage_number}: {e}"
+            raise PromptRenderError(
+                f"Unexpected error rendering prompt for stage {stage_number}: {e}"
             ) from e

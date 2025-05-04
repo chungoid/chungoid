@@ -2,27 +2,29 @@
 
 import logging
 from typing import List, Dict, Any, Optional
-import asyncio
+# import asyncio # No longer needed for this module directly
 import chromadb
 from .config_loader import get_config  # <<< Import config loader
+from pathlib import Path
+import os
 
 logger = logging.getLogger(__name__)
 
-# Configuration Defaults (Read from environment or fallback)
-# Default to HTTP client unless overridden
-# CHROMA_CLIENT_TYPE = os.getenv("CHROMA_CLIENT_TYPE", "http").lower()
-# CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-# CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
-# CHROMA_PERSIST_PATH = os.getenv("CHROMA_PERSIST_PATH", "./chroma")
+# Define Custom Exception for Chroma Operations
+class ChromaOperationError(Exception):
+    """Custom exception for errors during ChromaDB operations."""
+    pass
+
+# Configuration Defaults (Read from environment or fallback) - Handled by get_config now
 
 # Singleton ChromaDB client instance
 _client: Optional[chromadb.ClientAPI] = None
-_client_lock = asyncio.Lock()
+# _client_lock = asyncio.Lock() # Removed async lock
 
 # --- Public ChromaDB Client Accessor ---
 
 
-def get_chroma_client() -> Optional[chromadb.ClientAPI]:  # <--- Removed async
+def get_chroma_client() -> Optional[chromadb.ClientAPI]:  # Already sync, signature correct
     """
     Provides a singleton ChromaDB client instance based on configuration.
 
@@ -33,14 +35,13 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:  # <--- Removed async
     """
     global _client
 
-    # Use a lock to prevent race conditions during initialization
-    # Note: This simplistic lock might not be fully robust in highly concurrent scenarios,
-    # but it's sufficient for typical MCP server usage where client access is frequent
-    # but initialization is rare.
+    # Use a lock to prevent race conditions during initialization - Conceptually,
+    # but Python dict/global access is generally thread-safe for reads after init.
+    # Re-initialization race condition is the main concern if called concurrently *before* init.
 
-    # Double-checked locking pattern (without async lock)
+    # Double-checked locking pattern (simplified for sync)
     if _client is None:
-        # Acquire lock (conceptually, as this is now sync)
+        # Acquire lock (conceptually, Python handles basic assignment atomicity)
         if _client is None:
             try:
                 # Get ChromaDB configuration from the central loader
@@ -57,17 +58,36 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:  # <--- Removed async
                 logger.info(f"Determining client type: {client_type}, persist_path: {persist_path}")
 
                 if client_type == "http":
-                    host = chroma_config.get("host", "localhost")
-                    port = chroma_config.get("port", 8000)
+                    # Prioritize environment variables, then config, then default
+                    env_host = os.getenv("CHROMA_HOST")
+                    env_port_str = os.getenv("CHROMA_PORT")
+
+                    host = env_host if env_host else chroma_config.get("host", "localhost")
+                    port_str = env_port_str if env_port_str else str(chroma_config.get("port", 8000))
+
+                    # Validate and convert port
+                    try:
+                        port = int(port_str)
+                    except ValueError:
+                        logger.error(f"Invalid CHROMA_PORT or config port value: '{port_str}'. Using default 8000.")
+                        port = 8000
+
                     logger.info(f"Initializing HttpClient with host: {host}, port: {port}")
                     _client = chromadb.HttpClient(host=host, port=port)
                     logger.info("HttpClient initialized.")
                 elif client_type == "persistent":
+                    # Ensure persist_path is absolute or relative to a known base
+                    persist_path = Path(persist_path)
+                    if not persist_path.is_absolute():
+                        # Assuming relative paths should be relative to the project root?
+                        # This needs clarification. Using CWD for now.
+                        persist_path = Path.cwd() / persist_path
+                        logger.warning(
+                            f"ChromaDB persist_path was relative, resolved to {persist_path} based on CWD."
+                        )
+                    persist_path.mkdir(parents=True, exist_ok=True)
                     logger.info(f"Initializing PersistentClient with path: {persist_path}")
-                    _client = chromadb.PersistentClient(path=persist_path)
-                    logger.info(
-                        f"PersistentClient initialized with path: {persist_path}"
-                    )  # Added explicit path log
+                    _client = chromadb.PersistentClient(path=str(persist_path))
                 else:
                     logger.error(f"Unsupported ChromaDB client_type: {client_type}")
                     _client = None  # Ensure client remains None on error
@@ -80,27 +100,28 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:  # <--- Removed async
             except Exception as e:
                 logger.error(f"Failed to initialize ChromaDB client: {e}", exc_info=True)
                 _client = None  # Ensure client is None on exception
-            finally:
-                # Release lock (conceptually)
-                pass
+            # finally:
+            # Release lock (conceptually)
+            #    pass # No explicit lock object used
 
     # Log whether we are returning an existing or newly created client
     if _client:
         logger.debug("Returning ChromaDB client instance.")
         # You could add a check here like `_client.heartbeat()` for HttpClient
         # but PersistentClient doesn't have an equivalent easy check.
+
     else:
         logger.warning("Returning None for ChromaDB client.")
 
     return _client
 
 
-# --- Core Operations (modified to handle potential None client) ---
+# --- Core Operations (modified to handle potential None client and be synchronous) ---
 
 
-async def get_or_create_collection(collection_name: str) -> Optional[chromadb.Collection]:
+def get_or_create_collection(collection_name: str) -> Optional[chromadb.Collection]:
     """Helper to get or create a collection, returning the collection object or None."""
-    client = await get_chroma_client()
+    client = get_chroma_client() # Removed await
     if not client:
         logger.error(
             f"Cannot get/create collection '{collection_name}': ChromaDB client not available."
@@ -115,14 +136,14 @@ async def get_or_create_collection(collection_name: str) -> Optional[chromadb.Co
         return None
 
 
-async def add_documents(
+def add_documents(
     collection_name: str,
     documents: List[str],
     metadatas: Optional[List[Dict[str, Any]]] = None,
     ids: Optional[List[str]] = None,
 ) -> bool:
     """Adds multiple documents to a specified Chroma collection."""
-    collection = await get_or_create_collection(collection_name)
+    collection = get_or_create_collection(collection_name) # Removed await
     if not collection:
         return False
     try:
@@ -135,13 +156,13 @@ async def add_documents(
         return False
 
 
-async def get_documents(
+def get_documents(
     collection_name: str,
     doc_ids: List[str],
     include: Optional[List[str]] = ["metadatas", "documents"],
 ) -> Optional[Dict[str, Any]]:
     """Retrieves documents from a collection by their IDs."""
-    collection = await get_or_create_collection(collection_name)
+    collection = get_or_create_collection(collection_name) # Removed await
     if not collection:
         return None
     try:
@@ -156,7 +177,7 @@ async def get_documents(
         return None
 
 
-async def query_documents(
+def query_documents(
     collection_name: str,
     query_texts: Optional[List[str]] = None,
     query_embeddings: Optional[List[List[float]]] = None,
@@ -166,7 +187,7 @@ async def query_documents(
     include: Optional[List[str]] = ["metadatas", "documents", "distances"],
 ) -> Optional[List[Dict[str, Any]]]:  # Changed return format for consistency
     """Queries a Chroma collection by text or embeddings."""
-    collection = await get_or_create_collection(collection_name)
+    collection = get_or_create_collection(collection_name) # Removed await
     if not collection:
         return None
     try:
@@ -182,83 +203,74 @@ async def query_documents(
 
         # Reformat results into a simpler list of dictionaries
         formatted_results = []
-        num_results = len(results.get("ids", [[]])[0]) if results.get("ids") else 0
+        # Check if results are valid and contain IDs before processing
+        if results and results.get("ids") and results["ids"][0]:
+             num_results = len(results["ids"][0])
+             ids = results["ids"][0]
+             distances = results.get("distances", [[None] * num_results])[0]
+             metadatas = results.get("metadatas", [[None] * num_results])[0]
+             documents = results.get("documents", [[None] * num_results])[0]
+             embeddings = results.get("embeddings")
+             embeddings_list = embeddings[0] if embeddings else [None] * num_results
 
-        if num_results > 0:
-            ids = results["ids"][0]
-            distances = results.get("distances", [[None] * num_results])[0]
-            metadatas = results.get("metadatas", [[None] * num_results])[0]
-            documents = results.get("documents", [[None] * num_results])[0]
-            embeddings = results.get("embeddings")  # Embeddings might be None or list of lists
-            embeddings = embeddings[0] if embeddings else [None] * num_results
-
-            for i in range(num_results):
+             for i in range(num_results):
                 formatted_results.append(
-                    {
-                        "id": ids[i],
-                        "distance": distances[i],
-                        "metadata": metadatas[i],
-                        "document": documents[i],
-                        "embedding": embeddings[i],  # May be None if not included
-                    }
-                )
+                     {
+                         "id": ids[i],
+                         "distance": distances[i],
+                         "metadata": metadatas[i],
+                         "document": documents[i],
+                         "embedding": embeddings_list[i] if embeddings else None,
+                     }
+                 )
+             logger.info(f"Query returned {len(formatted_results)} results from '{collection_name}'.")
+        else:
+            logger.info(f"Query returned no results from '{collection_name}'.")
 
-        query_summary = query_texts[0] if query_texts else "embedding query"
-        logger.info(
-            f"Queried '{collection_name}' with '{query_summary}...', got {num_results} results."
-        )
         return formatted_results
 
     except Exception as e:
-        logger.exception(f"Error querying collection '{collection_name}': {e}")
+        logger.exception(f"Error querying documents from '{collection_name}': {e}")
         return None
 
 
-# Add other helper functions as needed, e.g.,
-# - add_or_update_document (handle upsert logic)
-# - get_document_by_id (simplify get_documents for single ID)
-# - get_all_documents (use collection.get() without IDs)
-# - delete_documents
-
-
-# Example utility for get_document_by_id
-async def get_document_by_id(
+def get_document_by_id(
     collection_name: str, doc_id: str, include: Optional[List[str]] = ["metadatas", "documents"]
 ) -> Optional[Dict[str, Any]]:
-    """Retrieves a single document by its ID."""
-    results = await get_documents(
-        collection_name=collection_name, doc_ids=[doc_id], include=include
-    )
-    if results and results.get("ids"):
-        # Extract the single result (assuming ID is unique)
-        doc_index = results["ids"].index(doc_id)
-        single_result = {}
-        if results.get("metadatas") and results["metadatas"][doc_index]:
-            single_result["metadata"] = results["metadatas"][doc_index]
-        if results.get("documents") and results["documents"][doc_index]:
-            single_result["document"] = results["documents"][doc_index]
-        # Add other included fields if needed
-        single_result["id"] = doc_id
+    """Retrieves a single document by its ID. Returns the document object or None."""
+    results = get_documents(collection_name, doc_ids=[doc_id], include=include) # Removed await
+    if results and results.get("ids") and results["ids"]:
+        # Reformat the result from collection.get format to a single dict
+        doc_index = 0 # Should only be one result
+        single_result = {
+            "id": results["ids"][doc_index],
+            "metadata": results.get("metadatas", [None])[doc_index],
+            "document": results.get("documents", [None])[doc_index],
+            "embedding": results.get("embeddings", [None])[doc_index] if results.get("embeddings") else None
+        }
+        logger.debug(f"Retrieved document ID {doc_id} from '{collection_name}'.")
         return single_result
-    return None
+    else:
+        logger.warning(f"Document ID {doc_id} not found in collection '{collection_name}'.")
+        return None
 
 
-# Placeholder for add_or_update_document
-async def add_or_update_document(
+def add_or_update_document(
     collection_name: str, doc_id: str, document_content: str, metadata: Dict[str, Any]
 ) -> bool:
-    """Adds or updates a single document (basic upsert)."""
-    collection = await get_or_create_collection(collection_name)
+    """Adds or updates (upserts) a single document in a collection."""
+    collection = get_or_create_collection(collection_name) # Removed await
     if not collection:
         return False
     try:
-        collection.upsert(ids=[doc_id], documents=[document_content], metadatas=[metadata])
-        logger.info(f"Upserted document ID '{doc_id}' in collection '{collection_name}'.")
+        # Use upsert for add-or-update behavior
+        collection.upsert(
+            ids=[doc_id], metadatas=[metadata], documents=[document_content]
+        )
+        logger.info(f"Upserted document ID {doc_id} in collection '{collection_name}'.")
         return True
     except Exception as e:
-        logger.exception(
-            f"Error upserting document '{doc_id}' in collection '{collection_name}': {e}"
-        )
+        logger.exception(f"Error upserting document ID {doc_id} in '{collection_name}': {e}")
         return False
 
 
