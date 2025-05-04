@@ -1,0 +1,388 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>utils.tool_adapters &mdash; Chungoid MCP Server 0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=2709fde1"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            Chungoid MCP Server
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../modules.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">Chungoid MCP Server</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">utils.tool_adapters</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for utils.tool_adapters</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Adapter functions for executing external tools and MCP commands.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">shlex</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Optional</span>
+
+
+<span class="c1"># Custom Exception for Tool Execution Errors</span>
+<div class="viewcode-block" id="ToolExecutionError">
+<a class="viewcode-back" href="../../utils.html#utils.tool_adapters.ToolExecutionError">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ToolExecutionError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Custom exception for errors encountered during tool execution.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">stdout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">stderr</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stdout</span> <span class="o">=</span> <span class="n">stdout</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stderr</span> <span class="o">=</span> <span class="n">stderr</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">msg</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__str__</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">stderr</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Stderr: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">stderr</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Stdout: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">stdout</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="n">msg</span></div>
+
+
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1"># --- Core Tool Execution Logic ---</span>
+
+
+<div class="viewcode-block" id="execute_tool">
+<a class="viewcode-back" href="../../utils.html#utils.tool_adapters.execute_tool">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">execute_tool</span><span class="p">(</span>
+    <span class="n">tool_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">tool_def</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">arguments</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Executes a defined tool (CLI command) with provided arguments.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        tool_name: The name of the tool being executed.</span>
+<span class="sd">        tool_def: The tool definition dictionary (containing &#39;command_template&#39;, etc.).</span>
+<span class="sd">        arguments: A dictionary of arguments provided for the tool execution.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The standard output of the executed command as a string.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ToolExecutionError: If the tool definition is invalid, arguments are missing,</span>
+<span class="sd">                            the command fails, times out, or produces errors.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Executing tool: </span><span class="si">%s</span><span class="s2"> with args: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">arguments</span><span class="p">)</span>
+
+    <span class="n">command_template</span> <span class="o">=</span> <span class="n">tool_def</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;command_template&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">command_template</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Tool &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39; definition is missing &#39;command_template&#39;.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Validate arguments based on tool_def (optional but recommended)</span>
+    <span class="c1"># TODO: Implement validation based on tool_def[&#39;arguments&#39;] if schema is available.</span>
+
+    <span class="c1"># Format the command string safely</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="c1"># Using f-string formatting, ensure arguments are sanitized if coming from untrusted sources</span>
+        <span class="c1"># For simple CLI tools where args are controlled, direct formatting might be okay.</span>
+        <span class="c1"># Consider more robust templating if complex/untrusted inputs are possible.</span>
+        <span class="n">formatted_command</span> <span class="o">=</span> <span class="n">command_template</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="o">**</span><span class="n">arguments</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">KeyError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+            <span class="s2">&quot;Missing argument &#39;</span><span class="si">%s</span><span class="s2">&#39; required by command template for </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">tool_name</span>
+        <span class="p">)</span>
+        <span class="c1"># Raise with specific error message, chain original exception</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Missing argument &#39;</span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&#39; required by command template for </span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s2">&quot;Error formatting command for </span><span class="si">%s</span><span class="s2">: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+        <span class="c1"># Raise with specific error message, chain original exception</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Error formatting command for </span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Formatted command: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">formatted_command</span><span class="p">)</span>
+
+    <span class="c1"># Execute the command using subprocess</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="c1"># shlex.split helps handle quoted arguments correctly</span>
+        <span class="n">cmd_parts</span> <span class="o">=</span> <span class="n">shlex</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">formatted_command</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">cmd_parts</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Formatted command for &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39; resulted in empty parts.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Execute the command</span>
+        <span class="n">timeout_seconds</span> <span class="o">=</span> <span class="n">tool_def</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;timeout&quot;</span><span class="p">,</span> <span class="mi">60</span><span class="p">)</span>  <span class="c1"># Default timeout 60 seconds</span>
+        <span class="n">process</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+            <span class="n">cmd_parts</span><span class="p">,</span>
+            <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Don&#39;t raise CalledProcessError automatically</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="n">timeout_seconds</span><span class="p">,</span>
+            <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>  <span class="c1"># Explicitly set encoding</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Check return code</span>
+        <span class="k">if</span> <span class="n">process</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+                <span class="s2">&quot;Tool &#39;</span><span class="si">%s</span><span class="s2">&#39; failed with return code </span><span class="si">%d</span><span class="s2">. Stderr: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="n">tool_name</span><span class="p">,</span>
+                <span class="n">process</span><span class="o">.</span><span class="n">returncode</span><span class="p">,</span>
+                <span class="n">process</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+            <span class="p">)</span>
+            <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Tool &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39; failed with exit code </span><span class="si">{</span><span class="n">process</span><span class="o">.</span><span class="n">returncode</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">,</span>
+                <span class="n">stdout</span><span class="o">=</span><span class="n">process</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+                <span class="n">stderr</span><span class="o">=</span><span class="n">process</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Success</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Tool &#39;</span><span class="si">%s</span><span class="s2">&#39; executed successfully.&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Tool &#39;</span><span class="si">%s</span><span class="s2">&#39; stdout: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">process</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">process</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="c1"># Handle case where the command itself is not found</span>
+        <span class="n">cmd_name</span> <span class="o">=</span> <span class="n">cmd_parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">cmd_parts</span> <span class="k">else</span> <span class="s2">&quot;command&quot;</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+            <span class="s2">&quot;Command &#39;</span><span class="si">%s</span><span class="s2">&#39; not found for tool &#39;</span><span class="si">%s</span><span class="s2">&#39;. Ensure it&#39;s in PATH.&quot;</span><span class="p">,</span>
+            <span class="n">cmd_name</span><span class="p">,</span>
+            <span class="n">tool_name</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Command not found: </span><span class="si">{</span><span class="n">cmd_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">exc</span>
+    <span class="k">except</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">TimeoutExpired</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+            <span class="s2">&quot;Tool &#39;</span><span class="si">%s</span><span class="s2">&#39; timed out after </span><span class="si">%s</span><span class="s2"> seconds.&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">timeout_seconds</span>
+        <span class="p">)</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Tool &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39; timed out.&quot;</span><span class="p">,</span> <span class="n">stdout</span><span class="o">=</span><span class="n">e</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">e</span><span class="o">.</span><span class="n">stderr</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s2">&quot;Unexpected error executing tool &#39;</span><span class="si">%s</span><span class="s2">&#39;: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Unexpected error executing tool &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span></div>
+
+
+
+<span class="c1"># --- Placeholder/Example MCP Tool Adapters ---</span>
+<span class="c1"># These would interact with an MCP client library if this module</span>
+<span class="c1"># needed to CALL other MCP tools.</span>
+
+
+<div class="viewcode-block" id="call_mcp_tool">
+<a class="viewcode-back" href="../../utils.html#utils.tool_adapters.call_mcp_tool">[docs]</a>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">call_mcp_tool</span><span class="p">(</span>
+    <span class="n">mcp_client</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">arguments</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Placeholder for calling another MCP tool via a client instance.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        mcp_client: An initialized MCP client object (e.g., from fastmcp).</span>
+<span class="sd">        tool_name: The name of the MCP tool to call.</span>
+<span class="sd">        arguments: The arguments for the MCP tool.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The result dictionary from the MCP tool call.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ToolExecutionError: If the MCP call fails.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Calling MCP tool: </span><span class="si">%s</span><span class="s2"> with args: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">arguments</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">mcp_client</span><span class="p">,</span> <span class="s2">&quot;call_tool&quot;</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="s2">&quot;Provided mcp_client does not have a &#39;call_tool&#39; method.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="c1"># Assuming the client has an async call_tool method</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mcp_client</span><span class="o">.</span><span class="n">call_tool</span><span class="p">(</span><span class="n">tool_name</span><span class="p">,</span> <span class="o">**</span><span class="n">arguments</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;MCP tool &#39;</span><span class="si">%s</span><span class="s2">&#39; call successful.&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;MCP tool &#39;</span><span class="si">%s</span><span class="s2">&#39; result: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s2">&quot;Failed to call MCP tool &#39;</span><span class="si">%s</span><span class="s2">&#39;: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+        <span class="c1"># More specific error handling based on the MCP client library would be better</span>
+        <span class="k">raise</span> <span class="n">ToolExecutionError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Failed to execute MCP tool &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span></div>
+
+
+
+<span class="c1"># --- Example Tool Definition Loading ---</span>
+<span class="c1"># In a real application, this might load from a JSON/YAML file</span>
+<span class="c1"># defined in dev-docs/tools/tools_schema.json</span>
+
+<span class="n">EXAMPLE_TOOL_DEFINITIONS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;list_directory&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Lists the contents of a specified directory.&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;command_template&quot;</span><span class="p">:</span> <span class="s2">&quot;ls -1a </span><span class="si">{directory_path}</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># Example template</span>
+        <span class="s2">&quot;arguments&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;directory_path&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+                <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Path of the directory to list.&quot;</span><span class="p">,</span>
+            <span class="p">}</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>  <span class="c1"># Seconds</span>
+    <span class="p">},</span>
+    <span class="s2">&quot;show_file&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Displays the content of a specified file.&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;command_template&quot;</span><span class="p">:</span> <span class="s2">&quot;cat </span><span class="si">{file_path}</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># Example template</span>
+        <span class="s2">&quot;arguments&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;file_path&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+                <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Path of the file to display.&quot;</span><span class="p">,</span>
+            <span class="p">}</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="c1"># Add more tool definitions here</span>
+<span class="p">}</span>
+
+<span class="c1"># --- Main Execution / Test ---</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span>
+        <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">,</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> - </span><span class="si">%(name)s</span><span class="s2"> - </span><span class="si">%(levelname)s</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;--- Testing Tool Adapters --- &quot;</span><span class="p">)</span>
+
+    <span class="c1"># Test listing current directory</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Testing &#39;list_directory&#39; on &#39;.&#39;&quot;</span><span class="p">)</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">execute_tool</span><span class="p">(</span>
+            <span class="s2">&quot;list_directory&quot;</span><span class="p">,</span>
+            <span class="n">EXAMPLE_TOOL_DEFINITIONS</span><span class="p">[</span><span class="s2">&quot;list_directory&quot;</span><span class="p">],</span>
+            <span class="p">{</span><span class="s2">&quot;directory_path&quot;</span><span class="p">:</span> <span class="s2">&quot;.&quot;</span><span class="p">},</span>
+        <span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;&#39;list_directory&#39; successful. Output:</span><span class="se">\n</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">output</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">ToolExecutionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;&#39;list_directory&#39; failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">20</span><span class="p">)</span>
+
+    <span class="c1"># Test showing a file (e.g., requirements.txt)</span>
+    <span class="n">test_file</span> <span class="o">=</span> <span class="s2">&quot;requirements.txt&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Testing &#39;show_file&#39; on &#39;</span><span class="si">%s</span><span class="s2">&#39;&quot;</span><span class="p">,</span> <span class="n">test_file</span><span class="p">)</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">execute_tool</span><span class="p">(</span>
+            <span class="s2">&quot;show_file&quot;</span><span class="p">,</span> <span class="n">EXAMPLE_TOOL_DEFINITIONS</span><span class="p">[</span><span class="s2">&quot;show_file&quot;</span><span class="p">],</span> <span class="p">{</span><span class="s2">&quot;file_path&quot;</span><span class="p">:</span> <span class="n">test_file</span><span class="p">}</span>
+        <span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;&#39;show_file&#39; successful. Output:</span><span class="se">\n</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">output</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">ToolExecutionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;&#39;show_file&#39; failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">20</span><span class="p">)</span>
+
+    <span class="c1"># Test non-existent command</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Testing non-existent command&quot;</span><span class="p">)</span>
+        <span class="n">bad_tool_def</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;command_template&quot;</span><span class="p">:</span> <span class="s2">&quot;non_existent_command_123&quot;</span><span class="p">,</span> <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+        <span class="n">execute_tool</span><span class="p">(</span><span class="s2">&quot;bad_command&quot;</span><span class="p">,</span> <span class="n">bad_tool_def</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="k">except</span> <span class="n">ToolExecutionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Caught expected error for non-existent command: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">20</span><span class="p">)</span>
+
+    <span class="c1"># Test command failure (e.g., cat non-existent file)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Testing command failure (cat non-existent file)&quot;</span><span class="p">)</span>
+        <span class="n">execute_tool</span><span class="p">(</span>
+            <span class="s2">&quot;show_file&quot;</span><span class="p">,</span>
+            <span class="n">EXAMPLE_TOOL_DEFINITIONS</span><span class="p">[</span><span class="s2">&quot;show_file&quot;</span><span class="p">],</span>
+            <span class="p">{</span><span class="s2">&quot;file_path&quot;</span><span class="p">:</span> <span class="s2">&quot;./non_existent_file_xyz.abc&quot;</span><span class="p">},</span>
+        <span class="p">)</span>
+    <span class="k">except</span> <span class="n">ToolExecutionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Caught expected error for command failure: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;--- Tool Adapter Tests Complete --- &quot;</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, AI Assistant.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

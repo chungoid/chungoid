@@ -1,0 +1,214 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chungoid-mcp-server"
+version = "0.2.0" # Assuming version 0.2.0 based on README
+authors = [
+  # { name="Your Name", email="your.email@example.com" }, # Add author details if known
+]
+description = "Meta-Cognitive Process server for Chungoid Bootstrapper"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta", # Or appropriate status
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "annotated-types==0.7.0",
+    "anyio==4.9.0",
+    "asgiref==3.8.1",
+    "attrs==25.3.0",
+    "babel==2.17.0", # Used by Sphinx
+    "backoff==2.2.1",
+    "bcrypt==4.3.0", # Often OS-dependent builds, ensure compatibility
+    "beautifulsoup4==4.13.4", # Used by Sphinx RTD theme
+    "cachetools==5.5.2", # Used by google-auth
+    "certifi==2025.4.26", # Dependency of requests, httpx
+    "charset-normalizer==3.4.2", # Dependency of requests
+    "chroma-hnswlib==0.7.6", # ChromaDB dependency
+    "chromadb==1.0.7",
+    "click==8.1.8", # Used by fastapi, uvicorn, typer, etc.
+    "coloredlogs==15.0.1", # Optional: for colored console logs
+    "Deprecated==1.2.18",
+    "dill==0.4.0", # Potential serialization lib
+    "distro==1.9.0", # Used by opentelemetry
+    "docutils==0.21.2", # Used by Sphinx, readme rendering
+    "durationpy==0.9", # Used by posthog
+    "exceptiongroup==1.2.2", # Required by anyio < 4.3 on Python < 3.11
+    "fastapi==0.115.9",
+    "fastmcp==2.2.6",
+    "filelock==3.18.0", # Used by StateManager
+    "flatbuffers==25.2.10", # ChromaDB dependency
+    "fsspec==2025.3.2", # Used by huggingface_hub
+    "google-auth==2.39.0", # Potential future use or dep
+    "googleapis-common-protos==1.70.0", # Used by grpcio, opentelemetry
+    "grpcio==1.71.0", # Used by opentelemetry
+    "h11==0.16.0", # Used by httpcore/httpx
+    "httpcore==1.0.9", # Used by httpx
+    "httptools==0.6.4", # Used by uvicorn
+    "httpx==0.28.1", # Used by chromadb, etc.
+    "httpx-sse==0.4.0", # Used by mcp client?
+    "huggingface-hub==0.30.2", # For model/tokenizer downloads
+    "humanfriendly==10.0", # Used by coloredlogs
+    "idna==3.10", # Used by requests, httpx
+    "imagesize==1.4.1", # Used by Sphinx
+    "importlib_metadata==8.6.1", # Required on Python < 3.10
+    "importlib_resources==6.5.2", # Used by jsonschema etc
+    "Jinja2==3.1.6", # Used by Sphinx, PromptManager
+    "jsonschema==4.23.0", # Used by referencing
+    "jsonschema-specifications==2025.4.1", # Used by jsonschema
+    "kubernetes==32.0.1", # Large dependency, check if needed
+    "markdown-it-py==3.0.0", # Used by rich
+    "MarkupSafe==3.0.2", # Used by Jinja2
+    "mcp==1.7.0", # Core dependency
+    "mdurl==0.1.2", # Used by markdown-it-py
+    "mmh3==5.1.0", # Used by chromadb
+    "mpmath==1.3.0", # Used by sympy
+    "numpy==2.2.5", # Used by chromadb, onnxruntime
+    "oauthlib==3.2.2", # Used by requests-oauthlib
+    "onnxruntime==1.21.1", # ChromaDB dependency
+    "openapi-pydantic==0.5.1", # ChromaDB dependency
+    "opentelemetry-api==1.32.1",
+    "opentelemetry-exporter-otlp-proto-common==1.32.1",
+    "opentelemetry-exporter-otlp-proto-grpc==1.32.1",
+    "opentelemetry-instrumentation==0.53b1",
+    "opentelemetry-instrumentation-asgi==0.53b1",
+    "opentelemetry-instrumentation-fastapi==0.53b1",
+    "opentelemetry-proto==1.32.1",
+    "opentelemetry-sdk==1.32.1",
+    "opentelemetry-semantic-conventions==0.53b1",
+    "opentelemetry-util-http==0.53b1",
+    "orjson==3.10.18", # Used by fastapi
+    "overrides==7.7.0", # Used by chromadb
+    "packaging==25.0", # Used by sphinx, setuptools, etc.
+    "pbr==6.1.1", # Used by stevedore
+    "pluggy==1.5.0", # Used by pytest
+    "posthog==4.0.1", # Analytics? Check if needed
+    "protobuf==5.29.4", # Used by opentelemetry, googleapis
+    "pyasn1==0.6.1", # Used by google-auth, rsa
+    "pyasn1_modules==0.4.2", # Used by google-auth
+    "pydantic==2.11.4", # Used by fastapi, chromadb, etc.
+    "pydantic-settings==2.9.1", # Useful config management
+    "pydantic_core==2.33.2", # Used by pydantic
+    "Pygments==2.19.1", # Used by rich, Sphinx
+    "PyPika==0.48.9", # Used by chromadb
+    "python-dateutil==2.9.0.post0", # Used by posthog
+    "python-dotenv==1.1.0",
+    "python-multipart==0.0.20", # Used by fastapi
+    "PyYAML==6.0.2", # Used by StateManager, config
+    "referencing==0.36.2", # Used by jsonschema
+    "requests==2.32.3", # General HTTP client
+    "requests-oauthlib==2.0.0", # OAuth for requests
+    "rich==14.0.0", # Used for nice terminal output
+    "roman-numerals-py==3.1.0", # Example dep? Check usage
+    "rpds-py==0.24.0", # Used by referencing
+    "rsa==4.9.1", # Used by google-auth
+    "setuptools==80.1.0", # Build system requirement
+    "shellingham==1.5.4", # Used by typer, rich
+    "six==1.17.0", # Compatibility lib (used by many)
+    "sniffio==1.3.1", # Used by anyio, httpcore
+    "snowballstemmer==2.2.0", # Used by Sphinx
+    "soupsieve==2.7", # Used by beautifulsoup4
+    "sse-starlette==2.3.3", # Server-Sent Events for Starlette/FastAPI
+    "starlette==0.45.3", # Used by fastapi
+    "stevedore==5.4.1", # Used by pbr? Check usage
+    "sympy==1.14.0", # Symbolic math, check if needed
+    "tenacity==9.1.2", # Retrying library
+    "tokenizers==0.21.1", # Used by huggingface_hub? Check usage
+    "tqdm==4.67.1", # Progress bars
+    "typer==0.15.3", # CLI framework (check usage)
+    "typing-inspection==0.4.0", # Used by overrides
+    "typing_extensions==4.13.2", # Polyfills for typing module
+    "urllib3==2.4.0", # Used by requests, google-auth, etc.
+    "uvicorn==0.34.2", # ASGI server, used by fastapi
+    "uvloop==0.21.0", # Faster asyncio event loop (optional for uvicorn)
+    "watchfiles==1.0.5", # Used by uvicorn for reloading
+    "websocket-client==1.8.0", # WebSocket client (check usage)
+    "websockets==15.0.1", # WebSocket server/client (used by uvicorn)
+    "wrapt==1.17.2", # Used by deprecated, opentelemetry
+    "zipp==3.21.0", # Used by importlib_resources
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<8.4",
+    "pytest-asyncio",
+    "ruff==0.11.8", # Linter/Formatter
+    "bandit==1.8.3", # Security linter
+    "mypy", # Optional: Type checker
+    "types-PyYAML",
+    "types-filelock",
+    "types-requests",
+    "build==1.2.2.post1", # For building the package
+    # Add other dev dependencies as needed
+]
+docs = [
+    "Sphinx==8.2.3",
+    "sphinx-rtd-theme==3.0.2",
+    "alabaster==1.0.0", # Sphinx theme
+    "Babel==2.17.0", # Needed by Sphinx for i18n
+    "imagesize==1.4.1", # Needed by Sphinx
+    "snowballstemmer==2.2.0", # Needed by Sphinx
+    "sphinxcontrib-applehelp==2.0.0",
+    "sphinxcontrib-devhelp==2.0.0",
+    "sphinxcontrib-htmlhelp==2.1.0",
+    "sphinxcontrib-jquery==4.1",
+    "sphinxcontrib-jsmath==1.0.1", # Check if jsmath is actually used
+    "sphinxcontrib-qthelp==2.0.0",
+    "sphinxcontrib-serializinghtml==2.0.0",
+]
+
+
+[tool.setuptools]
+# Since scripts are in the root, list them as modules
+# If you move them to src/, adjust accordingly.
+py-modules = ["chungoidmcp", "stage_executor", "application_security"]
+packages = ["utils"] # Removed tests and server_prompts
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+# addopts = "-ra -q --log-cli-level=DEBUG" # Add options like verbose, quiet, log level
+testpaths = [
+    "tests",
+]
+# Filter warnings if necessary
+# filterwarnings = [
+#     "error",
+#     "ignore::DeprecationWarning",
+# ]
+# Enable asyncio mode if using pytest-asyncio
+asyncio_mode = "auto"
+
+[tool.ruff]
+# Assuming default Ruff config is acceptable, or customize here
+# select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "PT"] # Example selection
+# ignore = ["E501"] # Example ignore: line too long
+line-length = 100 # Slightly longer allowed length
+
+[tool.ruff.lint]
+# select = ["ALL"]
+# ignore = ["D", "E501"] # Example: Ignore missing docstrings and long lines
+
+[tool.ruff.format]
+# quote-style = "double"
+# indent-style = "space"
+# skip-magic-trailing-comma = false
+# line-ending = "auto"
+
+# [tool.mypy] # Example mypy config - uncomment and configure if using mypy
+# python_version = "3.10"
+# warn_return_any = true
+# warn_unused_configs = true
+# ignore_missing_imports = true # Start permissive
+# follow_imports = "skips"
+# check_untyped_defs = true
