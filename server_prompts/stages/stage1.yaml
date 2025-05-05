@@ -6,7 +6,9 @@ EXECUTION CONTRACT: |
   • Create `dev-docs/design/` directory if needed.
   • Generate `dev-docs/design/validation_report.json`.
   • **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
-    // ... existing reflection steps ...
+    - **Announce Intent:** "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
+    - **Invoke Tool:** [Invoke tool to:
+            { **Refined Reflection:** Verify `validation_report.json` exists, ensure blueprint & requirements have YAML front-matter. **CRITICAL:** If `dev-docs/libraries/doc_requests.yaml` exists and contains unresolved entries, reflection must mark status as FAIL and instruct user to supply docs. Otherwise, confirm readiness. } ]
   • **AWAIT USER GUIDANCE:** Present the final artifact (`validation_report.json`) and internal reflection outcome. **Await explicit user confirmation** before proceeding.
   • **CRITICAL FINAL STEP (After user confirmation):**
     *   **Prepare Artifact Content:** Read the **full content** of the generated file (`validation_report.json`) into a variable.

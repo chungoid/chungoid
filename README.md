@@ -139,3 +139,42 @@ troubleshooting or JSON logs in CI without modifying repo-tracked files.
 When any of these variables are present, `utils.config_loader` injects the
 value into the runtime config before `utils.logger_setup.setup_logging()` is
 called. 
+
+## Bringing the Chungoid Cursor Rule into **your** project  
+
+Chungoid-core ships a master Cursor rule file  
+`chungoid_bootstrap.mdc` (see `chungoid_core/cursor_rules/`).  
+It keeps the agent behaviour consistent across every workspace.  
+Below are two equally simple ways to copy the rule into a new project, depending on **how you run Chungoid**.
+
+### If you are a *CLI-only* user  
+(You launch the server from the shell and talk to it via an MCP client on the command-line.)
+
+```bash
+# One-liner from project root – copies rule into .cursor/rules/
+chungoid-export-rule              # installed automatically with the package
+
+# Want a custom location?
+chungoid-export-rule ./some/other/path
+```
+The helper is installed as a console script when you `pip install chungoid-core`.
+It will create the target directory if it doesn't exist and prints the path of the copied file.
+
+### If you are an IDE / Cursor user  
+(Your IDE starts the MCP server via `launch_server.sh`.)
+
+Nothing to install manually:  **Stage –1** checks for the rule and auto-copies it if missing by calling the built-in tool handler:
+
+```tool_code
+print(default_api.mcp_chungoid_export_cursor_rule(dest_path=".cursor/rules"))
+```
+
+You'll see a confirmation in your chat pane:
+```
+✓ Copied chungoid_bootstrap.mdc → .cursor/rules/
+```
+If you ever delete the file, just re-run Stage –1 or call the tool handler yourself.
+
+> **Why is this needed?**  The rule embeds Golden Principles (stage fidelity, reflection requirements, doc-flow, etc.) that keep the agent on track. Storing it inside the project means you can tweak it locally without touching the global package, while still starting from the canonical version.
+
+--- 
