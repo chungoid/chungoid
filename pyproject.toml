@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later",
     "Operating System :: OS Independent",
     "Development Status :: 4 - Beta", # Or appropriate status
     "Intended Audience :: Developers",
@@ -217,3 +217,5 @@ extend-select = ["T201"]  # Enforce no print statements (flake8-print rule)
 # ignore_missing_imports = true # Start permissive
 # follow_imports = "skips"
 # check_untyped_defs = true
+
+license = { text = "AGPL-3.0-or-later" }

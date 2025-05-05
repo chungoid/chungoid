@@ -18,15 +18,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt  # from repo root
 
-# 1. Create a new empty work environment and 
+# 1. Create a new empty work environment
 
-# 2. Connect to Chungoid MCP server (both json and cli instructions below)
+# 2. Connect to Chungoid MCP server (see CLI *or* IDE instructions below)
 
-# 2.  In your chat client / CLI, initialise a directory & begin:
+# 3.  In your chat client / CLI, initialise a directory & begin:
 @chungoid set_project_context
 @chungoid initialize_project
 
-# 3. Begin discussing your goal with The Chungoid & refining it. Early stage goal refinement will increase the depth of documentation & context available to your Chungoid & ensure your project thrives. Let Chungoid lead you through the stages!
+# 4. Begin discussing your goal with The Chungoid & refining it. Early stage goal refinement will increase the depth of documentation & context available to your Chungoid & ensure your project thrives. Let Chungoid lead you through the stages!
 ```
 
 *That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
@@ -66,16 +66,18 @@ To begin a new project managed by Chungoid:
     *   It also automatically sets the project context for your current session.
     *   Follow your agents instructions and interact to clarify a well refined project goal & advance through the stages.
 
-## The Workflow: Stages 0-5
+## The Workflow: Stage –1 → Stage 5 *(optional Stage&nbsp;6)*
 
 Chungoid uses a sequential, stage-based workflow. Each stage focuses on a specific part of development and has defined goals and expected outputs (artifacts).
 
-1.  **Stage 0: Discovery & Design:** Understand the goal, research, create `requirements.md` and `blueprint.md`.
+0.  **Stage –1: Goal Draft & Scope Clarification:** Elicit a clear, bounded project goal, confirm KPIs, and brainstorm candidate libraries.  Output: `goal_draft.md` (+ optional `goal_questions.json`).
+1.  **Stage 0: Discovery & Design:** Understand the refined goal, research, create `requirements.md` and `blueprint.md`.
 2.  **Stage 1: Design Validation:** Review Stage 0 artifacts, ensure feasibility/clarity, produce `validation_report.json`.
 3.  **Stage 2: Implementation Planning:** Create `implementation_plan.md` and `detailed_interfaces.md` based on the validated design.
 4.  **Stage 3: Implementation & Unit Testing:** Write code incrementally according to the plan, add unit tests, run static analysis. Produce code artifacts and reports (`static_analysis_report.json`, `unit_test_report.json`).
 5.  **Stage 4: Validation & QA:** Perform integration testing, security checks, etc., on the implemented code. Produce reports (`integration_report.json`, etc.).
 6.  **Stage 5: Release Preparation:** Finalize `README.md`, `docs/`, packaging files, and `release_notes.md`.
+7.  **Stage 6 (Post-Release Retrospective, *optional*):** Run additional CI tests, gather metrics, and document lessons learned in `retrospective.md`.  Helps feed improvements back into Stage –1 for the next project cycle.
 
 ## Interaction: Using the Tools
 
@@ -199,5 +201,31 @@ You'll see a confirmation in your chat pane:
 If you ever delete the file, just re-run Stage –1 or call the tool handler yourself.
 
 > **Why is this needed?**  The rule embeds Golden Principles (stage fidelity, reflection requirements, doc-flow, etc.) that keep the agent on track. Storing it inside the project means you can tweak it locally without touching the global package, while still starting from the canonical version.
+
+--- 
+
+## 🔄 Recent Enhancements (May 2025)
+
+| Area | What changed | Where/Artifacts |
+|------|--------------|-----------------|
+| **New Micro-Stage** | Added **Stage –1: Goal Draft & Scope Clarification** with sequential-thinking prompt. | `server_prompts/stages/stage_minus1_goal_draft.yaml` |
+| **Prompt Refinement** | Injected explicit `mcp_sequentialthinking_sequentialthinking` reflection contracts into **Stage 0** & **Stage 1** prompts. | `stage0.yaml`, `stage1.yaml` |
+| **Library-Docs Flow** | Integrated Context7 retrieval + fallback `doc_requests.yaml` (with JSON schema + validator script). | `dev/schemas/doc_requests_schema.yaml`, `dev/scripts/validate_doc_requests.py` |
+| **Cursor Rule** | Packaged `chungoid_bootstrap.mdc` + helper `chungoid-export-rule` for one-liner installation. | `.cursor/rules/`, console entry-point |
+| **Tests & CI** | Added pytest cases ensuring every stage references the sequential-thinking tool and doc-request schema passes.  Updated GitHub Actions matrix for Py 3.11/3.12. | `tests/unit/`, `.github/workflows/python-tests.yml` |
+| **Compute Stacking Docs** | Added "🚀 Compute Stacking — Optional Power-Ups" section (ChromaDB, MCP Sequential Thinking, Context7). | README section above |
+
+> Use these notes to track breaking changes when upgrading Chungoid-core. 
+
+## License
+
+Chungoid-core is released under the **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)**.
+
+This strongest copyleft license ensures:
+
+* Any distributed or network-hosted derivative must remain open-source under the same terms.
+* Contributors and original authors receive credit via preserved copyright headers.
+
+Refer to the [`LICENSE`](../LICENSE) file for the full legal text and how to apply headers in source files.
 
 --- 
