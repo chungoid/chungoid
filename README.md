@@ -10,7 +10,7 @@
 
 ---
 
-## TL;DR — Bootstrap a New Project in 30 Seconds
+## TL;DR — Bootstrap a New Project with Chungoid
 
 ```bash
 # 0.  Install dependencies in a fresh venv
@@ -18,8 +18,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt  # from repo root
 
-# 3.  In your chat client / CLI, initialise a directory:
+# 1. Create a new empty work environment and connect to Chungoid MCP server (or enter a previous work environment)
+
+# 2.  In your chat client / CLI, initialise a directory & begin:
+@chungoid set_project_context
 @chungoid initialize_project
+
+# 3. Begin discussing your goal with The Chungoid & refining it. Early stage goal refinement will increase the depth of documentation & context available to your Chungoid & ensure your project thrives. Let Chungoid lead you through the stages!
 ```
 
 *That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
@@ -39,7 +44,7 @@ The server manages a multi-stage process where an AI agent (like you!) interacts
       "transportType": "stdio",
       "command": "/bin/bash",
       "args": [
-        "/home/flip/Desktop/chungoid-mcp/chungoid-core/launch_server.sh"
+        "/path/to/your/chungoid/launch_server.sh"
       ],
       "env": {
         "CHUNGOID_PROJECT_DIR": "${workspaceFolder}",
