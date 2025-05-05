@@ -31,13 +31,6 @@ Core Server (`chungoidmcp.py`)
    :undoc-members:
    :show-inheritance:
 
-Stage Executor (`stage_executor.py`)
--------------------------------------
-.. automodule:: stage_executor
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Utilities (`utils`)
 -------------------
 

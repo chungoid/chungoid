@@ -194,6 +194,7 @@ asyncio_mode = "auto"
 # select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "PT"] # Example selection
 # ignore = ["E501"] # Example ignore: line too long
 line-length = 100 # Slightly longer allowed length
+extend-select = ["T201"]  # Enforce no print statements (flake8-print rule)
 
 [tool.ruff.lint]
 # select = ["ALL"]

@@ -18,27 +18,16 @@ import pprint
 from fastmcp import FastMCP, Context
 from utils.logger_setup import setup_logging
 from utils.state_manager import StateManager, StatusFileError, ChromaOperationError
-# from stage_executor import StageExecutor, StageExecutionError  # <<< UNCOMMENTED
 from utils.chroma_utils import ChromaOperationError
 from utils.exceptions import StageExecutionError, ToolExecutionError, PromptRenderError
 from utils.prompt_manager import PromptManager
 from utils.prompt_manager import PromptLoadError # <<< ADDED IMPORT
 from engine import ChungoidEngine # <<< ADDED IMPORT
 from utils.config_loader import ConfigError # <<< ADDED IMPORT for helper
+from utils.security import safe_resolve, PathTraversalError
 
-# <<< EARLY EXECUTION LOGGING >>>
-EARLY_PID = os.getpid()
-EARLY_NAME = __name__
-# Use basic print first, as logging might not be configured yet
-print(f"[EARLY CHECK {EARLY_PID}] Script executing. __name__ = '{EARLY_NAME}'")
-# <<< END EARLY EXECUTION LOGGING >>>
-
-# <<< ADDED DIAGNOSTICS >>>
-print("--- Python Search Path (sys.path) ---")
-pprint.pprint(sys.path)
-print("-------------------------------------")
-# <<< END DIAGNOSTICS >>>
-
+# Early diagnostics moved to logger; remove print statements to keep stdout clean.
+# We'll delay until after logger setup:
 
 # --- Custom Exceptions ---
 class SecurityError(Exception):
@@ -54,33 +43,6 @@ CHUNGOID_PROJECT_DIR_ENV_VAR = "CHUNGOID_PROJECT_DIR"
 
 # --- <<< NEW: Read Project Directory from Environment Variable >>> ---
 GLOBAL_PROJECT_DIR: Optional[str] = os.getenv(CHUNGOID_PROJECT_DIR_ENV_VAR)
-if GLOBAL_PROJECT_DIR:
-    try:
-        # Resolve and validate the path immediately
-        resolved_path = Path(GLOBAL_PROJECT_DIR).resolve()
-        if resolved_path.is_dir():
-            GLOBAL_PROJECT_DIR = str(resolved_path)
-            logging.info(
-                f"Using project directory from env var {CHUNGOID_PROJECT_DIR_ENV_VAR}: {GLOBAL_PROJECT_DIR}"
-            )
-        else:
-            logging.error(
-                f"Path from env var {CHUNGOID_PROJECT_DIR_ENV_VAR} ('{GLOBAL_PROJECT_DIR}') is not a valid directory. Path resolution: {resolved_path}. Server may fail."
-            )
-            GLOBAL_PROJECT_DIR = None  # Invalidate if not a dir
-    except Exception as e:
-        logging.error(
-            f"Error resolving path from env var {CHUNGOID_PROJECT_DIR_ENV_VAR} ('{GLOBAL_PROJECT_DIR}'): {e}. Server may fail."
-        )
-        GLOBAL_PROJECT_DIR = None  # Invalidate on error
-else:
-    logging.error(
-        f"Environment variable {CHUNGOID_PROJECT_DIR_ENV_VAR} is not set. Server cannot determine project directory and will likely fail."
-    )
-    raise ValueError(
-        f"Required environment variable {CHUNGOID_PROJECT_DIR_ENV_VAR} is not set."
-    )  # <<< RESTORED RAISE >>>
-# --- <<< END NEW >>> ---
 
 # Determine the base directory of the Chungoid MCP server installation FIRST
 # This assumes chungoidmcp.py is at the root of the installation
@@ -89,10 +51,34 @@ CHUNGOID_BASE_DIR = Path(__file__).parent.resolve()
 # Configure logging to use the base directory
 setup_logging()
 logger = logging.getLogger(__name__)
-# <<< START ADDED LOGGING >>>
+
+# NOW validate the environment variable using the configured logger
+if GLOBAL_PROJECT_DIR:
+    logger.info(f"Environment variable {CHUNGOID_PROJECT_DIR_ENV_VAR} found: '{GLOBAL_PROJECT_DIR}'")
+    try:
+        resolved_path = Path(GLOBAL_PROJECT_DIR).resolve()
+        if resolved_path.is_dir():
+            GLOBAL_PROJECT_DIR = str(resolved_path)
+            logger.info(f"Validated project directory from env var: {GLOBAL_PROJECT_DIR}")
+        else:
+            logger.error(
+                f"Path from env var {CHUNGOID_PROJECT_DIR_ENV_VAR} ('{GLOBAL_PROJECT_DIR}') is not a valid directory. Resolved: '{resolved_path}'. Server cannot start."
+            )
+            GLOBAL_PROJECT_DIR = None # Invalidate if not a dir
+    except Exception as e:
+        logger.error(
+            f"Error resolving path from env var {CHUNGOID_PROJECT_DIR_ENV_VAR} ('{GLOBAL_PROJECT_DIR}'): {e}. Server cannot start.", exc_info=True
+        )
+        GLOBAL_PROJECT_DIR = None # Invalidate on error
+else:
+    logger.info(
+        f"Environment variable {CHUNGOID_PROJECT_DIR_ENV_VAR} is not set. Will rely on per-session context or explicit arguments."
+    )
+
+# We no longer abort startup if the env var is missing.
+
 # Log again after logging is set up
-logger.info(f"[EARLY CHECK {EARLY_PID}] Logging configured. __name__ = '{EARLY_NAME}'")
-# <<< END ADDED LOGGING >>>
+logger.info("Logging configured for chungoidmcp module.")
 
 # Also set FastMCP's internal logger to DEBUG if possible (optional, setup_logging might cover it)
 try:
@@ -183,20 +169,20 @@ def _get_target_directory(
     # 1. Prioritize the explicit argument if it's valid
     if target_directory_arg:
         logger.debug(f"Explicit target_directory argument provided: {target_directory_arg}")
+        resolved_path = Path(target_directory_arg)
+        # Use safe_resolve to ensure absolute path (no traversal)
         try:
-            resolved_path = Path(target_directory_arg).resolve()
-            if resolved_path.is_dir():
-                logger.info(f"Using valid directory provided via argument: {resolved_path}")
-                return str(resolved_path)  # <<< Return the validated explicit path
-            else:
-                # If explicit argument is invalid, log error but continue to check session/global
-                logger.error(
-                    f"Provided target_directory argument '{target_directory_arg}' resolves to '{resolved_path}' which is not a directory. Checking session/global..."
-                )
-        except Exception as e:
-            # If resolving fails, log error but continue to check session/global
+            resolved_abs = safe_resolve(Path.cwd(), resolved_path)
+        except PathTraversalError as perr:
+            logger.error("Invalid target_directory argument: %s", perr)
+            resolved_abs = None
+        if resolved_abs and resolved_abs.is_dir():
+            logger.info(f"Using valid directory provided via argument: {resolved_path}")
+            return str(resolved_abs)
+        else:
+            # If explicit argument is invalid, log error but continue to check session/global
             logger.error(
-                f"Error resolving provided target_directory argument '{target_directory_arg}': {e}. Checking session/global..."
+                f"Provided target_directory argument '{target_directory_arg}' resolves to '{resolved_path}' which is not a directory. Checking session/global..."
             )
 
     # 2. Check Session Context (only if explicit argument was NOT provided or was invalid)
@@ -307,19 +293,14 @@ def _initialize_state_manager_for_target(target_dir_path_str: str) -> StateManag
         logger.info(f"StateManager initialized successfully for target: {target_dir_path_str}")
         return state_manager_instance
     except (StatusFileError, ValueError, FileNotFoundError, Exception) as e:
-        # logger.exception(f"Failed to initialize StateManager for target '{target_dir_path_str}': {e}")
-        # <<< REPLACED LOGGING WITH DIRECT PRINT TO STDERR FOR DIAGNOSIS >>>
-        import sys
-
-        print(
-            f"!!! STDERR: EXCEPTION CAUGHT in _initialize_state_manager_for_target: {type(e).__name__}: {e}",
-            file=sys.stderr,
+        logger.error(
+            "StateManager initialisation failed for '%s': %s", target_dir_path_str, e, exc_info=True
         )
-        import traceback
-
-        traceback.print_exc(file=sys.stderr)
-        # <<< END REPLACEMENT >>>
-        raise  # Re-raise the exception to be caught by the calling tool handler
+        return {
+            "status": "error",
+            "message": f"Failed to initialize project state for reflection retrieval: {e}",
+            "summary": "",
+        }
 
 
 # Define a function to handle common error types and return JSONResponse
@@ -685,20 +666,16 @@ async def handle_initialize_project(target_directory: str, ctx: Optional[Context
             # Create a StateManager instance for this specific target directory
             # to initialize the status file if it doesn't exist
             try:
-                # Determine the absolute path to the server stages directory
-                server_stages_relative_path = "server_prompts/stages"  # Standard location
-                server_stages_absolute_path = CHUNGOID_BASE_DIR / server_stages_relative_path
-                logger.debug(f"Initializing StateManager for {effective_target_directory}")
-                state_manager = StateManager(
-                    target_directory=effective_target_directory,
-                    server_stages_dir=str(server_stages_absolute_path),
-                )
+                # Use the validated target_dir path directly
+                logger.debug(f"Initializing StateManager for {target_dir}")
+                # Use the _initialize_state_manager_for_target helper for consistency
+                state_manager = _initialize_state_manager_for_target(str(target_dir))
                 # Call a method that reads/writes to ensure file is created/validated
                 _ = state_manager.get_full_status()
                 logger.info("Initialized/Validated project_status.json via StateManager.")
-            except (StatusFileError, ValueError, ConfigError) as e:
+            except (StatusFileError, ValueError, ConfigError, RuntimeError) as e: # Added RuntimeError
                 logger.exception(
-                    f"Failed to initialize StateManager or project_status.json for {effective_target_directory}: {e}"
+                    f"Failed to initialize StateManager or project_status.json for {target_dir}: {e}"
                 )
                 return {
                     "success": False,
@@ -883,7 +860,11 @@ async def handle_set_pending_reflection(reflection_text: str, ctx: Context) -> d
 
 @mcp.tool(
     name="submit_stage_artifacts",
-    description="Submits artifacts. Uses environment variable for project dir if target_directory not provided.",
+    description=(
+        "Submits artifacts for a completed stage. \n"
+        "IMPORTANT: `generated_artifacts` values MUST be file *content* (strings), not paths. \n"
+        "Valid `stage_result_status` options: PASS, FAIL, DONE, UNKNOWN."
+    ),
 )
 async def handle_submit_stage_artifacts(
     target_directory: Optional[str] = None,
@@ -892,7 +873,29 @@ async def handle_submit_stage_artifacts(
     stage_result_status: str = "UNKNOWN",
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
-    """Handler for the 'submit_stage_artifacts' tool."""
+    """Handler for the 'submit_stage_artifacts' tool.
+
+    This tool processes the results of a completed stage, writes generated
+    artifact files to disk, stores reflections and artifact context in ChromaDB,
+    and updates the project's status file.
+
+    Args:
+        target_directory: Optional path to the project root. If None, uses session
+            context or the CHUNGOID_PROJECT_DIR environment variable.
+        stage_number: The number of the stage being submitted (e.g., 0.0, 1.0).
+        generated_artifacts: A dictionary representing the files generated by the
+            agent. 
+            **IMPORTANT:** Keys must be strings representing the relative path
+            (from the project root) where the artifact should be saved.
+            Values must be strings containing the **actual file content** to be written.
+            Example: `{'path/to/file.md': '# Content\n...', 'src/main.py': 'import os\n...'}`
+        stage_result_status: The outcome status of the stage ('PASS', 'FAIL', 'DONE', 'UNKNOWN').
+        ctx: The MCP client context (used for session management).
+
+    Returns:
+        A dictionary indicating the success or failure of the submission, including
+        details about written files, stored reflections, and any errors.
+    """
     # <<< Get effective client ID >>>
     global stdio_client_id # Need this for stdio case
     original_client_id = ctx.client_id if ctx else None
@@ -905,9 +908,16 @@ async def handle_submit_stage_artifacts(
         effective_client_id = original_client_id
     # <<< End Get effective client ID >>>
 
+    # <<< ADDED: Log received artifacts structure >>>
+    artifacts_repr = pprint.pformat(generated_artifacts)
+    logger.info(f"Received 'submit_stage_artifacts'. Effective client ID: {effective_client_id}")
+    logger.debug(f"Stage Number: {stage_number}, Status: {stage_result_status}")
+    logger.debug(f"Raw generated_artifacts received:\\n{artifacts_repr}")
+    # <<< END ADDED LOG >>>
+
     logger.info(
-        # Updated log message
-        f"Received 'submit_stage_artifacts' (explicit target: '{target_directory}') for stage='{stage_number}', status='{stage_result_status}'. Effective client ID: {effective_client_id}"
+        # Updated log message - REMOVED duplication, covered by logs above
+        f"Processing 'submit_stage_artifacts' (explicit target: '{target_directory}') for stage='{stage_number}', status='{stage_result_status}'."
     )
     # <<< Retrieve (and remove) pending reflection from session >>>
     reflection_to_process: Optional[str] = None
@@ -990,9 +1000,49 @@ async def handle_submit_stage_artifacts(
             errors.append(msg)
             continue
 
+        # --- SAFETY GUARD: detect likely mistaken path values instead of real file content ---
+        # If the caller passed a *filename* (or other short token) instead of the full
+        # contents of the file, writing it would erase the real artifact on disk.
+        # We perform a lightweight heuristic check:
+        #   • Content has no newline (single-line)
+        #   • Content length is reasonably small (<= 300 chars)
+        #   • Interpreting the content as a path inside the project yields an existing file
+        # If all conditions are met we treat this as a probable user error and skip writing.
+        if (
+            isinstance(content, str)
+            and "\n" not in content
+            and len(content) <= 300
+        ):
+            potential_path = (target_dir_path / content).resolve()
+            try:
+                if potential_path.is_relative_to(target_dir_path) and potential_path.exists():
+                    msg = (
+                        f"Value for artifact '{rel_path_str}' appears to be a file path ('{content}'), "
+                        "not file contents. This would overwrite the existing file. Aborting this artifact "
+                        "write. Ensure you pass the FULL text of the file when calling submit_stage_artifacts."
+                    )
+                    logger.error(msg)
+                    errors.append(msg)
+                    continue  # Skip to next artifact without writing
+            except Exception as heur_err:
+                # is_relative_to may not exist on older Python versions; fallback to safe containment check
+                try:
+                    if str(potential_path).startswith(str(target_dir_path)) and potential_path.exists():
+                        msg = (
+                            f"Value for artifact '{rel_path_str}' appears to be a file path ('{content}'), "
+                            "not file contents. This would overwrite the existing file. Aborting this artifact "
+                            "write. Ensure you pass the FULL text of the file when calling submit_stage_artifacts."
+                        )
+                        logger.error(msg)
+                        errors.append(msg)
+                        continue
+                except Exception:
+                    # If heuristic fails, proceed normally (better to risk overwrite than crash)
+                    pass
+
         try:
-            rel_path = Path(rel_path_str)
-            abs_path = (target_dir_path / rel_path).resolve()
+            # Use centralised helper for strong containment guarantees
+            abs_path = safe_resolve(target_dir_path, rel_path_str)
             # Security Check: Ensure path is within target_dir_path
             if not abs_path.is_relative_to(target_dir_path):
                 msg = f"Security risk: Resolved path '{abs_path}' is outside target directory '{target_dir_path}'"
@@ -1001,11 +1051,16 @@ async def handle_submit_stage_artifacts(
                 continue
 
             # Write the artifact content provided by the agent
-            logger.info(f"Writing artifact content to: {abs_path}")
+            logger.info(f"Preparing to write artifact to: {abs_path}") # Slightly modified log
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             # <<< Log content AGAIN right before writing >>>
-            logger.debug(f"Writing content (type: {type(content)}): {content}")
-            # <<< End logging >>>
+            # <<< MODIFIED/ENHANCED Logging >>>
+            content_type = type(content).__name__
+            content_snippet_to_log = (content[:100] + '...') if isinstance(content, str) and len(content) > 100 else content
+            logger.debug(f"--> Writing to Path: {abs_path}")
+            logger.debug(f"--> Content Type : {content_type}")
+            logger.debug(f"--> Content Snippet: {content_snippet_to_log}")
+            # <<< End MODIFIED/ENHANCED logging >>>
             abs_path.write_text(content, encoding="utf-8")
             written_files.append(rel_path_str)  # Mark as written
 
@@ -1035,11 +1090,16 @@ async def handle_submit_stage_artifacts(
                 try:
                     # Need run_id - get it from the latest run
                     latest_status = context_state_manager.get_last_status()
-                    run_id = latest_status.get('run_id') if latest_status else 0 # Default to run 0 if no status yet
+                    # run_id = latest_status.get('run_id') if latest_status else 0 # Default to run 0 if no status yet
+                    # <<< More robust run_id calculation >>>
+                    run_id_from_status = latest_status.get('run_id') if latest_status else None
+                    run_id = run_id_from_status if isinstance(run_id_from_status, int) else 0
+                    logger.debug(f"Determined run_id for reflection persistence: {run_id} (from status: {run_id_from_status})")
+                    # <<< End robust calculation >>>
                     # TODO: Consider how run_id increments or is managed
 
                     reflection_stored = context_state_manager.persist_reflections_to_chroma(
-                        run_id=run_id, # Get current run ID
+                        run_id=run_id, # Pass the validated/defaulted run_id
                         stage_number=float(stage_number),
                         reflections=reflection_to_process
                     )
@@ -1325,22 +1385,17 @@ async def handle_get_file(target_directory: str, relative_path: str) -> Dict[str
     target_path = Path(target_directory).resolve()
 
     try:
-        # Resolve the potential file path *before* checking directory existence
-        # This helps prevent race conditions where the dir exists but the path escapes it.
-        potential_file_path = (target_path / relative_path).resolve()
+        # Securely resolve the requested path ensuring it remains inside the
+        # project directory.  This avoids path-traversal attacks such as
+        # "../../etc/passwd".
+        potential_file_path = safe_resolve(target_path, relative_path)
 
         # Ensure target directory exists *after* resolving potential path to avoid errors
         if not target_path.is_dir():
             raise FileNotFoundError(f"Target project directory not found: {target_directory}")
 
-        # Security Check: Ensure the resolved path is strictly within the target directory
-        # Use Path.is_relative_to() available in Python 3.9+
-        # For older Python, a more manual check might be needed.
-        if not potential_file_path.is_relative_to(target_path):
-             logger.error(f"Security Alert: Path traversal attempt blocked. Requested: '{relative_path}', Resolved outside target: '{potential_file_path}', Target: '{target_path}'")
-             raise ToolExecutionError(f"Access denied: Path '{relative_path}' points outside the project directory.")
-
-        # Now that we know it's safe, assign the validated path
+        # The safe_resolve call already guarantees the path is inside
+        # ``target_path``.  We can therefore proceed directly.
         file_path = potential_file_path
 
         if not file_path.is_file():
@@ -1360,6 +1415,9 @@ async def handle_get_file(target_directory: str, relative_path: str) -> Dict[str
         logger.info(f"Successfully read file content from {file_path}")
         return {"status": "success", "content": content_str}
 
+    except PathTraversalError as trav_err:
+        logger.error("Path traversal attempt detected and blocked: %s", trav_err)
+        raise ToolExecutionError(str(trav_err)) from trav_err
     except FileNotFoundError as e:
         logger.error(f"Error getting file: {e}", exc_info=False)
         raise ToolExecutionError(f"Could not find the requested file: {relative_path} (resolved path: {potential_file_path})") from e
@@ -1489,7 +1547,7 @@ if __name__ == "__main__":
     try:
         logger.critical("!!!! SERVER PROCESS STARTED AND LOGGING TO FILE !!!!")
     except Exception as log_err:
-        print(f"CRITICAL ERROR: Failed to write initial log message: {log_err}", file=sys.stderr)
+        logger.critical("Startup logging failed: %s", log_err)
     # <<< END STARTUP LOG TEST >>>
     logger.info(
         "Starting Chungoid MCP Server via STDIO (Restored Full Script / Renamed Tool Mode)..."

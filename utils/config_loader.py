@@ -23,8 +23,13 @@ DEFAULT_CONFIG = {
         "backup_count": 5,
     },
     "chromadb": {
-        "client_type": "http",
-        "host": "localhost",
+        # Preferred unified keys (new)
+        "mode": "auto",             # auto | persistent | http
+        "server_url": "",           # http://localhost:8000 (only for http mode)
+
+        # Legacy/back-compat keys (still consumed if present)
+        "client_type": "http",      # deprecated – will be mapped to mode if mode not set
+        "host": "localhost",        # used to build server_url if not provided
         "port": 8000,
         "persist_path": "./chroma",
     },
@@ -132,6 +137,31 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
                         f"Could not convert environment variable {env_var_name}='{env_value}' to type {type(default_value)}. Using string value."
                     )
                     loaded_config[section][key] = env_value
+
+    # --- Normalise chromadb config (derive missing values, env overrides) ---
+    chroma_cfg = loaded_config.setdefault("chromadb", {})
+
+    # 1) Apply direct env overrides for new keys
+    env_mode = os.getenv("CHROMA_MODE")
+    if env_mode:
+        chroma_cfg["mode"] = env_mode.lower()
+
+    env_server_url = os.getenv("CHROMA_SERVER_URL")
+    if env_server_url:
+        chroma_cfg["server_url"] = env_server_url
+
+    # 2) Derive mode if set to 'auto'
+    if chroma_cfg.get("mode", "auto") == "auto":
+        if os.getenv("CHROMA_API_IMPL", "").lower() == "http":
+            chroma_cfg["mode"] = "http"
+        else:
+            chroma_cfg["mode"] = "persistent"
+
+    # 3) Fallback for legacy keys if server_url still empty
+    if not chroma_cfg.get("server_url") and chroma_cfg["mode"] == "http":
+        host = chroma_cfg.get("host", "localhost")
+        port = chroma_cfg.get("port", 8000)
+        chroma_cfg["server_url"] = f"http://{host}:{port}"
 
     _config = loaded_config
     logger.debug(f"Final configuration: {_config}")

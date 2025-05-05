@@ -1,6 +1,7 @@
 """Core execution engine for the Chungoid agent."""
 
 import logging
+logger = logging.getLogger(__name__)
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -17,7 +18,7 @@ try:
     from .utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
     from .utils.config_loader import get_config, ConfigError
 except ImportError as e:
-    print(f"Error importing Chungoid utils: {e}. Ensure paths are correct or run as module.")
+    logger.error("Error importing Chungoid utils: %s. Ensure paths are correct or run as module.", e)
     # Handle path issues more gracefully if running as script vs module
     if Path(__file__).parent.name == 'chungoid-core': # Simple check if running from root
          sys.path.insert(0, str(Path(__file__).parent))
@@ -26,9 +27,6 @@ except ImportError as e:
          from utils.config_loader import get_config, ConfigError
     else:
         raise
-
-logger = logging.getLogger(__name__)
-# TODO: Configure logging properly (e.g., inheriting from a central config)
 
 # <<< ADDED LOGGING FOR IMPORT PATH >>>
 try:

@@ -13,7 +13,7 @@ logging:
 # ChromaDB Settings
 # client_type: http, persistent
 chromadb:
-  client_type: "http"
+  client_type: "persistent"
   host: "localhost"
   port: 8000
   persist_path: "./chroma" # Keep for reference, but not used by HttpClient

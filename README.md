@@ -1,6 +1,36 @@
-# Chungoid Core MCP Server - User Guide
+# Chungoid — Model-Context-Protocol (MCP) Server
 
-Welcome to the Chungoid Core MCP (Meta-Cognitive Project) Server! This system facilitates an AI-driven, stage-based workflow for software project development.
+<!--[BADGES]-->
+![Tests](https://github.com/your-org/your-repo/actions/workflows/test.yml/badge.svg)
+![Coverage](https://img.shields.io/badge/coverage-80%25%2B-brightgreen)
+![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
+
+> The **Chungoid MCP server** orchestrates an AI-driven, stage-based workflow that turns an idea into a production-ready codebase.  This README tells you *exactly* how to get a project bootstrapped and running in minutes.
+
+---
+
+## TL;DR — Bootstrap a New Project in 30 Seconds
+
+```bash
+# 0.  Install dependencies in a fresh venv
+pip install -e .[dev]  # from repo root
+
+# 1.  Start the embedded ChromaDB (optional – script handles it automatically)
+make chroma-dev-server &
+
+# 2.  Launch the server (stdio mode)
+python chungoid-core/chungoidmcp.py &  # or `python -m chungoidmcp`
+
+# 3.  In your chat client / CLI, initialise a directory:
+@chungoid initialize_project target_directory="$(pwd)"
+
+# 4.  Ask for the first stage prompt:
+@chungoid prepare_next_stage
+```
+
+*That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
+
+---
 
 ## What it Does
 
@@ -78,4 +108,23 @@ They weren't just creating *chunks*; they were designing a system *that operated
 
 During a late-night whiteboard session, mapping out the flow between stages, agents, and the reflection database, someone drew a box around the entire process – the State Manager, the Prompt Manager, the Stage Executor, the Memory. "This whole thing," they declared, gesturing at the diagram, "it's the... the *Chungoid*. It takes the big messy goal, breaks it into chunks, digests each one through the stages, learns, and moves on."
 
-The name stuck. "Chungoid" came to represent not just the act of chunking, but the entire **meta-cognitive, agent-driven framework** designed to systematically consume complexity through sequential, reflective stages. It embodied the structured approach, the learning capability, and the staged progression – the intelligent system that brings order to the chaos of creation. 
+The name stuck. "Chungoid" came to represent not just the act of chunking, but the entire **meta-cognitive, agent-driven framework** designed to systematically consume complexity through sequential, reflective stages. It embodied the structured approach, the learning capability, and the staged progression – the intelligent system that brings order to the chaos of creation.
+
+## Logging Configuration (Environment Overrides)
+
+Chungoid-core uses a centralised logging helper (`utils.logger_setup`) that
+reads settings from **config.yaml** but **can be overridden via environment
+variables** at runtime.  This is handy when you need verbose logs for
+troubleshooting or JSON logs in CI without modifying repo-tracked files.
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `CHUNGOID_LOGGING_LEVEL` | Override `logging.level` in config. Accepts standard Python levels (`DEBUG`, `INFO`, etc.). | `export CHUNGOID_LOGGING_LEVEL=DEBUG` |
+| `CHUNGOID_LOGGING_FORMAT` | Set formatter: `text` (default) or `json`. | `export CHUNGOID_LOGGING_FORMAT=json` |
+| `CHUNGOID_LOGGING_FILE` | Path for rotating file handler. Leave blank to disable file logging. | `export CHUNGOID_LOGGING_FILE=/tmp/chungoid.log` |
+| `CHUNGOID_LOGGING_MAX_BYTES` | Max size (bytes) before rotation. | `export CHUNGOID_LOGGING_MAX_BYTES=1048576` |
+| `CHUNGOID_LOGGING_BACKUP_COUNT` | How many rotated files to keep. | `export CHUNGOID_LOGGING_BACKUP_COUNT=3` |
+
+When any of these variables are present, `utils.config_loader` injects the
+value into the runtime config before `utils.logger_setup.setup_logging()` is
+called. 

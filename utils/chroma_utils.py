@@ -66,91 +66,27 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
         _client = None # Force re-initialization
 
     if _client is None:
-        if _client is None:
-            try:
-                # --- Check Environment Variable Override FIRST --- #
-                env_client_type = os.getenv('CHROMA_CLIENT_TYPE')
-                forced_client_type = None
-                if env_client_type:
-                    env_client_type = env_client_type.lower()
-                    if env_client_type == 'persistent':
-                        forced_client_type = 'persistent'
-                        logger.info(f"Forcing persistent client type based on CHROMA_CLIENT_TYPE env var.")
-                    elif env_client_type == 'http':
-                        forced_client_type = 'http'
-                        logger.info(f"Forcing http client type based on CHROMA_CLIENT_TYPE env var.")
-                    else:
-                        logger.warning(f"Ignoring invalid CHROMA_CLIENT_TYPE env var value: '{env_client_type}'. Will use config.")
-                # --- End Env Var Check ---
+        from .chroma_client_factory import get_client as _factory_get_client
+        try:
+            cfg = get_config().get("chromadb", {})
+            mode = cfg.get("mode", "auto")
+            if mode == "auto":
+                mode = "http" if os.getenv("CHROMA_API_IMPL", "").lower() == "http" else "persistent"
 
-                # Determine client type from env var override or config
-                if forced_client_type:
-                    client_type = forced_client_type
-                else:
-                    # Fallback to config if env var not set or invalid
-                    logger.debug("Fetching ChromaDB config (env var CHROMA_CLIENT_TYPE not set or invalid)...")
-                    config = get_config()
-                    chroma_config = config.get("chromadb", {})
-                    logger.debug(f"ChromaDB config fetched: {chroma_config}")
-                    client_type = chroma_config.get("client_type", "http").lower()
+            server_url = cfg.get("server_url", "")
 
-                logger.info(f"Effective client type determined: {client_type}")
-                #persist_path_config = chroma_config.get("persist_path") # No longer needed here
+            if mode == "persistent" and _current_project_directory is None:
+                logger.error("Persistent mode requested but project context not set via set_chroma_project_context().")
+                return None
 
-                #logger.info(f"Determining client type: {client_type}") # Redundant
+            project_dir = _current_project_directory or Path.cwd()
 
-                if client_type == "http":
-                    # --- Get config specific to HTTP --- #
-                    # Ensure chroma_config is loaded if we fell back from env var
-                    if not forced_client_type:
-                        config = get_config()
-                        chroma_config = config.get("chromadb", {})
-
-                    env_host = os.getenv("CHROMA_HOST")
-                    env_port_str = os.getenv("CHROMA_PORT")
-
-                    host = env_host if env_host else chroma_config.get("host", "localhost")
-                    port_str = env_port_str if env_port_str else str(chroma_config.get("port", 8000))
-
-                    # Validate and convert port
-                    try:
-                        port = int(port_str)
-                    except ValueError:
-                        logger.error(f"Invalid CHROMA_PORT or config port value: '{port_str}'. Using default 8000.")
-                        port = 8000
-
-                    logger.info(f"Initializing HttpClient with host: {host}, port: {port}")
-                    _client = chromadb.HttpClient(host=host, port=port)
-                    _client_project_context = None # HTTP client is not project-specific
-                    logger.info("HttpClient initialized.")
-                elif client_type == "persistent":
-                    # --- MODIFIED PERSISTENT LOGIC ---
-                    if _current_project_directory is None:
-                        logger.error(
-                            "Persistent client type selected, but project context directory not set. "
-                            "Call set_chroma_project_context() first."
-                        )
-                        _client = None
-                    else:
-                        # Use the dedicated function which handles path creation
-                        logger.info(f"Calling get_persistent_chroma_client for project: {_current_project_directory}")
-                        _client = get_persistent_chroma_client(_current_project_directory)
-                        _client_project_context = _current_project_directory # Store context used
-                    # --- END MODIFIED PERSISTENT LOGIC ---
-                else:
-                    # This case should only be hit if config specified an invalid type
-                    # and env var wasn't set.
-                    logger.error(f"Unsupported ChromaDB client_type in config: {client_type}")
-                    _client = None
-
-                if _client:
-                    logger.info("ChromaDB client initialization successful.")
-                else:
-                    logger.error("ChromaDB client initialization failed.")
-
-            except Exception as e:
-                logger.error(f"Failed to initialize ChromaDB client: {e}", exc_info=True)
-                _client = None
+            _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+            _client_project_context = _current_project_directory
+            logger.info(f"ChromaDB client initialised in {mode} mode.")
+        except Exception as e:
+            logger.error(f"Failed to initialise Chroma client: {e}", exc_info=True)
+            _client = None
 
     if _client:
         logger.debug("Returning ChromaDB client instance.")
@@ -350,8 +286,17 @@ def get_persistent_chroma_client(project_directory: Path) -> chromadb.ClientAPI:
         os.makedirs(persist_path, exist_ok=True)
 
         logger.info(f"Initializing PersistentClient at: {persist_path}")
-        # Consider adding settings=chromadb.Settings(...) if specific settings are needed
-        client = chromadb.PersistentClient(path=str(persist_path))
+        # <<< Explicitly create Settings object >>>
+        # By creating a default settings object, we might override any
+        # problematic implicit settings the library might load.
+        # <<< MODIFICATION: Explicitly set is_persistent=True >>>
+        explicit_settings = chromadb.Settings(is_persistent=True)
+        # We are intentionally *not* setting chroma_api_impl here,
+        # hoping the library defaults correctly for PersistentClient.
+        logger.debug(f"Using explicit chromadb.Settings: {explicit_settings}")
+
+        # Pass the explicit settings object
+        client = chromadb.PersistentClient(path=str(persist_path), settings=explicit_settings)
         logger.info("PersistentClient initialized successfully.")
         return client
     except OSError as e:
