@@ -2106,3 +2106,398 @@ TypeError: TestStateManager.test_update_project_status.<locals>.is_dir_side_effe
 2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - Successfully read and parsed status file with {'runs': ...} structure.
 2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:21:16.666103+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:21:16.665859+00:00', 'artifacts': ['a.txt']}]}]}
 2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:21:16.666103+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:21:16.665859+00:00', 'artifacts': ['a.txt']}]}]}
+2025-05-05 07:49:18,514 - root - INFO - File logging configured to chungoid_mcp_server.log
+2025-05-05 07:49:18,515 - utils.logger_setup - INFO - Logging setup complete. Level: INFO
+2025-05-05 07:49:18,515 - chungoidmcp - INFO - Environment variable CHUNGOID_PROJECT_DIR found: '/home/flip/Desktop/chungoid-mcp'
+2025-05-05 07:49:18,515 - chungoidmcp - INFO - Validated project directory from env var: /home/flip/Desktop/chungoid-mcp
+2025-05-05 07:49:18,515 - chungoidmcp - INFO - Logging configured for chungoidmcp module.
+2025-05-05 07:49:18,515 - chungoidmcp - INFO - Initializing Chungoid MCP Server components at module level...
+2025-05-05 07:49:18,515 - chungoidmcp - INFO - Chungoid base directory determined as: /home/flip/Desktop/chungoid-mcp/chungoid-core
+2025-05-05 07:49:18,519 - mcp.server.lowlevel.server - DEBUG - Initializing server 'ChungoidMCP'
+2025-05-05 07:49:18,519 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListToolsRequest
+2025-05-05 07:49:18,519 - mcp.server.lowlevel.server - DEBUG - Registering handler for CallToolRequest
+2025-05-05 07:49:18,519 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListResourcesRequest
+2025-05-05 07:49:18,519 - mcp.server.lowlevel.server - DEBUG - Registering handler for ReadResourceRequest
+2025-05-05 07:49:18,520 - mcp.server.lowlevel.server - DEBUG - Registering handler for PromptListRequest
+2025-05-05 07:49:18,520 - mcp.server.lowlevel.server - DEBUG - Registering handler for GetPromptRequest
+2025-05-05 07:49:18,520 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListResourceTemplatesRequest
+2025-05-05 07:49:18,520 - chungoidmcp - INFO - Root logger handlers AFTER FastMCP init: [<StreamHandler <_io.FileIO name=8 mode='rb+' closefd=True> (INFO)>, <RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:18,520 - chungoidmcp - INFO - FastMCP instance created. StateManager initialization deferred to tool calls.
+2025-05-05 07:49:18,530 - chungoidmcp - INFO - --- Inspecting Registered MCP Tools ---
+2025-05-05 07:49:18,530 - chungoidmcp - WARNING - Could not access or inspect mcp.tools registry.
+2025-05-05 07:49:18,530 - chungoidmcp - INFO - -------------------------------------
+2025-05-05 07:49:18,810 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,811 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,817 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,818 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpmul1oppl/proj
+2025-05-05 07:49:18,818 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,822 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,822 - test_chroma_utils - INFO - Running test_get_chroma_client_http
+2025-05-05 07:49:18,823 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,828 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,829 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_context_change
+2025-05-05 07:49:18,829 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpowt0dfrh/project1
+2025-05-05 07:49:18,829 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,835 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,836 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_no_context
+2025-05-05 07:49:18,837 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,846 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,847 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_success
+2025-05-05 07:49:18,847 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpctkt7hvp/project1
+2025-05-05 07:49:18,847 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,853 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,853 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_uses_helper
+2025-05-05 07:49:18,853 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpl8ev4iri/project1
+2025-05-05 07:49:18,854 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,859 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,859 - test_chroma_utils - INFO - Running test_set_and_clear_project_context
+2025-05-05 07:49:18,859 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpe1k89ahc/project1
+2025-05-05 07:49:18,859 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,859 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:49:18,867 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:18,867 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:18,867 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:18,867 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:18,868 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:18,965 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:18,965 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:18,965 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:18,965 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:18,965 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,005 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,006 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:19,006 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:19,006 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,006 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,047 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,048 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:19,048 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:19,048 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,048 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,087 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,087 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:19,087 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:19,087 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,087 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,128 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,128 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:19,129 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:19,129 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,129 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,172 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,172 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:49:19,172 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:49:19,173 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,173 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:49:19,210 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,211 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/tmp/tmpkkakvx2t/stages'
+2025-05-05 07:49:19,211 - utils.prompt_manager - INFO - Loading common template from /tmp/tmpkkakvx2t/common.yaml
+2025-05-05 07:49:19,211 - utils.prompt_manager - INFO - Successfully loaded common template.
+2025-05-05 07:49:19,211 - utils.prompt_manager - INFO - Loading stage definitions from /tmp/tmpkkakvx2t/stages
+2025-05-05 07:49:19,211 - utils.prompt_manager - INFO - Attempting to load stage definition from stage1.yaml
+2025-05-05 07:49:19,212 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpkkakvx2t/stages/stage1.yaml': 
+2025-05-05 07:49:19,212 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage1.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Only system prompt"\n            '
+2025-05-05 07:49:19,212 - utils.prompt_manager - ERROR - Failed to load stage definition from stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:49:19,212 - utils.prompt_manager - INFO - Attempting to load stage definition from stage0.yaml
+2025-05-05 07:49:19,212 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpkkakvx2t/stages/stage0.yaml': 
+2025-05-05 07:49:19,212 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage0.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Greetings {{ name }}"\n            user_prompt: "What is up?"\n            '
+2025-05-05 07:49:19,212 - utils.prompt_manager - INFO - Successfully loaded and stored stage definition for 0 from stage0.yaml
+2025-05-05 07:49:19,213 - utils.prompt_manager - ERROR - Encountered 1 error(s) while loading stage definitions:
+stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:49:19,216 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:49:19,216 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/tmp/tmpszoce860/stages'
+2025-05-05 07:49:19,217 - utils.prompt_manager - INFO - Loading common template from /tmp/tmpszoce860/common.yaml
+2025-05-05 07:49:19,217 - utils.prompt_manager - INFO - Successfully loaded common template.
+2025-05-05 07:49:19,217 - utils.prompt_manager - INFO - Loading stage definitions from /tmp/tmpszoce860/stages
+2025-05-05 07:49:19,217 - utils.prompt_manager - INFO - Attempting to load stage definition from stage1.yaml
+2025-05-05 07:49:19,217 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpszoce860/stages/stage1.yaml': 
+2025-05-05 07:49:19,217 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage1.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Only system prompt"\n            '
+2025-05-05 07:49:19,218 - utils.prompt_manager - ERROR - Failed to load stage definition from stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:49:19,218 - utils.prompt_manager - INFO - Attempting to load stage definition from stage0.yaml
+2025-05-05 07:49:19,218 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpszoce860/stages/stage0.yaml': 
+2025-05-05 07:49:19,218 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage0.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Greetings {{ name }}"\n            user_prompt: "What is up?"\n            '
+2025-05-05 07:49:19,218 - utils.prompt_manager - INFO - Successfully loaded and stored stage definition for 0 from stage0.yaml
+2025-05-05 07:49:19,218 - utils.prompt_manager - ERROR - Encountered 1 error(s) while loading stage definitions:
+stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:49:19,237 - utils.state_manager - INFO - Successfully added root RotatingFileHandler to utils.state_manager logger.
+2025-05-05 07:49:19,237 - utils.state_manager - INFO - Successfully added root RotatingFileHandler to utils.state_manager logger.
+2025-05-05 07:49:19,237 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,237 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,237 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,237 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,238 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,238 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,238 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,238 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,238 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:49:19,238 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,238 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,238 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,238 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,238 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,248 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,248 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,248 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,248 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,248 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,248 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,248 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,248 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,248 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,249 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,249 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,249 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,249 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,328 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,328 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,328 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,328 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,328 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,328 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,328 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,328 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,328 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,329 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,329 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,329 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,329 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,405 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,405 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,405 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,405 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,406 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,406 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:49:19,406 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:49:19,406 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:49:19,406 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,406 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,407 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,407 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,407 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,407 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,407 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,407 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,407 - utils.state_manager - DEBUG - Querying Chroma collection 'chungoid_reflections' for reflections: 'test query...' (n=3, filter=None)
+2025-05-05 07:49:19,407 - utils.state_manager - DEBUG - Querying Chroma collection 'chungoid_reflections' for reflections: 'test query...' (n=3, filter=None)
+2025-05-05 07:49:19,407 - utils.chroma_utils - INFO - Query returned no results from 'chungoid_reflections'.
+2025-05-05 07:49:19,407 - utils.state_manager - INFO - Retrieved 0 reflection context results from Chroma for query 'test query...'
+2025-05-05 07:49:19,407 - utils.state_manager - INFO - Retrieved 0 reflection context results from Chroma for query 'test query...'
+2025-05-05 07:49:19,415 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,415 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,415 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,415 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,415 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,415 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,415 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,415 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,416 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,416 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,416 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,416 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,416 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,503 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,503 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,503 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,503 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,503 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,503 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,504 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,504 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,504 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,504 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,504 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,504 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,504 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,582 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,582 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,582 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,582 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,582 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,582 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,667 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,667 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,667 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,667 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,667 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,667 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,743 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,743 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,744 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,744 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,744 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,744 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,744 - utils.state_manager - ERROR - Failed to create .chungoid directory at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid'
+2025-05-05 07:49:19,744 - utils.state_manager - ERROR - Failed to create .chungoid directory at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid'
+2025-05-05 07:49:19,776 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,776 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,776 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,776 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,776 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,776 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,777 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,777 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:49:19,777 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:49:19,777 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:49:19,777 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,777 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,777 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,777 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:49:19,778 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,778 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,778 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,778 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,778 - utils.state_manager - DEBUG - Attempting to upsert artifact context to Chroma 'chungoid_context': ID=09a62d2dcd900b1d2da88021afb07884731b8656, Path=a/b.txt...
+2025-05-05 07:49:19,778 - utils.state_manager - DEBUG - Attempting to upsert artifact context to Chroma 'chungoid_context': ID=09a62d2dcd900b1d2da88021afb07884731b8656, Path=a/b.txt...
+2025-05-05 07:49:19,778 - utils.chroma_utils - INFO - Upserted document ID 09a62d2dcd900b1d2da88021afb07884731b8656 in collection 'chungoid_context'.
+2025-05-05 07:49:19,778 - utils.state_manager - INFO - Successfully stored artifact context for 'a/b.txt' (Stage 1.0) in Chroma.
+2025-05-05 07:49:19,778 - utils.state_manager - INFO - Successfully stored artifact context for 'a/b.txt' (Stage 1.0) in Chroma.
+2025-05-05 07:49:19,815 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,815 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:49:19,815 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,815 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,815 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,815 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,815 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,815 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,816 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:49:19,816 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,816 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,816 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,816 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,894 - utils.state_manager - DEBUG - StateManager.__init__ called for target: /tmp/tmpnrtdcctj
+2025-05-05 07:49:19,894 - utils.state_manager - DEBUG - StateManager.__init__ called for target: /tmp/tmpnrtdcctj
+2025-05-05 07:49:19,894 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,894 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:49:19,894 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,894 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:49:19,894 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,894 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:49:19,894 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpnrtdcctj
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /tmp/tmpnrtdcctj/.chungoid
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /tmp/tmpnrtdcctj/.chungoid
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - File locking is disabled.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - File locking is disabled.
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - StateManager initialized for file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - StateManager initialized for file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,895 - utils.state_manager - WARNING - Status file not found at /tmp/tmpnrtdcctj/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,895 - utils.state_manager - WARNING - Status file not found at /tmp/tmpnrtdcctj/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,895 - utils.state_manager - WARNING - Status file not found at /tmp/tmpnrtdcctj/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,895 - utils.state_manager - WARNING - Status file not found at /tmp/tmpnrtdcctj/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': []}
+2025-05-05 07:49:19,895 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': []}
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - Attempting to update status for Stage: 0, Status: DONE
+2025-05-05 07:49:19,895 - utils.state_manager - INFO - Attempting to update status for Stage: 0, Status: DONE
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,896 - utils.state_manager - WARNING - Status file not found at /tmp/tmpnrtdcctj/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,896 - utils.state_manager - WARNING - Status file not found at /tmp/tmpnrtdcctj/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:49:19,896 - utils.state_manager - INFO - Creating first run (id: 0) and adding status update.
+2025-05-05 07:49:19,896 - utils.state_manager - INFO - Creating first run (id: 0) and adding status update.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Attempting to write to status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Attempting to write to status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Successfully wrote to status file (post-dump, pre-release).
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Successfully wrote to status file (post-dump, pre-release).
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Lock released after write.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Lock released after write.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Read file back immediately after write. Content: {
+  "runs": [
+    {
+      "run_id": 0,
+      "start_timestamp": "2025-05-05T12:49:19.896205+00:00",
+      "status_updates": [
+        {
+          "stage": 0.0,
+          "status": "DONE",
+          "timestamp": "2025-05-05T12:49:19.896041+00:00",
+          "artifacts": [
+            "a.txt"
+          ]
+        }
+      ]
+    }
+  ]
+}
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Read file back immediately after write. Content: {
+  "runs": [
+    {
+      "run_id": 0,
+      "start_timestamp": "2025-05-05T12:49:19.896205+00:00",
+      "status_updates": [
+        {
+          "stage": 0.0,
+          "status": "DONE",
+          "timestamp": "2025-05-05T12:49:19.896041+00:00",
+          "artifacts": [
+            "a.txt"
+          ]
+        }
+      ]
+    }
+  ]
+}
+2025-05-05 07:49:19,896 - utils.state_manager - INFO - Status update for Stage 0 completed successfully.
+2025-05-05 07:49:19,896 - utils.state_manager - INFO - Status update for Stage 0 completed successfully.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpnrtdcctj/.chungoid/project_status.json
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Successfully read and parsed status file with {'runs': ...} structure.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - Successfully read and parsed status file with {'runs': ...} structure.
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:49:19.896205+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:49:19.896041+00:00', 'artifacts': ['a.txt']}]}]}
+2025-05-05 07:49:19,896 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:49:19.896205+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:49:19.896041+00:00', 'artifacts': ['a.txt']}]}]}
