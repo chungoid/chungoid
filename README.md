@@ -115,8 +115,8 @@ store state artifacts, research artifacts, documentation artifacts, etc.
 | Add-on | What it brings | Install | Docs / Repo |
 |--------|---------------|---------|-------------|
 | **ChromaDB** | Embedded or HTTP vector store for long-term reflections, planning docs, and fetched library docs.  Enables fast semantic search so later stages recall past decisions instead of repeating analysis. | Built-in (install via `pip install chromadb` — already in requirements.txt) | https://docs.trychroma.com |
-| **MCP Sequential Thinking** | Tool that forces the agent to reason step-by-step, self-critique, and verify outputs before showing them to you.  Early stages (-1, 0, 1) use it to spot gaps; later stages (2-5) use it for code/test validation. | `pip install mcp-sequentialthinking` | https://github.com/modelcontextprotocol/servers/tree/main/sequentialthinking |
-| **Context7 Library Docs** | On-demand retrieval of third-party API documentation (`resolve-library-id` → `get-library-docs`).  Reduces hallucinations and saves you from hunting docs manually. | `pip install context7` | https://github.com/upstash/context7 |
+| **MCP Sequential Thinking** | Tool that forces the agent to reason step-by-step, self-critique, and verify outputs before showing them to you.  Early stages (-1, 0, 1) use it to spot gaps; later stages (2-5) use it for code/test validation. | `instructions at ->` | https://github.com/modelcontextprotocol/servers/ |
+| **Context7 Library Docs** | On-demand retrieval of third-party API documentation (`resolve-library-id` → `get-library-docs`).  Reduces hallucinations and saves you from hunting docs manually. | `instructions at ->` | https://github.com/upstash/context7 |
 
 > These packages are **maintained by their own teams**.  Chungoid merely detects and uses them if they're present; see each repository for license and security details.
 
