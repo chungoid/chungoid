@@ -18,7 +18,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt  # from repo root
 
-# 1. Create a new empty work environment and connect to Chungoid MCP server (or enter a previous work environment)
+# 1. Create a new empty work environment and 
+
+# 2. Connect to Chungoid MCP server (both json and cli instructions below)
 
 # 2.  In your chat client / CLI, initialise a directory & begin:
 @chungoid set_project_context
