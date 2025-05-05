@@ -14,10 +14,11 @@ def create_sample_project(tmp_path: Path) -> Path:
     project_dir = tmp_path / "my_project"
     project_dir.mkdir()
 
-    # Also create a dummy stages dir with one yaml file so StateManager init passes
+    # Also create a dummy stages dir with two stage files so next-stage logic can advance
     stages_dir = tmp_path / "server_stages"
     stages_dir.mkdir()
     (stages_dir / "stage0.yaml").write_text("system_prompt: foo\nuser_prompt: bar\n")
+    (stages_dir / "stage1.yaml").write_text("system_prompt: foo1\nuser_prompt: bar1\n")
 
     return project_dir, stages_dir
 
@@ -52,4 +53,14 @@ def test_get_next_stage(sm: StateManager):
 
 def test_store_artifact_context(sm: StateManager):
     # Ensure method returns True and does not raise with fake chroma
-    assert sm.store_artifact_context_in_chroma(stage_number=1.0, rel_path="a/b.txt", content="hello") 
+    assert sm.store_artifact_context_in_chroma(stage_number=1.0, rel_path="a/b.txt", content="hello")
+
+
+# New test ensuring RuntimeError when all stages done
+
+
+def test_get_next_stage_completed(sm: StateManager):
+    sm.update_status(stage=0.0, status="DONE", artifacts=[])
+    sm.update_status(stage=1.0, status="DONE", artifacts=[])
+    with pytest.raises(RuntimeError):
+        sm.get_next_stage() 
