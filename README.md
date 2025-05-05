@@ -103,6 +103,20 @@ store state artifacts, research artifacts, documentation artifacts, etc.
 *   **Reflections:** Your thoughts, analysis, or rationale recorded during a stage, stored for context.
 *   **Context:** Information (status, artifacts, reflections) gathered and potentially passed into stage prompts.
 
+## Compute Stacking — Optional Chungoid Power-Ups
+
+> *Everything below is optional.*  Chungoid-core runs out-of-the-box with plain files on disk.  But if you enable these extra components the agent can "stack" new kinds of computation and context, giving it **exponential leverage** during the stage workflow.
+
+| Add-on | What it brings | Typical env var / setup |
+|--------|---------------|-------------------------|
+| **ChromaDB** | Embedded or HTTP vector store for long-term reflections, planning docs, and fetched library docs.  Enables fast semantic search so later stages recall past decisions instead of repeating analysis. | `CHROMA_CLIENT_TYPE=persistent` (default) or `http` + run `make chroma-dev-server`. |
+| **MCP Sequential Thinking** | Tool that forces the agent to reason step-by-step, self-critique, and verify outputs before showing them to you.  Early stages (-1, 0, 1) use it to spot gaps; later stages (2-5) use it for code/test validation. | Built-in, no setup — invoked inside every prompt. |
+| **Context7 Library Docs** | On-demand retrieval of third-party API documentation (`resolve-library-id` → `get-library-docs`).  Reduces hallucinations and saves you from hunting docs manually. | No setup; Stage 0 tries first, else logs to `doc_requests.yaml` so you can supply `llms.txt`. |
+
+Chungoid calls this synergy **compute stacking**: each layer (vector memory, disciplined reasoning, live docs) augments the next, letting the agent solve harder problems with fewer tokens and less user micro-management. Enable as many layers as your environment allows; the workflow adapts automatically.
+
+---
+
 ## Development
 
 This project structure contains the server implementation. Development *of* the server (meta-development) occurs in the parent `chungoid-mcp` (currently private) repository structure. This is autonomously built from within an abstraction layer which uses a modified version of the chungoid workflow, and soon.. A2A protocol.
