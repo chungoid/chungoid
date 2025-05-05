@@ -131,6 +131,7 @@ Requires-Dist: zipp==3.21.0
 Provides-Extra: dev
 Requires-Dist: pytest<8.4,>=8.3; extra == "dev"
 Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
 Requires-Dist: ruff==0.11.8; extra == "dev"
 Requires-Dist: bandit==1.8.3; extra == "dev"
 Requires-Dist: mypy; extra == "dev"
@@ -154,213 +155,134 @@ Requires-Dist: sphinxcontrib-qthelp==2.0.0; extra == "docs"
 Requires-Dist: sphinxcontrib-serializinghtml==2.0.0; extra == "docs"
 Dynamic: license-file
 
-<!-- Placeholder for Banner Image -->
-<!-- ![Project Banner](URL_TO_YOUR_BANNER_IMAGE.png) -->
-<p align="center">
-  <img src="docs/images/banner.png" alt="Chungoid MCP Banner">
-</p>
+# Chungoid — Model-Context-Protocol (MCP) Server
 
-# Chungoid MCP Server
+<!--[BADGES]-->
+<!-- CI badge: replace <owner>/<repo> with your GitHub slug if the fork is elsewhere -->
+[![Tests](https://github.com/chungoid/chungoid/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/chungoid/chungoid/actions/workflows/test.yml)
+![Coverage](https://img.shields.io/badge/coverage-80%25%2B-brightgreen)
+![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
 
-**Version:** 0.2.0 (See `pyproject.toml`)
-**License:** Apache 2.0 ([LICENSE](LICENSE))
+> The **Chungoid MCP server** orchestrates an AI-driven, stage-based workflow that turns an idea into a production-ready codebase.  This README tells you *exactly* how to get a project bootstrapped and running in minutes.
 
-**Goal:** Develop a Meta-Cognitive Process (MCP) server that orchestrates a flexible, iterative software development workflow, leveraging contextual awareness (ChromaDB), self-analysis, and striving towards greater agent autonomy.
+---
 
-## Overview
+## TL;DR — Bootstrap a New Project in 30 Seconds
 
-This project implements the **Chungoid MCP server**, a system designed to manage a staged software development process guided by an AI agent. It allows an AI (like Gemini via Cursor or other MCP-compatible clients) to interact with your local development environment through a defined toolset.
+```bash
+# 0.  Install dependencies in a fresh venv
+pip install -e .[dev]  # from repo root
 
-**Key Features:**
+# 1.  Start the embedded ChromaDB (optional – script handles it automatically)
+make chroma-dev-server &
 
-*   **Staged Workflow:** Uses YAML-defined stages (`server_prompts/stages/`) to guide the development process from discovery to release.
-*   **State Management:** Tracks project progress and artifact locations in `.chungoid/project_status.json`.
-*   **Contextual Awareness (Optional but HIGHLY recommended):** Leverages a separate ChromaDB server to store and retrieve project context (planning documents, code snippets, reflections) across sessions, enhancing the AI's understanding.
-*   **Extensible Tools:** Provides a foundation for adding new tools the AI can use.
-*   **Integration Tested:** Includes a suite of integration tests (`tests/test_integration.py`) verifying the core workflow.
+# 2.  Launch the server (stdio mode)
+python chungoid-core/chungoidmcp.py &  # or `python -m chungoidmcp`
 
-## Project Structure
+# 3.  In your chat client / CLI, initialise a directory:
+@chungoid initialize_project target_directory="$(pwd)"
 
-```plaintext
-chungoid-mcp/
-├── .chungoid/          # Project status (project_status.json) & lock file
-├── .venv/              # Python virtual environment (Created by user)
-├── dev-docs/           # Development documentation artifacts (design, planning, validation, reports)
-│   ├── design/
-│   ├── planning/
-│   ├── release/
-│   ├── reports/
-│   └── validation/
-├── dist/               # Built package distribution files (Created by `python -m build`)
-├── docs/               # Generated user/API documentation (via Sphinx)
-│   ├── _build/         # HTML output
-│   └── ... (source .rst files)
-├── server_prompts/     # Stage definitions (stage*.yaml), common templates, initial status
-├── src/                # (Currently empty, core logic in root scripts)
-├── tests/              # Unit and integration tests
-│   └── __pycache__/
-├── utils/              # Core utility modules (state_manager, chroma_utils, etc.)
-│   └── __pycache__/
-├── .env.template       # Template for environment variables (Primarily for CHUNGOID_PROJECT_DIR now)
-├── .env                # Optional: Local environment variables (e.g., CHUNGOID_PROJECT_DIR)
-├── config.yaml         # <<< NEW: Main configuration file (logging, ChromaDB, etc.) >>>
-├── .gitignore          # Specifies intentionally untracked files
-├── application_security.py # (Placeholder/Future work)
-├── chungoidmcp.py      # Main MCP server script (STDIO entry point)
-├── stage_executor.py   # Logic for executing individual stages
-├── requirements.txt    # Project dependencies
-├── pyproject.toml      # Build system and project metadata (PEP 517/518)
-├── LICENSE             # Project license (Apache 2.0)
-└── README.md           # This file
+# 4.  Ask for the first stage prompt:
+@chungoid prepare_next_stage
 ```
 
-## Installation
+*That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
 
-1.  **Prerequisites:**
-    *   Python >= 3.10 (Check with `python --version`)
-    *   `pip` and `venv` (Usually included with Python)
-    *   Git (For cloning)
+---
 
-2.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/chungoid/chungoid.git # Replace with your actual repo URL if different
-    cd chungoid-mcp
+## What it Does
+
+The server manages a multi-stage process where an AI agent (like you!) interacts via defined tools to perform tasks like design, planning, implementation, validation, and release preparation for a target software project.
+
+## Getting Started: Initializing a Project
+
+To begin a new project managed by Chungoid:
+
+1.  **Navigate:** Open your terminal *in the directory* where you want your new project to reside.
+2.  **Initialize:** Use the Chungoid client (e.g., Cursor chat) connected to this server and run the initialization:
     ```
-
-3.  **Create and activate a virtual environment:**
-    ```bash
-    python3 -m venv .venv
-    # On Linux/macOS:
-    source .venv/bin/activate
-    # On Windows (Git Bash/WSL):
-    # source .venv/Scripts/activate
-    # On Windows (Command Prompt):
-    # .venv\\Scripts\\activate.bat
-    # On Windows (PowerShell):
-    # .venv\\Scripts\\Activate.ps1
+    @chungoid initialize_project target_directory="."
     ```
-    *(You should see `(.venv)` at the beginning of your terminal prompt)*
+    *   (Replace `.` with the full path if you aren't running the client from the target directory itself).
+    *   This creates a `.chungoid/` directory containing essential state files (`project_status.json`).
+    *   It also automatically sets the project context for your current session.
 
-4.  **Install dependencies:**
-    ```bash
-    # Ensure pip is up-to-date within the venv
-    python -m pip install --upgrade pip
-    # Install project requirements
-    python -m pip install -r requirements.txt
-    ```
+## The Workflow: Stages 0-5
 
-## Configuration
+Chungoid uses a sequential, stage-based workflow. Each stage focuses on a specific part of development and has defined goals and expected outputs (artifacts).
 
-Chungoid MCP uses a `config.yaml` file in the root directory for its primary configuration.
+1.  **Stage 0: Discovery & Design:** Understand the goal, research, create `requirements.md` and `blueprint.md`.
+2.  **Stage 1: Design Validation:** Review Stage 0 artifacts, ensure feasibility/clarity, produce `validation_report.json`.
+3.  **Stage 2: Implementation Planning:** Create `implementation_plan.md` and `detailed_interfaces.md` based on the validated design.
+4.  **Stage 3: Implementation & Unit Testing:** Write code incrementally according to the plan, add unit tests, run static analysis. Produce code artifacts and reports (`static_analysis_report.json`, `unit_test_report.json`).
+5.  **Stage 4: Validation & QA:** Perform integration testing, security checks, etc., on the implemented code. Produce reports (`integration_report.json`, etc.).
+6.  **Stage 5: Release Preparation:** Finalize `README.md`, `docs/`, packaging files, and `release_notes.md`.
 
-```yaml
-# config.yaml (Example)
+## Interaction: Using the Tools
 
-logging:
-  level: "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  format: "text" # text, json
-  file: "chungoid_mcp_server.log"
-  max_bytes: 10485760 # 10 MB
-  backup_count: 5
+You interact with the server using specific tools via your client (e.g., `@chungoid tool_name ...`). Key tools include:
 
-chromadb:
-  client_type: "http" # http, persistent
-  host: "localhost"   # Hostname for http client
-  port: 8000          # Port for http client
-  persist_path: "./chroma" # Filesystem path for persistent client
+*   **`initialize_project`**: (Human driven) As shown above, Sets up a new project directory.
+*   **`set_project_context`**: (Human Driven)Tells the server which project directory subsequent commands should apply to for your session. Useful if managing multiple projects or if context is lost.
+*   **`get_project_status`**: (Human Driven) Retrieves the current status, including completed stages and runs.
+*   **`load_reflections`**: (Self/Agent/Engine Driven) Loads reflections/notes stored from previous stages.
+*   **`retrieve_reflections`**:(Self/Agent/Engine Driven) Searches stored reflections for specific information.
+*   **`prepare_next_stage`**: (Self/Agent/Engine Driven) Determines the next stage based on the project status and provides you with the prompt (role, goals, tasks) for that stage.
+*   **`get_file relative_path`**: (Self/Agent/Engine Driven) Reads the content of a file within the *currently set project context*.
+*   **`set_pending_reflection`**: (Self/Agent/Engine Driven) *Required before submitting.* Stages your reflection text temporarily.
+*   **`submit_stage_artifacts`**: (Self/Agent/Engine Driven) Submits the results of a stage. This updates the project status and stores artifact/reflection context. *Note: The `reflection_text` is picked up automatically from the previous `set_pending_reflection` call.*
 
-# Add other sections as needed
-```
+**Typical Flow:**
 
-*   **Defaults:** Sensible defaults are used if `config.yaml` is missing or incomplete.
-*   **Environment Overrides:** You can override any setting using environment variables prefixed with `CHUNGOID_`. For example, `CHUNGOID_LOGGING_LEVEL=DEBUG` or `CHUNGOID_CHROMADB_CLIENT_TYPE=persistent`.
-*   **Project Directory:** The main way to specify the project directory Chungoid should operate on is via the `CHUNGOID_PROJECT_DIR` environment variable, typically set in your client's `mcp.json` (see Usage below).
+1.  Write a brief summary of the goal you wish to acheive with your software project in goal.txt
+2.  Send agent request to `set_project_context` or `initialize_project`
+3.  Send agent request to `prepare_next_stage`
+4.  Refine your goal.txt by discussing with the agent how to optimize it for success.
+5.  Send agent request to `execute_next_stage`
+6.  Follow the stages workflow and let the agent guide you through the phases & use its chungoid tools to 
+store state artifacts, research artifacts, documentation artifacts, etc. 
+7.  Use `get_project_status` at any point in time to reflect on current state and next steps if you need guidance.
 
-## ChromaDB Setup (Optional but Recommended)
+## Key Concepts
 
-Chungoid MCP uses ChromaDB (configured via `config.yaml` or environment variables) for enhanced context management (storing/retrieving artifacts and reflections). While optional, running a local ChromaDB instance is needed to fully utilize these features and pass all integration tests.
+*   **Project Status (`.chungoid/project_status.json`):** Tracks the history of stage runs and their outcomes (PASS/FAIL).
+*   **Artifacts:** Files generated or modified during a stage (code, documents, reports).
+*   **Reflections:** Your thoughts, analysis, or rationale recorded during a stage, stored for context.
+*   **Context:** Information (status, artifacts, reflections) gathered and potentially passed into stage prompts.
 
-## Usage (Quick Start)
+## Development
 
-1.  **Configure Client (`mcp.json`):**
-    *   Add the following to your user `mcp.json` (e.g., `~/.cursor/mcp.json`), **replacing the `/path/to/...` parts with the absolute path** to your cloned `chungoid-mcp` directory and its virtual environment:
-        ```json
-        {
-          "mcpServers": {
-            "chungoid_mcp_server": { 
-              "transportType": "stdio",
-              "command": "/path/to/your/GLOBAL/chungoid-mcp/.venv/bin/python", 
-              "args": [
-                "/path/to/your/GLOBAL/chungoid-mcp/chungoidmcp.py" 
-              ],
-              "env": {
-                "CHUNGOID_PROJECT_DIR": "${workspaceFolder}",
-                # You can also set overrides here, e.g.:
-                # "CHUNGOID_LOGGING_LEVEL": "DEBUG"
-              }
-            }
-            // ... other servers ...
-          }
-        }
-        ```
-    *   This tells your client how to run the server and uses `${workspaceFolder}` to automatically target the project you have open.
+This project structure contains the server implementation. Development *of* the server (meta-development) occurs in the parent `chungoid-mcp` (currently private) repository structure. This is autonomously built from within an abstraction layer which uses a modified version of the chungoid workflow, and soon.. A2A protocol.
 
-2.  **Restart Editor & Select Server:**
-    *   Restart your editor (Cursor/VS Code) for the `mcp.json` changes to load.
-    *   Select `chungoid_mcp_server` (or your chosen name) as the active MCP server in your editor.
+## Origin Story
 
-3.  **Start ChromaDB (Optional):**
-    *   If using ChromaDB for context, ensure it's running and accessible based on your `config.yaml` or environment settings (e.g., for the default HTTP client: `chroma run --host localhost --port 8000`).
+In the early days, ambitious AI projects were often chaotic. Developers faced a swirling vortex of high-level goals, vague requirements, shifting dependencies, and endless potential paths. Progress stalled in "analysis paralysis," the sheer complexity overwhelming any attempt at structured development. They needed a new paradigm.
 
-4.  **Initialize & Run Workflow (via Client):**
-    *   Open the project you want Chungoid to work on in your editor (this becomes `${workspaceFolder}`).
-    *   Using your configured client (`@chungoid_mcp_server`), run these commands:
-        ```
-        # 1. Create .chungoid structure
-        @chungoid_mcp_server initialize_project
+The breakthrough came from a simple observation: even the most complex system could be broken down. Like eating an elephant one bite at a time, the team realized they needed to isolate manageable "chunks" of the problem – a specific feature, a single module, a defined stage of development. This wasn't just task breakdown; it was about creating self-contained units of work with clear inputs and outputs.
 
-        # 2. Set context for this session (needed after init)
-        @chungoid_mcp_server set_project_context
+Just chunking wasn't enough. They needed a *process* to handle each chunk consistently: define it (Stage 0), validate it (Stage 1), plan its implementation (Stage 2), build and test it (Stage 3), validate the build (Stage 4), and prepare it for integration (Stage 5). Crucially, the system needed to *learn* from each chunk – reflections stored in a persistent memory (like ChromaDB) to inform the next. This meta-cognitive loop was vital.
 
-        # 3. Verify setup (optional but recommended)
-        @chungoid_mcp_server get_project_status
+They weren't just creating *chunks*; they were designing a system *that operated on chunks*. This system had its own lifecycle, its own internal state, its own memory, and distinct operational phases (the stages). It felt less like a static plan and more like an autonomous entity designed specifically to *process* these chunks. The suffix "-oid" came to mind – signifying something "like" or "resembling" a self-contained, purposeful entity. It wasn't just *a* chunk; it was the **Chunk-Processor**, the **Chunk-Handler**, the **Chunk-oid**.
 
-        # 4. Start the workflow
-        @chungoid_mcp_server execute_next_stage
+During a late-night whiteboard session, mapping out the flow between stages, agents, and the reflection database, someone drew a box around the entire process – the State Manager, the Prompt Manager, the Stage Executor, the Memory. "This whole thing," they declared, gesturing at the diagram, "it's the... the *Chungoid*. It takes the big messy goal, breaks it into chunks, digests each one through the stages, learns, and moves on."
 
-        begin discussing your goal with 
-        ```
-    *   Follow the prompts from the server/AI, using `submit_stage_artifacts` and `execute_next_stage` as needed.
+The name stuck. "Chungoid" came to represent not just the act of chunking, but the entire **meta-cognitive, agent-driven framework** designed to systematically consume complexity through sequential, reflective stages. It embodied the structured approach, the learning capability, and the staged progression – the intelligent system that brings order to the chaos of creation.
 
-## Current Status (Run 7 Focus)
+## Logging Configuration (Environment Overrides)
 
-The primary goal of Run 7 was to debug and resolve issues related to ChromaDB persistence and artifact search functionality. Key findings and fixes include:
+Chungoid-core uses a centralised logging helper (`utils.logger_setup`) that
+reads settings from **config.yaml** but **can be overridden via environment
+variables** at runtime.  This is handy when you need verbose logs for
+troubleshooting or JSON logs in CI without modifying repo-tracked files.
 
-*   **Switched to `chromadb.HttpClient`:** Identified a mismatch between the configured `PersistentClient` and the server running in HTTP mode. Updated configuration and client initialization logic to use `HttpClient`.
-*   **Fixed `await` Errors:** Corrected `TypeError` exceptions caused by incorrectly awaiting synchronous StateManager methods in tool handlers (`handle_find_artifacts`, `handle_submit_stage_artifacts`).
-*   **Verified Artifact Storage/Retrieval:** Confirmed via direct checks and successful `find_artifacts` calls (using content-based queries) that artifacts are now correctly stored in and retrieved from ChromaDB.
-*   **Improved Logging:** Added more detailed logging around ChromaDB operations, although file logging behavior remains inconsistent.
-*   **Metadata Enhancement:** Added `description` and `keywords` to stored artifact metadata (though retrieval via `list_artifacts` needs further investigation).
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `CHUNGOID_LOGGING_LEVEL` | Override `logging.level` in config. Accepts standard Python levels (`DEBUG`, `INFO`, etc.). | `export CHUNGOID_LOGGING_LEVEL=DEBUG` |
+| `CHUNGOID_LOGGING_FORMAT` | Set formatter: `text` (default) or `json`. | `export CHUNGOID_LOGGING_FORMAT=json` |
+| `CHUNGOID_LOGGING_FILE` | Path for rotating file handler. Leave blank to disable file logging. | `export CHUNGOID_LOGGING_FILE=/tmp/chungoid.log` |
+| `CHUNGOID_LOGGING_MAX_BYTES` | Max size (bytes) before rotation. | `export CHUNGOID_LOGGING_MAX_BYTES=1048576` |
+| `CHUNGOID_LOGGING_BACKUP_COUNT` | How many rotated files to keep. | `export CHUNGOID_LOGGING_BACKUP_COUNT=3` |
 
-**Outcome:** The core ChromaDB integration issues were successfully resolved in Run 7. Artifacts are persisted and searchable via semantic queries.
-
-## Development & Testing
-
-*   **Tests:** Run the integration test suite. Requires ChromaDB server running (see ChromaDB Setup and configuration).
-    ```bash
-    python -m pytest tests/
-    # Open docs/_build/html/index.html in your browser
-    ```
-
-## Showcase Suggestions
-
-Consider adding screenshots or GIFs to this README demonstrating:
-*   An example interaction with the AI agent using the server tools.
-
-## Contributing
-
-Contributions are welcome! Please fork the repository, create a feature branch, and submit a pull request. Ensure tests pass and code adheres to linting/formatting standards.
-
-## License
-
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+When any of these variables are present, `utils.config_loader` injects the
+value into the runtime config before `utils.logger_setup.setup_logging()` is
+called. 

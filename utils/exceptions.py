@@ -1,5 +1,7 @@
 """Custom exceptions for the Chungoid MCP Core system."""
 
+from .chroma_utils import ChromaOperationError  # Re-export for convenience and backward compatibility
+
 class ChungoidError(Exception):
     """Base class for custom exceptions in Chungoid Core."""
     pass
@@ -19,3 +21,11 @@ class PromptRenderError(ChungoidError):
     pass
 
 # Note: ChromaOperationError is defined in chroma_utils.py 
+
+__all__ = [
+    "ChungoidError",
+    "StageExecutionError",
+    "ToolExecutionError",
+    "PromptRenderError",
+    "ChromaOperationError",
+] 

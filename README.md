@@ -2,7 +2,7 @@
 
 <!--[BADGES]-->
 <!-- CI badge: replace <owner>/<repo> with your GitHub slug if the fork is elsewhere -->
-[![Tests](https://github.com/<owner>/<repo>/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/<owner>/<repo>/actions/workflows/test.yml)
+[![Tests](https://github.com/chungoid/chungoid/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/chungoid/chungoid/actions/workflows/test.yml)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%2B-brightgreen)
 ![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
 
