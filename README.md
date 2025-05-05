@@ -34,15 +34,15 @@ Chungoid uses a sequential, stage-based workflow. Each stage focuses on a specif
 
 You interact with the server using specific tools via your client (e.g., `@chungoid tool_name ...`). Key tools include:
 
-*   **`initialize_project target_directory="..."`**: (As shown above) Sets up a new project directory.
-*   **`set_project_context target_directory="..."`**: Tells the server which project directory subsequent commands should apply to for your session. Useful if managing multiple projects or if context is lost.
-*   **`get_project_status`**: Retrieves the current status, including completed stages and runs.
-*   **`load_reflections`**: Loads reflections/notes stored from previous stages.
-*   **`retrieve_reflections query="..."`**: Searches stored reflections for specific information.
-*   **`prepare_next_stage`**: Determines the next stage based on the project status and provides you with the prompt (role, goals, tasks) for that stage.
-*   **`get_file relative_path="..."`**: Reads the content of a file within the *currently set project context*.
-*   **`set_pending_reflection reflection_text="..."`**: *Required before submitting.* Stages your reflection text temporarily.
-*   **`submit_stage_artifacts stage_number=X.Y stage_result_status="PASS|FAIL|..." generated_artifacts={...}`**: Submits the results of a stage. This updates the project status and stores artifact/reflection context. *Note: The `reflection_text` is picked up automatically from the previous `set_pending_reflection` call.*
+*   **`initialize_project`**: (Human driven) As shown above, Sets up a new project directory.
+*   **`set_project_context`**: (Human Driven)Tells the server which project directory subsequent commands should apply to for your session. Useful if managing multiple projects or if context is lost.
+*   **`get_project_status`**: (Human Driven) Retrieves the current status, including completed stages and runs.
+*   **`load_reflections`**: (Self/Agent/Engine Driven) Loads reflections/notes stored from previous stages.
+*   **`retrieve_reflections`**:(Self/Agent/Engine Driven) Searches stored reflections for specific information.
+*   **`prepare_next_stage`**: (Self/Agent/Engine Driven) Determines the next stage based on the project status and provides you with the prompt (role, goals, tasks) for that stage.
+*   **`get_file relative_path`**: (Self/Agent/Engine Driven) Reads the content of a file within the *currently set project context*.
+*   **`set_pending_reflection`**: (Self/Agent/Engine Driven) *Required before submitting.* Stages your reflection text temporarily.
+*   **`submit_stage_artifacts`**: (Self/Agent/Engine Driven) Submits the results of a stage. This updates the project status and stores artifact/reflection context. *Note: The `reflection_text` is picked up automatically from the previous `set_pending_reflection` call.*
 
 **Typical Flow:**
 
