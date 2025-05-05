@@ -14,19 +14,12 @@
 
 ```bash
 # 0.  Install dependencies in a fresh venv
-pip install -e .[dev]  # from repo root
-
-# 1.  Start the embedded ChromaDB (optional – script handles it automatically)
-make chroma-dev-server &
-
-# 2.  Launch the server (stdio mode)
-python chungoid-core/chungoidmcp.py &  # or `python -m chungoidmcp`
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt  # from repo root
 
 # 3.  In your chat client / CLI, initialise a directory:
-@chungoid initialize_project target_directory="$(pwd)"
-
-# 4.  Ask for the first stage prompt:
-@chungoid prepare_next_stage
+@chungoid initialize_project
 ```
 
 *That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
@@ -39,16 +32,32 @@ The server manages a multi-stage process where an AI agent (like you!) interacts
 
 ## Getting Started: Initializing a Project
 
+*   Set your mcp.json configuration if you're using an IDE like cursor and change `args` to point towards your launch_server.sh so your client can start the server. Everything else remains as is, `CHROMA_CLIENT_TYPE` can be configured to handle http if desired.
+
+```
+    "chungoid": {
+      "transportType": "stdio",
+      "command": "/bin/bash",
+      "args": [
+        "/home/flip/Desktop/chungoid-mcp/chungoid-core/launch_server.sh"
+      ],
+      "env": {
+        "CHUNGOID_PROJECT_DIR": "${workspaceFolder}",
+        "CHROMA_CLIENT_TYPE": "persistent"
+      }
+    }
+```
+
 To begin a new project managed by Chungoid:
 
 1.  **Navigate:** Open your terminal *in the directory* where you want your new project to reside.
 2.  **Initialize:** Use the Chungoid client (e.g., Cursor chat) connected to this server and run the initialization:
     ```
-    @chungoid initialize_project target_directory="."
+    @chungoid initialize_project
     ```
-    *   (Replace `.` with the full path if you aren't running the client from the target directory itself).
     *   This creates a `.chungoid/` directory containing essential state files (`project_status.json`).
     *   It also automatically sets the project context for your current session.
+    *   Follow your agents instructions and interact to clarify a well refined project goal & advance through the stages.
 
 ## The Workflow: Stages 0-5
 
@@ -85,6 +94,7 @@ You interact with the server using specific tools via your client (e.g., `@chung
 6.  Follow the stages workflow and let the agent guide you through the phases & use its chungoid tools to 
 store state artifacts, research artifacts, documentation artifacts, etc. 
 7.  Use `get_project_status` at any point in time to reflect on current state and next steps if you need guidance.
+8. Use `set_pending_reflections` `load_reflections` and `store_reflections` to store context in the projects `.chungoid/chroma_db` subdirectory.
 
 ## Key Concepts
 
