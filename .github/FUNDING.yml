@@ -1,6 +1,5 @@
 # GitHub Sponsors / Funding metadata
 # See https://docs.github.com/articles/displaying-a-sponsor-button-in-your-repository
 
-github: chungoid        # <-- Set this to your GitHub Sponsors username once approved
+github: chungoid        
 buy_me_a_coffee: chungoid
-custom: ["https://buymeacoffee.com/chungoid"] 
