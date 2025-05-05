@@ -204,7 +204,7 @@ If you ever delete the file, just re-run Stage –1 or call the tool handler you
 
 --- 
 
-## 🔄 Recent Enhancements (May 2025)
+## Enhancements (May 2025)
 
 | Area | What changed | Where/Artifacts |
 |------|--------------|-----------------|
