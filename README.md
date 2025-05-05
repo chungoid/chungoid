@@ -112,11 +112,13 @@ store state artifacts, research artifacts, documentation artifacts, etc.
 
 > *Everything below is optional.*  Chungoid-core runs out-of-the-box with plain files on disk.  But if you enable these extra components the agent can "stack" new kinds of computation and context, giving it **exponential leverage** during the stage workflow.
 
-| Add-on | What it brings | Typical env var / setup |
-|--------|---------------|-------------------------|
-| **ChromaDB** | Embedded or HTTP vector store for long-term reflections, planning docs, and fetched library docs.  Enables fast semantic search so later stages recall past decisions instead of repeating analysis. | `CHROMA_CLIENT_TYPE=persistent` (default) or `http` + run `make chroma-dev-server`. |
-| **MCP Sequential Thinking** | Tool that forces the agent to reason step-by-step, self-critique, and verify outputs before showing them to you.  Early stages (-1, 0, 1) use it to spot gaps; later stages (2-5) use it for code/test validation. | Built-in, no setup — invoked inside every prompt. |
-| **Context7 Library Docs** | On-demand retrieval of third-party API documentation (`resolve-library-id` → `get-library-docs`).  Reduces hallucinations and saves you from hunting docs manually. | No setup; Stage 0 tries first, else logs to `doc_requests.yaml` so you can supply `llms.txt`. |
+| Add-on | What it brings | Install | Docs / Repo |
+|--------|---------------|---------|-------------|
+| **ChromaDB** | Embedded or HTTP vector store for long-term reflections, planning docs, and fetched library docs.  Enables fast semantic search so later stages recall past decisions instead of repeating analysis. | Built-in (install via `pip install chromadb` — already in requirements.txt) | https://docs.trychroma.com |
+| **MCP Sequential Thinking** | Tool that forces the agent to reason step-by-step, self-critique, and verify outputs before showing them to you.  Early stages (-1, 0, 1) use it to spot gaps; later stages (2-5) use it for code/test validation. | `pip install mcp-sequentialthinking` | https://github.com/modelcontextprotocol/servers/tree/main/sequentialthinking |
+| **Context7 Library Docs** | On-demand retrieval of third-party API documentation (`resolve-library-id` → `get-library-docs`).  Reduces hallucinations and saves you from hunting docs manually. | `pip install context7` | https://github.com/upstash/context7 |
+
+> These packages are **maintained by their own teams**.  Chungoid merely detects and uses them if they're present; see each repository for license and security details.
 
 Chungoid calls this synergy **compute stacking**: each layer (vector memory, disciplined reasoning, live docs) augments the next, letting the agent solve harder problems with fewer tokens and less user micro-management. Enable as many layers as your environment allows; the workflow adapts automatically.
 
