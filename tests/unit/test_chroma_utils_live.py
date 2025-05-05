@@ -7,9 +7,6 @@ import pytest
 from utils import chroma_utils
 import utils.chroma_utils as cu
 
-# Mark the whole module as expected to fail until chroma_utils DI refactor is done
-pytestmark = pytest.mark.xfail(reason="Pending chroma_utils DI refactor", strict=False)
-
 
 def _fake_get_client(mode, project_dir, server_url=None):
     """Return a sentinel object marking which mode was requested."""
@@ -26,13 +23,7 @@ def fake_chroma_client(monkeypatch):
 def patch_factory(monkeypatch):
     # Patch the factory before each test
     # prevent global conftest from patching chroma_utils.get_chroma_client
-    import importlib
-    importlib.reload(chroma_utils)
-    # Override global conftest patch by resetting function
-    monkeypatch.setattr(chroma_utils, "get_chroma_client", chroma_utils.get_chroma_client, raising=False)
-    monkeypatch.setattr("utils.chroma_client_factory.get_client", _fake_get_client)
-    # Reload module to restore original get_chroma_client (removed by global conftest)
-    importlib.reload(chroma_utils)
+    monkeypatch.setattr(chroma_utils, "_factory_get_client", _fake_get_client)
     # Ensure singleton cleared
     chroma_utils._client = None
     chroma_utils._client_project_context = None

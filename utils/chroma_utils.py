@@ -70,7 +70,6 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
         _client = None # Force re-initialization
 
     if _client is None:
-        from .chroma_client_factory import get_client as _factory_get_client
         try:
             cfg = get_config().get("chromadb", {})
             mode = cfg.get("mode", "auto")
@@ -333,3 +332,19 @@ def get_persistent_chroma_client(project_directory: Path) -> chromadb.ClientAPI:
         # Catch potential chromadb initialization errors
         logger.error(f"Failed to initialize PersistentClient at {persist_path}: {e}", exc_info=True)
         raise
+
+# --- Dependency-injection hook -------------------------------------------------
+# Wrapping the factory import in a helper makes it trivial to monkey-patch in
+# tests without touching import machinery.  Production code path remains the
+# same because we call the wrapper.
+
+def _factory_get_client(mode: str, project_dir: Path, *, server_url: str | None = None):
+    """Wrapper around utils.chroma_client_factory.get_client.
+
+    This indirection exists solely to allow tests to monkey-patch a single
+    symbol (`utils.chroma_utils._factory_get_client`) instead of deep
+    patching import targets inside the function body.
+    """
+    from .chroma_client_factory import get_client as _real_get_client
+
+    return _real_get_client(mode, project_dir, server_url=server_url)
