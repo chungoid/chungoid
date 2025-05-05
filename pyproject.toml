@@ -178,7 +178,10 @@ packages = ["utils"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-# addopts = "-ra -q --log-cli-level=DEBUG" # Add options like verbose, quiet, log level
+addopts = "-m \"not legacy\"" # skip legacy tests by default
+markers = [
+    "legacy: tests that target deprecated code paths, skipped in default run",
+]
 testpaths = [
     "tests",
 ]

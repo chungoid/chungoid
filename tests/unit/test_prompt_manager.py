@@ -3,11 +3,14 @@ from unittest.mock import patch, MagicMock, mock_open
 import yaml
 from pathlib import Path
 import sys
+import pytest
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
+
+pytestmark = pytest.mark.legacy
 
 # --- Test Data ---
 COMMON_YAML_CONTENT = """

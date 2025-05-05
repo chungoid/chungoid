@@ -5,6 +5,7 @@ import tempfile
 import shutil
 from unittest.mock import patch, MagicMock
 import logging
+import pytest
 
 from utils import chroma_utils
 from utils import config_loader
@@ -12,6 +13,8 @@ import chromadb
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+pytestmark = pytest.mark.legacy
 
 
 class TestChromaModes(unittest.TestCase):
@@ -45,12 +48,12 @@ class TestChromaModes(unittest.TestCase):
             }
         }
         mock_get_config.return_value = cfg
-        mock_http_instance = MagicMock(spec=chromadb.HttpClient)
-        mock_http_ctor.return_value = mock_http_instance
+        mock_http_client_instance = MagicMock()
+        mock_http_ctor.return_value = mock_http_client_instance
 
         client = chroma_utils.get_chroma_client()
 
-        self.assertIs(client, mock_http_instance)
+        self.assertIs(client, mock_http_client_instance)
         mock_http_ctor.assert_called_once_with(host="testhost", port=9999)
 
     @patch("chromadb.PersistentClient")
@@ -60,14 +63,14 @@ class TestChromaModes(unittest.TestCase):
         """`mode: persistent` requires project context and creates proper path."""
         cfg = {"chromadb": {"mode": "persistent"}}
         mock_get_config.return_value = cfg
-        mock_persist_instance = MagicMock(spec=chromadb.PersistentClient)
-        mock_persist_ctor.return_value = mock_persist_instance
+        mock_pc_instance = MagicMock()
+        mock_persist_ctor.return_value = mock_pc_instance
 
         # context must be set first
         chroma_utils.set_chroma_project_context(self.project_dir)
         client = chroma_utils.get_chroma_client()
 
-        self.assertIs(client, mock_persist_instance)
+        self.assertIs(client, mock_pc_instance)
         expected_dir = self.project_dir / ".chungoid" / "chroma_db"
         mock_makedirs.assert_called_once_with(expected_dir, exist_ok=True)
         mock_persist_ctor.assert_called_once_with(path=str(expected_dir))

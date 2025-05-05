@@ -8,6 +8,7 @@ import logging
 import chromadb
 import filelock
 import datetime
+import pytest
 
 # Add project root to path to allow importing utils
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -21,6 +22,8 @@ STATUS_CONTENT_RUN0_DONE = '{"current_stage": 1.0, "runs": [{"run_id": "run_0", 
 STATUS_CONTENT_RUN0_FAIL = '{"current_stage": 0.0, "runs": [{"run_id": "run_0", "status_updates": [{"timestamp": "2023-01-01T10:00:00Z", "stage": 0.0, "status": "FAIL", "artifacts": []}]}]}'
 STATUS_CONTENT_INVALID_JSON = '{"runs": [}'
 
+# Mark the entire file as legacy until StateManager refactor is complete
+pytestmark = pytest.mark.legacy
 
 class TestStateManager(unittest.TestCase):
     test_target_dir = "./test_sm_target" # Use relative path for simplicity

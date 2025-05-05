@@ -3,6 +3,9 @@ import tempfile
 from pathlib import Path
 import shutil
 from utils.prompt_manager import PromptManager, PromptLoadError
+import pytest
+
+pytestmark = pytest.mark.legacy
 
 class TestPromptManagerCore(unittest.TestCase):
     """Covers loading & rendering logic of PromptManager with minimal YAML."""

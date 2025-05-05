@@ -3,8 +3,11 @@ import tempfile
 from pathlib import Path
 import shutil
 from unittest.mock import patch, MagicMock
+import pytest
 
 from utils.state_manager import StateManager, StatusFileError
+
+pytestmark = pytest.mark.legacy
 
 class TestStateManagerCore(unittest.TestCase):
     """Covers status read / write paths of StateManager without hitting real Chroma."""

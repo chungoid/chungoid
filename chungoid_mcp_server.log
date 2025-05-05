@@ -1048,3 +1048,1061 @@ TypeError: TestStateManager.test_update_project_status.<locals>.is_dir_side_effe
 2025-05-05 07:14:56,283 - utils.state_manager - DEBUG - Successfully read and parsed status file with {'runs': ...} structure.
 2025-05-05 07:14:56,284 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:14:56.283258+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:14:56.283144+00:00', 'artifacts': ['a.txt']}]}]}
 2025-05-05 07:14:56,284 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:14:56.283258+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:14:56.283144+00:00', 'artifacts': ['a.txt']}]}]}
+2025-05-05 07:21:14,995 - root - INFO - File logging configured to chungoid_mcp_server.log
+2025-05-05 07:21:14,995 - utils.logger_setup - INFO - Logging setup complete. Level: INFO
+2025-05-05 07:21:14,996 - chungoidmcp - INFO - Environment variable CHUNGOID_PROJECT_DIR found: '/home/flip/Desktop/chungoid-mcp'
+2025-05-05 07:21:14,996 - chungoidmcp - INFO - Validated project directory from env var: /home/flip/Desktop/chungoid-mcp
+2025-05-05 07:21:14,996 - chungoidmcp - INFO - Logging configured for chungoidmcp module.
+2025-05-05 07:21:14,996 - chungoidmcp - INFO - Initializing Chungoid MCP Server components at module level...
+2025-05-05 07:21:14,996 - chungoidmcp - INFO - Chungoid base directory determined as: /home/flip/Desktop/chungoid-mcp/chungoid-core
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Initializing server 'ChungoidMCP'
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListToolsRequest
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for CallToolRequest
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListResourcesRequest
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for ReadResourceRequest
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for PromptListRequest
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for GetPromptRequest
+2025-05-05 07:21:14,997 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListResourceTemplatesRequest
+2025-05-05 07:21:14,997 - chungoidmcp - INFO - Root logger handlers AFTER FastMCP init: [<StreamHandler <_io.FileIO name=8 mode='rb+' closefd=True> (INFO)>, <RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:14,998 - chungoidmcp - INFO - FastMCP instance created. StateManager initialization deferred to tool calls.
+2025-05-05 07:21:15,013 - chungoidmcp - INFO - --- Inspecting Registered MCP Tools ---
+2025-05-05 07:21:15,014 - chungoidmcp - WARNING - Could not access or inspect mcp.tools registry.
+2025-05-05 07:21:15,014 - chungoidmcp - INFO - -------------------------------------
+2025-05-05 07:21:15,315 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,316 - utils.chroma_utils - ERROR - Persistent mode requested but project context not set via set_chroma_project_context().
+2025-05-05 07:21:15,316 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,319 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,319 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpgy8_ck7y/proj
+2025-05-05 07:21:15,320 - utils.chroma_utils - INFO - ChromaDB client initialised in persistent mode.
+2025-05-05 07:21:15,320 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,355 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,355 - test_chroma_utils - INFO - Running test_get_chroma_client_http
+2025-05-05 07:21:15,356 - utils.chroma_utils - ERROR - Persistent mode requested but project context not set via set_chroma_project_context().
+2025-05-05 07:21:15,356 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,360 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,361 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_context_change
+2025-05-05 07:21:15,362 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmp3cwj07ml/project1
+2025-05-05 07:21:15,362 - utils.chroma_utils - INFO - ChromaDB client initialised in persistent mode.
+2025-05-05 07:21:15,363 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,398 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,398 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_no_context
+2025-05-05 07:21:15,399 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,402 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,403 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_success
+2025-05-05 07:21:15,403 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpmgd2bejq/project1
+2025-05-05 07:21:15,404 - utils.chroma_utils - INFO - ChromaDB client initialised in persistent mode.
+2025-05-05 07:21:15,404 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,438 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,438 - test_chroma_utils - INFO - Running test_get_chroma_client_persistent_uses_helper
+2025-05-05 07:21:15,439 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmp9tk0mbtb/project1
+2025-05-05 07:21:15,439 - utils.chroma_utils - WARNING - Chroma library is compiled http-only – falling back to HttpClient (http://localhost:8000).
+2025-05-05 07:21:15,629 - utils.chroma_utils - ERROR - Fallback HttpClient initialisation failed: Could not connect to a Chroma server. Are you sure it is running?
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+        pool_request.request
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 106, in get_user_identity
+    return self._server.get_user_identity()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 150, in wrapper
+    return f(*args, **kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 200, in get_user_identity
+    return UserIdentity(**self._make_request("get", "/auth/identity"))
+                          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 105, in _make_request
+    response = self._session.request(method, url, **cast(Any, kwargs))
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 103, in get_chroma_client
+    _client = _factory_get_client("http", project_dir, server_url=fallback_url)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 76, in get_client
+    return chromadb.HttpClient(host=host, port=port, settings=s)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/__init__.py", line 241, in HttpClient
+    return ClientCreator(tenant=tenant, database=database, settings=settings)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 70, in __init__
+    user_identity = self.get_user_identity()
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 108, in get_user_identity
+    raise ValueError(
+        "Could not connect to a Chroma server. Are you sure it is running?"
+    )
+ValueError: Could not connect to a Chroma server. Are you sure it is running?
+2025-05-05 07:21:15,634 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:15,635 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,639 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,640 - test_chroma_utils - INFO - Running test_set_and_clear_project_context
+2025-05-05 07:21:15,640 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpjwgupokn/project1
+2025-05-05 07:21:15,640 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,640 - utils.chroma_utils - INFO - Clearing Chroma project context directory.
+2025-05-05 07:21:15,647 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,647 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,648 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,648 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,648 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,694 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,694 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,694 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,695 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,695 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,736 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,736 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,736 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,736 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,737 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,779 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,779 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,779 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,779 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,779 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,820 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,820 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,820 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,820 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,820 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,857 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,857 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,858 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,858 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,858 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,900 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,900 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/fake/stages'
+2025-05-05 07:21:15,900 - utils.prompt_manager - INFO - Loading common template from /fake/common.yaml
+2025-05-05 07:21:15,900 - utils.prompt_manager - ERROR - Failed to read YAML file '/fake/common.yaml': [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,901 - utils.prompt_manager - ERROR - Failed to load common template: Could not read YAML file /fake/common.yaml: [Errno 2] No such file or directory: '/fake/common.yaml'
+2025-05-05 07:21:15,940 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,940 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/tmp/tmpvmu921bz/stages'
+2025-05-05 07:21:15,940 - utils.prompt_manager - INFO - Loading common template from /tmp/tmpvmu921bz/common.yaml
+2025-05-05 07:21:15,940 - utils.prompt_manager - INFO - Successfully loaded common template.
+2025-05-05 07:21:15,941 - utils.prompt_manager - INFO - Loading stage definitions from /tmp/tmpvmu921bz/stages
+2025-05-05 07:21:15,941 - utils.prompt_manager - INFO - Attempting to load stage definition from stage1.yaml
+2025-05-05 07:21:15,941 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpvmu921bz/stages/stage1.yaml': 
+2025-05-05 07:21:15,941 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage1.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Only system prompt"\n            '
+2025-05-05 07:21:15,941 - utils.prompt_manager - ERROR - Failed to load stage definition from stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:21:15,941 - utils.prompt_manager - INFO - Attempting to load stage definition from stage0.yaml
+2025-05-05 07:21:15,942 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpvmu921bz/stages/stage0.yaml': 
+2025-05-05 07:21:15,942 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage0.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Greetings {{ name }}"\n            user_prompt: "What is up?"\n            '
+2025-05-05 07:21:15,942 - utils.prompt_manager - INFO - Successfully loaded and stored stage definition for 0 from stage0.yaml
+2025-05-05 07:21:15,942 - utils.prompt_manager - ERROR - Encountered 1 error(s) while loading stage definitions:
+stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:21:15,944 - utils.prompt_manager - INFO - Jinja2 environment created.
+2025-05-05 07:21:15,944 - utils.prompt_manager - INFO - DEBUG PromptManager: Initializing with server_stages_dir='/tmp/tmpdfc13ny9/stages'
+2025-05-05 07:21:15,944 - utils.prompt_manager - INFO - Loading common template from /tmp/tmpdfc13ny9/common.yaml
+2025-05-05 07:21:15,944 - utils.prompt_manager - INFO - Successfully loaded common template.
+2025-05-05 07:21:15,944 - utils.prompt_manager - INFO - Loading stage definitions from /tmp/tmpdfc13ny9/stages
+2025-05-05 07:21:15,945 - utils.prompt_manager - INFO - Attempting to load stage definition from stage1.yaml
+2025-05-05 07:21:15,945 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpdfc13ny9/stages/stage1.yaml': 
+2025-05-05 07:21:15,945 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage1.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Only system prompt"\n            '
+2025-05-05 07:21:15,945 - utils.prompt_manager - ERROR - Failed to load stage definition from stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:21:15,945 - utils.prompt_manager - INFO - Attempting to load stage definition from stage0.yaml
+2025-05-05 07:21:15,945 - utils.prompt_manager - ERROR - DEBUG: Failed to read snippet directly from '/tmp/tmpdfc13ny9/stages/stage0.yaml': 
+2025-05-05 07:21:15,946 - utils.prompt_manager - INFO - DEBUG PromptManager: Reading stage0.yaml in _load_yaml_file. Content repr(): '\n            system_prompt: "Greetings {{ name }}"\n            user_prompt: "What is up?"\n            '
+2025-05-05 07:21:15,946 - utils.prompt_manager - INFO - Successfully loaded and stored stage definition for 0 from stage0.yaml
+2025-05-05 07:21:15,946 - utils.prompt_manager - ERROR - Encountered 1 error(s) while loading stage definitions:
+stage1.yaml: Stage 1 definition missing required string keys: ['user_prompt']
+2025-05-05 07:21:15,966 - utils.state_manager - INFO - Successfully added root RotatingFileHandler to utils.state_manager logger.
+2025-05-05 07:21:15,966 - utils.state_manager - INFO - Successfully added root RotatingFileHandler to utils.state_manager logger.
+2025-05-05 07:21:15,967 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:15,967 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:15,967 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:15,967 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:15,967 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:15,967 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:15,967 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:15,968 - utils.chroma_utils - WARNING - Chroma library is compiled http-only – falling back to HttpClient (http://localhost:8000).
+2025-05-05 07:21:15,974 - utils.chroma_utils - ERROR - Fallback HttpClient initialisation failed: Could not connect to a Chroma server. Are you sure it is running?
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+        pool_request.request
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 106, in get_user_identity
+    return self._server.get_user_identity()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 150, in wrapper
+    return f(*args, **kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 200, in get_user_identity
+    return UserIdentity(**self._make_request("get", "/auth/identity"))
+                          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 105, in _make_request
+    response = self._session.request(method, url, **cast(Any, kwargs))
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 103, in get_chroma_client
+    _client = _factory_get_client("http", project_dir, server_url=fallback_url)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 76, in get_client
+    return chromadb.HttpClient(host=host, port=port, settings=s)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/__init__.py", line 241, in HttpClient
+    return ClientCreator(tenant=tenant, database=database, settings=settings)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 70, in __init__
+    user_identity = self.get_user_identity()
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 108, in get_user_identity
+    raise ValueError(
+        "Could not connect to a Chroma server. Are you sure it is running?"
+    )
+ValueError: Could not connect to a Chroma server. Are you sure it is running?
+2025-05-05 07:21:15,977 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:15,977 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:15,977 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:15,977 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:21:15,977 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:21:15,978 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:21:15,978 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:21:15,978 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:15,978 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:15,978 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:15,978 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:15,978 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:15,978 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:15,978 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:15,978 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:15,985 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:15,985 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:15,986 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:15,986 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:15,986 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:15,986 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:15,986 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:15,986 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:15,986 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:15,986 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:15,986 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:15,987 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_get_next_stage_fail.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_get_next_stage_fail.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:15,988 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:15,988 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:15,988 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,068 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,068 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,068 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,068 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,068 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,068 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,068 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,068 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,068 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,068 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,068 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,069 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_get_next_stage_simple.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_get_next_stage_simple.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:16,070 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,070 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,070 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,152 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,152 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,153 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,153 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,153 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,153 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,153 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,153 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,153 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,153 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,153 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,154 - utils.chroma_utils - WARNING - Chroma library is compiled http-only – falling back to HttpClient (http://localhost:8000).
+2025-05-05 07:21:16,160 - utils.chroma_utils - ERROR - Fallback HttpClient initialisation failed: Could not connect to a Chroma server. Are you sure it is running?
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+        pool_request.request
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 106, in get_user_identity
+    return self._server.get_user_identity()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 150, in wrapper
+    return f(*args, **kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 200, in get_user_identity
+    return UserIdentity(**self._make_request("get", "/auth/identity"))
+                          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 105, in _make_request
+    response = self._session.request(method, url, **cast(Any, kwargs))
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 103, in get_chroma_client
+    _client = _factory_get_client("http", project_dir, server_url=fallback_url)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 76, in get_client
+    return chromadb.HttpClient(host=host, port=port, settings=s)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/__init__.py", line 241, in HttpClient
+    return ClientCreator(tenant=tenant, database=database, settings=settings)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 70, in __init__
+    user_identity = self.get_user_identity()
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 108, in get_user_identity
+    raise ValueError(
+        "Could not connect to a Chroma server. Are you sure it is running?"
+    )
+ValueError: Could not connect to a Chroma server. Are you sure it is running?
+2025-05-05 07:21:16,163 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,163 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,163 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,163 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:21:16,163 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:21:16,163 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:21:16,163 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:21:16,164 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,164 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,164 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,164 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,164 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,164 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,164 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:16,164 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:16,164 - utils.state_manager - DEBUG - Querying Chroma collection 'chungoid_reflections' for reflections: 'test query...' (n=3, filter=None)
+2025-05-05 07:21:16,164 - utils.state_manager - DEBUG - Querying Chroma collection 'chungoid_reflections' for reflections: 'test query...' (n=3, filter=None)
+2025-05-05 07:21:16,165 - utils.chroma_utils - WARNING - Chroma library is compiled http-only – falling back to HttpClient (http://localhost:8000).
+2025-05-05 07:21:16,171 - utils.chroma_utils - ERROR - Fallback HttpClient initialisation failed: Could not connect to a Chroma server. Are you sure it is running?
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+        pool_request.request
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 106, in get_user_identity
+    return self._server.get_user_identity()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 150, in wrapper
+    return f(*args, **kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 200, in get_user_identity
+    return UserIdentity(**self._make_request("get", "/auth/identity"))
+                          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 105, in _make_request
+    response = self._session.request(method, url, **cast(Any, kwargs))
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 103, in get_chroma_client
+    _client = _factory_get_client("http", project_dir, server_url=fallback_url)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 76, in get_client
+    return chromadb.HttpClient(host=host, port=port, settings=s)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/__init__.py", line 241, in HttpClient
+    return ClientCreator(tenant=tenant, database=database, settings=settings)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 70, in __init__
+    user_identity = self.get_user_identity()
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 108, in get_user_identity
+    raise ValueError(
+        "Could not connect to a Chroma server. Are you sure it is running?"
+    )
+ValueError: Could not connect to a Chroma server. Are you sure it is running?
+2025-05-05 07:21:16,173 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,173 - utils.chroma_utils - ERROR - Cannot get/create collection 'chungoid_reflections': ChromaDB client not available.
+2025-05-05 07:21:16,173 - utils.state_manager - ERROR - Failed to get reflection context from Chroma collection 'chungoid_reflections': ChromaDB query operation failed for collection 'chungoid_reflections'. Check logs for details.
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/state_manager.py", line 830, in get_reflection_context_from_chroma
+    raise ChromaOperationError(f"ChromaDB query operation failed for collection '{self._REFLECTIONS_COLLECTION_NAME}'. Check logs for details.")
+utils.state_manager.ChromaOperationError: ChromaDB query operation failed for collection 'chungoid_reflections'. Check logs for details.
+2025-05-05 07:21:16,173 - utils.state_manager - ERROR - Failed to get reflection context from Chroma collection 'chungoid_reflections': ChromaDB query operation failed for collection 'chungoid_reflections'. Check logs for details.
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/state_manager.py", line 830, in get_reflection_context_from_chroma
+    raise ChromaOperationError(f"ChromaDB query operation failed for collection '{self._REFLECTIONS_COLLECTION_NAME}'. Check logs for details.")
+utils.state_manager.ChromaOperationError: ChromaDB query operation failed for collection 'chungoid_reflections'. Check logs for details.
+2025-05-05 07:21:16,194 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,194 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,194 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,194 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,194 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,194 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,194 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,194 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,195 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,195 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,195 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,195 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_init_stages_dir_does_not_exist.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_init_stages_dir_does_not_exist.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:16,196 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,196 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,196 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,273 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,273 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,273 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,273 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,273 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,273 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,273 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,273 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,273 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,273 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,273 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,274 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_init_status_file_corrupted.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_init_status_file_corrupted.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:16,275 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,275 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,275 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,352 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,352 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,352 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,352 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,352 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,352 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,352 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,352 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,352 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,352 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,352 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,353 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_init_success_file_does_not_exist.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_init_success_file_does_not_exist.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:16,354 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,354 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,354 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,433 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,433 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,433 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,433 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,433 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,433 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,434 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,434 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,434 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,434 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,434 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,434 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_init_success_file_exists.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_init_success_file_exists.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:16,435 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,435 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,435 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,519 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,519 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,519 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,519 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,519 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,519 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,519 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,519 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,519 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,520 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,520 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,520 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+2025-05-05 07:21:16,521 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,521 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,521 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,521 - utils.state_manager - ERROR - Failed to create .chungoid directory at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid'
+2025-05-05 07:21:16,521 - utils.state_manager - ERROR - Failed to create .chungoid directory at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid'
+2025-05-05 07:21:16,549 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,549 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,550 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,550 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,550 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,550 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,550 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,550 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,550 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,550 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,550 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,551 - utils.chroma_utils - WARNING - Chroma library is compiled http-only – falling back to HttpClient (http://localhost:8000).
+2025-05-05 07:21:16,557 - utils.chroma_utils - ERROR - Fallback HttpClient initialisation failed: Could not connect to a Chroma server. Are you sure it is running?
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+        pool_request.request
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 106, in get_user_identity
+    return self._server.get_user_identity()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 150, in wrapper
+    return f(*args, **kwargs)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 200, in get_user_identity
+    return UserIdentity(**self._make_request("get", "/auth/identity"))
+                          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/fastapi.py", line 105, in _make_request
+    response = self._session.request(method, url, **cast(Any, kwargs))
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 103, in get_chroma_client
+    _client = _factory_get_client("http", project_dir, server_url=fallback_url)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 76, in get_client
+    return chromadb.HttpClient(host=host, port=port, settings=s)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/__init__.py", line 241, in HttpClient
+    return ClientCreator(tenant=tenant, database=database, settings=settings)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 70, in __init__
+    user_identity = self.get_user_identity()
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/.venv/lib/python3.13/site-packages/chromadb/api/client.py", line 108, in get_user_identity
+    raise ValueError(
+        "Could not connect to a Chroma server. Are you sure it is running?"
+    )
+ValueError: Could not connect to a Chroma server. Are you sure it is running?
+2025-05-05 07:21:16,559 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,559 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,559 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,559 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:21:16,559 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid
+2025-05-05 07:21:16,560 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:21:16,560 - utils.state_manager - DEBUG - Using real file lock: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json.lock
+2025-05-05 07:21:16,560 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,560 - utils.state_manager - INFO - StateManager initialized for file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,560 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,560 - utils.state_manager - DEBUG - Attempting to read status file: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json
+2025-05-05 07:21:16,560 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,560 - utils.state_manager - WARNING - Status file not found at /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,560 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:16,560 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:16,560 - utils.state_manager - ERROR - ChromaDB client was not initialized successfully. Cannot perform DB operations.
+2025-05-05 07:21:16,560 - utils.state_manager - ERROR - ChromaDB client was not initialized successfully. Cannot perform DB operations.
+2025-05-05 07:21:16,577 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,577 - utils.state_manager - DEBUG - StateManager.__init__ called for target: ./test_sm_target
+2025-05-05 07:21:16,578 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,578 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,578 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,578 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,578 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,578 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,578 - utils.chroma_utils - INFO - Setting Chroma project context directory: /home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target
+2025-05-05 07:21:16,578 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,578 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,579 - utils.chroma_utils - ERROR - Failed to initialise Chroma client: TestStateManager.test_update_project_status.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/pathlib/_local.py", line 724, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+FileExistsError: [Errno 17] File exists: '/home/flip/Desktop/chungoid-mcp/chungoid-core/test_sm_target/.chungoid/chroma_db'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_utils.py", line 89, in get_chroma_client
+    _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+  File "/home/flip/Desktop/chungoid-mcp/chungoid-core/utils/chroma_client_factory.py", line 57, in get_client
+    db_dir.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/pathlib/_local.py", line 733, in mkdir
+    if not exist_ok or not self.is_dir():
+                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    result = effect(*args, **kwargs)
+TypeError: TestStateManager.test_update_project_status.<locals>.is_dir_side_effect() missing 1 required positional argument: 'path_instance'
+2025-05-05 07:21:16,580 - utils.chroma_utils - WARNING - Returning None for ChromaDB client.
+2025-05-05 07:21:16,580 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,580 - utils.state_manager - ERROR - ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.
+2025-05-05 07:21:16,662 - utils.state_manager - DEBUG - StateManager.__init__ called for target: /tmp/tmpx78kp0p8
+2025-05-05 07:21:16,662 - utils.state_manager - DEBUG - StateManager.__init__ called for target: /tmp/tmpx78kp0p8
+2025-05-05 07:21:16,663 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,663 - utils.state_manager - DEBUG - Root RotatingFileHandler already present on utils.state_manager logger.
+2025-05-05 07:21:16,663 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,663 - utils.state_manager - INFO - Checking utils.state_manager logger propagation: True
+2025-05-05 07:21:16,663 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,663 - utils.state_manager - INFO - Checking utils.state_manager logger handlers: [<RotatingFileHandler /home/flip/Desktop/chungoid-mcp/chungoid-core/chungoid_mcp_server.log (DEBUG)>]
+2025-05-05 07:21:16,663 - utils.chroma_utils - INFO - Setting Chroma project context directory: /tmp/tmpx78kp0p8
+2025-05-05 07:21:16,664 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,664 - utils.state_manager - INFO - Attempting synchronous ChromaDB client initialization...
+2025-05-05 07:21:16,664 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:21:16,664 - utils.state_manager - INFO - ChromaDB client initialization successful and confirmed operational.
+2025-05-05 07:21:16,664 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /tmp/tmpx78kp0p8/.chungoid
+2025-05-05 07:21:16,664 - utils.state_manager - DEBUG - Ensured .chungoid directory exists: /tmp/tmpx78kp0p8/.chungoid
+2025-05-05 07:21:16,664 - utils.state_manager - DEBUG - File locking is disabled.
+2025-05-05 07:21:16,664 - utils.state_manager - DEBUG - File locking is disabled.
+2025-05-05 07:21:16,664 - utils.state_manager - INFO - StateManager initialized for file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,664 - utils.state_manager - INFO - StateManager initialized for file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,664 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,664 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,664 - utils.state_manager - WARNING - Status file not found at /tmp/tmpx78kp0p8/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,664 - utils.state_manager - WARNING - Status file not found at /tmp/tmpx78kp0p8/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - Initial status file read successful.
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,665 - utils.state_manager - WARNING - Status file not found at /tmp/tmpx78kp0p8/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,665 - utils.state_manager - WARNING - Status file not found at /tmp/tmpx78kp0p8/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': []}
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': []}
+2025-05-05 07:21:16,665 - utils.state_manager - INFO - Attempting to update status for Stage: 0, Status: DONE
+2025-05-05 07:21:16,665 - utils.state_manager - INFO - Attempting to update status for Stage: 0, Status: DONE
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,665 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,666 - utils.state_manager - WARNING - Status file not found at /tmp/tmpx78kp0p8/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,666 - utils.state_manager - WARNING - Status file not found at /tmp/tmpx78kp0p8/.chungoid/project_status.json, returning empty structure {'runs': []}.
+2025-05-05 07:21:16,666 - utils.state_manager - INFO - Creating first run (id: 0) and adding status update.
+2025-05-05 07:21:16,666 - utils.state_manager - INFO - Creating first run (id: 0) and adding status update.
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Attempting to write to status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Attempting to write to status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Successfully wrote to status file (post-dump, pre-release).
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Successfully wrote to status file (post-dump, pre-release).
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Lock released after write.
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Lock released after write.
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Read file back immediately after write. Content: {
+  "runs": [
+    {
+      "run_id": 0,
+      "start_timestamp": "2025-05-05T12:21:16.666103+00:00",
+      "status_updates": [
+        {
+          "stage": 0.0,
+          "status": "DONE",
+          "timestamp": "2025-05-05T12:21:16.665859+00:00",
+          "artifacts": [
+            "a.txt"
+          ]
+        }
+      ]
+    }
+  ]
+}
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - Read file back immediately after write. Content: {
+  "runs": [
+    {
+      "run_id": 0,
+      "start_timestamp": "2025-05-05T12:21:16.666103+00:00",
+      "status_updates": [
+        {
+          "stage": 0.0,
+          "status": "DONE",
+          "timestamp": "2025-05-05T12:21:16.665859+00:00",
+          "artifacts": [
+            "a.txt"
+          ]
+        }
+      ]
+    }
+  ]
+}
+2025-05-05 07:21:16,666 - utils.state_manager - INFO - Status update for Stage 0 completed successfully.
+2025-05-05 07:21:16,666 - utils.state_manager - INFO - Status update for Stage 0 completed successfully.
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:21:16,666 - utils.state_manager - DEBUG - get_full_status: Reading entire status structure.
+2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - Attempting to read status file: /tmp/tmpx78kp0p8/.chungoid/project_status.json
+2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - Successfully read and parsed status file with {'runs': ...} structure.
+2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - Successfully read and parsed status file with {'runs': ...} structure.
+2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:21:16.666103+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:21:16.665859+00:00', 'artifacts': ['a.txt']}]}]}
+2025-05-05 07:21:16,667 - utils.state_manager - DEBUG - get_full_status: Returning data: {'runs': [{'run_id': 0, 'start_timestamp': '2025-05-05T12:21:16.666103+00:00', 'status_updates': [{'stage': 0.0, 'status': 'DONE', 'timestamp': '2025-05-05T12:21:16.665859+00:00', 'artifacts': ['a.txt']}]}]}

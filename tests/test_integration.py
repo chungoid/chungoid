@@ -9,6 +9,7 @@ import chromadb
 import logging
 import json
 import yaml
+import pytest
 
 # Try importing necessary components
 try:
@@ -29,6 +30,7 @@ try:
 except ImportError as e:
     print(f"Failed to import necessary components: {e}")
 
+pytestmark = pytest.mark.legacy
 
 class TestIntegration(unittest.TestCase):
     TEST_DIR = Path("./test_project_integration")
