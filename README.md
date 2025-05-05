@@ -26,7 +26,7 @@ pip install -r requirements.txt  # from repo root
 @chungoid set_project_context
 @chungoid initialize_project
 
-# 4. Begin discussing your goal with The Chungoid & refining it. Early stage goal refinement will increase the depth of documentation & context available to your Chungoid & ensure your project thrives. Let Chungoid lead you through the stages!
+# 4. Chat with Chungoid to refine the goal, then follow its guided stage workflow.
 ```
 
 *That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
