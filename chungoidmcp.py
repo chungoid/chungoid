@@ -682,6 +682,51 @@ async def handle_initialize_project(target_directory: str, ctx: Optional[Context
                     )
                     context_set_message = f" Project initialized, but failed to automatically set session context: {context_err}"
 
+            # Create a StateManager instance for this specific target directory
+            # to initialize the status file if it doesn't exist
+            try:
+                # Determine the absolute path to the server stages directory
+                server_stages_relative_path = "server_prompts/stages"  # Standard location
+                server_stages_absolute_path = CHUNGOID_BASE_DIR / server_stages_relative_path
+                logger.debug(f"Initializing StateManager for {effective_target_directory}")
+                state_manager = StateManager(
+                    target_directory=effective_target_directory,
+                    server_stages_dir=str(server_stages_absolute_path),
+                )
+                # Call a method that reads/writes to ensure file is created/validated
+                _ = state_manager.get_full_status()
+                logger.info("Initialized/Validated project_status.json via StateManager.")
+            except (StatusFileError, ValueError, ConfigError) as e:
+                logger.exception(
+                    f"Failed to initialize StateManager or project_status.json for {effective_target_directory}: {e}"
+                )
+                return {
+                    "success": False,
+                    "message": f"Failed to initialize project status file: {e}",
+                }
+
+            # --- Add .gitignore Creation ---
+            gitignore_path = dest_chungoid_dir / ".gitignore"
+            # Content includes chroma_db and the lock file
+            gitignore_content = (
+                "# Ignore persistent ChromaDB data\n"
+                "chroma_db/\n\n"
+                "# Ignore project status lock file\n"
+                "project_status.json.lock\n"
+            )
+            if not gitignore_path.exists():
+                try:
+                    with open(gitignore_path, "w", encoding="utf-8") as f:
+                        f.write(gitignore_content)
+                    logger.info(f"Created .chungoid/.gitignore file at: {gitignore_path}")
+                except IOError as io_err:
+                    logger.error(f"Failed to write .gitignore file at {gitignore_path}: {io_err}")
+                    # Decide if this is critical - maybe just log and continue?
+                    # For now, log and continue initialization.
+            else:
+                logger.debug(f".chungoid/.gitignore already exists at: {gitignore_path}")
+            # --- End .gitignore Creation ---
+
             return {
                 "status": "success",
                 "message": success_message + context_set_message,

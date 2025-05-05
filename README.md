@@ -46,12 +46,14 @@ You interact with the server using specific tools via your client (e.g., `@chung
 
 **Typical Flow:**
 
-1.  `initialize_project` or `set_project_context`.
-2.  `prepare_next_stage` -> Receive prompt.
-3.  Perform tasks defined in the prompt (may involve `get_file`, `retrieve_reflections`, etc.).
-4.  `set_pending_reflection reflection_text="..."`
-5.  `submit_stage_artifacts stage_number=... stage_result_status=... generated_artifacts={...}`
-6.  Repeat from step 2.
+1.  Write a brief summary of the goal you wish to acheive with your software project in goal.txt
+2.  Send agent request to `set_project_context` or `initialize_project`
+3.  Send agent request to `prepare_next_stage`
+4.  Refine your goal.txt by discussing with the agent how to optimize it for success.
+5.  Send agent request to `execute_next_stage`
+6.  Follow the stages workflow and let the agent guide you through the phases & use its chungoid tools to 
+store state artifacts, research artifacts, documentation artifacts, etc. 
+7.  Use `get_project_status` at any point in time to reflect on current state and next steps if you need guidance.
 
 ## Key Concepts
 
@@ -62,7 +64,7 @@ You interact with the server using specific tools via your client (e.g., `@chung
 
 ## Development
 
-This `chungoid-core/` directory contains the server implementation. Development *of* the server (meta-development) typically occurs in the parent `chungoid-mcp` repository structure. See the `dev/` directory in that repository for details if contributing to the core server itself.
+This project structure contains the server implementation. Development *of* the server (meta-development) occurs in the parent `chungoid-mcp` (currently private) repository structure. This is autonomously built from within an abstraction layer which uses a modified version of the chungoid workflow, and soon.. A2A protocol.
 
 ## Origin Story
 

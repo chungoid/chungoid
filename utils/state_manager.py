@@ -61,6 +61,10 @@ class StateManager:
             server_stages_dir: The path to the directory containing stage*.yaml files.
             use_locking: Whether to use file locking (default: True).
         """
+        # <<< Add Logging Point >>>
+        logging.getLogger(__name__).debug(f"StateManager.__init__ called for target: {target_directory}")
+        # <<< End Logging Point >>>
+
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
         # <<< START ADDED CODE >>>
@@ -101,19 +105,38 @@ class StateManager:
         self.lock_file_path = f"{self.status_file_path}.lock"
         self.use_locking = use_locking
         self.server_stages_dir = Path(server_stages_dir).resolve()  # Ensure resolved Path
+
+        # --- Set ChromaDB Project Context ---
+        # This must be called before the first call to get_chroma_client() in this context
+        chroma_utils.set_chroma_project_context(self.target_dir_path)
+        # --- End Set Context ---
+
         self.chroma_client: Optional[chromadb.ClientAPI] = (
             None  # Keep Optional for type hinting if init fails
         )
         try:
             self.logger.info("Attempting synchronous ChromaDB client initialization...")
+            # Now get_chroma_client() can use the context we just set
             self.chroma_client = chroma_utils.get_chroma_client()
+            # --- Modified Logging --- #
             if self.chroma_client:
-                self.logger.info("Synchronous ChromaDB client initialization successful.")
+                # Attempt a simple operation to confirm client validity (optional)
+                try:
+                    # List collections as a basic check that the client is operational
+                    self.chroma_client.list_collections()
+                    self.logger.info("ChromaDB client initialization successful and confirmed operational.")
+                except Exception as conn_err:
+                    self.logger.error(f"ChromaDB client initialized but failed basic operation check: {conn_err}", exc_info=True)
+                    # Optionally set client back to None if basic check fails?
+                    # self.chroma_client = None
             else:
-                self.logger.error("Synchronous ChromaDB client initialization returned None.")
+                # This case means get_chroma_client() returned None
+                self.logger.error("ChromaDB client initialization failed (get_chroma_client returned None). Check chroma_utils logs for details.")
+            # --- End Modified Logging --- #
         except Exception as e:
+            # Catch errors during the call to get_chroma_client itself
             self.logger.error(
-                f"Exception during synchronous ChromaDB client initialization: {e}", exc_info=True
+                f"Exception during ChromaDB client retrieval: {e}", exc_info=True
             )
             self.chroma_client = None  # Ensure it's None on error
 
@@ -481,24 +504,29 @@ class StateManager:
             target_run_index: int = -1
 
             if not runs:
-                # First run ever, create it
+                # First run ever, create it with run_id 0
                 target_run_id = 0
                 new_run = {
-                    "run_id": target_run_id,
-                    "start_timestamp": datetime.now(timezone.utc).isoformat(),  # Record start time
-                    "status_updates": [new_entry],  # Add first entry
+                    "run_id": target_run_id, # Ensure run_id is explicitly set to 0
+                    "start_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "status_updates": [new_entry],
                 }
                 runs.append(new_run)
                 self.logger.info(
                     f"Creating first run (id: {target_run_id}) and adding status update."
                 )
             else:
-                # Find the latest run
+                # Find the latest run based on highest existing run_id
                 latest_run = max(runs, key=lambda r: r.get("run_id", -1))
-                target_run_id = latest_run.get("run_id", -1)
-                if target_run_id == -1:
-                    # Should not happen if runs is not empty and runs have run_id
-                    raise StatusFileError("Could not determine target run_id from existing runs.")
+                target_run_id = latest_run.get("run_id", -1) # Get the ID of the latest run
+
+                # --- Add validation for existing target_run_id --- #
+                if target_run_id == -1 or not isinstance(target_run_id, int):
+                    # This indicates a malformed status file if runs exist but no valid run_id
+                    err_msg = f"Could not determine a valid integer run_id for the latest run in status file. Found: {target_run_id}"
+                    self.logger.error(err_msg)
+                    raise StatusFileError(err_msg)
+                # --- End validation ---
 
                 # Find the index of the latest run to modify it
                 for i, run in enumerate(runs):
@@ -690,6 +718,18 @@ class StateManager:
         # collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
         # if not collection:
         #     raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+
+        # Need run_id - get it from the latest run
+        latest_status = self.get_last_status()
+        run_id = latest_status.get('run_id') if latest_status else None # Default to run 0 if no status yet
+        # TODO: Consider how run_id increments or is managed
+
+        # --- Add run_id validation --- #
+        if run_id is None or not isinstance(run_id, int):
+            err_msg = f"Invalid or missing run_id ({run_id}, type: {type(run_id)}) found in latest status. Cannot persist reflection."
+            self.logger.error(err_msg)
+            raise ChromaOperationError(err_msg)
+        # --- End run_id validation --- #
 
         # Create a unique ID for this reflection entry
         doc_id = f"run{run_id}_stage{stage_number}_{uuid.uuid4()}"
