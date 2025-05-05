@@ -702,7 +702,7 @@ class StateManager:
                  raise e # Re-raise original ChromaOperationError
 
     def persist_reflections_to_chroma(
-        self, run_id: int, stage_number: float, reflections: str
+        self, run_id: int | None, stage_number: float, reflections: str
     ) -> bool:
         """Persists reflection text to ChromaDB.
 
@@ -711,25 +711,33 @@ class StateManager:
         Raises:
             ChromaOperationError: If the ChromaDB operation fails.
         """
-        # <<< REMOVED client/collection getting - Handled by chroma_utils.add_documents >>>
-        # client = self._get_chroma_client()
-        # if not client:
-        #     raise ChromaOperationError("ChromaDB client is not available.")
-        # collection = client.get_or_create_collection(name=self._REFLECTIONS_COLLECTION_NAME)
-        # if not collection:
-        #     raise ChromaOperationError(f"Could not get or create collection '{self._REFLECTIONS_COLLECTION_NAME}'.")
+        # Validate provided run_id; if invalid, attempt to infer from status file
+        if run_id is None or not isinstance(run_id, int) or run_id < 0:
+            self.logger.debug(
+                "Supplied run_id '%s' is invalid. Falling back to the run_id of the latest run.",
+                run_id,
+            )
+            try:
+                status_data = self._read_status_file()
+                runs = status_data.get("runs", [])
+                if runs:
+                    latest_run = max(runs, key=lambda r: r.get("run_id", -1))
+                    run_id = latest_run.get("run_id")
+                else:
+                    run_id = 0  # initialise first run
+            except Exception as e:
+                self.logger.error(
+                    "Failed to derive run_id from status file: %s", e, exc_info=True
+                )
+                raise ChromaOperationError("Unable to determine run_id for reflection persistence") from e
 
-        # Need run_id - get it from the latest run
-        latest_status = self.get_last_status()
-        run_id = latest_status.get('run_id') if latest_status else None # Default to run 0 if no status yet
-        # TODO: Consider how run_id increments or is managed
-
-        # --- Add run_id validation --- #
+        # Final validation after fallback
         if run_id is None or not isinstance(run_id, int):
-            err_msg = f"Invalid or missing run_id ({run_id}, type: {type(run_id)}) found in latest status. Cannot persist reflection."
+            err_msg = (
+                f"Invalid or missing run_id ({run_id}, type: {type(run_id)}) after fallback. Cannot persist reflection."
+            )
             self.logger.error(err_msg)
             raise ChromaOperationError(err_msg)
-        # --- End run_id validation --- #
 
         # Create a unique ID for this reflection entry
         doc_id = f"run{run_id}_stage{stage_number}_{uuid.uuid4()}"
@@ -1013,12 +1021,13 @@ if __name__ == "__main__":
         print(f"Store Artifact Success: {store_success}")
 
         # Store reflection
-        reflect_success = sm.persist_reflections_to_chroma(
-            run_id=1, # Assuming first run
-            stage_number=1.0,
-            reflections="Stage 1 validation failed due to unclear requirements."
+        reflection_to_process = "Stage 1 validation failed due to unclear requirements."
+        reflection_stored = sm.persist_reflections_to_chroma(
+            run_id=None,
+            stage_number=float(1.0),
+            reflections=reflection_to_process,
         )
-        print(f"Persist Reflection Success: {reflect_success}")
+        print(f"Persist Reflection Success: {reflection_stored}")
 
         # Get artifact context
         print("\nQuerying Artifact Context:")

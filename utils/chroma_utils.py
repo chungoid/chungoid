@@ -7,6 +7,10 @@ import chromadb
 from .config_loader import get_config  # <<< Import config loader
 from pathlib import Path
 import os
+import subprocess
+import time
+import socket
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +85,31 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
 
             project_dir = _current_project_directory or Path.cwd()
 
-            _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
-            _client_project_context = _current_project_directory
-            logger.info(f"ChromaDB client initialised in {mode} mode.")
+            try:
+                _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+                _client_project_context = _current_project_directory
+                logger.info(f"ChromaDB client initialised in {mode} mode.")
+            except RuntimeError as rt_err:
+                # Detect the common http-only build error when asking for persistent mode
+                if (
+                    mode == "persistent"
+                    and "http-only client mode" in str(rt_err).lower()
+                ):
+                    fallback_url = server_url or cfg.get("server_url") or "http://localhost:8000"
+                    logger.warning(
+                        "Chroma library is compiled http-only – falling back to HttpClient (%s).", fallback_url
+                    )
+                    try:
+                        _client = _factory_get_client("http", project_dir, server_url=fallback_url)
+                        _client_project_context = _current_project_directory
+                        logger.info("ChromaDB HttpClient initialised as fallback.")
+                    except Exception as http_err:
+                        logger.error(
+                            "Fallback HttpClient initialisation failed: %s", http_err, exc_info=True
+                        )
+                        _client = None
+                else:
+                    raise
         except Exception as e:
             logger.error(f"Failed to initialise Chroma client: {e}", exc_info=True)
             _client = None
