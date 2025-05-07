@@ -25,7 +25,7 @@
     cd chungoid
 
     # Install using pipx (from the root of the 'chungoid' repository clone)
-    # This makes `chungoid-server` and `chungoid-export-rule` globally available.
+    # This makes `chungoid-server` globally available.
     pipx install .
     ```
 
@@ -38,15 +38,13 @@
     cd ~/my_new_chungoid_project
 
     # Configure your MCP Client (e.g., Cursor) to use `chungoid-server`.
-    # (See "Getting Started" section below for an example mcp.json snippet for Cursor,
-    # ensuring the `command` is `chungoid-server` and `args` point to your project directory).
-
-    # Copy the standard Cursor rule into your new project (optional but recommended):
-    chungoid-export-rule .
+    # See "Getting Started" section below for an example `mcp.json` snippet for Cursor
 
     # Interact with Chungoid via your MCP Client (e.g., Cursor):
     # - The server should start based on your client's MCP configuration when you open the project.
+    # - Use `@chungoid set_project_context` to set projects current working directory.
     # - Use tools like `@chungoid initialize_project` to set up the .chungoid directory.
+    # - Ask your cursor agent what steps you should take next if you're in doubt!
     # - Then, begin the workflow with `@chungoid prepare_next_stage`.
     ```
 Your new project directory (`~/my_new_chungoid_project`) will now have a `.chungoid/` folder, ready for Stage –1.

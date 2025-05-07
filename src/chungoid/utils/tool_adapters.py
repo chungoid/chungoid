@@ -127,7 +127,10 @@ def execute_tool(tool_name: str, tool_def: Dict[str, Any], arguments: Dict[str, 
         ) from e
     except Exception as e:
         logger.exception("Unexpected error executing tool '%s': %s", tool_name, e)
-        raise ToolExecutionError(f"Unexpected error executing tool '{tool_name}': {e}") from e
+        # If it's already a ToolExecutionError, re-raise it to preserve details
+        if isinstance(e, ToolExecutionError):
+            raise
+        raise ToolExecutionError(f"Unexpected error executing tool '{tool_name}': {str(e)}") from e
 
 
 # --- Placeholder/Example MCP Tool Adapters ---
