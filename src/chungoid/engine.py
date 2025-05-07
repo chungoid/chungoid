@@ -179,13 +179,11 @@ class ChungoidEngine:
                 "inputSchema": {"type": "object", "properties": {}} # No input arguments needed
             },
             {
-                "name": "mcp_chungoid_export_cursor_rule", # Direct mapping to existing state_manager method
-                "description": "Exports the chungoid_bootstrap.mdc rule to the specified destination path within the project.",
+                "name": "mcp_chungoid_export_cursor_rule",
+                "description": "Exports the chungoid.mdc rule to the user's global Cursor rules directory (~/.cursor/rules/chungoid.mdc).",
                  "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "dest_path": {"type": "string", "default": ".cursor/rules", "description": "Relative destination path for the rule file."}
-                    },
+                    "properties": {},
                     "required": []
                 }
             }
@@ -449,8 +447,15 @@ class ChungoidEngine:
                     }
 
             elif tool_name == "mcp_chungoid_export_cursor_rule":
-                dest_path_str = tool_arguments.get("dest_path", ".cursor/rules") 
+                # dest_path_str is no longer used or taken from tool_arguments
                 
+                # Logic to re-initialize StateManager if its context differs from the current engine context
+                # This part is problematic if export_cursor_rule is meant to be project-independent (global path)
+                # However, StateManager instance is tied to self.project_dir for other things.
+                # For a global export, self.state_manager (with its current project_dir) can still perform the action
+                # as Path.home() is absolute and doesn't depend on self.target_dir_path for resolution.
+                # So, the re-initialization check below is likely not needed for this specific tool if it's truly global.
+                # Let's keep it for consistency for now, though it might be slightly counter-intuitive.
                 if self.state_manager.target_dir_path != current_project_dir:
                      logger.warning(f"mcp_chungoid_export_cursor_rule: StateManager context {self.state_manager.target_dir_path} differs from tool context {current_project_dir}. Re-initializing SM for tool's context.")
                      core_root = Path(__file__).parent.parent.parent
@@ -458,7 +463,7 @@ class ChungoidEngine:
                      common_prompt_path = core_root / 'server_prompts' / 'common.yaml'
                      self.state_manager = StateManager(str(current_project_dir), str(stages_dir_path))
 
-                exported_path = self.state_manager.export_cursor_rule(dest_path=dest_path_str)
+                exported_path = self.state_manager.export_cursor_rule() # No arguments passed
                 if exported_path:
                     return {
                         "toolCallId": tool_call_id,

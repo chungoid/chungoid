@@ -1040,30 +1040,24 @@ class StateManager:
             self.logger.info("No pending reflection text to retrieve.")
         return self._pending_reflection_text
 
-    def export_cursor_rule(self, dest_path: str = ".cursor/rules") -> Optional[str]:
-        """Exports the chungoid_bootstrap.mdc rule to the specified relative path.
-
-        Args:
-            dest_path: The relative directory path within the project to save the rule.
-                       Defaults to ".cursor/rules". The filename will be chungoid_bootstrap.mdc.
+    def export_cursor_rule(self) -> Optional[str]:
+        """Exports the chungoid.mdc rule to ~/.cursor/rules/chungoid.mdc.
 
         Returns:
             The absolute path to the exported rule file if successful, None otherwise.
         """
-        rule_filename = "chungoid_bootstrap.mdc"
-        # Ensure dest_path is treated as a directory, then join with filename
-        # If dest_path itself is intended to be the full file path, this logic might need adjustment
-        # For now, assuming dest_path is a directory like ".cursor/rules"
-        try:
-            # Construct the full absolute path for the directory
-            full_dest_dir = (self.target_dir_path / dest_path).resolve()
-            # Ensure the directory exists
-            full_dest_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Construct the full absolute path for the file
-            rule_file_path = full_dest_dir / rule_filename
+        rule_filename = "chungoid.mdc"
+        target_dir = Path.home() / ".cursor" / "rules"
+        rule_file_path = target_dir / rule_filename
 
-            rule_content = """
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+            rule_content = """---
+description: 
+globs: 
+alwaysApply: false
+---
 # Chungoid Bootstrap Rule for Cursor
 # Version: 0.1.0
 # This rule helps initialize a Cursor IDE environment for working with Chungoid.
@@ -1149,7 +1143,6 @@ async def get_chungoid_project_status(ide_services):
     else:
         error_message = response.get('error', {}).get('message', "Failed to retrieve status.")
         await ide_services.show_error_message(f"Error getting project status: {error_message}")
-
 """
             with open(rule_file_path, "w", encoding="utf-8") as f:
                 f.write(rule_content)
@@ -1158,7 +1151,7 @@ async def get_chungoid_project_status(ide_services):
             return str(rule_file_path)
         
         except Exception as e:
-            self.logger.error(f"Failed to export Cursor rule to {dest_path}/{rule_filename}: {e}", exc_info=True)
+            self.logger.error(f"Failed to export Cursor rule to {rule_file_path}: {e}", exc_info=True)
             return None
 
 
