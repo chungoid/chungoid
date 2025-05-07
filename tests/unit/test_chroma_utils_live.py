@@ -51,13 +51,31 @@ def test_persistent_mode(tmp_path, monkeypatch):
 
 def test_http_mode_env(monkeypatch, tmp_path):
     # No config file, but env forces http
-    monkeypatch.setenv("CHROMA_MODE", "http")
-    from utils import config_loader
+    monkeypatch.setenv("CHUNGOID_CHROMA_MODE", "http")
+    from chungoid.utils import config_loader
+    from chungoid.utils import chroma_utils
 
     config_loader._config = None
-    config_loader.load_config(str(tmp_path / "nonexistent.yaml"))
+    config_loader.load_config(config_path=str(tmp_path / "nonexistent_config.yaml"))
 
     client = chroma_utils.get_chroma_client()
     assert client.mode == "http"
 
-    monkeypatch.delenv("CHROMA_MODE") 
+    monkeypatch.delenv("CHUNGOID_CHROMA_MODE")
+
+
+def test_persistent_mode_from_config(tmp_path):
+    # Set config to persistent
+    cfg_yaml = """chromadb:\n  mode: persistent\n"""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(cfg_yaml)
+
+    from utils import config_loader
+
+    config_loader._config = None
+    config_loader.load_config(str(cfg_path))
+    # Set project context
+    chroma_utils.set_chroma_project_context(tmp_path)
+
+    client = chroma_utils.get_chroma_client()
+    assert client.mode == "persistent" 

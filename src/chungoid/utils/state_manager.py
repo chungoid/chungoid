@@ -462,6 +462,7 @@ class StateManager:
         status: str,
         artifacts: List[str],
         reason: Optional[str] = None,
+        reflection_text: Optional[str] = None,
     ) -> bool:
         """Updates the status file by adding a new entry to the *latest run*.
 
@@ -475,6 +476,7 @@ class StateManager:
             status: The result status (e.g., "PASS", "FAIL", "DONE").
             artifacts: A list of relative paths to generated artifacts.
             reason: Optional reason, e.g., for FAIL status.
+            reflection_text: Optional reflection text for this stage update.
 
         Returns:
             True if the update was successful, False otherwise.
@@ -494,6 +496,8 @@ class StateManager:
         }
         if reason:
             new_entry["reason"] = reason
+        if reflection_text is not None:
+            new_entry["reflection_text"] = reflection_text
 
         try:
             # Read the current state
@@ -1017,9 +1021,9 @@ if __name__ == "__main__":
 
     # Test basic status update
     print("\n--- Testing Status Update ---")
-    update_success = sm.update_status(0, "PASS", ["artifact1.txt"], "Initial setup")
+    update_success = sm.update_status(0, "PASS", ["artifact1.txt"], "Initial setup", "Initial reflection text")
     print(f"Update 1 successful: {update_success}")
-    update_success = sm.update_status(1, "FAIL", ["artifact2.py"], "Failed validation")
+    update_success = sm.update_status(1, "FAIL", ["artifact2.py"], "Failed validation", "Failed reflection text")
     print(f"Update 2 successful: {update_success}")
 
     # Test status retrieval
