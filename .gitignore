@@ -1,3 +1,4 @@
 # Ignore Python cache directories
 __pycache__/
 **/__pycache__/ 
+chungoid_mcp_server.egg-info/
