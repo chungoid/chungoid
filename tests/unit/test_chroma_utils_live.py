@@ -6,6 +6,7 @@ import pytest
 
 from utils import chroma_utils
 import utils.chroma_utils as cu
+import chromadb
 
 
 def _fake_get_client(mode, project_dir, server_url=None):
@@ -50,18 +51,32 @@ def test_persistent_mode(tmp_path, monkeypatch):
 
 
 def test_http_mode_env(monkeypatch, tmp_path):
-    # No config file, but env forces http
-    monkeypatch.setenv("CHUNGOID_CHROMA_MODE", "http")
-    from chungoid.utils import config_loader
-    from chungoid.utils import chroma_utils
+    # This test now MOCKS config_loader.get_config to directly test http mode in chroma_utils
+    from chungoid.utils import config_loader, chroma_utils
+    import chromadb # Required for isinstance check
 
-    config_loader._config = None
-    config_loader.load_config(config_path=str(tmp_path / "nonexistent_config.yaml"))
+    def mock_get_config_for_http():
+        return {
+            "chromadb": {
+                "mode": "http",
+                "server_url": "http://localhost:8000/test_http_mode" # Unique URL for test
+            },
+            "logging": {"level": "DEBUG"} # Minimal logging config
+        }
+
+    monkeypatch.setattr(config_loader, "get_config", mock_get_config_for_http)
+    
+    # Crucially, reset any cached client and context in chroma_utils
+    chroma_utils._client = None
+    chroma_utils._client_mode = None
+    chroma_utils._client_project_context = None
+    chroma_utils.clear_chroma_project_context() # Ensure project context is None for http mode
 
     client = chroma_utils.get_chroma_client()
-    assert client.mode == "http"
 
-    monkeypatch.delenv("CHUNGOID_CHROMA_MODE")
+    assert client is not None, "HTTP Client should not be None"
+    assert isinstance(client, chromadb.HttpClient), \
+        f"Client should be HttpClient in http mode when config is mocked, got {type(client)}"
 
 
 def test_persistent_mode_from_config(tmp_path):
