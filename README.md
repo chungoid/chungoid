@@ -79,7 +79,7 @@ The server manages a multi-stage process where an AI agent (like you!) interacts
         ```
 *   **Project Initialization via MCP Client:**
     1.  Open your chosen project directory in your MCP client (e.g., open the folder in Cursor).
-    2.  If your client starts `chungoid-server` with the correct `--project-dir ${workspaceFolder}`, the context is usually set.
+    2.  If your client starts `chungoid-server` with the correct `--project-dir ${workspaceFolder}`, the context is usually set but run @chungoid `@chungoid set_project_context` in cursor chat to be certain.
     3.  Use the `initialize_project` tool via your client:
         ```
         @chungoid initialize_project
