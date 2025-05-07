@@ -64,20 +64,18 @@ The server manages a multi-stage process where an AI agent (like you!) interacts
     *   Example `mcp.json` entry for Cursor:
         ```json
         "chungoid": {
-          "transportType": "stdio",
-          "command": "chungoid-server", // Command to run
-          "args": [
-            "--project-dir",
-            "${workspaceFolder}", // Client replaces this with the actual project path
-            "--log-level", // Optional: for more detailed server logs
-            "DEBUG"
-          ],
-          "env": {
+            "command": "chungoid-server",
+            "transportType": "stdio",
+            "args": [],
+            "env": {
+                "CHUNGOID_PROJECT_DIR": "${workspaceFolder}",
+                "CHROMA_CLIENT_TYPE": "persistent",
+                "CHUNGOID_LOGGING_LEVEL": "DEBUG"
+                }
+            }
             // "CHROMA_MODE": "http", // Example: if using a remote Chroma server
             // "CHROMA_HOST": "localhost",
             // "CHROMA_PORT": "8000"
-          }
-        }
         ```
 *   **Project Initialization via MCP Client:**
     1.  Open your chosen project directory in your MCP client (e.g., open the folder in Cursor).
