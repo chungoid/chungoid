@@ -190,7 +190,7 @@ class ChungoidEngine:
         logger.info(f"MCP Tool List generated with {len(tools)} tools.")
         return tools
 
-    def execute_mcp_tool(self, tool_name: str, tool_arguments: dict, tool_call_id: Optional[str] = None, project_dir: Optional[Path] = None) -> Any:
+    def execute_mcp_tool(self, tool_name: str, tool_arguments: dict, tool_call_id: Optional[str] = None) -> Any:
         """
         Executes the specified MCP tool with the given arguments.
 
@@ -198,15 +198,13 @@ class ChungoidEngine:
             tool_name: The name of the tool to execute.
             tool_arguments: A dictionary of arguments for the tool.
             tool_call_id: Optional ID for the specific tool call (from MCP).
-            project_dir: The resolved project directory (passed from mcp.py).
 
         Returns:
             The result of the tool execution. Structure depends on the tool.
         """
-        logger.info(f"Executing MCP tool: {tool_name} with args: {tool_arguments} (ToolCallID: {tool_call_id}) for project: {project_dir or self.project_dir}")
+        current_project_dir = self.project_dir # Always use the engine's current project directory
+        logger.info(f"Executing MCP tool: {tool_name} with args: {tool_arguments} (ToolCallID: {tool_call_id}) for project: {current_project_dir}")
         
-        current_project_dir = project_dir or self.project_dir # Use explicitly passed project_dir if available
-
         try:
             if tool_name == "initialize_project":
                 # Engine already re-initializes StateManager if project_directory is passed and different
@@ -277,8 +275,6 @@ class ChungoidEngine:
                 # Ensure StateManager is operating on the correct project_dir if passed by mcp.py
                 # This requires StateManager to be flexible or re-instantiated.
                 # For now, assume StateManager associated with this engine instance is used.
-                if current_project_dir != self.state_manager.target_dir_path:
-                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir_path}. Using SM's.")
                 status_content = self.state_manager.get_full_status() # get_full_status to get the whole dict
                 return {
                     "toolCallId": tool_call_id,
@@ -293,8 +289,6 @@ class ChungoidEngine:
             elif tool_name == "prepare_next_stage":
                 # run_next_stage uses self.project_dir and self.state_manager implicitly
                 # It already returns a dict suitable for MCP.
-                if current_project_dir != self.state_manager.target_dir_path:
-                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir_path} for prepare_next_stage. Using SM's.")
                 next_stage_data = self.run_next_stage()
                 return {
                     "toolCallId": tool_call_id,

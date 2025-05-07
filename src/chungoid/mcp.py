@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> None:
                     if hasattr(engine, "execute_mcp_tool"):
                         try:
                             # The engine method should handle the execution and return a result or raise an error
-                            tool_result = engine.execute_mcp_tool(tool_name, tool_arguments, tool_call_id=tool_call_id, project_dir=project_directory_path)
+                            tool_result = engine.execute_mcp_tool(tool_name, tool_arguments, tool_call_id=tool_call_id)
                             response_payload = {
                                 "jsonrpc": "2.0",
                                 "id": request_id, # This is the MCP request ID
