@@ -998,7 +998,7 @@ class StateManager:
             f"Project state file confirmed/initialized by StateManager at {self.status_file_path}"
         )
 
-    def _acquire_lock(self) -> FileLock | contextlib.nullcontext:
+    def _acquire_lock(self) -> filelock.FileLock | contextlib.nullcontext:
         """Returns the appropriate lock object based on configuration."""
         return self._lock
 
