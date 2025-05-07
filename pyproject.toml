@@ -173,7 +173,7 @@ docs = [
 [tool.setuptools]
 package-dir = {"" = "src"}
 # Explicit package list until automatic discovery later
-packages = ["chungoid", "chungoid.utils", "utils"]
+packages = ["chungoid", "utils"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 

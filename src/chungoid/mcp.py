@@ -10,10 +10,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from pathlib import Path
+import os
 import sys
+from pathlib import Path
 
 from chungoid.engine import ChungoidEngine  # type: ignore  # local import
+from chungoid.utils.log_utils import setup_logging
+
+__version__ = "0.1.0"  # Example version
 
 logger = logging.getLogger(__name__)
 
@@ -24,22 +28,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Start the Chungoid MCP engine for a given project directory.",
     )
     parser.add_argument(
-        "project_dir",
-        nargs="?",
-        default=Path.cwd(),
-        type=Path,
-        help="Path to the project directory (defaults to current working directory).",
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=str,
+        default=os.environ.get("CHUNGOID_PROJECT_DIR", "."),
+        help="Directory of the project to operate on. Defaults to CHUNGOID_PROJECT_DIR env var or current dir.",
     )
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output the engine result as JSON (default is pretty-printed).",
+        help="Output results as JSON (currently affects placeholder message).",
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level (default: INFO)",
+        type=str,
+        default=os.environ.get("CHUNGOID_LOG_LEVEL", "INFO"),
+        help="Set the logging level (e.g., DEBUG, INFO, WARNING). Defaults to CHUNGOID_LOG_LEVEL env var or INFO.",
     )
     return parser.parse_args(argv)
 
@@ -47,29 +53,88 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:  # Entry-point for console-script
     args = _parse_args(argv)
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    setup_logging(level=args.log_level)
+    logger = logging.getLogger(__name__)
+
+    logger.info(
+        f"Chungoid MCP Server starting. Version: {__version__}, Project Dir: {args.project_dir}, Log Level: {args.log_level}"
     )
 
-    project_path: Path = args.project_dir.expanduser().resolve()
-    logger.info("Starting Chungoid engine for project: %s", project_path)
+    # Basic MCP server loop (simplified for stdio)
+    # In a real MCP server, you'd handle message framing and parsing here.
+    # For now, we assume the IDE sends JSON messages line by line.
 
-    try:
-        engine = ChungoidEngine(str(project_path))
-        result = engine.run_next_stage()
-    except Exception as exc:
-        logger.exception("Engine failed to start: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    # Placeholder: Initialize engine or other core components if needed immediately
+    # try:
+    #     engine = ChungoidEngine(project_dir=args.project_dir)
+    #     logger.info(f"ChungoidEngine initialized for project: {engine.project_dir}")
+    #     logger.info(f"Chroma client: {engine.chroma_client}")
+    # except Exception as e:
+    #     logger.error(f"Failed to initialize ChungoidEngine: {e}", exc_info=True)
+    #     # Depending on severity, you might exit or try to operate in a limited mode
+    #     # For now, we'll log and continue to allow MCP communication for diagnostics.
+    #     # sys.exit(1) # Uncomment if engine initialization is critical for any operation
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        print(
+            json.dumps(
+                {
+                    "message": "Chungoid server alive and awaiting MCP messages.",
+                    "project_dir": args.project_dir,
+                }
+            )
+        )
     else:
-        # Pretty print basic result
-        from pprint import pprint
+        # This is primarily for direct CLI testing, not for MCP interaction
+        print(
+            f"Chungoid server alive. Project: {args.project_dir}. Awaiting MCP messages on stdin..."
+        )
+        print("Use --json for structured output if testing directly.")
+        print("This executable is intended to be run by an MCP client (e.g., an IDE).")
 
-        pprint(result)
+
+    # Example: Basic echo server for testing MCP communication (replace with actual MCP logic)
+    # try:
+    #     for line in sys.stdin:
+    #         line = line.strip()
+    #         if not line:
+    #             continue # Skip empty lines, though well-behaved clients shouldn't send them
+
+    #         logger.debug(f"Received raw line: {line}")
+    #         try:
+    #             request = json.loads(line)
+    #             logger.info(f"Received MCP request: {request}")
+
+    #             # Replace with actual request handling and response generation
+    #             response = {"status": "received", "original_request": request}
+                
+    #             json_response = json.dumps(response)
+    #             print(json_response)
+    #             sys.stdout.flush() # Ensure the client receives the message promptly
+    #             logger.info(f"Sent MCP response: {json_response}")
+
+    #         except json.JSONDecodeError:
+    #             logger.error(f"Failed to decode JSON from line: {line}", exc_info=True)
+    #             # Send an error response if possible, or log and continue
+    #             error_response = {"error": "Invalid JSON received", "received_line": line}
+    #             json_error_response = json.dumps(error_response)
+    #             print(json_error_response)
+    #             sys.stdout.flush()
+    #         except Exception as e:
+    #             logger.error(f"Error processing message: {line}: {e}", exc_info=True)
+    #             # Send a generic error response
+    #             error_response = {"error": "Internal server error", "details": str(e)}
+    #             json_error_response = json.dumps(error_response)
+    #             print(json_error_response)
+    #             sys.stdout.flush()
+
+
+    # except KeyboardInterrupt:
+    #     logger.info("Chungoid server shutting down due to KeyboardInterrupt.")
+    # except Exception as e:
+    #     logger.error(f"Chungoid server crashed: {e}", exc_info=True)
+    # finally:
+    #     logger.info("Chungoid server exited.")
 
 
 if __name__ == "__main__":  # pragma: no cover — executed only when run as module
