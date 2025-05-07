@@ -115,11 +115,10 @@ def main(argv: list[str] | None = None) -> None:
                     # Respond to initialize request
                     server_capabilities = {
                         # MCP Spec often expects objects here, even if empty, to indicate support.
-                        # Booleans might be for very simple true/false flags within these objects if defined by spec.
-                        "tools": {},  # Changed from True
-                        "prompts": False, # Keep False if not supported, or {} if supported with no specific options
-                        "resources": {}, # Changed from True
-                        "logging": False,  # Keep False if not supported, or {} if supported with no specific options
+                        "tools": {}, 
+                        "prompts": {}, # Changed from False
+                        "resources": {},
+                        "logging": {},  # Changed from False
                         "roots": {"listChanged": False} 
                     }
                     
@@ -131,8 +130,11 @@ def main(argv: list[str] | None = None) -> None:
                         if isinstance(engine_caps.get("tools"), dict): server_capabilities["tools"] = engine_caps["tools"]
                         if isinstance(engine_caps.get("resources"), dict): server_capabilities["resources"] = engine_caps["resources"]
                         # Handle prompts and logging similarly if engine can enable them
-                        if "prompts" in engine_caps: server_capabilities["prompts"] = engine_caps["prompts"]
-                        if "logging" in engine_caps: server_capabilities["logging"] = engine_caps["logging"]
+                        # Ensure these are also objects if provided by engine_caps
+                        if "prompts" in engine_caps:
+                            server_capabilities["prompts"] = engine_caps["prompts"] if isinstance(engine_caps["prompts"], dict) else {}
+                        if "logging" in engine_caps:
+                            server_capabilities["logging"] = engine_caps["logging"] if isinstance(engine_caps["logging"], dict) else {}
                         if isinstance(engine_caps.get("roots"), dict): server_capabilities["roots"] = engine_caps["roots"]
 
                     response_payload = {
