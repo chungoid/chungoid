@@ -175,7 +175,7 @@ chungoid-server = "chungoid.mcp:main"
 chungoid = "chungoid.cli:cli"
 
 [tool.setuptools]
-package_dir = {"" = "src"}
+# package_dir = {"" = "src"} # This line is removed as per GitHub feedback
 
 # --- Packaging layout migrated to `src/` (Phase P1) ---
 [tool.setuptools.packages.find]
