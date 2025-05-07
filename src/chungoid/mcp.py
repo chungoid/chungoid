@@ -14,8 +14,24 @@ import os
 import sys
 from pathlib import Path
 
+# --- HACK: Temporarily add src to sys.path ---
+try:
+    from chungoid.utils.log_utils import setup_logging
+except ModuleNotFoundError:
+    # This assumes mcp.py is in src/chungoid/mcp.py
+    # So, two levels up is the 'src' directory.
+    src_dir = Path(__file__).resolve().parent.parent.parent
+    if (src_dir / "chungoid" / "utils").is_dir(): # Check if 'chungoid/utils' exists in the guessed src_dir
+        sys.path.insert(0, str(src_dir))
+        from chungoid.utils.log_utils import setup_logging # Retry import
+    else:
+        # If the structure isn't as expected, re-raise to see the original error
+        # or provide a more specific error about the hack failing.
+        print(f"Temporary sys.path hack in mcp.py failed. Guessed src_dir: {src_dir}", file=sys.stderr)
+        raise
+# --- END HACK ---
+
 from chungoid.engine import ChungoidEngine  # type: ignore  # local import
-from chungoid.utils.log_utils import setup_logging
 
 __version__ = "0.1.0"  # Example version
 
