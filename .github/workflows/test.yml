@@ -1,3 +1,6 @@
+# This workflow is intentionally disabled and should ideally be deleted.
+# The active workflow is in the root .github/workflows directory of the chungoid-mcp project.
+
 name: tests # Or any name you prefer for the main testing workflow, e.g., "CI", "Build and Test"
 
 on:
