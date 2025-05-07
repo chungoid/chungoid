@@ -1,3 +1,6 @@
+# This workflow is intentionally disabled.
+# The active workflow is in the root .github/workflows directory.
+
 name: tests
 
 on:
