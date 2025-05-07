@@ -353,4 +353,7 @@ def _factory_get_client(mode: str, project_dir: Path, *, server_url: str | None 
     """
     from .chroma_client_factory import get_client as _real_get_client
 
+    host = "localhost"
+    port = 8000
+
     return _real_get_client(mode, project_dir, server_url=server_url)

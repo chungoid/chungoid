@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from utils import config_loader
+from chungoid.utils import config_loader
 
 
 def test_load_default_config(tmp_path, monkeypatch):

@@ -2,7 +2,7 @@ import unittest
 import tempfile
 from pathlib import Path
 import shutil
-from utils.prompt_manager import PromptManager, PromptLoadError
+from chungoid.utils.prompt_manager import PromptManager, PromptLoadError
 import pytest
 
 pytestmark = pytest.mark.legacy

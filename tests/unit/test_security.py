@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from utils.security import safe_resolve, PathTraversalError
+from chungoid.utils.security import safe_resolve, PathTraversalError
 
 
 def test_safe_resolve_inside(tmp_path: Path):

@@ -1,6 +1,6 @@
 import pytest
 
-from utils import template_helpers as th
+from chungoid.utils import template_helpers as th
 
 
 def test_inject_variable():

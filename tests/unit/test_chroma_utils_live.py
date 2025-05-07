@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from utils import chroma_utils
-import utils.chroma_utils as cu
+from chungoid.utils import chroma_utils
+import chungoid.utils.chroma_utils as cu
 import chromadb
 
 
@@ -20,7 +20,7 @@ def fake_chroma_client(monkeypatch):
     yield
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def patch_factory(monkeypatch):
     # Patch the factory before each test
     # prevent global conftest from patching chroma_utils.get_chroma_client
@@ -33,13 +33,13 @@ def patch_factory(monkeypatch):
     chroma_utils._client_project_context = None
 
 
-def test_persistent_mode(tmp_path, monkeypatch):
+def test_persistent_mode(tmp_path, monkeypatch, patch_factory):
     # Set config to persistent
     cfg_yaml = """chromadb:\n  mode: persistent\n"""
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(cfg_yaml)
 
-    from utils import config_loader
+    from chungoid.utils import config_loader
 
     config_loader._config = None
     config_loader.load_config(str(cfg_path))
@@ -51,10 +51,13 @@ def test_persistent_mode(tmp_path, monkeypatch):
 
 
 def test_http_mode_env(monkeypatch, tmp_path):
+    # from chungoid.utils import chroma_utils # Only import chroma_utils # No longer needed here if autouse is off for this test
+    # from chungoid.utils.chroma_utils import _factory_get_client as original_factory # Get original factory # No longer needed
+
     # This test now MOCKS config_loader.get_config DIRECTLY within chroma_utils
     # and also MOCKS chromadb.HttpClient to prevent actual connection attempts.
     from unittest.mock import MagicMock, patch
-    from chungoid.utils import chroma_utils # Only import chroma_utils
+    from chungoid.utils import chroma_utils # Import here for clarity
     import chromadb # Required for isinstance check
 
     # Define the mock config that get_config within chroma_utils will return
@@ -78,6 +81,12 @@ def test_http_mode_env(monkeypatch, tmp_path):
     chroma_utils._client_project_context = None
     chroma_utils.clear_chroma_project_context() # Ensure project context is None for http mode
 
+    # ---- DEBUGGING ----
+    # print(f"DEBUG: chroma_utils.get_config() returns: {chroma_utils.get_config()}")
+    # print(f"DEBUG: chroma_utils._factory_get_client is: {chroma_utils._factory_get_client}")
+    # print(f"DEBUG: cu._factory_get_client is: {cu._factory_get_client}")
+    # ---- END DEBUGGING ----
+
     # Mock chromadb.HttpClient to avoid actual network calls
     mock_http_client_instance = MagicMock(spec=chromadb.HttpClient)
 
@@ -98,13 +107,13 @@ def test_http_mode_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CHROMA_MODE", "http")
 
 
-def test_persistent_mode_from_config(tmp_path):
+def test_persistent_mode_from_config(tmp_path, patch_factory):
     # Set config to persistent
     cfg_yaml = """chromadb:\n  mode: persistent\n"""
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(cfg_yaml)
 
-    from utils import config_loader
+    from chungoid.utils import config_loader
 
     config_loader._config = None
     config_loader.load_config(str(cfg_path))

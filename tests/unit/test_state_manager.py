@@ -13,8 +13,8 @@ import pytest
 # Add project root to path to allow importing utils
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from utils.state_manager import StateManager, StatusFileError
-from utils.exceptions import ChromaOperationError # Import correct error
+from chungoid.utils.state_manager import StateManager, StatusFileError
+from chungoid.utils.exceptions import ChromaOperationError # Import correct error
 
 # Define constants for test data
 INITIAL_STATUS_CONTENT = '{"runs": []}'
@@ -33,7 +33,7 @@ class TestStateManager(unittest.TestCase):
     mock_status_path = mock_chungoid_dir / "project_status.json"
     mock_lock_path = mock_status_path.with_suffix(".json.lock")
 
-    @patch('utils.chroma_utils.get_chroma_client')
+    @patch('chungoid.utils.chroma_utils.get_chroma_client')
     def setUp(self, mock_get_chroma):
         self.mock_chroma_client = MagicMock(spec=chromadb.ClientAPI)
         self.mock_collection = MagicMock(spec=chromadb.Collection)

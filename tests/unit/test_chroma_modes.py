@@ -7,8 +7,8 @@ from unittest.mock import patch, MagicMock
 import logging
 import pytest
 
-from utils import chroma_utils
-from utils import config_loader
+from chungoid.utils import chroma_utils
+from chungoid.utils import config_loader
 import chromadb
 
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +38,7 @@ class TestChromaModes(unittest.TestCase):
         shutil.rmtree(self.temp_root)
 
     @patch("chromadb.HttpClient")
-    @patch("utils.config_loader.get_config")
+    @patch("chungoid.utils.config_loader.get_config")
     def test_http_mode(self, mock_get_config, mock_http_ctor):
         """`mode: http` returns an HttpClient with server_url parsing."""
         cfg = {
@@ -58,7 +58,7 @@ class TestChromaModes(unittest.TestCase):
 
     @patch("chromadb.PersistentClient")
     @patch("os.makedirs")
-    @patch("utils.config_loader.get_config")
+    @patch("chungoid.utils.config_loader.get_config")
     def test_persistent_mode(self, mock_get_config, mock_makedirs, mock_persist_ctor):
         """`mode: persistent` requires project context and creates proper path."""
         cfg = {"chromadb": {"mode": "persistent"}}

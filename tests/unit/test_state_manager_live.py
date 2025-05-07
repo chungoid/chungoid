@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.state_manager import StateManager
+from chungoid.utils.state_manager import StateManager
 
 
 def create_sample_project(tmp_path: Path) -> Path:

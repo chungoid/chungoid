@@ -176,7 +176,7 @@ docs = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["chungoid", "chungoid.*", "utils", "utils.*"]
+include = ["chungoid", "chungoid.*"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 

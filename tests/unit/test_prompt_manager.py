@@ -8,7 +8,7 @@ import pytest
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
+from chungoid.utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
 
 pytestmark = pytest.mark.legacy
 

@@ -6,7 +6,7 @@ import chromadb
 # no test ever tries to connect to a real Chroma server.
 @pytest.fixture(autouse=True)
 def fake_chroma_client(monkeypatch):
-    from utils import chroma_utils as cu
+    from chungoid.utils import chroma_utils as cu
 
     fake_client = MagicMock(spec=chromadb.ClientAPI)
     fake_collection = MagicMock(spec=chromadb.Collection)

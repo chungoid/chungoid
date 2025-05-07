@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import utils.logger_setup as logger_setup
+import chungoid.utils.logger_setup as logger_setup
 
 
 def test_setup_logging_creates_rotating_handler(tmp_path, monkeypatch):
@@ -24,7 +24,7 @@ logging:
     cfg_path.write_text(cfg_yaml)
 
     # Ensure loader picks our config
-    from utils import config_loader
+    from chungoid.utils import config_loader
 
     config_loader._config = None  # reset cache
     cfg = config_loader.load_config(str(cfg_path))

@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from utils.prompt_manager import PromptManager
+from chungoid.utils.prompt_manager import PromptManager
 
 
 def create_prompt_tree(tmp_path: Path):

@@ -5,7 +5,7 @@ import shutil
 from unittest.mock import patch, MagicMock
 import pytest
 
-from utils.state_manager import StateManager, StatusFileError
+from chungoid.utils.state_manager import StateManager, StatusFileError
 
 pytestmark = pytest.mark.legacy
 
@@ -25,7 +25,7 @@ class TestStateManagerCore(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.project_dir)
 
-    @patch("utils.chroma_utils.get_chroma_client")
+    @patch("chungoid.utils.chroma_utils.get_chroma_client")
     def test_status_file_initialization_and_update(self, mock_get_client):
         # patch chroma client with minimal mock
         mock_get_client.return_value = MagicMock(list_collections=lambda: [])

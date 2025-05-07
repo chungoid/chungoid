@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.security import safe_resolve, PathTraversalError
+from chungoid.utils.security import safe_resolve, PathTraversalError
 
 
 def test_safe_resolve_within_base(tmp_path):

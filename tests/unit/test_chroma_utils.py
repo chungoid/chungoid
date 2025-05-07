@@ -9,8 +9,8 @@ import pytest
 pytestmark = pytest.mark.legacy
 
 # Correct import path assuming tests are run from the project root or configured PYTHONPATH
-from utils import chroma_utils
-from utils import config_loader
+from chungoid.utils import chroma_utils
+from chungoid.utils import config_loader
 import chromadb
 
 # Configure logging for tests
@@ -56,7 +56,7 @@ class TestChromaUtils(unittest.TestCase):
         chroma_utils.clear_chroma_project_context()
         self.assertIsNone(chroma_utils._current_project_directory)
 
-    @patch('utils.config_loader.get_config')
+    @patch('chungoid.utils.config_loader.get_config')
     @patch('chromadb.HttpClient')  # Patch HttpClient constructor; spec not needed inside
     def test_get_chroma_client_http(self, mock_http_client_constructor, mock_get_config):
         """Test get_chroma_client returns HttpClient when configured."""
@@ -82,7 +82,7 @@ class TestChromaUtils(unittest.TestCase):
         self.assertIs(client_again, client)
         mock_http_client_constructor.assert_called_once() # Constructor not called again
 
-    @patch('utils.config_loader.get_config')
+    @patch('chungoid.utils.config_loader.get_config')
     @patch('chromadb.PersistentClient')  # Patch PersistentClient constructor
     @patch('os.makedirs') # Mock os.makedirs to avoid actual FS operations
     def test_get_chroma_client_persistent_success(self, mock_makedirs, mock_persistent_client_constructor, mock_get_config):
@@ -113,7 +113,7 @@ class TestChromaUtils(unittest.TestCase):
         self.assertIs(client_again, client)
         mock_persistent_client_constructor.assert_called_once() # Constructor not called again
 
-    @patch('utils.config_loader.get_config')
+    @patch('chungoid.utils.config_loader.get_config')
     def test_get_chroma_client_persistent_no_context(self, mock_get_config):
         """Test get_chroma_client returns None and logs error if persistent but no context."""
         logger.info("Running test_get_chroma_client_persistent_no_context")
@@ -127,7 +127,7 @@ class TestChromaUtils(unittest.TestCase):
         self.assertTrue(any("project context directory not set" in msg for msg in log_cm.output),
                         "Error message about missing context not logged")
 
-    @patch('utils.config_loader.get_config')
+    @patch('chungoid.utils.config_loader.get_config')
     @patch('chromadb.PersistentClient')
     @patch('os.makedirs')
     def test_get_chroma_client_persistent_context_change(self, mock_makedirs, mock_persistent_client, mock_get_config):
@@ -164,8 +164,8 @@ class TestChromaUtils(unittest.TestCase):
         self.assertTrue(any("context changed" in msg for msg in log_cm.output),
                         "Warning about context change not logged")
 
-    @patch('utils.config_loader.get_config')
-    @patch('utils.chroma_utils.get_persistent_chroma_client') # Patch the helper
+    @patch('chungoid.utils.config_loader.get_config')
+    @patch('chungoid.utils.chroma_utils.get_persistent_chroma_client') # Patch the helper
     def test_get_chroma_client_persistent_uses_helper(self, mock_get_persistent_helper, mock_get_config):
         """Verify get_chroma_client calls the dedicated get_persistent_chroma_client helper."""
         logger.info("Running test_get_chroma_client_persistent_uses_helper")
