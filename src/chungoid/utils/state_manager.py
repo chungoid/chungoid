@@ -1040,6 +1040,127 @@ class StateManager:
             self.logger.info("No pending reflection text to retrieve.")
         return self._pending_reflection_text
 
+    def export_cursor_rule(self, dest_path: str = ".cursor/rules") -> Optional[str]:
+        """Exports the chungoid_bootstrap.mdc rule to the specified relative path.
+
+        Args:
+            dest_path: The relative directory path within the project to save the rule.
+                       Defaults to ".cursor/rules". The filename will be chungoid_bootstrap.mdc.
+
+        Returns:
+            The absolute path to the exported rule file if successful, None otherwise.
+        """
+        rule_filename = "chungoid_bootstrap.mdc"
+        # Ensure dest_path is treated as a directory, then join with filename
+        # If dest_path itself is intended to be the full file path, this logic might need adjustment
+        # For now, assuming dest_path is a directory like ".cursor/rules"
+        try:
+            # Construct the full absolute path for the directory
+            full_dest_dir = (self.target_dir_path / dest_path).resolve()
+            # Ensure the directory exists
+            full_dest_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Construct the full absolute path for the file
+            rule_file_path = full_dest_dir / rule_filename
+
+            rule_content = """
+# Chungoid Bootstrap Rule for Cursor
+# Version: 0.1.0
+# This rule helps initialize a Cursor IDE environment for working with Chungoid.
+
+# On project open, suggest setting the Chungoid project context if not already done.
+# (This part is more of a conceptual placeholder as direct IDE event hooking is complex)
+
+# Provides a command to initialize the current folder as a Chungoid project.
+@command(
+    {
+        "name": "chungoid.initializeProjectHere",
+        "title": "Chungoid: Initialize Project in Current Folder",
+        "description": "Sets up the current folder as a Chungoid project by creating .chungoid/project_status.json.",
+        "category": "Chungoid"
+    }
+)
+async def initialize_chungoid_project_here(ide_services):
+    project_path = await ide_services.get_workspace_path()
+    if not project_path:
+        await ide_services.show_error_message("Could not determine workspace path.")
+        return
+    
+    response = await ide_services.call_mcp_tool(
+        tool_name="initialize_project",
+        tool_arguments={"project_directory": project_path}
+    )
+    if response and not response.get('isError'):
+        await ide_services.show_information_message(f"Chungoid project initialized at {project_path}")
+    else:
+        error_message = response.get('error', {}).get('message', "Unknown error during initialization.")
+        await ide_services.show_error_message(f"Failed to initialize Chungoid project: {error_message}")
+
+# Provides a command to set the active Chungoid project context.
+@command(
+    {
+        "name": "chungoid.setProjectContext",
+        "title": "Chungoid: Set Active Project Context",
+        "description": "Prompts for a directory and sets it as the active Chungoid project context.",
+        "category": "Chungoid"
+    }
+)
+async def set_chungoid_project_context(ide_services):
+    project_path = await ide_services.show_input_box(
+        title="Set Chungoid Project Directory",
+        prompt="Enter the absolute path to your Chungoid project directory",
+        placeholder=await ide_services.get_workspace_path() or "/path/to/your/project"
+    )
+    if not project_path:
+        return
+
+    response = await ide_services.call_mcp_tool(
+        tool_name="set_project_context",
+        tool_arguments={"project_directory": project_path}
+    )
+    if response and not response.get('isError'):
+        await ide_services.show_information_message(f"Chungoid project context set to: {project_path}")
+    else:
+        error_message = response.get('error', {}).get('message', "Unknown error setting context.")
+        await ide_services.show_error_message(f"Failed to set Chungoid project context: {error_message}")
+
+# Add more commands and context providers as Chungoid evolves.
+# Example: A command to show current project status via MCP tool.
+@command(
+    {
+        "name": "chungoid.getCurrentStatus",
+        "title": "Chungoid: Get Current Project Status",
+        "description": "Retrieves and displays the current status of the active Chungoid project.",
+        "category": "Chungoid"
+    }
+)
+async def get_chungoid_project_status(ide_services):
+    response = await ide_services.call_mcp_tool(tool_name="get_project_status", tool_arguments={})
+    if response and not response.get('isError') and response.get('content'):
+        status_text = response['content'][0].get('text', "Failed to parse status.")
+        # Attempt to pretty-print if it's JSON
+        try:
+            import json
+            status_obj = json.loads(status_text)
+            pretty_status = json.dumps(status_obj, indent=2)
+            await ide_services.show_information_message(f"Chungoid Project Status:\n{pretty_status}", use_modal=True)
+        except:
+            await ide_services.show_information_message(f"Chungoid Project Status:\n{status_text}", use_modal=True)
+    else:
+        error_message = response.get('error', {}).get('message', "Failed to retrieve status.")
+        await ide_services.show_error_message(f"Error getting project status: {error_message}")
+
+"""
+            with open(rule_file_path, "w", encoding="utf-8") as f:
+                f.write(rule_content)
+            
+            self.logger.info(f"Exported Cursor rule to: {rule_file_path}")
+            return str(rule_file_path)
+        
+        except Exception as e:
+            self.logger.error(f"Failed to export Cursor rule to {dest_path}/{rule_filename}: {e}", exc_info=True)
+            return None
+
 
 # Example usage (for testing or demonstration)
 if __name__ == "__main__":
