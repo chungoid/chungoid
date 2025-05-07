@@ -59,11 +59,22 @@ def main(argv: list[str] | None = None) -> None:
     logger.info(
         f"Chungoid MCP Server starting. Version: {__version__}, Project Dir: {args.project_dir}, Log Level: {args.log_level}"
     )
-    logger.info("Chungoid MCP Server now listening on stdin for MCP messages...")
-
-    # Store CHUNGOID_PROJECT_DIR for potential use in tool handlers
+    
     project_directory = Path(args.project_dir).resolve()
     logger.info(f"Effective project directory for MCP operations: {project_directory}")
+
+    # Instantiate the ChungoidEngine
+    try:
+        # Assuming ChungoidEngine might take the project_directory and logger
+        engine = ChungoidEngine(project_dir=project_directory, logger_instance=logger)
+        logger.info("ChungoidEngine instantiated successfully.")
+    except Exception as e:
+        logger.error(f"Failed to instantiate ChungoidEngine: {e}", exc_info=True)
+        # If engine fails to load, we can't really proceed with MCP.
+        # We could send a specific error or just exit. For now, log and let it fail later.
+        engine = None 
+
+    logger.info("Chungoid MCP Server now listening on stdin for MCP messages...")
 
     try:
         for line in sys.stdin:
@@ -74,44 +85,125 @@ def main(argv: list[str] | None = None) -> None:
 
             logger.debug(f"Received raw line: {line}")
             request_id = None # Initialize request_id
+            response_payload = None
+            request = None
+
             try:
                 request = json.loads(line)
-                request_id = request.get("id") # Capture the request ID
+                request_id = request.get("id")
                 method = request.get("method")
+                params = request.get("params", {})
 
-                logger.info(f"Received MCP request (ID: {request_id}): {request}")
+                logger.info(f"Received MCP request (ID: {request_id}, Method: {method}): {request}")
 
-                response_payload = None
+                if not engine and method not in ["shutdown", "exit"]: # Allow shutdown/exit even if engine failed
+                    response_payload = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": "Server error: ChungoidEngine failed to initialize."}
+                    }
+                elif method == "initialize":
+                    # Respond to initialize request
+                    # Based on MCP spec, clientInfo and capabilities are in params
+                    # client_info = params.get("clientInfo", {})
+                    # client_capabilities = params.get("capabilities", {})
+                    # logger.info(f"Initialize request from {client_info.get('name')} v{client_info.get('version')}")
+                    
+                    server_capabilities = {
+                        "tools": True,  # We will offer tools
+                        "prompts": False, # Not offering prompts for now
+                        "resources": True, # We might offer resources
+                        "logging": False,  # Not offering custom logging via MCP for now
+                        "roots": {"listChanged": False} # Not supporting dynamic root changes for now
+                    }
+                    # ChungoidEngine might have its own capabilities to merge/report
+                    if hasattr(engine, "get_server_capabilities"):
+                        server_capabilities = engine.get_server_capabilities(params)
 
-                if method == "listOfferings":
                     response_payload = {
                         "jsonrpc": "2.0",
                         "id": request_id,
                         "result": {
-                            "tools": [], # No tools defined yet
-                            "resources": [],
-                            "resourceTemplates": []
+                            "protocolVersion": "2024-11-05", # Align with client if possible, or state our version
+                            "capabilities": server_capabilities,
+                            "serverInfo": {
+                                "name": "chungoid-mcp-server",
+                                "version": __version__,
+                                # "documentationUrl": "Optional URL to server docs"
+                            }
                         }
                     }
-                    logger.info("Responding to listOfferings.")
-                # TODO: Add handlers for "executeTool" and other MCP methods
-                # elif method == "executeTool":
-                #     tool_name = request.get("params", {}).get("name")
-                #     tool_args = request.get("params", {}).get("arguments")
-                #     # result = run_tool(tool_name, tool_args, project_directory)
-                #     # response_payload = { "jsonrpc": "2.0", "id": request_id, "result": result }
-                #     pass # Placeholder for tool execution
+                    logger.info(f"Responded to initialize (ID: {request_id}).")
 
-                else:
-                    # Unhandled method
-                    logger.warning(f"Unhandled MCP method: {method}")
+                elif method == "listOfferings":
+                    tools = []
+                    resources = []
+                    resource_templates = []
+                    
+                    if hasattr(engine, "get_mcp_tools"):
+                        tools = engine.get_mcp_tools()
+                    if hasattr(engine, "get_mcp_resources"):
+                        resources = engine.get_mcp_resources()
+                    if hasattr(engine, "get_mcp_resource_templates"):
+                        resource_templates = engine.get_mcp_resource_templates()
+                        
                     response_payload = {
                         "jsonrpc": "2.0",
                         "id": request_id,
-                        "error": {
-                            "code": -32601,  # JSON-RPC standard error code for Method not found
-                            "message": f"Method not found: {method}"
+                        "result": {
+                            "tools": tools,
+                            "resources": resources,
+                            "resourceTemplates": resource_templates
                         }
+                    }
+                    logger.info(f"Responded to listOfferings (ID: {request_id}) with {len(tools)} tools.")
+
+                elif method == "executeTool":
+                    tool_call_id = params.get("toolCallId") # MCP spec often uses toolCallId
+                    tool_name = params.get("name")
+                    tool_arguments = params.get("arguments")
+                    
+                    if hasattr(engine, "execute_mcp_tool"):
+                        try:
+                            # The engine method should handle the execution and return a result or raise an error
+                            tool_result = engine.execute_mcp_tool(tool_name, tool_arguments, tool_call_id=tool_call_id, project_dir=project_directory)
+                            response_payload = {
+                                "jsonrpc": "2.0",
+                                "id": request_id, # This is the MCP request ID
+                                "result": tool_result # The result structure is tool-specific, often {"toolCallId": ..., "output": ...}
+                            }
+                            logger.info(f"Tool {tool_name} executed successfully (ID: {request_id}, ToolCallID: {tool_call_id}).")
+                        except Exception as tool_exec_error:
+                            logger.error(f"Error executing tool {tool_name} (ID: {request_id}, ToolCallID: {tool_call_id}): {tool_exec_error}", exc_info=True)
+                            response_payload = {
+                                "jsonrpc": "2.0",
+                                "id": request_id,
+                                "error": {"code": -32001, "message": f"Tool execution error: {str(tool_exec_error)}", "data": {"toolCallId": tool_call_id}}
+                            }
+                    else:
+                        logger.warning(f"Engine has no method execute_mcp_tool for tool: {tool_name}")
+                        response_payload = {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {"code": -32601, "message": f"Tool not found or engine cannot execute: {tool_name}", "data": {"toolCallId": tool_call_id}}
+                        }
+                
+                elif method == "shutdown" or method == "exit":
+                    logger.info(f"Received {method} request. Server will shut down. (ID: {request_id})")
+                    # Acknowledge shutdown if an ID was provided, then break loop
+                    if request_id is not None: # 'exit' is a notification, might not have an id
+                         response_payload = {"jsonrpc": "2.0", "id": request_id, "result": None} # Acknowledge if it's not a notification
+                    if response_payload:
+                         print(json.dumps(response_payload))
+                         sys.stdout.flush()
+                    break # Exit the loop
+
+                else:
+                    logger.warning(f"Unhandled MCP method: {method} (ID: {request_id})")
+                    response_payload = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32601, "message": f"Method not found: {method}"}
                     }
                 
                 if response_payload:
@@ -122,20 +214,19 @@ def main(argv: list[str] | None = None) -> None:
 
             except json.JSONDecodeError:
                 logger.error(f"Failed to decode JSON from line: {line}", exc_info=True)
-                # Cannot determine request_id if JSON is invalid
                 error_response_payload = {
-                    "jsonrpc": "2.0",
-                    "id": None, # ID is unknown
+                    "jsonrpc": "2.0", "id": None,
                     "error": {"code": -32700, "message": "Parse error: Invalid JSON received"}
                 }
                 print(json.dumps(error_response_payload))
                 sys.stdout.flush()
             except Exception as e:
-                logger.error(f"Error processing message (ID: {request_id}): {line} - {e}", exc_info=True)
-                # Use captured request_id if available
+                # Catch any other unexpected error during request processing
+                # Use request_id if it was parsed, otherwise it's None
+                current_request_id = request.get("id") if request else None
+                logger.error(f"Generic error processing message (ID: {current_request_id}): {line} - {e}", exc_info=True)
                 error_response_payload = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
+                    "jsonrpc": "2.0", "id": current_request_id,
                     "error": {"code": -32603, "message": f"Internal server error: {str(e)}"}
                 }
                 print(json.dumps(error_response_payload))
