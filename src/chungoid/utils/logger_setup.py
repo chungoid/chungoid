@@ -56,8 +56,7 @@ class JsonFormatter(logging.Formatter):
 
 # Central logging setup function
 def setup_logging(
-    # Remove parameters that are now read from environment
-    # level: str = "INFO",
+    level: str | None = None, # Re-enable level, make it optional
     # log_file_path: str = "app.log",
     # max_bytes: int = 10 * 1024 * 1024, # Keep these if you want them configurable per call
     # backup_count: int = 5,             # Keep these if you want them configurable per call
@@ -65,10 +64,11 @@ def setup_logging(
 ):
     """Configures root logger based on settings from config.yaml or defaults.
 
-    Reads logging configuration (level, format, file, max_bytes, backup_count)
-    from the loaded configuration.
+    Reads logging configuration (format, file, max_bytes, backup_count)
+    from the loaded configuration. The log level can be overridden by the 'level' param.
 
-    # Args: # <<< Remove Args if parameters are removed, or update if kept >>>
+    Args:
+        level: Optional log level string (e.g., "DEBUG", "INFO"). If None, uses config.
     #    max_bytes: Maximum size of the log file before rotation.
     #    backup_count: Number of backup log files to keep.
     """
@@ -76,8 +76,8 @@ def setup_logging(
     config = get_config()
     log_config = config.get("logging", {})
 
-    # Get settings from config, falling back to defaults if necessary (though loader handles defaults)
-    level = log_config.get("level", "INFO")
+    # Use provided level if given, otherwise use config
+    effective_level = level if level is not None else log_config.get("level", "INFO")
     log_format_type = log_config.get("format", "text").lower()
     log_file_path = log_config.get("file", None)  # Default to None if not in config
     max_bytes = log_config.get("max_bytes", 10 * 1024 * 1024)
@@ -85,20 +85,15 @@ def setup_logging(
 
     use_json_formatter = log_format_type == "json"
 
-    # Use environment variables read at module level # <<< REMOVE THESE LINES >>>
-    # level = LOG_LEVEL_ENV
-    # use_json_formatter = LOG_FORMAT_ENV == "json"
-    # log_file_path = LOG_FILE_ENV
-
     try:
-        log_level = getattr(logging, level.upper(), logging.INFO)
+        log_level_val = getattr(logging, effective_level.upper(), logging.INFO) # Use effective_level
     except AttributeError:
-        print(f"Warning: Invalid log level '{level}'. Defaulting to INFO.")
-        log_level = logging.INFO
+        print(f"Warning: Invalid log level '{effective_level}'. Defaulting to INFO.")
+        log_level_val = logging.INFO
 
     # Get the root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)  # Set the minimum level for the root logger
+    root_logger.setLevel(log_level_val)  # Set the minimum level for the root logger
 
     # Clear existing handlers to avoid duplicates if called multiple times
     # Use list comprehension to avoid modifying list while iterating
@@ -117,7 +112,7 @@ def setup_logging(
 
     # Console Handler (always add)
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(log_level)  # Console logs at the specified level
+    console_handler.setLevel(log_level_val)  # Console logs at the specified level
     console_handler.setFormatter(stream_formatter)
     root_logger.addHandler(console_handler)
 
@@ -139,17 +134,20 @@ def setup_logging(
             )
             file_handler.setFormatter(formatter)  # Use the chosen formatter
             # <<< SET HANDLER LEVEL EXPLICITLY TO DEBUG >>>
-            file_handler.setLevel(logging.DEBUG)
+            file_handler.setLevel(logging.DEBUG) # Keep this as DEBUG for file, or use log_level_val?
+            # For now, let file handler log more verbosely, root_logger.setLevel controls overall threshold.
             root_logger.addHandler(file_handler)
-            logging.info(f"File logging configured to {log_file}")  # Use standard logging here
+            # Use a specific logger to announce file logging, not the root logger directly with logging.info
+            logging.getLogger(__name__).info(f"File logging configured to {log_file_path}")
         except Exception as e:
-            logging.error(
+            # Use a specific logger for this error too
+            logging.getLogger(__name__).error(
                 f"Error setting up file logging: {e}. File logging disabled.", exc_info=True
             )
     else:
         logging.getLogger(__name__).info("File logging is disabled (no path provided).")
 
-    logging.getLogger(__name__).info("Logging setup complete. Level: %s", level.upper())
+    logging.getLogger(__name__).info("Logging setup complete. Effective Level: %s", effective_level.upper())
 
 
 # Example usage (typically called once at application startup)
