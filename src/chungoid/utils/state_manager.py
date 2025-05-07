@@ -53,6 +53,7 @@ class StateManager:
 
     _CONTEXT_COLLECTION_NAME = "chungoid_context"
     _REFLECTIONS_COLLECTION_NAME = "chungoid_reflections"
+    _pending_reflection_text: Optional[str] = None # Added instance attribute for pending reflection
 
     def __init__(self, target_directory: str, server_stages_dir: str, use_locking: bool = True):
         """Initializes the StateManager.
@@ -185,6 +186,7 @@ class StateManager:
 
         # Remove or comment out the deferred connection log message
         # self.logger.debug("ChromaDB client connection deferred to first use.")
+        self._pending_reflection_text = None # Explicitly initialize in __init__
 
     def _get_lock(self) -> Union[filelock.FileLock, DummyFileLock]:
         """Returns the appropriate lock object based on configuration."""
@@ -462,7 +464,7 @@ class StateManager:
         status: str,
         artifacts: List[str],
         reason: Optional[str] = None,
-        reflection_text: Optional[str] = None,
+        reflection_text: Optional[str] = None, # This is for direct passing
     ) -> bool:
         """Updates the status file by adding a new entry to the *latest run*.
 
@@ -470,13 +472,15 @@ class StateManager:
         Validates input status.
         Adds a timestamp to the new entry.
         Writes the updated list back to the file.
+        Uses and clears any pending reflection text if reflection_text argument is None.
 
         Args:
             stage: The stage number (e.g., 1.0, 2).
             status: The result status (e.g., "PASS", "FAIL", "DONE").
             artifacts: A list of relative paths to generated artifacts.
             reason: Optional reason, e.g., for FAIL status.
-            reflection_text: Optional reflection text for this stage update.
+            reflection_text: Optional reflection text for this stage update. If None,
+                             will try to use and clear _pending_reflection_text.
 
         Returns:
             True if the update was successful, False otherwise.
@@ -487,6 +491,23 @@ class StateManager:
             self.logger.error(f"Invalid status provided: {status}. Must be one of {valid_statuses}")
             return False
 
+        # Determine the reflection text to use
+        final_reflection_text = reflection_text
+        if final_reflection_text is None and self._pending_reflection_text is not None:
+            final_reflection_text = self._pending_reflection_text
+            self.logger.info(f"Using pending reflection text for stage {stage} update.")
+            self._pending_reflection_text = None # Clear after use
+            self.logger.info("Cleared pending reflection text after incorporating into status update.")
+        elif self._pending_reflection_text is not None and reflection_text is not None:
+            self.logger.warning(
+                f"Both a direct reflection_text and a pending_reflection_text were present for stage {stage}. "
+                f"Prioritizing the directly passed reflection_text. Pending reflection was NOT cleared."
+            )
+            # In this case, we prioritize the explicitly passed `reflection_text`.
+            # The `_pending_reflection_text` remains uncleared, which might be unexpected.
+            # Consider if _pending_reflection_text should be cleared anyway or if this state is an error.
+            # For now, it persists if a direct one is also provided.
+
         # Create the new status entry
         new_entry: Dict[str, Any] = {
             "stage": float(stage),
@@ -496,8 +517,8 @@ class StateManager:
         }
         if reason:
             new_entry["reason"] = reason
-        if reflection_text is not None:
-            new_entry["reflection_text"] = reflection_text
+        if final_reflection_text is not None: # Use the determined reflection text
+            new_entry["reflection_text"] = final_reflection_text
 
         try:
             # Read the current state
@@ -1005,6 +1026,19 @@ class StateManager:
     def _acquire_lock(self) -> filelock.FileLock | contextlib.nullcontext:
         """Returns the appropriate lock object based on configuration."""
         return self._lock
+
+    def set_pending_reflection_text(self, reflection_text: str) -> None:
+        """Stores reflection text temporarily before it's committed with a status update."""
+        self._pending_reflection_text = reflection_text
+        self.logger.info(f"Pending reflection text set. Length: {len(reflection_text)}")
+
+    def get_pending_reflection_text(self) -> Optional[str]:
+        """Retrieves the currently set pending reflection text."""
+        if self._pending_reflection_text is not None:
+            self.logger.info(f"Retrieved pending reflection text. Length: {len(self._pending_reflection_text)}")
+        else:
+            self.logger.info("No pending reflection text to retrieve.")
+        return self._pending_reflection_text
 
 
 # Example usage (for testing or demonstration)

@@ -174,6 +174,11 @@ class ChungoidEngine:
                 }
             },
             {
+                "name": "load_pending_reflection", # Added new tool definition
+                "description": "Retrieves the currently set pending reflection text that has not yet been submitted.",
+                "inputSchema": {"type": "object", "properties": {}} # No input arguments needed
+            },
+            {
                 "name": "mcp_chungoid_export_cursor_rule", # Direct mapping to existing state_manager method
                 "description": "Exports the chungoid_bootstrap.mdc rule to the specified destination path within the project.",
                  "inputSchema": {
@@ -407,8 +412,8 @@ class ChungoidEngine:
 
             elif tool_name == "set_pending_reflection":
                 reflection_text = tool_arguments.get("reflection_text")
-                if reflection_text is None: # Allow empty string, but not missing key
-                    raise ValueError("Missing 'reflection_text' for set_pending_reflection tool.")
+                if reflection_text is None: # Should be caught by schema validation, but good practice
+                    raise ValueError("Missing 'reflection_text' argument for set_pending_reflection")
                 self.state_manager.set_pending_reflection_text(reflection_text)
                 return {
                     "toolCallId": tool_call_id,
@@ -419,6 +424,29 @@ class ChungoidEngine:
                         }
                     ]
                 }
+
+            elif tool_name == "load_pending_reflection": # Added new tool execution
+                pending_text = self.state_manager.get_pending_reflection_text()
+                if pending_text is not None:
+                    return {
+                        "toolCallId": tool_call_id,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Pending reflection: {pending_text}"
+                            }
+                        ]
+                    }
+                else:
+                    return {
+                        "toolCallId": tool_call_id,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "No pending reflection text is currently set."
+                            }
+                        ]
+                    }
 
             elif tool_name == "mcp_chungoid_export_cursor_rule":
                 dest_path_str = tool_arguments.get("dest_path", ".cursor/rules") 
