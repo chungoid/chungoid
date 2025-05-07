@@ -208,26 +208,10 @@ class ChungoidEngine:
 
         try:
             if tool_name == "initialize_project":
-                # StateManager's initialize_project doesn't take args, it uses its configured target_directory
-                # If a specific dir is provided, we might need a way to re-init StateManager or have it accept a dir.
-                # For now, assume it initializes the engine's currently set project_dir.
-                # Or, if an argument is given, re-initialize for that.
-                target_init_dir_str = tool_arguments.get("project_directory")
-                if target_init_dir_str:
-                    target_init_dir = Path(target_init_dir_str).resolve()
-                    logger.info(f"Re-initializing StateManager for explicit directory: {target_init_dir}")
-                    # This is a simplification. A robust implementation might re-instantiate StateManager
-                    # or have StateManager.initialize_project accept a directory.
-                    # For now, we'll assume StateManager is already configured for self.project_dir
-                    # and `initialize_project` tool call might be for that dir if no arg,
-                    # or we should update self.project_dir and re-init if arg is present.
-                    # Let's assume it just calls the existing SM's init on its configured dir.
-                    self.state_manager.initialize_project() # Operates on self.state_manager.target_dir
-                    return {"status": "success", "message": f"Project initialized at {self.state_manager.target_dir}"}
-                else:
-                    self.state_manager.initialize_project()
-                    return {"status": "success", "message": f"Project initialized at {self.state_manager.target_dir}"}
-
+                # Engine already re-initializes StateManager if project_directory is passed and different
+                # This tool can be used to explicitly ensure directories and status file are set up.
+                self.state_manager.initialize_project() # Operates on self.state_manager.target_dir_path
+                return {"status": "success", "message": f"Project initialized at {str(self.state_manager.target_dir_path)}"}
 
             elif tool_name == "set_project_context":
                 new_project_dir_str = tool_arguments.get("project_directory")
