@@ -52,6 +52,8 @@ def test_persistent_mode(tmp_path, monkeypatch):
 
 def test_http_mode_env(monkeypatch, tmp_path):
     # This test now MOCKS config_loader.get_config DIRECTLY within chroma_utils
+    # and also MOCKS chromadb.HttpClient to prevent actual connection attempts.
+    from unittest.mock import MagicMock, patch
     from chungoid.utils import chroma_utils # Only import chroma_utils
     import chromadb # Required for isinstance check
 
@@ -76,11 +78,24 @@ def test_http_mode_env(monkeypatch, tmp_path):
     chroma_utils._client_project_context = None
     chroma_utils.clear_chroma_project_context() # Ensure project context is None for http mode
 
-    client = chroma_utils.get_chroma_client()
+    # Mock chromadb.HttpClient to avoid actual network calls
+    mock_http_client_instance = MagicMock(spec=chromadb.HttpClient)
+
+    with patch('chromadb.HttpClient', return_value=mock_http_client_instance) as mock_http_client_class:
+        client = chroma_utils.get_chroma_client()
 
     assert client is not None, "HTTP Client should not be None with direct get_config patch"
-    assert isinstance(client, chromadb.HttpClient), \
-        f"Client should be HttpClient with direct get_config patch, got {type(client)}"
+    mock_http_client_class.assert_called_once() # Verify HttpClient was called
+    assert client == mock_http_client_instance, "Returned client should be the mocked HttpClient instance"
+    # Further assertions can be made on mock_http_client_class.call_args if needed,
+    # e.g., to check host, port, database, settings. For example:
+    # call_args = mock_http_client_class.call_args
+    # assert call_args.kwargs['host'] == 'localhost'
+    # assert call_args.kwargs['port'] == 8000
+    # assert call_args.kwargs['database'] == 'test_http_direct_patch'
+
+    # Test with CHROMA_MODE env var (legacy, should still work if get_config handles it)
+    monkeypatch.setenv("CHROMA_MODE", "http")
 
 
 def test_persistent_mode_from_config(tmp_path):

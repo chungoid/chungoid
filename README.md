@@ -120,7 +120,9 @@ You interact with the server using specific tools via your client (e.g., `@chung
 *   **`submit_stage_artifacts`**: (Self/Agent/Engine Driven) Submits the results of a stage. This updates the project status and stores artifact/reflection context. *Note: The `reflection_text` is picked up automatically from the previous `set_pending_reflection` call.*
 
 **Typical Flow:**
-
+0.1.  Optional: Use chungoid mcp_chungoid_export_cursor_rule in cursor chat.
+0.2.  Optional: Select add context (ctrl+alt+p in cursor chat) and select add new rule, name it: chungoid
+0.3.  Optional: From the add context menu select chungoid.mdc to apply it as a new rule to better follow the system.
 1.  Write a brief summary of the goal you wish to acheive with your software project in goal.txt
 2.  Send agent request to `set_project_context` or `initialize_project`
 3.  Send agent request to `prepare_next_stage`

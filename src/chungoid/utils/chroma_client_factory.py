@@ -61,16 +61,24 @@ def get_client(
     if not server_url:
         raise ValueError("server_url must be provided when mode == 'http'")
 
-    # Remove protocol if present & split host/port
-    server_url = server_url.replace("http://", "").replace("https://", "")
-    if ":" not in server_url:
-        # default port
-        host, port_s = server_url, "8000"
-    else:
-        host, port_s = server_url.split(":", 1)
-    try:
-        port = int(port_s)
-    except ValueError as exc:
-        raise ValueError(f"Invalid port in server_url '{server_url}'") from exc
+    # Remove protocol if present
+    url_no_protocol = server_url.replace("http://", "").replace("https://", "")
 
-    return chromadb.HttpClient(host=host, port=port, settings=s) 
+    # Split host:port from path (database name)
+    host_port_str, *path_segments = url_no_protocol.split("/", 1)
+    database = path_segments[0] if path_segments else None
+
+    # Split host from port
+    if ":" not in host_port_str:
+        # default port
+        host, port_str = host_port_str, "8000"
+    else:
+        host, port_str = host_port_str.split(":", 1)
+    
+    try:
+        port = int(port_str)
+    except ValueError as exc:
+        raise ValueError(f"Invalid port '{port_str}' in server_url '{server_url}'") from exc
+
+    # Pass database to HttpClient, it has its own default if None is passed.
+    return chromadb.HttpClient(host=host, port=port, settings=s, database=database) 
