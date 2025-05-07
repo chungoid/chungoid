@@ -200,6 +200,7 @@ testpaths = [
 # ]
 # Enable asyncio mode if using pytest-asyncio
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 # Assuming default Ruff config is acceptable, or customize here
