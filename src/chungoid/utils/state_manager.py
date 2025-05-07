@@ -1054,8 +1054,8 @@ class StateManager:
             target_dir.mkdir(parents=True, exist_ok=True)
             
             rule_content = """---
-description: 
-globs: 
+description: Chungoid AI development assistant rule providing core commands.
+globs: []
 alwaysApply: false
 ---
 # Chungoid Bootstrap Rule for Cursor
