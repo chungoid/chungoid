@@ -5,6 +5,7 @@ import json
 import os
 from logging.handlers import RotatingFileHandler
 from .config_loader import get_config
+from pathlib import Path
 
 # Environment Variable Defaults
 # DEFAULT_LOG_LEVEL = "INFO"
@@ -79,7 +80,8 @@ def setup_logging(
     # Use provided level if given, otherwise use config
     effective_level = level if level is not None else log_config.get("level", "INFO")
     log_format_type = log_config.get("format", "text").lower()
-    log_file_path = log_config.get("file", None)  # Default to None if not in config
+    # Default to "logs/chungoid_mcp_server.log" if not in config, ensuring a subdirectory
+    log_file_path_from_config = log_config.get("file", "logs/chungoid_mcp_server.log") 
     max_bytes = log_config.get("max_bytes", 10 * 1024 * 1024)
     backup_count = log_config.get("backup_count", 5)
 
@@ -117,35 +119,45 @@ def setup_logging(
     root_logger.addHandler(console_handler)
 
     # Rotating File Handler (optional)
-    if log_file_path:
+    if log_file_path_from_config: # Check the original config value
         try:
+            # Determine project root from this file's location:
+            # logger_setup.py is in chungoid-core/src/chungoid/utils/
+            # utils -> chungoid -> src -> chungoid-core -> chungoid-mcp (project root)
+            project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+
+            # If the configured path is not absolute, make it relative to project_root
+            if not Path(log_file_path_from_config).is_absolute():
+                resolved_log_file_path = project_root / log_file_path_from_config
+            else:
+                resolved_log_file_path = Path(log_file_path_from_config) # Use as is if absolute
+            
+            # Convert to string for os.path.dirname and RotatingFileHandler
+            log_file_path_str = str(resolved_log_file_path)
+
             # Ensure log directory exists
-            log_dir = os.path.dirname(log_file_path)
+            log_dir = os.path.dirname(log_file_path_str)
             if log_dir and not os.path.exists(log_dir):
                 os.makedirs(log_dir)
-                print(f"Created log directory: {log_dir}")
+                # Use print for this initial setup phase as logger might not be fully ready
+                print(f"Log directory created: {log_dir}")
 
-            # Create file handler
-            log_file = config.get("logging", {}).get("file", "chungoid_mcp_server.log")
-            max_bytes = config.get("logging", {}).get("max_bytes", 10 * 1024 * 1024)  # Default 10MB
-            backup_count = config.get("logging", {}).get("backup_count", 5)
+            # Create file handler - No longer re-reading from config here
             file_handler = RotatingFileHandler(
-                log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+                log_file_path_str, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
             )
             file_handler.setFormatter(formatter)  # Use the chosen formatter
-            # <<< SET HANDLER LEVEL EXPLICITLY TO DEBUG >>>
-            file_handler.setLevel(logging.DEBUG) # Keep this as DEBUG for file, or use log_level_val?
-            # For now, let file handler log more verbosely, root_logger.setLevel controls overall threshold.
+            file_handler.setLevel(logging.DEBUG) 
             root_logger.addHandler(file_handler)
-            # Use a specific logger to announce file logging, not the root logger directly with logging.info
-            logging.getLogger(__name__).info(f"File logging configured to {log_file_path}")
+            # Use a specific logger to announce file logging
+            logging.getLogger(__name__).info(f"File logging configured to {log_file_path_str}")
         except Exception as e:
             # Use a specific logger for this error too
             logging.getLogger(__name__).error(
                 f"Error setting up file logging: {e}. File logging disabled.", exc_info=True
             )
     else:
-        logging.getLogger(__name__).info("File logging is disabled (no path provided).")
+        logging.getLogger(__name__).info("File logging is disabled (no path provided in config).")
 
     logging.getLogger(__name__).info("Logging setup complete. Effective Level: %s", effective_level.upper())
 

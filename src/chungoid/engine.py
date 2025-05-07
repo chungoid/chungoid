@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 import inspect
+import json
 
 # Absolute imports – sys.path hacks removed
 from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
@@ -211,7 +212,15 @@ class ChungoidEngine:
                 # Engine already re-initializes StateManager if project_directory is passed and different
                 # This tool can be used to explicitly ensure directories and status file are set up.
                 self.state_manager.initialize_project() # Operates on self.state_manager.target_dir_path
-                return {"status": "success", "message": f"Project initialized at {str(self.state_manager.target_dir_path)}"}
+                return {
+                    "toolCallId": tool_call_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Project initialized at {str(self.state_manager.target_dir_path)}"
+                        }
+                    ]
+                }
 
             elif tool_name == "set_project_context":
                 new_project_dir_str = tool_arguments.get("project_directory")
@@ -253,22 +262,49 @@ class ChungoidEngine:
                     common_template_path=str(common_prompt_path)
                 )
                 logger.info(f"ChungoidEngine context switched to: {new_project_path}. StateManager and PromptManager re-initialized.")
-                return {"status": "success", "message": f"Project context set to {new_project_path}"}
+                # Return structure expected by MCP client for successful tool call
+                return {
+                    "toolCallId": tool_call_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Project context set to {str(new_project_path)}"
+                        }
+                    ]
+                }
 
             elif tool_name == "get_project_status":
                 # Ensure StateManager is operating on the correct project_dir if passed by mcp.py
                 # This requires StateManager to be flexible or re-instantiated.
                 # For now, assume StateManager associated with this engine instance is used.
-                if current_project_dir != self.state_manager.target_dir:
-                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir}. Using SM's.")
-                return self.state_manager.get_status_file_content()
+                if current_project_dir != self.state_manager.target_dir_path:
+                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir_path}. Using SM's.")
+                status_content = self.state_manager.get_full_status() # get_full_status to get the whole dict
+                return {
+                    "toolCallId": tool_call_id,
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": json.dumps(status_content, indent=2)
+                        }
+                    ]
+                }
 
             elif tool_name == "prepare_next_stage":
                 # run_next_stage uses self.project_dir and self.state_manager implicitly
                 # It already returns a dict suitable for MCP.
-                if current_project_dir != self.state_manager.target_dir:
-                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir} for prepare_next_stage. Using SM's.")
-                return self.run_next_stage() # This method is already in ChungoidEngine
+                if current_project_dir != self.state_manager.target_dir_path:
+                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir_path} for prepare_next_stage. Using SM's.")
+                next_stage_data = self.run_next_stage()
+                return {
+                    "toolCallId": tool_call_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(next_stage_data, indent=2)
+                        }
+                    ]
+                }
 
             elif tool_name == "submit_stage_artifacts":
                 stage_num = tool_arguments.get("stage_number")
@@ -316,7 +352,15 @@ class ChungoidEngine:
                     reflection_text=reflection
                 )
                 if success:
-                    return {"status": "success", "message": f"Stage {stage_num} submitted with status {status_str} and {len(saved_artifact_paths)} artifacts."}
+                    return {
+                        "toolCallId": tool_call_id,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Stage {stage_num} submitted with status {status_str} and {len(saved_artifact_paths)} artifacts."
+                            }
+                        ]
+                    }
                 else:
                     # update_status currently returns bool, might want more detailed error
                     raise RuntimeError(f"Failed to update status for stage {stage_num}")
@@ -332,7 +376,12 @@ class ChungoidEngine:
                 
                 try:
                     content = file_path.read_text(encoding="utf-8")
-                    return {"file_path": str(file_path), "content": content}
+                    return {
+                        "toolCallId": tool_call_id,
+                        "content": [
+                            {"type": "text", "text": f"Content of {str(file_path)}:\\n\\n{content}"}
+                        ]
+                    }
                 except Exception as e_read:
                     logger.error(f"Error reading file {file_path}: {e_read}", exc_info=True)
                     raise IOError(f"Could not read file: {file_path}") from e_read
@@ -343,46 +392,61 @@ class ChungoidEngine:
                 if not query:
                     raise ValueError("Missing 'query' for load_reflections tool.")
                 # Ensure StateManager's Chroma client is set to the correct project context
-                self.state_manager.chroma_utils.set_project_context_directory(str(current_project_dir))
-                return self.state_manager.get_reflection_context_from_chroma(query=query, n_results=n_results)
+                # This might be redundant if set_project_context was called correctly and SM was re-initialized
+                if self.state_manager.target_dir_path != current_project_dir:
+                     logger.warning(f"load_reflections: StateManager context {self.state_manager.target_dir_path} differs from tool context {current_project_dir}. Re-initializing SM for tool's context.")
+                     core_root = Path(__file__).parent.parent.parent
+                     stages_dir_path = core_root / 'server_prompts' / 'stages'
+                     common_prompt_path = core_root / 'server_prompts' / 'common.yaml'
+                     self.state_manager = StateManager(str(current_project_dir), str(stages_dir_path))
+                
+                reflection_results = self.state_manager.get_reflection_context_from_chroma(query=query, n_results=n_results)
+                return {
+                    "toolCallId": tool_call_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(reflection_results, indent=2)
+                        }
+                    ]
+                }
 
             elif tool_name == "set_pending_reflection":
                 reflection_text = tool_arguments.get("reflection_text")
                 if reflection_text is None: # Allow empty string, but not missing key
                     raise ValueError("Missing 'reflection_text' for set_pending_reflection tool.")
                 self.state_manager.set_pending_reflection_text(reflection_text)
-                return {"status": "success", "message": "Pending reflection text has been set."}
+                return {
+                    "toolCallId": tool_call_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Pending reflection text has been set."
+                        }
+                    ]
+                }
 
             elif tool_name == "mcp_chungoid_export_cursor_rule":
-                dest_path_str = tool_arguments.get("dest_path", ".cursor/rules") # Use default from schema
-                # This method is in StateManager and uses its own project_dir.
-                # If current_project_dir from MCP differs, StateManager might need update or this tool needs to pass it.
-                # For now, assuming it uses the StateManager's inherent project_dir.
-                if Path(current_project_dir) != self.state_manager.target_dir:
-                    logger.warning(f"Exporting rule for project {self.state_manager.target_dir}, not necessarily {current_project_dir}")
+                dest_path_str = tool_arguments.get("dest_path", ".cursor/rules") 
                 
-                # The method in StateManager expects an absolute path for `self.target_dir`
-                # and `dest_path` is relative to that.
-                # Let's ensure the dest_path is resolved correctly against the tool's current_project_dir
-                
-                # state_manager.export_cursor_rule takes dest_path relative to its own target_dir
-                # If we want it relative to current_project_dir of the tool call:
-                # This assumes StateManager's export_cursor_rule correctly handles this relative path within *its* own context.
-                # The method is simple, it just constructs core_root/rules -> project_root/dest_path
-                # So if state_manager.target_dir is different from current_project_dir, it will go to the wrong place.
-                # We must ensure state_manager is configured for current_project_dir.
-                # The `set_project_context` tool is supposed to handle this by re-initializing SM.
-                
-                # Simpler: ensure SM is using the right context
-                if self.state_manager.target_dir != current_project_dir:
-                     logger.error(f"CRITICAL: mcp_chungoid_export_cursor_rule called for project {current_project_dir} but StateManager is for {self.state_manager.target_dir}. This tool might not work as expected.")
-                     # This indicates a need for better context management if engine is long-lived.
-                     # For now, proceed with SM's context, but log error.
-                     # OR, more correctly, if StateManager's context is vital, this tool should fail or re-init SM.
+                if self.state_manager.target_dir_path != current_project_dir:
+                     logger.warning(f"mcp_chungoid_export_cursor_rule: StateManager context {self.state_manager.target_dir_path} differs from tool context {current_project_dir}. Re-initializing SM for tool's context.")
+                     core_root = Path(__file__).parent.parent.parent
+                     stages_dir_path = core_root / 'server_prompts' / 'stages'
+                     common_prompt_path = core_root / 'server_prompts' / 'common.yaml'
+                     self.state_manager = StateManager(str(current_project_dir), str(stages_dir_path))
 
-                exported_path = self.state_manager.export_cursor_rule(dest_path=dest_path_str) # Relative to SM's target_dir
+                exported_path = self.state_manager.export_cursor_rule(dest_path=dest_path_str)
                 if exported_path:
-                    return {"status": "success", "message": f"Cursor rule exported to {exported_path}", "exported_path": str(exported_path)}
+                    return {
+                        "toolCallId": tool_call_id,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Cursor rule exported to {str(exported_path)}"
+                            }
+                        ]
+                    }
                 else:
                     raise RuntimeError("Failed to export cursor rule, path might be None.")
 
@@ -590,7 +654,6 @@ if __name__ == "__main__":
         stage_result = engine.run_next_stage()
 
         print("\n--- Engine Result ---")
-        import json
         print(json.dumps(stage_result, indent=2))
 
         # Example: Simulate submitting results (if stage run was successful)
