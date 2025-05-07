@@ -51,20 +51,24 @@ def test_persistent_mode(tmp_path, monkeypatch):
 
 
 def test_http_mode_env(monkeypatch, tmp_path):
-    # This test now MOCKS config_loader.get_config to directly test http mode in chroma_utils
-    from chungoid.utils import config_loader, chroma_utils
+    # This test now MOCKS config_loader.get_config DIRECTLY within chroma_utils
+    from chungoid.utils import chroma_utils # Only import chroma_utils
     import chromadb # Required for isinstance check
 
-    def mock_get_config_for_http():
-        return {
-            "chromadb": {
-                "mode": "http",
-                "server_url": "http://localhost:8000/test_http_mode" # Unique URL for test
-            },
-            "logging": {"level": "DEBUG"} # Minimal logging config
-        }
+    # Define the mock config that get_config within chroma_utils will return
+    mock_config_http = {
+        "chromadb": {
+            "mode": "http",
+            "server_url": "http://localhost:8000/test_http_direct_patch" 
+        },
+        "logging": {"level": "DEBUG"}
+    }
 
-    monkeypatch.setattr(config_loader, "get_config", mock_get_config_for_http)
+    def mock_get_config_for_chroma_utils_module():
+        return mock_config_http
+
+    # Patch get_config AS IT IS USED BY chroma_utils.py
+    monkeypatch.setattr(chroma_utils, "get_config", mock_get_config_for_chroma_utils_module)
     
     # Crucially, reset any cached client and context in chroma_utils
     chroma_utils._client = None
@@ -74,9 +78,9 @@ def test_http_mode_env(monkeypatch, tmp_path):
 
     client = chroma_utils.get_chroma_client()
 
-    assert client is not None, "HTTP Client should not be None"
+    assert client is not None, "HTTP Client should not be None with direct get_config patch"
     assert isinstance(client, chromadb.HttpClient), \
-        f"Client should be HttpClient in http mode when config is mocked, got {type(client)}"
+        f"Client should be HttpClient with direct get_config patch, got {type(client)}"
 
 
 def test_persistent_mode_from_config(tmp_path):
