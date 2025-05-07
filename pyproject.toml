@@ -176,12 +176,12 @@ chungoid = "chungoid.cli:cli"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["chungoid"] # BE EXPLICIT
+# packages = ["chungoid"] # BE EXPLICIT --> Remove this
 
 # --- Packaging layout migrated to `src/` (Phase P1) ---
-# [tool.setuptools.packages.find] # SOLELY RELY ON THIS ----> COMMENT OUT FOR NOW
-# where = ["src"]
-# include = ["chungoid", "chungoid.*"]
+[tool.setuptools.packages.find] # SOLELY RELY ON THIS ----> UNCOMMENT AND RESTORE
+where = ["src"]
+include = ["chungoid", "chungoid.*"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 
