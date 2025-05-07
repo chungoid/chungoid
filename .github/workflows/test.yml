@@ -1,8 +1,4 @@
-# This workflow is intentionally disabled.
-# The active workflow is in the root .github/workflows directory.
-# Any other content in this file was part of an older, conflicting workflow definition.
-
-name: old_tests_disabled
+name: tests # Or any name you prefer for the main testing workflow, e.g., "CI", "Build and Test"
 
 on:
   pull_request:
@@ -10,7 +6,46 @@ on:
     branches: [main, master]
 
 jobs:
-  old_build_disabled:
+  build: # This job name will appear in status checks
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
     steps:
-      - run: echo 'This job is intentionally disabled.' 
+      - uses: actions/checkout@v4
+        # If chungoid-core is a submodule in chungoid/chungoid, ensure it's checked out
+        # with:
+        #   submodules: 'recursive' # or 'true'
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Assuming chungoid-core is a directory within chungoid/chungoid after checkout
+          pip install -e chungoid-core[dev] 
+          pip install pytest-cov # Ensure pytest-cov is installed
+
+      - name: Run tests with coverage
+        run: |
+          # Paths must be relative to the root of chungoid/chungoid
+          pytest -p pytest_cov chungoid-core/tests/unit/ --cov=chungoid.utils --cov-report=xml --cov-fail-under=40 --quiet
+
+      - name: CLI smoke test 
+        run: |
+          # This assumes chungoid-core CLI is accessible after install
+          chungoid-core --help | cat
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-${{ matrix.python-version }}
+          # Path must be relative to the root of chungoid/chungoid
+          path: chungoid-core/coverage.xml 
+          # Optional: If you want the artifact to be named just coverage.xml
+          # name: coverage.xml
+          # path: chungoid-core/coverage.xml # this might need to be just coverage.xml if pytest outputs to root
