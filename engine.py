@@ -11,22 +11,18 @@ import inspect
 # Add project root to path to allow importing project modules
 # Adjust based on actual execution context if needed
 project_root = Path(__file__).parent.parent
-# sys.path.insert(0, str(project_root)) # Commented out for now, assume module structure handles it
+sys.path.insert(0, str(project_root))  # Ensure project root is on sys.path for absolute imports
 
 try:
     from .utils.state_manager import StateManager, StatusFileError, ChromaOperationError
     from .utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
     from .utils.config_loader import get_config, ConfigError
 except ImportError as e:
-    logger.error("Error importing Chungoid utils: %s. Ensure paths are correct or run as module.", e)
-    # Handle path issues more gracefully if running as script vs module
-    if Path(__file__).parent.name == 'chungoid-core': # Simple check if running from root
-         sys.path.insert(0, str(Path(__file__).parent))
-         from utils.state_manager import StateManager, StatusFileError, ChromaOperationError
-         from utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
-         from utils.config_loader import get_config, ConfigError
-    else:
-        raise
+    logger.warning("Relative import failed (%s). Falling back to absolute imports via utils.*", e)
+    sys.path.insert(0, str(Path(__file__).parent))
+    from utils.state_manager import StateManager, StatusFileError, ChromaOperationError
+    from utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
+    from utils.config_loader import get_config, ConfigError
 
 # <<< ADDED LOGGING FOR IMPORT PATH >>>
 try:
