@@ -188,7 +188,7 @@ def main(argv: list[str] | None = None) -> None:
                     }
                     logger.info(f"Responded to tools/list (ID: {request_id}) with {len(tools)} tools.")
 
-                elif method == "executeTool":
+                elif method == "tools/call": # Changed from executeTool
                     tool_call_id = params.get("toolCallId") # MCP spec often uses toolCallId
                     tool_name = params.get("name")
                     tool_arguments = params.get("arguments")
