@@ -141,27 +141,55 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     # --- Normalise chromadb config (derive missing values, env overrides) ---
     chroma_cfg = loaded_config.setdefault("chromadb", {})
 
-    # 1) Apply direct env overrides for new keys
-    env_mode = os.getenv("CHROMA_MODE")
-    if env_mode:
-        chroma_cfg["mode"] = env_mode.lower()
+    # Current chroma_cfg["mode"] reflects (default -> file -> generic CHUNGOID_ envs)
+    # Now apply specific overrides and derivations in order:
 
-    env_server_url = os.getenv("CHROMA_SERVER_URL")
-    if env_server_url:
-        chroma_cfg["server_url"] = env_server_url
+    # 1. Let CHROMA_MODE (short env var) override if set
+    env_short_mode_val = os.getenv("CHROMA_MODE")
+    if env_short_mode_val:
+        chroma_cfg["mode"] = env_short_mode_val.lower()
+        logger.info(f"ChromaDB mode updated by CHROMA_MODE to: '{chroma_cfg['mode']}'.")
 
-    # 2) Derive mode if set to 'auto'
-    if chroma_cfg.get("mode", "auto") == "auto":
+    # 2. If mode is still "auto" (meaning no specific mode from file, generic CHUNGOID_ envs, or CHROMA_MODE)
+    #    Derive from CHROMA_API_IMPL.
+    #    Use DEFAULT_CONFIG["chromadb"]["mode"] as fallback if "mode" key is somehow missing from chroma_cfg.
+    if chroma_cfg.get("mode", DEFAULT_CONFIG["chromadb"]["mode"]) == "auto":
+        logger.info("ChromaDB mode is 'auto'; deriving from CHROMA_API_IMPL...")
         if os.getenv("CHROMA_API_IMPL", "").lower() == "http":
             chroma_cfg["mode"] = "http"
         else:
             chroma_cfg["mode"] = "persistent"
+        logger.info(f"ChromaDB mode derived as '{chroma_cfg['mode']}'.")
 
-    # 3) Fallback for legacy keys if server_url still empty
-    if not chroma_cfg.get("server_url") and chroma_cfg["mode"] == "http":
-        host = chroma_cfg.get("host", "localhost")
-        port = chroma_cfg.get("port", 8000)
+    # 3. CHUNGOID_CHROMADB_MODE (long env var) has ultimate precedence for mode.
+    #    This overrides any previous setting (default, file, generic, CHROMA_MODE, or auto-derivation).
+    env_chungoid_mode_val = os.getenv("CHUNGOID_CHROMADB_MODE")
+    if env_chungoid_mode_val:
+        chroma_cfg["mode"] = env_chungoid_mode_val.lower()
+        logger.info(f"ChromaDB mode ultimately set by CHUNGOID_CHROMADB_MODE to: '{chroma_cfg['mode']}'.")
+
+    # Handle server_url: CHUNGOID_ version takes precedence, then CHROMA_ version.
+    # This is processed after mode is finalized, as server_url might be needed for http mode.
+    # Initial server_url in chroma_cfg is from (default -> file -> generic CHUNGOID_ envs)
+    
+    env_chungoid_server_url = os.getenv("CHUNGOID_CHROMADB_SERVER_URL")
+    env_short_server_url = os.getenv("CHROMA_SERVER_URL")
+
+    if env_chungoid_server_url:
+        chroma_cfg["server_url"] = env_chungoid_server_url
+        logger.info(f"ChromaDB server_url set by CHUNGOID_CHROMADB_SERVER_URL to: '{chroma_cfg['server_url']}'.")
+    elif env_short_server_url: # Only if CHUNGOID_ version wasn't set
+        chroma_cfg["server_url"] = env_short_server_url
+        logger.info(f"ChromaDB server_url set by CHROMA_SERVER_URL to: '{chroma_cfg['server_url']}'.")
+    
+    # Fallback for server_url if still empty and mode is http (using legacy host/port if available)
+    if chroma_cfg.get("mode") == "http" and not chroma_cfg.get("server_url"):
+        # Use .get from chroma_cfg for host/port first (might have been set by generic envs), then DEFAULT_CONFIG
+        host = chroma_cfg.get("host", DEFAULT_CONFIG["chromadb"]["host"])
+        port = chroma_cfg.get("port", DEFAULT_CONFIG["chromadb"]["port"])
         chroma_cfg["server_url"] = f"http://{host}:{port}"
+        logger.info(f"ChromaDB server_url constructed for http mode using host/port: '{chroma_cfg['server_url']}'.")
+
 
     _config = loaded_config
     logger.debug(f"Final configuration: {_config}")
