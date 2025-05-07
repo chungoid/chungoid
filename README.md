@@ -13,10 +13,11 @@
 ## TL;DR — Bootstrap a New Project with Chungoid
 
 ```bash
-# 0.  Install dependencies in a fresh venv
+# 0.  Install dependencies in a fresh venv *and* add Chungoid-core to PYTHONPATH
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt  # from repo root
+# Editable install puts the `chungoid` package on your path *and* installs requirements
+pip install -e .               # from repo root
 
 # 1. Create a new empty work environment
 
