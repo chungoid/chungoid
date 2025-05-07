@@ -11,6 +11,7 @@ from chromadb.utils import embedding_functions
 from logging.handlers import RotatingFileHandler
 import hashlib
 import uuid
+import contextlib
 
 import filelock  # Ensure filelock is installed
 from . import chroma_utils
@@ -970,6 +971,36 @@ class StateManager:
             raise ChromaOperationError(
                 f"Failed to get all reflections from collection '{self._REFLECTIONS_COLLECTION_NAME}'"
             ) from e
+
+    def initialize_project(self) -> None:
+        """
+        Ensures the project is initialized from the StateManager's perspective.
+        This primarily means ensuring the status file and its directory exist.
+        This is typically handled by __init__, but this method can be called
+        to explicitly confirm or re-trigger the checks if necessary.
+        """
+        # Ensure the .chungoid directory exists (idempotent)
+        self.chungoid_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure the status file is read/created (idempotent via _read_status_file's logic)
+        # _read_status_file returns the content, also creates if missing.
+        current_status_data = self._read_status_file()
+
+        # If, for some reason, _read_status_file didn't create it (e.g., if it only returned default
+        # without writing), or if we want to ensure it's physically present after this call:
+        if not Path(self.status_file_path).exists():
+            # Ensure current_status_data is suitable for writing, especially if _read_status_file
+            # might return something not directly writable (though it should return a dict).
+            # The default from _read_status_file when file is missing is {'runs': []}
+            self._write_status_file(current_status_data)
+
+        self.logger.info(
+            f"Project state file confirmed/initialized by StateManager at {self.status_file_path}"
+        )
+
+    def _acquire_lock(self) -> FileLock | contextlib.nullcontext:
+        """Returns the appropriate lock object based on configuration."""
+        return self._lock
 
 
 # Example usage (for testing or demonstration)
