@@ -59,9 +59,12 @@ def main(argv: list[str] | None = None) -> None:
     logger.info(
         f"Chungoid MCP Server starting. Version: {__version__}, Project Dir: {args.project_dir}, Log Level: {args.log_level}"
     )
-    logger.info("Chungoid MCP Server now listening on stdin for MCP messages...") # This log is fine
+    logger.info("Chungoid MCP Server now listening on stdin for MCP messages...")
 
-    # MCP Server Loop (from previous step)
+    # Store CHUNGOID_PROJECT_DIR for potential use in tool handlers
+    project_directory = Path(args.project_dir).resolve()
+    logger.info(f"Effective project directory for MCP operations: {project_directory}")
+
     try:
         for line in sys.stdin:
             line = line.strip()
@@ -70,28 +73,72 @@ def main(argv: list[str] | None = None) -> None:
                 continue
 
             logger.debug(f"Received raw line: {line}")
+            request_id = None # Initialize request_id
             try:
                 request = json.loads(line)
-                logger.info(f"Received MCP request: {request}")
+                request_id = request.get("id") # Capture the request ID
+                method = request.get("method")
 
-                response = {"status": "received_but_not_processed", "original_request": request, "message": "Implement actual tool/command handling"}
+                logger.info(f"Received MCP request (ID: {request_id}): {request}")
+
+                response_payload = None
+
+                if method == "listOfferings":
+                    response_payload = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "tools": [], # No tools defined yet
+                            "resources": [],
+                            "resourceTemplates": []
+                        }
+                    }
+                    logger.info("Responding to listOfferings.")
+                # TODO: Add handlers for "executeTool" and other MCP methods
+                # elif method == "executeTool":
+                #     tool_name = request.get("params", {}).get("name")
+                #     tool_args = request.get("params", {}).get("arguments")
+                #     # result = run_tool(tool_name, tool_args, project_directory)
+                #     # response_payload = { "jsonrpc": "2.0", "id": request_id, "result": result }
+                #     pass # Placeholder for tool execution
+
+                else:
+                    # Unhandled method
+                    logger.warning(f"Unhandled MCP method: {method}")
+                    response_payload = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32601,  # JSON-RPC standard error code for Method not found
+                            "message": f"Method not found: {method}"
+                        }
+                    }
                 
-                json_response = json.dumps(response)
-                print(json_response) # This print IS for MCP communication
-                sys.stdout.flush()
-                logger.info(f"Sent MCP response: {json_response}")
+                if response_payload:
+                    json_response = json.dumps(response_payload)
+                    print(json_response)
+                    sys.stdout.flush()
+                    logger.info(f"Sent MCP response (ID: {request_id}): {json_response}")
 
             except json.JSONDecodeError:
                 logger.error(f"Failed to decode JSON from line: {line}", exc_info=True)
-                error_response = {"error": "Invalid JSON received", "received_line": line}
-                json_error_response = json.dumps(error_response)
-                print(json_error_response) # This print IS for MCP communication
+                # Cannot determine request_id if JSON is invalid
+                error_response_payload = {
+                    "jsonrpc": "2.0",
+                    "id": None, # ID is unknown
+                    "error": {"code": -32700, "message": "Parse error: Invalid JSON received"}
+                }
+                print(json.dumps(error_response_payload))
                 sys.stdout.flush()
             except Exception as e:
-                logger.error(f"Error processing message: {line}: {e}", exc_info=True)
-                error_response = {"error": "Internal server error processing message", "details": str(e)}
-                json_error_response = json.dumps(error_response)
-                print(json_error_response) # This print IS for MCP communication
+                logger.error(f"Error processing message (ID: {request_id}): {line} - {e}", exc_info=True)
+                # Use captured request_id if available
+                error_response_payload = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32603, "message": f"Internal server error: {str(e)}"}
+                }
+                print(json.dumps(error_response_payload))
                 sys.stdout.flush()
 
     except KeyboardInterrupt:
