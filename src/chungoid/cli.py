@@ -75,7 +75,7 @@ print("--- END DIAGNOSTIC (Top of cli.py) ---")
 
 # Original application imports
 from chungoid.utils.state_manager import StateManager
-from chungoid.utils.config_loader import ChungoidConfig
+from chungoid.utils.config_loader import get_config
 from chungoid.utils.logger_setup import setup_logging
 
 # ---------------------------------------------------------------------------
