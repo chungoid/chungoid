@@ -2,7 +2,9 @@ LICENSE
 README.md
 pyproject.toml
 src/chungoid/__init__.py
+src/chungoid/cli.py
 src/chungoid/engine.py
+src/chungoid/mcp.py
 src/chungoid/utils/__init__.py
 src/chungoid/utils/analysis_utils.py
 src/chungoid/utils/chroma_client_factory.py

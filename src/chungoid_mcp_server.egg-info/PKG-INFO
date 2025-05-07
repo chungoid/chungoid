@@ -169,25 +169,42 @@ Dynamic: license-file
 
 ## TL;DR — Bootstrap a New Project with Chungoid
 
-```bash
-# 0.  Install dependencies in a fresh venv *and* add Chungoid-core to PYTHONPATH
-python3 -m venv .venv
-source .venv/bin/activate
-# Editable install puts the `chungoid` package on your path *and* installs requirements
-pip install -e .               # from repo root
+1.  **Install `pipx`** (if you haven't already):
+    *   Linux (Debian/Ubuntu): `sudo apt update && sudo apt install pipx`
+    *   macOS (using Homebrew): `brew install pipx`
+    *   Other systems: See [pipx installation guide](https://pypa.github.io/pipx/installation/).
+    Then run `pipx ensurepath` to add its binary location to your `PATH` (you might need to open a new terminal).
 
-# 1. Create a new empty work environment
+2.  **Install the `chungoid` CLI tools**:
+    ```bash
+    # Clone the chungoid repository
+    git clone https://github.com/chungoid/chungoid.git
+    cd chungoid
 
-# 2. Connect to Chungoid MCP server (see CLI *or* IDE instructions below)
+    # Install using pipx (from the root of the 'chungoid' repository clone)
+    # This makes `chungoid-server` globally available.
+    pipx install .
+    ```
 
-# 3.  In your chat client / CLI, initialise a directory & begin:
-@chungoid set_project_context
-@chungoid initialize_project
+3.  **Start your new project**:
+    ```bash
+    # Create and navigate to your new project directory (OUTSIDE the chungoid repo clone)
+    # Example: if your `chungoid` repo clone is at `~/dev/chungoid`,
+    # you might create your new project at `~/projects/my_new_chungoid_project`.
+    mkdir -p ~/my_new_chungoid_project 
+    cd ~/my_new_chungoid_project
 
-# 4. Chat with Chungoid to refine the goal, then follow its guided stage workflow.
-```
+    # Configure your MCP Client (e.g., Cursor) to use `chungoid-server`.
+    # See "Getting Started" section below for an example `mcp.json` snippet for Cursor
 
-*That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.
+    # Interact with Chungoid via your MCP Client (e.g., Cursor):
+    # - The server should start based on your client's MCP configuration when you open the project.
+    # - Use `@chungoid set_project_context` to set projects current working directory.
+    # - Use tools like `@chungoid initialize_project` to set up the .chungoid directory.
+    # - Ask your cursor agent what steps you should take next if you're in doubt!
+    # - Then, begin the workflow with `@chungoid prepare_next_stage`.
+    ```
+Your new project directory (`~/my_new_chungoid_project`) will now have a `.chungoid/` folder, ready for Stage –1.
 
 ---
 
@@ -197,32 +214,36 @@ The server manages a multi-stage process where an AI agent (like you!) interacts
 
 ## Getting Started: Initializing a Project
 
-*   Set your mcp.json configuration if you're using an IDE like cursor and change `args` to point towards your launch_server.sh so your client can start the server. Everything else remains as is, `CHROMA_CLIENT_TYPE` can be configured to handle http if desired.
-
-```
-    "chungoid": {
-      "transportType": "stdio",
-      "command": "/bin/bash",
-      "args": [
-        "/path/to/your/chungoid/launch_server.sh"
-      ],
-      "env": {
-        "CHUNGOID_PROJECT_DIR": "${workspaceFolder}",
-        "CHROMA_CLIENT_TYPE": "persistent"
-      }
-    }
-```
-
-To begin a new project managed by Chungoid:
-
-1.  **Navigate:** Open your terminal *in the directory* where you want your new project to reside.
-2.  **Initialize:** Use the Chungoid client (e.g., Cursor chat) connected to this server and run the initialization:
-    ```
-    @chungoid initialize_project
-    ```
-    *   This creates a `.chungoid/` directory containing essential state files (`project_status.json`).
-    *   It also automatically sets the project context for your current session.
-    *   Follow your agents instructions and interact to clarify a well refined project goal & advance through the stages.
+*   **Installation:** First, install the `chungoid-server` and its tools using `pipx` by cloning the `chungoid` repository and running `pipx install .` from its root, as described in the TL;DR section. This makes `chungoid-server` globally available.
+*   **MCP Client Configuration:** Configure your MCP client (e.g., Cursor, an IDE plugin) to use `chungoid-server`.
+    *   The client needs to know how to start `chungoid-server`.
+    *   It should pass the path to your target project directory when starting the server (often as `${workspaceFolder}`).
+    *   Example `mcp.json` entry for Cursor:
+        ```json
+        "chungoid": {
+            "command": "chungoid-server",
+            "transportType": "stdio",
+            "args": [],
+            "env": {
+                "CHUNGOID_PROJECT_DIR": "${workspaceFolder}",
+                "CHROMA_CLIENT_TYPE": "persistent",
+                "CHUNGOID_LOGGING_LEVEL": "DEBUG"
+                }
+            }
+            // "CHROMA_MODE": "http", // Example: if using a remote Chroma server
+            // "CHROMA_HOST": "localhost",
+            // "CHROMA_PORT": "8000"
+        ```
+*   **Project Initialization via MCP Client:**
+    1.  Open your chosen project directory in your MCP client (e.g., open the folder in Cursor).
+    2.  If your client starts `chungoid-server` with the correct `--project-dir ${workspaceFolder}`, the context is usually set but run @chungoid `@chungoid set_project_context` in cursor chat to be certain.
+    3.  Use the `initialize_project` tool via your client:
+        ```
+        @chungoid initialize_project
+        ```
+        This command will instruct the `chungoid-server` (already context-aware of your project directory) to create the `.chungoid/` subdirectory and `project_status.json` if they don't exist.
+    4.  Follow your agent's instructions and interact to clarify a well-refined project goal & advance through the stages, starting with `@chungoid prepare_next_stage`.
+*   **Cursor Rule (Recommended):** For consistent agent behavior, especially with Cursor, ensure the `chungoid_bootstrap.mdc` rule is in your project's `.cursor/rules/` directory. You can copy it using the `chungoid-export-rule .` command from your project root, or Stage -1 might do it for you.
 
 ## The Workflow: Stage –1 → Stage 5 *(optional Stage&nbsp;6)*
 
@@ -252,7 +273,9 @@ You interact with the server using specific tools via your client (e.g., `@chung
 *   **`submit_stage_artifacts`**: (Self/Agent/Engine Driven) Submits the results of a stage. This updates the project status and stores artifact/reflection context. *Note: The `reflection_text` is picked up automatically from the previous `set_pending_reflection` call.*
 
 **Typical Flow:**
-
+0.1.  Optional: Use chungoid mcp_chungoid_export_cursor_rule in cursor chat.
+0.2.  Optional: Select add context (ctrl+alt+p in cursor chat) and select add new rule, name it: chungoid
+0.3.  Optional: From the add context menu select chungoid.mdc to apply it as a new rule to better follow the system.
 1.  Write a brief summary of the goal you wish to acheive with your software project in goal.txt
 2.  Send agent request to `set_project_context` or `initialize_project`
 3.  Send agent request to `prepare_next_stage`
@@ -288,7 +311,26 @@ Chungoid calls this synergy **compute stacking**: each layer (vector memory, dis
 
 ## Development
 
-This project structure contains the server implementation. Development *of* the server (meta-development) occurs in the parent `chungoid-mcp` (currently private) repository structure. This is autonomously built from within an abstraction layer which uses a modified version of the chungoid workflow, and soon.. A2A protocol.
+This `chungoid` repository contains the Python package for the `chungoid-server` and its core logic. For development *of* this `chungoid` Python package:
+
+1.  Clone this `chungoid` repository from GitHub.
+2.  Navigate to the root of your cloned `chungoid` repository.
+3.  Create and activate a Python virtual environment here:
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    ```
+4.  Install in editable mode with development dependencies (from the root of the `chungoid` repository):
+    ```bash
+    pip install -e \".[dev,test]\"
+    ```
+5.  Set up pre-commit hooks:
+    ```bash
+    pre-commit install
+    ```
+Now you can make changes to the code (e.g., within `src/chungoid/`). Run tests with `pytest` (also from the root of the `chungoid` repository).
+
+Development of the overarching meta-level Chungoid MCP (the system that *uses* the `chungoid` Python package for its own development) may occur in a separate, broader project structure (e.g., the `chungoid-mcp` project if that's the name, or the root of the `chungoid` repository if it also serves as the meta-project).
 
 ## Origin Story
 
