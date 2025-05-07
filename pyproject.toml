@@ -169,12 +169,18 @@ docs = [
     "sphinxcontrib-serializinghtml==2.0.0",
 ]
 
-
+# --- Packaging layout migrated to `src/` (Phase P1) ---
 [tool.setuptools]
-# Since scripts are in the root, list them as modules
-# If you move them to src/, adjust accordingly.
-py-modules = ["chungoidmcp", "stage_executor", "application_security"]
-packages = ["utils"]
+package-dir = {"" = "src"}
+# Explicit package list until automatic discovery later
+packages = ["chungoid", "chungoid.utils", "utils"]
+
+# Additional config keys (e.g., include-package-data) can be set later
+
+# Declare console-script entry-point
+[project.scripts]
+chungoid-server = "chungoid.mcp:main"
+chungoid = "chungoid.cli:cli"
 
 [tool.pytest.ini_options]
 minversion = "6.0"

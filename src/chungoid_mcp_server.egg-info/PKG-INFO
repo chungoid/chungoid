@@ -1,3 +1,160 @@
+Metadata-Version: 2.4
+Name: chungoid-mcp-server
+Version: 0.2.0
+Summary: Meta-Cognitive Process server for Chungoid Bootstrapper
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: License :: OSI Approved :: GNU Affero General Public License v3 or later
+Classifier: Operating System :: OS Independent
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: annotated-types==0.7.0
+Requires-Dist: anyio==4.9.0
+Requires-Dist: asgiref==3.8.1
+Requires-Dist: attrs==25.3.0
+Requires-Dist: babel==2.17.0
+Requires-Dist: backoff==2.2.1
+Requires-Dist: bcrypt==4.3.0
+Requires-Dist: beautifulsoup4==4.13.4
+Requires-Dist: cachetools==5.5.2
+Requires-Dist: certifi==2025.4.26
+Requires-Dist: charset-normalizer==3.4.2
+Requires-Dist: chroma-hnswlib==0.7.6
+Requires-Dist: chromadb==1.0.7
+Requires-Dist: click==8.1.8
+Requires-Dist: coloredlogs==15.0.1
+Requires-Dist: Deprecated==1.2.18
+Requires-Dist: dill==0.4.0
+Requires-Dist: distro==1.9.0
+Requires-Dist: docutils==0.21.2
+Requires-Dist: durationpy==0.9
+Requires-Dist: exceptiongroup==1.2.2
+Requires-Dist: fastapi==0.115.9
+Requires-Dist: fastmcp==2.2.6
+Requires-Dist: filelock==3.18.0
+Requires-Dist: flatbuffers==25.2.10
+Requires-Dist: fsspec==2025.3.2
+Requires-Dist: google-auth==2.39.0
+Requires-Dist: googleapis-common-protos==1.70.0
+Requires-Dist: grpcio==1.71.0
+Requires-Dist: h11==0.16.0
+Requires-Dist: httpcore==1.0.9
+Requires-Dist: httptools==0.6.4
+Requires-Dist: httpx==0.28.1
+Requires-Dist: httpx-sse==0.4.0
+Requires-Dist: huggingface-hub==0.30.2
+Requires-Dist: humanfriendly==10.0
+Requires-Dist: idna==3.10
+Requires-Dist: imagesize==1.4.1
+Requires-Dist: importlib_metadata==8.6.1
+Requires-Dist: importlib_resources==6.5.2
+Requires-Dist: Jinja2==3.1.6
+Requires-Dist: jsonschema==4.23.0
+Requires-Dist: jsonschema-specifications==2025.4.1
+Requires-Dist: kubernetes==32.0.1
+Requires-Dist: markdown-it-py==3.0.0
+Requires-Dist: MarkupSafe==3.0.2
+Requires-Dist: mcp==1.7.0
+Requires-Dist: mdurl==0.1.2
+Requires-Dist: mmh3==5.1.0
+Requires-Dist: mpmath==1.3.0
+Requires-Dist: numpy==2.2.5
+Requires-Dist: oauthlib==3.2.2
+Requires-Dist: onnxruntime==1.21.1
+Requires-Dist: openapi-pydantic==0.5.1
+Requires-Dist: opentelemetry-api==1.32.1
+Requires-Dist: opentelemetry-exporter-otlp-proto-common==1.32.1
+Requires-Dist: opentelemetry-exporter-otlp-proto-grpc==1.32.1
+Requires-Dist: opentelemetry-instrumentation==0.53b1
+Requires-Dist: opentelemetry-instrumentation-asgi==0.53b1
+Requires-Dist: opentelemetry-instrumentation-fastapi==0.53b1
+Requires-Dist: opentelemetry-proto==1.32.1
+Requires-Dist: opentelemetry-sdk==1.32.1
+Requires-Dist: opentelemetry-semantic-conventions==0.53b1
+Requires-Dist: opentelemetry-util-http==0.53b1
+Requires-Dist: orjson==3.10.18
+Requires-Dist: overrides==7.7.0
+Requires-Dist: packaging==25.0
+Requires-Dist: pbr==6.1.1
+Requires-Dist: pluggy==1.5.0
+Requires-Dist: posthog==4.0.1
+Requires-Dist: protobuf==5.29.4
+Requires-Dist: pyasn1==0.6.1
+Requires-Dist: pyasn1_modules==0.4.2
+Requires-Dist: pydantic==2.11.4
+Requires-Dist: pydantic-settings==2.9.1
+Requires-Dist: pydantic_core==2.33.2
+Requires-Dist: Pygments==2.19.1
+Requires-Dist: PyPika==0.48.9
+Requires-Dist: python-dateutil==2.9.0.post0
+Requires-Dist: python-dotenv==1.1.0
+Requires-Dist: python-multipart==0.0.20
+Requires-Dist: PyYAML==6.0.2
+Requires-Dist: referencing==0.36.2
+Requires-Dist: requests==2.32.3
+Requires-Dist: requests-oauthlib==2.0.0
+Requires-Dist: rich==14.0.0
+Requires-Dist: roman-numerals-py==3.1.0
+Requires-Dist: rpds-py==0.24.0
+Requires-Dist: rsa==4.9.1
+Requires-Dist: setuptools==80.1.0
+Requires-Dist: shellingham==1.5.4
+Requires-Dist: six==1.17.0
+Requires-Dist: sniffio==1.3.1
+Requires-Dist: snowballstemmer==2.2.0
+Requires-Dist: soupsieve==2.7
+Requires-Dist: sse-starlette==2.3.3
+Requires-Dist: starlette==0.45.3
+Requires-Dist: stevedore==5.4.1
+Requires-Dist: sympy==1.14.0
+Requires-Dist: tenacity==9.1.2
+Requires-Dist: tokenizers==0.21.1
+Requires-Dist: tqdm==4.67.1
+Requires-Dist: typer==0.15.3
+Requires-Dist: typing-inspection==0.4.0
+Requires-Dist: typing_extensions==4.13.2
+Requires-Dist: urllib3==2.4.0
+Requires-Dist: uvicorn==0.34.2
+Requires-Dist: uvloop==0.21.0
+Requires-Dist: watchfiles==1.0.5
+Requires-Dist: websocket-client==1.8.0
+Requires-Dist: websockets==15.0.1
+Requires-Dist: wrapt==1.17.2
+Requires-Dist: zipp==3.21.0
+Provides-Extra: dev
+Requires-Dist: pytest<8.4,>=8.3; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: ruff==0.11.8; extra == "dev"
+Requires-Dist: bandit==1.8.3; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: types-PyYAML; extra == "dev"
+Requires-Dist: types-filelock; extra == "dev"
+Requires-Dist: types-requests; extra == "dev"
+Requires-Dist: build==1.2.2.post1; extra == "dev"
+Provides-Extra: docs
+Requires-Dist: Sphinx==8.2.3; extra == "docs"
+Requires-Dist: sphinx-rtd-theme==3.0.2; extra == "docs"
+Requires-Dist: alabaster==1.0.0; extra == "docs"
+Requires-Dist: Babel==2.17.0; extra == "docs"
+Requires-Dist: imagesize==1.4.1; extra == "docs"
+Requires-Dist: snowballstemmer==2.2.0; extra == "docs"
+Requires-Dist: sphinxcontrib-applehelp==2.0.0; extra == "docs"
+Requires-Dist: sphinxcontrib-devhelp==2.0.0; extra == "docs"
+Requires-Dist: sphinxcontrib-htmlhelp==2.1.0; extra == "docs"
+Requires-Dist: sphinxcontrib-jquery==4.1; extra == "docs"
+Requires-Dist: sphinxcontrib-jsmath==1.0.1; extra == "docs"
+Requires-Dist: sphinxcontrib-qthelp==2.0.0; extra == "docs"
+Requires-Dist: sphinxcontrib-serializinghtml==2.0.0; extra == "docs"
+Dynamic: license-file
+
 # Chungoid — Model-Context-Protocol (MCP) Server
 
 <!--[BADGES]-->
@@ -13,20 +170,21 @@
 ## TL;DR — Bootstrap a New Project with Chungoid
 
 ```bash
-# 0. Set up and install Chungoid-core in editable mode (inside a fresh venv):
-python -m venv .venv && source .venv/bin/activate
-pip install -e .  # run from repo root – installs the `chungoid` CLI
+# 0.  Install dependencies in a fresh venv *and* add Chungoid-core to PYTHONPATH
+python3 -m venv .venv
+source .venv/bin/activate
+# Editable install puts the `chungoid` package on your path *and* installs requirements
+pip install -e .               # from repo root
 
-# 1. Create or choose a project directory (here we’ll use ./my_project)
-mkdir -p my_project
+# 1. Create a new empty work environment
 
-# 2. Initialise the directory so Chungoid can track status files:
-chungoid init my_project
+# 2. Connect to Chungoid MCP server (see CLI *or* IDE instructions below)
 
-# 3. Kick off the first stage whenever you’re ready:
-chungoid run my_project
+# 3.  In your chat client / CLI, initialise a directory & begin:
+@chungoid set_project_context
+@chungoid initialize_project
 
-# 4. Chat with the agent via your IDE / chat client as it guides you through the stages.
+# 4. Chat with Chungoid to refine the goal, then follow its guided stage workflow.
 ```
 
 *That's it.*  Your working directory now holds a `.chungoid/` folder with `project_status.json`, and Stage 0 is ready to walk you through discovery and design.

@@ -1,0 +1,2 @@
+[console_scripts]
+chungoid-server = chungoid.mcp:main

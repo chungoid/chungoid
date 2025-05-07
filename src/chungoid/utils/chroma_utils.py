@@ -44,7 +44,8 @@ class ChromaOperationError(Exception):
 
 # Singleton ChromaDB client instance
 _client: Optional[chromadb.ClientAPI] = None
-_client_project_context: Optional[Path] = None # Store context used for init
+_client_project_context: Optional[Path] = None  # Store context used for init
+_client_mode: Optional[str] = None  # Track mode used during init
 
 # --- Public ChromaDB Client Accessor ---
 
@@ -58,40 +59,44 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
     Returns:
         An initialized ChromaDB client (HttpClient or PersistentClient) or None if config fails.
     """
-    global _client, _client_project_context, _current_project_directory
+    global _client, _client_project_context, _current_project_directory, _client_mode
 
-    # Check if the context has changed since the client was initialized
-    if _client is not None and _client_project_context != _current_project_directory:
-        logger.warning(
-            f"Chroma project context changed from '{_client_project_context}' "
-            f"to '{_current_project_directory}' since client initialization. "
-            f"Re-initializing client. This might indicate improper context management."
-        )
-        _client = None # Force re-initialization
+    cfg = get_config().get("chromadb", {})
+    desired_mode = cfg.get("mode", "auto")
+    if desired_mode == "auto":
+        desired_mode = "http" if os.getenv("CHROMA_API_IMPL", "").lower() == "http" else "persistent"
+
+    # Re-init reasons: project context changed, or mode changed via env/config between calls
+    if _client is not None:
+        if _client_project_context != _current_project_directory or desired_mode != _client_mode:
+            logger.info(
+                "Re-initialising Chroma client due to context/mode change: context %s→%s, mode %s→%s",
+                _client_project_context,
+                _current_project_directory,
+                _client_mode,
+                desired_mode,
+            )
+            _client = None
 
     if _client is None:
         try:
-            cfg = get_config().get("chromadb", {})
-            mode = cfg.get("mode", "auto")
-            if mode == "auto":
-                mode = "http" if os.getenv("CHROMA_API_IMPL", "").lower() == "http" else "persistent"
-
             server_url = cfg.get("server_url", "")
 
-            if mode == "persistent" and _current_project_directory is None:
+            if desired_mode == "persistent" and _current_project_directory is None:
                 logger.error("Persistent mode requested but project context not set via set_chroma_project_context().")
                 return None
 
             project_dir = _current_project_directory or Path.cwd()
 
             try:
-                _client = _factory_get_client(mode, project_dir, server_url=server_url or None)
+                _client = _factory_get_client(desired_mode, project_dir, server_url=server_url or None)
                 _client_project_context = _current_project_directory
-                logger.info(f"ChromaDB client initialised in {mode} mode.")
+                _client_mode = desired_mode
+                logger.info(f"ChromaDB client initialised in {desired_mode} mode.")
             except RuntimeError as rt_err:
                 # Detect the common http-only build error when asking for persistent mode
                 if (
-                    mode == "persistent"
+                    desired_mode == "persistent"
                     and "http-only client mode" in str(rt_err).lower()
                 ):
                     fallback_url = server_url or cfg.get("server_url") or "http://localhost:8000"
@@ -101,6 +106,7 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
                     try:
                         _client = _factory_get_client("http", project_dir, server_url=fallback_url)
                         _client_project_context = _current_project_directory
+                        _client_mode = "http"
                         logger.info("ChromaDB HttpClient initialised as fallback.")
                     except Exception as http_err:
                         logger.error(
