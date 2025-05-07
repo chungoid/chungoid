@@ -113,36 +113,41 @@ def main(argv: list[str] | None = None) -> None:
                     }
                 elif method == "initialize":
                     # Respond to initialize request
-                    # Based on MCP spec, clientInfo and capabilities are in params
-                    # client_info = params.get("clientInfo", {})
-                    # client_capabilities = params.get("capabilities", {})
-                    # logger.info(f"Initialize request from {client_info.get('name')} v{client_info.get('version')}")
-                    
                     server_capabilities = {
-                        "tools": True,  # We will offer tools
-                        "prompts": False, # Not offering prompts for now
-                        "resources": True, # We might offer resources
-                        "logging": False,  # Not offering custom logging via MCP for now
-                        "roots": {"listChanged": False} # Not supporting dynamic root changes for now
+                        # MCP Spec often expects objects here, even if empty, to indicate support.
+                        # Booleans might be for very simple true/false flags within these objects if defined by spec.
+                        "tools": {},  # Changed from True
+                        "prompts": False, # Keep False if not supported, or {} if supported with no specific options
+                        "resources": {}, # Changed from True
+                        "logging": False,  # Keep False if not supported, or {} if supported with no specific options
+                        "roots": {"listChanged": False} 
                     }
-                    # ChungoidEngine might have its own capabilities to merge/report
+                    
                     if hasattr(engine, "get_server_capabilities"):
-                        server_capabilities = engine.get_server_capabilities(params)
+                        # If engine provides its own, it should conform to the expected object structure
+                        engine_caps = engine.get_server_capabilities(params)
+                        # Basic merge: engine_caps can override defaults
+                        # A more sophisticated merge might be needed if schemas are complex
+                        if isinstance(engine_caps.get("tools"), dict): server_capabilities["tools"] = engine_caps["tools"]
+                        if isinstance(engine_caps.get("resources"), dict): server_capabilities["resources"] = engine_caps["resources"]
+                        # Handle prompts and logging similarly if engine can enable them
+                        if "prompts" in engine_caps: server_capabilities["prompts"] = engine_caps["prompts"]
+                        if "logging" in engine_caps: server_capabilities["logging"] = engine_caps["logging"]
+                        if isinstance(engine_caps.get("roots"), dict): server_capabilities["roots"] = engine_caps["roots"]
 
                     response_payload = {
                         "jsonrpc": "2.0",
                         "id": request_id,
                         "result": {
-                            "protocolVersion": "2024-11-05", # Align with client if possible, or state our version
+                            "protocolVersion": "2024-11-05", 
                             "capabilities": server_capabilities,
                             "serverInfo": {
                                 "name": "chungoid-mcp-server",
                                 "version": __version__,
-                                # "documentationUrl": "Optional URL to server docs"
                             }
                         }
                     }
-                    logger.info(f"Responded to initialize (ID: {request_id}).")
+                    logger.info(f"Responded to initialize (ID: {request_id}) with capabilities: {server_capabilities}")
 
                 elif method == "listOfferings":
                     tools = []
