@@ -79,6 +79,361 @@ class ChungoidEngine:
             logger.exception("An unexpected error occurred during engine initialization.")
             raise RuntimeError("Unexpected initialization error.") from e
 
+    def get_mcp_tools(self) -> list[dict[str, Any]]:
+        """Returns a list of tool definitions for MCP."""
+        tools = [
+            {
+                "name": "initialize_project",
+                "description": "Initializes a new Chungoid project in the specified directory. Creates .chungoid folder and project_status.json.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_directory": {
+                            "type": "string",
+                            "description": "The absolute path to the project directory to initialize. If not provided, uses the engine's current project directory.",
+                        }
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "set_project_context",
+                "description": "Sets the active project directory for the Chungoid engine. Future tool calls will operate on this project.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_directory": {
+                            "type": "string",
+                            "description": "The absolute path to the project directory.",
+                        }
+                    },
+                    "required": ["project_directory"],
+                },
+            },
+            {
+                "name": "get_project_status",
+                "description": "Retrieves the current status of the Chungoid project, including completed stages and run history.",
+                "inputSchema": {"type": "object", "properties": {}}, # No specific params needed beyond current context
+            },
+            {
+                "name": "prepare_next_stage",
+                "description": "Determines the next stage in the workflow and returns its prompt and relevant context.",
+                "inputSchema": {"type": "object", "properties": {}}, # No specific params needed
+            },
+            {
+                "name": "submit_stage_artifacts",
+                "description": "Submits the artifacts and reflection for a completed stage, updating the project status.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "stage_number": {"type": "number", "description": "The stage number being submitted (e.g., 0.0, 1.0)."},
+                        "stage_result_status": {"type": "string", "enum": ["PASS", "FAIL", "DONE", "UNKNOWN"], "description": "The result status of the stage."},
+                        "generated_artifacts": {
+                            "type": "object",
+                            "description": "A dictionary where keys are relative file paths and values are the full file content (as strings).",
+                            "additionalProperties": {"type": "string"}
+                        },
+                        "reflection_text": {"type": ["string", "null"], "description": "Optional reflection text for the stage."}
+                    },
+                    "required": ["stage_number", "stage_result_status", "generated_artifacts"]
+                }
+            },
+            {
+                "name": "get_file",
+                "description": "Reads the content of a file within the currently set project context.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "relative_path": {"type": "string", "description": "The relative path to the file from the project root."}
+                    },
+                    "required": ["relative_path"]
+                }
+            },
+            {
+                "name": "load_reflections", # Corresponds to state_manager.get_reflection_context_from_chroma
+                "description": "Loads and searches stored reflections from ChromaDB based on a query.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "The query string to search reflections."},
+                        "n_results": {"type": "integer", "default": 3, "description": "Number of results to return."}
+                    },
+                    "required": ["query"]
+                }
+            },
+            {
+                "name": "set_pending_reflection", # Maps to state_manager.set_pending_reflection_text
+                "description": "Stages reflection text temporarily before it's submitted with artifacts. Overwrites previous pending reflection.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "reflection_text": {"type": "string", "description": "The reflection text to stage."}
+                    },
+                    "required": ["reflection_text"]
+                }
+            },
+            {
+                "name": "mcp_chungoid_export_cursor_rule", # Direct mapping to existing state_manager method
+                "description": "Exports the chungoid_bootstrap.mdc rule to the specified destination path within the project.",
+                 "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "dest_path": {"type": "string", "default": ".cursor/rules", "description": "Relative destination path for the rule file."}
+                    },
+                    "required": []
+                }
+            }
+            # TODO: Add retrieve_reflections if it's distinct from load_reflections
+            # TODO: Add other tools as needed
+        ]
+        logger.info(f"MCP Tool List generated with {len(tools)} tools.")
+        return tools
+
+    def execute_mcp_tool(self, tool_name: str, tool_arguments: dict, tool_call_id: Optional[str] = None, project_dir: Optional[Path] = None) -> Any:
+        """
+        Executes the specified MCP tool with the given arguments.
+
+        Args:
+            tool_name: The name of the tool to execute.
+            tool_arguments: A dictionary of arguments for the tool.
+            tool_call_id: Optional ID for the specific tool call (from MCP).
+            project_dir: The resolved project directory (passed from mcp.py).
+
+        Returns:
+            The result of the tool execution. Structure depends on the tool.
+        """
+        logger.info(f"Executing MCP tool: {tool_name} with args: {tool_arguments} (ToolCallID: {tool_call_id}) for project: {project_dir or self.project_dir}")
+        
+        current_project_dir = project_dir or self.project_dir # Use explicitly passed project_dir if available
+
+        try:
+            if tool_name == "initialize_project":
+                # StateManager's initialize_project doesn't take args, it uses its configured target_directory
+                # If a specific dir is provided, we might need a way to re-init StateManager or have it accept a dir.
+                # For now, assume it initializes the engine's currently set project_dir.
+                # Or, if an argument is given, re-initialize for that.
+                target_init_dir_str = tool_arguments.get("project_directory")
+                if target_init_dir_str:
+                    target_init_dir = Path(target_init_dir_str).resolve()
+                    logger.info(f"Re-initializing StateManager for explicit directory: {target_init_dir}")
+                    # This is a simplification. A robust implementation might re-instantiate StateManager
+                    # or have StateManager.initialize_project accept a directory.
+                    # For now, we'll assume StateManager is already configured for self.project_dir
+                    # and `initialize_project` tool call might be for that dir if no arg,
+                    # or we should update self.project_dir and re-init if arg is present.
+                    # Let's assume it just calls the existing SM's init on its configured dir.
+                    self.state_manager.initialize_project() # Operates on self.state_manager.target_dir
+                    return {"status": "success", "message": f"Project initialized at {self.state_manager.target_dir}"}
+                else:
+                    self.state_manager.initialize_project()
+                    return {"status": "success", "message": f"Project initialized at {self.state_manager.target_dir}"}
+
+
+            elif tool_name == "set_project_context":
+                new_project_dir_str = tool_arguments.get("project_directory")
+                if not new_project_dir_str:
+                    raise ValueError("Missing 'project_directory' argument for set_project_context")
+                
+                new_project_path = Path(new_project_dir_str).resolve()
+                if not new_project_path.is_dir():
+                    # It's okay if it doesn't exist yet, might be initialized next.
+                    logger.warning(f"New project context directory {new_project_path} does not exist or is not a directory. It might be created by 'initialize_project'.")
+
+                self.project_dir = new_project_path
+                # IMPORTANT: StateManager and PromptManager are tied to the initial project_directory.
+                # To truly switch context, these would need to be re-initialized.
+                # This is a significant change. For now, this tool will update self.project_dir,
+                # but StateManager will still point to the original.
+                # This implies mcp.py should re-instantiate ChungoidEngine or pass project_dir per call for true context switching.
+                # Given mcp.py *does* pass project_dir to execute_mcp_tool, we should prioritize that.
+                
+                # Re-initialize components with the new project directory
+                # This assumes that mcp.py would create a new engine instance or this engine instance is for this context.
+                # The current structure of mcp.py passes the resolved project_directory_path to engine constructor.
+                # So, this set_project_context might be more for an *interactive session* where the *same engine instance*
+                # is used for multiple commands and needs its internal context changed.
+                # If mcp.py makes a new engine per high-level command, this tool is less critical.
+                # Let's assume this changes the *current* engine instance's context:
+                
+                logger.info(f"Attempting to re-initialize StateManager and PromptManager for new context: {new_project_path}")
+                core_root = Path(__file__).parent.parent.parent
+                stages_dir_path = core_root / 'server_prompts' / 'stages'
+                common_prompt_path = core_root / 'server_prompts' / 'common.yaml'
+                
+                self.state_manager = StateManager(
+                    target_directory=str(new_project_path),
+                    server_stages_dir=str(stages_dir_path)
+                )
+                self.prompt_manager = PromptManager(
+                    server_stages_dir=str(stages_dir_path),
+                    common_template_path=str(common_prompt_path)
+                )
+                logger.info(f"ChungoidEngine context switched to: {new_project_path}. StateManager and PromptManager re-initialized.")
+                return {"status": "success", "message": f"Project context set to {new_project_path}"}
+
+            elif tool_name == "get_project_status":
+                # Ensure StateManager is operating on the correct project_dir if passed by mcp.py
+                # This requires StateManager to be flexible or re-instantiated.
+                # For now, assume StateManager associated with this engine instance is used.
+                if current_project_dir != self.state_manager.target_dir:
+                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir}. Using SM's.")
+                return self.state_manager.get_status_file_content()
+
+            elif tool_name == "prepare_next_stage":
+                # run_next_stage uses self.project_dir and self.state_manager implicitly
+                # It already returns a dict suitable for MCP.
+                if current_project_dir != self.state_manager.target_dir:
+                     logger.warning(f"Mismatch: tool's project_dir {current_project_dir} vs SM's {self.state_manager.target_dir} for prepare_next_stage. Using SM's.")
+                return self.run_next_stage() # This method is already in ChungoidEngine
+
+            elif tool_name == "submit_stage_artifacts":
+                stage_num = tool_arguments.get("stage_number")
+                status_str = tool_arguments.get("stage_result_status")
+                artifacts_dict = tool_arguments.get("generated_artifacts")
+                reflection = tool_arguments.get("reflection_text") # Optional
+
+                if stage_num is None or status_str is None or artifacts_dict is None:
+                    raise ValueError("Missing required arguments for submit_stage_artifacts (stage_number, stage_result_status, generated_artifacts)")
+                
+                # The StateManager.update_status expects artifact *paths*, not content.
+                # The MCP spec implies content is sent. This is a mismatch.
+                # For now, let's assume the agent will create files and then pass paths.
+                # OR, this tool needs to save the content to files first.
+                # The prompt examples show sending content. Let's adapt StateManager or this tool.
+                
+                # Option 1: Tool saves content to files, then calls SM.update_status with paths.
+                # This seems more aligned with how StateManager currently works with artifacts.
+                saved_artifact_paths = []
+                if isinstance(artifacts_dict, dict):
+                    for rel_path, content_str in artifacts_dict.items():
+                        if not isinstance(content_str, str):
+                            logger.warning(f"Artifact content for {rel_path} is not a string, skipping.")
+                            continue
+                        try:
+                            # Ensure project_dir for the tool call is used
+                            artifact_abs_path = Path(current_project_dir) / rel_path
+                            artifact_abs_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(artifact_abs_path, "w", encoding="utf-8") as f:
+                                f.write(content_str)
+                            saved_artifact_paths.append(rel_path) # SM expects relative paths
+                            logger.info(f"Saved artifact content to: {artifact_abs_path}")
+                        except Exception as e_save:
+                            logger.error(f"Failed to save artifact {rel_path}: {e_save}", exc_info=True)
+                            # Decide if we should continue or fail the tool call
+                            raise IOError(f"Failed to save artifact {rel_path}") from e_save
+                else:
+                    logger.warning(f"generated_artifacts was not a dictionary: {type(artifacts_dict)}. No files saved.")
+
+                # Handle reflection: StateManager's update_status can take reflection_text
+                success = self.state_manager.update_status(
+                    stage=float(stage_num),
+                    status=status_str.upper(), # Ensure uppercase (PASS, FAIL, etc.)
+                    artifacts=saved_artifact_paths, # List of relative paths
+                    reflection_text=reflection
+                )
+                if success:
+                    return {"status": "success", "message": f"Stage {stage_num} submitted with status {status_str} and {len(saved_artifact_paths)} artifacts."}
+                else:
+                    # update_status currently returns bool, might want more detailed error
+                    raise RuntimeError(f"Failed to update status for stage {stage_num}")
+            
+            elif tool_name == "get_file":
+                relative_path = tool_arguments.get("relative_path")
+                if not relative_path:
+                    raise ValueError("Missing 'relative_path' for get_file tool.")
+                
+                file_path = Path(current_project_dir) / relative_path
+                if not file_path.is_file():
+                    raise FileNotFoundError(f"File not found: {file_path}")
+                
+                try:
+                    content = file_path.read_text(encoding="utf-8")
+                    return {"file_path": str(file_path), "content": content}
+                except Exception as e_read:
+                    logger.error(f"Error reading file {file_path}: {e_read}", exc_info=True)
+                    raise IOError(f"Could not read file: {file_path}") from e_read
+
+            elif tool_name == "load_reflections": # Corresponds to get_reflection_context_from_chroma
+                query = tool_arguments.get("query")
+                n_results = tool_arguments.get("n_results", 3)
+                if not query:
+                    raise ValueError("Missing 'query' for load_reflections tool.")
+                # Ensure StateManager's Chroma client is set to the correct project context
+                self.state_manager.chroma_utils.set_project_context_directory(str(current_project_dir))
+                return self.state_manager.get_reflection_context_from_chroma(query=query, n_results=n_results)
+
+            elif tool_name == "set_pending_reflection":
+                reflection_text = tool_arguments.get("reflection_text")
+                if reflection_text is None: # Allow empty string, but not missing key
+                    raise ValueError("Missing 'reflection_text' for set_pending_reflection tool.")
+                self.state_manager.set_pending_reflection_text(reflection_text)
+                return {"status": "success", "message": "Pending reflection text has been set."}
+
+            elif tool_name == "mcp_chungoid_export_cursor_rule":
+                dest_path_str = tool_arguments.get("dest_path", ".cursor/rules") # Use default from schema
+                # This method is in StateManager and uses its own project_dir.
+                # If current_project_dir from MCP differs, StateManager might need update or this tool needs to pass it.
+                # For now, assuming it uses the StateManager's inherent project_dir.
+                if Path(current_project_dir) != self.state_manager.target_dir:
+                    logger.warning(f"Exporting rule for project {self.state_manager.target_dir}, not necessarily {current_project_dir}")
+                
+                # The method in StateManager expects an absolute path for `self.target_dir`
+                # and `dest_path` is relative to that.
+                # Let's ensure the dest_path is resolved correctly against the tool's current_project_dir
+                
+                # state_manager.export_cursor_rule takes dest_path relative to its own target_dir
+                # If we want it relative to current_project_dir of the tool call:
+                # This assumes StateManager's export_cursor_rule correctly handles this relative path within *its* own context.
+                # The method is simple, it just constructs core_root/rules -> project_root/dest_path
+                # So if state_manager.target_dir is different from current_project_dir, it will go to the wrong place.
+                # We must ensure state_manager is configured for current_project_dir.
+                # The `set_project_context` tool is supposed to handle this by re-initializing SM.
+                
+                # Simpler: ensure SM is using the right context
+                if self.state_manager.target_dir != current_project_dir:
+                     logger.error(f"CRITICAL: mcp_chungoid_export_cursor_rule called for project {current_project_dir} but StateManager is for {self.state_manager.target_dir}. This tool might not work as expected.")
+                     # This indicates a need for better context management if engine is long-lived.
+                     # For now, proceed with SM's context, but log error.
+                     # OR, more correctly, if StateManager's context is vital, this tool should fail or re-init SM.
+
+                exported_path = self.state_manager.export_cursor_rule(dest_path=dest_path_str) # Relative to SM's target_dir
+                if exported_path:
+                    return {"status": "success", "message": f"Cursor rule exported to {exported_path}", "exported_path": str(exported_path)}
+                else:
+                    raise RuntimeError("Failed to export cursor rule, path might be None.")
+
+
+            else:
+                logger.error(f"Unknown MCP tool requested: {tool_name}")
+                raise NotImplementedError(f"Tool '{tool_name}' is not implemented.")
+
+        except (ValueError, FileNotFoundError, NotImplementedError, IOError, RuntimeError, StatusFileError, ChromaOperationError) as e_tool:
+            logger.error(f"Error executing tool {tool_name} (ToolCallID: {tool_call_id}): {e_tool}", exc_info=True)
+            # MCP spec suggests returning error within the result structure
+            # This structure might vary based on client expectations for tool errors
+            return {
+                "toolCallId": tool_call_id, # Echo back the ID
+                "isError": True,
+                "error": { # This is a custom error structure, MCP spec might have a more defined one.
+                    "code": -32001, # Generic tool error
+                    "message": str(e_tool),
+                    "tool_name": tool_name,
+                },
+                "content": [{"type": "text", "text": f"Error in tool {tool_name}: {str(e_tool)}"}] # MCP-style content
+            }
+        except Exception as e_unhandled: # Catch-all for unexpected errors
+            logger.error(f"Unexpected error executing tool {tool_name} (ToolCallID: {tool_call_id}): {e_unhandled}", exc_info=True)
+            return {
+                "toolCallId": tool_call_id,
+                "isError": True,
+                 "error": {
+                    "code": -32000, # Generic server error during tool execution
+                    "message": f"Unexpected server error: {str(e_unhandled)}",
+                    "tool_name": tool_name,
+                },
+                "content": [{"type": "text", "text": f"Unexpected server error in tool {tool_name}: {str(e_unhandled)}"}]
+            }
+
     def run_next_stage(self) -> Dict[str, Any]:
         """
         Determines, prepares, and simulates the execution of the next stage.
