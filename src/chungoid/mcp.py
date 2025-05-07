@@ -60,18 +60,15 @@ def main(argv: list[str] | None = None) -> None:
         f"Chungoid MCP Server starting. Version: {__version__}, Project Dir: {args.project_dir}, Log Level: {args.log_level}"
     )
     
-    project_directory = Path(args.project_dir).resolve()
-    logger.info(f"Effective project directory for MCP operations: {project_directory}")
+    project_directory_path = Path(args.project_dir).resolve()
+    logger.info(f"Effective project directory for MCP operations: {project_directory_path}")
 
     # Instantiate the ChungoidEngine
     try:
-        # Assuming ChungoidEngine might take the project_directory and logger
-        engine = ChungoidEngine(project_dir=project_directory, logger_instance=logger)
+        engine = ChungoidEngine(str(project_directory_path))
         logger.info("ChungoidEngine instantiated successfully.")
     except Exception as e:
         logger.error(f"Failed to instantiate ChungoidEngine: {e}", exc_info=True)
-        # If engine fails to load, we can't really proceed with MCP.
-        # We could send a specific error or just exit. For now, log and let it fail later.
         engine = None 
 
     logger.info("Chungoid MCP Server now listening on stdin for MCP messages...")
@@ -166,7 +163,7 @@ def main(argv: list[str] | None = None) -> None:
                     if hasattr(engine, "execute_mcp_tool"):
                         try:
                             # The engine method should handle the execution and return a result or raise an error
-                            tool_result = engine.execute_mcp_tool(tool_name, tool_arguments, tool_call_id=tool_call_id, project_dir=project_directory)
+                            tool_result = engine.execute_mcp_tool(tool_name, tool_arguments, tool_call_id=tool_call_id, project_dir=project_directory_path)
                             response_payload = {
                                 "jsonrpc": "2.0",
                                 "id": request_id, # This is the MCP request ID
