@@ -74,7 +74,7 @@ print("--- END DIAGNOSTIC (Top of cli.py) ---")
 # --- END DIAGNOSTIC CODE ---
 
 # Original application imports
-from chungoid.utils.state_manager import StateManager, StageError, StageDefinition
+from chungoid.utils.state_manager import StateManager, StageDefinition
 from chungoid.utils.config_loader import ChungoidConfig
 from chungoid.utils.log_utils import setup_logging # This one was working fine in CLI
 

@@ -74,7 +74,7 @@ print("--- END DIAGNOSTIC (Top of mcp.py) ---")
 
 
 # The original application imports come AFTER diagnostics
-from chungoid.utils.log_utils import setup_logging # This is the problematic import
+from chungoid.utils.logger_setup import setup_logging # CORRECTED IMPORT
 from chungoid.engine import ChungoidEngine  # type: ignore  # local import
 
 __version__ = "0.1.0"  # Example version
