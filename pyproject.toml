@@ -169,6 +169,14 @@ docs = [
     "sphinxcontrib-serializinghtml==2.0.0",
 ]
 
+# Declare console-script entry-point
+[project.scripts]
+chungoid-server = "chungoid.mcp:main"
+chungoid = "chungoid.cli:cli"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 # --- Packaging layout migrated to `src/` (Phase P1) ---
 [tool.setuptools.packages.find] # SOLELY RELY ON THIS
 where = ["src"]
@@ -176,14 +184,9 @@ include = ["chungoid", "chungoid.*"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 
-# Declare console-script entry-point
-[project.scripts]
-chungoid-server = "chungoid.mcp:main"
-chungoid = "chungoid.cli:cli"
-
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-m \"not legacy\"" # skip legacy tests by default
+addopts = "-m "not legacy"" # skip legacy tests by default
 markers = [
     "legacy: tests that target deprecated code paths, skipped in default run",
 ]
