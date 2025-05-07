@@ -2,7 +2,7 @@
 # The active workflow is in the root .github/workflows directory.
 # Any other content in this file was part of an older, conflicting workflow definition.
 
-name: tests
+name: old_tests_disabled
 
 on:
   pull_request:
@@ -10,28 +10,7 @@ on:
     branches: [main, master]
 
 jobs:
-  build:
+  old_build_disabled:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
-
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
-          pip install pre-commit
-      - name: Run tests with coverage
-        run: |
-          pytest --cov=utils --cov-report=xml --cov-fail-under=35 --quiet
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml-${{ matrix.python-version }}
-          path: coverage.xml 
+      - run: echo 'This job is intentionally disabled.' 
