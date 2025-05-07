@@ -186,7 +186,7 @@ include = ["chungoid", "chungoid.*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-m "not legacy"" # skip legacy tests by default
+addopts = '-m "not legacy"' # skip legacy tests by default
 markers = [
     "legacy: tests that target deprecated code paths, skipped in default run",
 ]
