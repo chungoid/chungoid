@@ -14,7 +14,67 @@ import os
 import sys
 from pathlib import Path
 
-from chungoid.utils.log_utils import setup_logging # Original import, assuming it will be found
+# --- DIAGNOSTIC CODE AT THE TOP OF mcp.py ---
+print("--- DIAGNOSING chungoid.mcp (Top of mcp.py) ---")
+print(f"Python Executable: {sys.executable}")
+print(f"Initial sys.path: {sys.path}")
+print(f"os.getcwd(): {os.getcwd()}")
+print(f"__file__ (mcp.py): {__file__}")
+
+# Try to see where 'chungoid' itself is found from
+try:
+    # Temporarily remove current dir from path to avoid importing local mcp.py as 'chungoid'
+    # This is only safe if this script is NOT being run as __main__ directly for this test.
+    # If run as 'python -m chungoid.mcp', Path(".").resolve() would be the project root (containing src)
+    # If run via entry script, cwd is where the script was launched from.
+    # The entry script usually handles adding the package to sys.path.
+    
+    # Let's see what's on sys.path that might be relevant
+    print("Relevant sys.path entries for 'chungoid':")
+    for p in sys.path:
+        if 'chungoid' in p.lower() or 'site-packages' in p.lower() or p == os.getcwd() or '.local/pipx/venvs' in p.lower():
+            print(f"  - {p}")
+            if os.path.isdir(p):
+                # print(f"    Contents: {os.listdir(p)[:10]}") # Potentially too verbose
+                pass 
+
+    # Attempt to import chungoid and then chungoid.utils
+    # We do this *before* the main application's import of log_utils
+    import chungoid
+    print(f"Found chungoid (in mcp.py): {chungoid.__file__ if hasattr(chungoid, '__file__') else 'Namespace package'}")
+    if hasattr(chungoid, '__path__'):
+        print(f"chungoid.__path__ (in mcp.py): {chungoid.__path__}")
+        for p_item_chungoid in chungoid.__path__:
+            print(f"  Contents of chungoid path item {p_item_chungoid}: {os.listdir(p_item_chungoid) if os.path.exists(p_item_chungoid) and os.path.isdir(p_item_chungoid) else 'Not a dir or does not exist'}")
+            # Specifically look for 'utils' directory
+            utils_dir_path = Path(p_item_chungoid) / 'utils'
+            print(f"    Looking for {utils_dir_path}: Exists? {utils_dir_path.exists()}, IsDir? {utils_dir_path.is_dir()}")
+            if utils_dir_path.is_dir():
+                 print(f"    Contents of {utils_dir_path}: {os.listdir(utils_dir_path)}")
+
+
+    # Now try importing chungoid.utils directly here for diagnostics
+    try:
+        import chungoid.utils
+        print(f"Found chungoid.utils (in mcp.py): {chungoid.utils.__file__ if hasattr(chungoid.utils, '__file__') else 'Namespace package'}")
+        if hasattr(chungoid.utils, '__path__'):
+            print(f"chungoid.utils.__path__ (in mcp.py): {chungoid.utils.__path__}")
+            for p_item_utils in chungoid.utils.__path__:
+                print(f"  Contents of chungoid.utils path item {p_item_utils}: {os.listdir(p_item_utils) if os.path.exists(p_item_utils) and os.path.isdir(p_item_utils) else 'Not a dir or does not exist'}")
+    except ModuleNotFoundError as e_utils_diag:
+        print(f"DIAGNOSTIC: Failed to import chungoid.utils in mcp.py: {e_utils_diag}")
+
+except ModuleNotFoundError as e_chungoid_diag:
+    print(f"DIAGNOSTIC: Failed to import top-level 'chungoid' in mcp.py: {e_chungoid_diag}")
+except Exception as e_diag_general:
+    print(f"DIAGNOSTIC: General error during diagnostic imports in mcp.py: {e_diag_general}")
+
+print("--- END DIAGNOSTIC (Top of mcp.py) ---")
+# --- END DIAGNOSTIC CODE ---
+
+
+# The original application imports come AFTER diagnostics
+from chungoid.utils.log_utils import setup_logging # This is the problematic import
 from chungoid.engine import ChungoidEngine  # type: ignore  # local import
 
 __version__ = "0.1.0"  # Example version
