@@ -170,10 +170,13 @@ docs = [
 ]
 
 # --- Packaging layout migrated to `src/` (Phase P1) ---
-[tool.setuptools]
-package-dir = {"" = "src"}
-# Explicit package list until automatic discovery later
-packages = ["chungoid", "utils"]
+# [tool.setuptools] # Comment out or remove old explicit packages and package-dir
+# package-dir = {"" = "src"}
+# packages = ["chungoid", "utils"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["chungoid", "chungoid.*", "utils", "utils.*"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 
