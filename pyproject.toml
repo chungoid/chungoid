@@ -170,9 +170,13 @@ docs = [
 ]
 
 # --- Packaging layout migrated to `src/` (Phase P1) ---
-[tool.setuptools] # Use this explicit block
+[tool.setuptools] # Keep this explicit block
 package-dir = {"" = "src"}
-packages = ["chungoid"] # Explicitly list top-level packages in src
+# packages = ["chungoid"] # Remove explicit packages if find is used
+
+[tool.setuptools.packages.find] # Add this back
+where = ["src"]
+include = ["chungoid", "chungoid.*"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 
