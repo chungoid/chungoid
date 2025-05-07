@@ -174,6 +174,20 @@ def main(argv: list[str] | None = None) -> None:
                     }
                     logger.info(f"Responded to listOfferings (ID: {request_id}) with {len(tools)} tools.")
 
+                elif method == "tools/list": # Specific handler for tools/list
+                    tools = []
+                    if hasattr(engine, "get_mcp_tools"):
+                        tools = engine.get_mcp_tools()
+                    
+                    response_payload = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "tools": tools
+                        }
+                    }
+                    logger.info(f"Responded to tools/list (ID: {request_id}) with {len(tools)} tools.")
+
                 elif method == "executeTool":
                     tool_call_id = params.get("toolCallId") # MCP spec often uses toolCallId
                     tool_name = params.get("name")
