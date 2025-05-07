@@ -33,30 +33,39 @@ class ChungoidEngine:
         """
         self.project_dir = Path(project_directory).resolve()
         if not self.project_dir.is_dir():
-            raise ValueError(f"Project directory not found: {self.project_dir}")
+            # Allow engine to proceed if project_dir is a placeholder like ${workspaceFolder}
+            # The actual check for its validity can be deferred or handled by tools that need it.
+            # Or, if we know this is from MCP, we might have a default cwd already set.
+            logger.warning(f"Project directory '{self.project_dir}' not found or not a directory. This might be a placeholder.")
+            # For now, let's not raise an error here, assuming it might be resolved by CWD or specific tool logic
+            # raise ValueError(f"Project directory not found: {self.project_dir}")
 
         logger.info(f"Initializing ChungoidEngine for project: {self.project_dir}")
 
         # --- Load Configuration ---
         try:
             self.config = get_config() # Load central config
-            # TODO: Potentially pass specific config sections if needed
         except ConfigError as e:
             logger.exception("Failed to load configuration.")
             raise RuntimeError("Configuration error prevented engine initialization.") from e
 
         # --- Initialize Core Components ---
         try:
-            # TODO: Get stages dir path from config or make it relative/standard?
-            # Assuming server_stages_dir is findable relative to this file or configured
-            # For now, let's assume it's './server_prompts/stages' relative to core root
-            core_root = Path(__file__).parent
-            stages_dir_path = core_root / 'server_prompts' / 'stages' # Example path
-            common_prompt_path = core_root / 'server_prompts' / 'common.yaml' # Example path
+            # CORRECTED: core_root should be project root, not src/chungoid
+            # Path(__file__) is .../chungoid-core/src/chungoid/engine.py
+            # .parent is .../chungoid-core/src/chungoid/
+            # .parent.parent is .../chungoid-core/src/
+            # .parent.parent.parent is .../chungoid-core/
+            core_root = Path(__file__).parent.parent.parent 
+            stages_dir_path = core_root / 'server_prompts' / 'stages'
+            common_prompt_path = core_root / 'server_prompts' / 'common.yaml'
+
+            logger.info(f"Calculated stages_dir_path: {stages_dir_path}")
+            logger.info(f"Calculated common_prompt_path: {common_prompt_path}")
 
             self.state_manager = StateManager(
                 target_directory=str(self.project_dir),
-                server_stages_dir=str(stages_dir_path) # Pass the stages dir path
+                server_stages_dir=str(stages_dir_path) 
             )
             self.prompt_manager = PromptManager(
                 server_stages_dir=str(stages_dir_path),

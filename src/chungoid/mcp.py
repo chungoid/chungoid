@@ -35,7 +35,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--project-dir",
         type=str,
         default=os.environ.get("CHUNGOID_PROJECT_DIR", "."),
-        help="Directory of the project to operate on. Defaults to CHUNGOID_PROJECT_DIR env var or current dir.",
+        help="Directory of the project to operate on. Defaults to CHUNGOID_PROJECT_DIR env var or current dir. MCP clients might pass '${workspaceFolder}'.",
     )
     parser.add_argument(
         "--json", 
@@ -56,12 +56,24 @@ def main(argv: list[str] | None = None) -> None:
     setup_logging(level=args.log_level)
     logger = logging.getLogger(__name__)
 
+    # Resolve project directory
+    raw_project_dir_arg = args.project_dir
+    if raw_project_dir_arg == "${workspaceFolder}":
+        # If MCP client sends this literal, assume current working directory is the intended workspace
+        project_directory_path = Path.cwd().resolve()
+        logger.info(f"Received '${{workspaceFolder}}' as project_dir, using CWD: {project_directory_path}")
+    elif raw_project_dir_arg:
+        project_directory_path = Path(raw_project_dir_arg).resolve()
+    else:
+        # Should be caught by argparse default, but as a fallback
+        project_directory_path = Path.cwd().resolve()
+        logger.warning(f"Project directory argument was empty, defaulting to CWD: {project_directory_path}")
+
     logger.info(
-        f"Chungoid MCP Server starting. Version: {__version__}, Project Dir: {args.project_dir}, Log Level: {args.log_level}"
+        f"Chungoid MCP Server starting. Version: {__version__}, Resolved Project Dir: {project_directory_path}, Log Level: {args.log_level}"
     )
-    
-    project_directory_path = Path(args.project_dir).resolve()
-    logger.info(f"Effective project directory for MCP operations: {project_directory_path}")
+    # Note: args.project_dir still holds the original argument from the client (e.g. "${workspaceFolder}")
+    # project_directory_path is what the engine will actually use.
 
     # Instantiate the ChungoidEngine
     try:
