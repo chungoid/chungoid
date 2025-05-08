@@ -49,6 +49,35 @@
     ```
 Your new project directory (`~/my_new_chungoid_project`) will now have a `.chungoid/` folder, ready for Stage –1.
 
+> **Quick demo with Agent Registry**
+> ```bash
+> # 1. start MCP server in another terminal
+> MCP_API_KEY=dev-key uvicorn chungoid.utils.mcp_server:app --port 9000 &
+>
+> # 2. register a scaffolder agent (maps to built-in project_scaffolder tool)
+> python - <<'PY'
+> from pathlib import Path
+> from chungoid.utils.agent_registry import AgentRegistry, AgentCard
+> reg = AgentRegistry(project_root=Path('.'))
+> reg.add(AgentCard(agent_id='web_scaffolder', tool_names=['project_scaffolder'], name='FastAPI Scaffolder'), overwrite=True)
+> PY
+>
+> # 3. write a minimal flow
+> echo "\nname: demo\nstart_stage: s\nstages:\n  s: {agent_id: web_scaffolder, next: null}" > flow.yaml
+>
+> # 4. run it
+> python - <<'PY'
+> from chungoid.flow_executor import FlowExecutor
+> from chungoid.utils.agent_resolver import RegistryAgentProvider
+> from chungoid.utils.agent_registry import AgentRegistry
+> from pathlib import Path
+>
+> provider = RegistryAgentProvider(AgentRegistry(Path('.')))
+> print(FlowExecutor(provider).run('flow.yaml'))
+> PY
+> ```
+> Output should be `['s']` plus real scaffolded files in `./fastapi_demo`.
+
 ---
 
 ## What it Does
@@ -135,6 +164,9 @@ store state artifacts, research artifacts, documentation artifacts, etc.
 *   **Artifacts:** Files generated or modified during a stage (code, documents, reports).
 *   **Reflections:** Your thoughts, analysis, or rationale recorded during a stage, stored for context.
 *   **Context:** Information (status, artifacts, reflections) gathered and potentially passed into stage prompts.
+*   **Agent Registry**: Chroma collection `a2a_agent_registry`; stores `AgentCard` entries that map `agent_id` → one or more MCP `tool_names`.
+*   **AgentResolver**: Runtime adapter that looks up an `AgentCard` and invokes the corresponding MCP tool (`/invoke`)—falls back to a stub when the server is offline.
+*   **agent_id**: Preferred identifier in Stage-Flow v0.2 YAML.  Replaces legacy `agent` for unambiguous lookup in the registry.
 
 ## Compute Stacking — Optional Chungoid Power-Ups
 
@@ -270,5 +302,13 @@ This strongest copyleft license ensures:
 * Contributors and original authors receive credit via preserved copyright headers.
 
 Refer to the [`LICENSE`](../LICENSE) file for the full legal text and how to apply headers in source files.
+
+--- 
+
+> **What's New (May 2025)**  
+> • Stage-Flow DSL v0.2 with `agent_id` (replaces legacy `agent`)  
+> • **Agent Registry + AgentResolver** → reference tools by slug, no hard-coded callables  
+> • Live MCP dispatch: if `uvicorn chungoid.utils.mcp_server` is running, tool calls are executed automatically.  
+> • Migration helper `dev/scripts/migrate_stage_flows.py` auto-adds `agent_id`.
 
 --- 
