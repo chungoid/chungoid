@@ -1,7 +1,14 @@
-import yaml, jsonschema, pathlib
+import yaml, jsonschema, pathlib, itertools
 
-SCHEMA_PATH = pathlib.Path(__file__).resolve().parents[3] / "schemas" / "doc_requests_schema.yaml"
+# Locate schema file by walking up parent directories
+def _find_schema(start: pathlib.Path) -> pathlib.Path:
+    for parent in itertools.chain([start], start.parents):
+        candidate = parent / "schemas" / "doc_requests_schema.yaml"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("Could not locate doc_requests_schema.yaml in ancestors")
 
+SCHEMA_PATH = _find_schema(pathlib.Path(__file__).resolve())
 schema = yaml.safe_load(SCHEMA_PATH.read_text())
 
 
