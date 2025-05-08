@@ -60,11 +60,31 @@ class RegistryAgentProvider:
             raise TypeError("registry must be an AgentRegistry instance")
         self._registry = registry
         self._fallback: Dict[str, AgentCallable] = fallback or {}
+        self._cache: Dict[str, AgentCallable] = {}
+
+        # Lazy MCP client import to keep meta-layer optional in pure-core tests
+        try:
+            import sys
+            from pathlib import Path
+            proj_root = Path(__file__).resolve().parents[3]
+            dev_scripts = proj_root / "dev" / "scripts"
+            if dev_scripts.exists():
+                sys.path.append(str(dev_scripts))
+            from core_mcp_client import CoreMCPClient  # type: ignore
+
+            self._CoreMCPClient = CoreMCPClient  # stash
+        except Exception:
+            # No dev scripts or import fails – disable MCP dispatch gracefully
+            self._CoreMCPClient = None  # type: ignore
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def get(self, identifier: str) -> AgentCallable:  # noqa: D401 – impl of protocol
+        # Fast path: return cached callable
+        if identifier in self._cache:
+            return self._cache[identifier]
+
         card = self._registry.get(identifier)
         if card is None:
             # graceful fallback to mapping if present
@@ -72,12 +92,29 @@ class RegistryAgentProvider:
                 return self._fallback[identifier]
             raise KeyError(f"Agent '{identifier}' not found in registry")
 
-        # Simple placeholder implementation: echo stage + agent_id
-        def _stub_callable(stage: StageDict) -> Dict[str, object]:  # type: ignore[override]
-            """Placeholder callable until dynamic MCP invocation is wired up."""
+        # Build callable depending on MCP availability & card metadata
+        if self._CoreMCPClient and card.tool_names:
+            tool_name = card.tool_names[0]
+
+            async def _async_invoke(stage: StageDict) -> Dict[str, object]:  # noqa: D401
+                async with self._CoreMCPClient("http://localhost:9000", api_key="dev-key") as mcp:
+                    return await mcp.invoke_tool(tool_name, **stage.get("inputs", {}))
+
+            # Synchronous wrapper so FlowExecutor remains sync
+            def _sync_callable(stage: StageDict):  # type: ignore[override]
+                import asyncio
+
+                return asyncio.run(_async_invoke(stage))
+
+            self._cache[identifier] = _sync_callable
+            return _sync_callable
+
+        # Fallback stub (no MCP client or no tool mapping)
+        def _stub(stage: StageDict) -> Dict[str, object]:  # type: ignore[override]
             return {"agent_id": identifier, "stage_inputs": stage.get("inputs", {})}
 
-        return _stub_callable
+        self._cache[identifier] = _stub
+        return _stub
 
 
 # Convenient alias used by FlowExecutor refactor
