@@ -21,7 +21,7 @@ def _normalise_mode(mode: str) -> str:
     if not mode:
         raise ValueError("Chroma mode may not be empty/null")
     mode_l = mode.lower()
-    if mode_l not in {"persistent", "http"}:
+    if mode_l not in {"persistent", "http", "memory"}:
         raise ValueError(f"Unsupported Chroma mode: {mode}")
     return mode_l
 
@@ -51,6 +51,10 @@ def get_client(
     """
     mode_n = _normalise_mode(mode)
     s = settings or Settings()
+
+    if mode_n == "memory":
+        from .memory_vector import MemoryClient  # local import to avoid heavy deps
+        return MemoryClient()
 
     if mode_n == "persistent":
         db_dir = (project_path / ".chungoid" / "chroma_db").resolve()

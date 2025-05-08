@@ -1,14 +1,11 @@
 import uuid
 from pathlib import Path
-import pytest
 
 from chungoid.utils.reflection_store import ReflectionStore, Reflection
 
-pytest.skip("ReflectionStore integration skipped until Chroma mocked", allow_module_level=True)
-
 
 def test_add_and_get(tmp_path: Path):
-    store = ReflectionStore(project_root=tmp_path, chroma_mode="persistent")
+    store = ReflectionStore(project_root=tmp_path, chroma_mode="memory")
 
     ref = Reflection(
         conversation_id="conv1",
@@ -27,7 +24,7 @@ def test_add_and_get(tmp_path: Path):
 
 
 def test_query_filter(tmp_path: Path):
-    store = ReflectionStore(project_root=tmp_path, chroma_mode="persistent")
+    store = ReflectionStore(project_root=tmp_path, chroma_mode="memory")
     conv_id = "conv-xyz"
     rs = [
         Reflection(
