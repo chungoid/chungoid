@@ -20,8 +20,26 @@ import jsonschema  # type: ignore
 
 from chungoid.utils.agent_resolver import AgentProvider, DictAgentProvider, RegistryAgentProvider  # noqa: E501
 
-ROOT = Path(__file__).resolve().parents[3]  # /chungoid-core/src/chungoid/ -> ../../..
-SCHEMA_PATH = ROOT / "schemas" / "stage_flow_schema.json"
+ROOT = Path(__file__).resolve()
+
+# Determine schema path in a way that works for both:
+# 1) meta-monorepo: <root>/schemas/…
+# 2) standalone core repo: <root>/chungoid-core/schemas/…
+
+_repo_root_candidates = [
+    Path(__file__).resolve().parents[3],            # monorepo root
+    Path(__file__).resolve().parents[3] / "chungoid-core",  # standalone root == this path, but include for safety
+]
+
+SCHEMA_PATH = None
+for _root in _repo_root_candidates:
+    candidate = _root / "schemas" / "stage_flow_schema.json"
+    if candidate.exists():
+        SCHEMA_PATH = candidate
+        break
+
+if SCHEMA_PATH is None:  # pragma: no cover – repo mis-configured
+    raise FileNotFoundError("stage_flow_schema.json not found in any known location")
 
 StageDict = Dict[str, Any]
 AgentCallable = Callable[[StageDict], Dict[str, Any]]  # returns arbitrary dict
