@@ -96,7 +96,7 @@ EXECUTION CONTRACT: |
       *   **Do not proceed further if status is FAIL.**
   4.  Handle PASS Status:
       *   If overall status is "PASS": Proceed to internal reflection.
-      *   **Internal Reflection:**
+      *   **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
           - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
           - **Invoke Tool:** [Invoke MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** Requires completion. Use to: { **Refined Reflection:** Verify validation reports were generated and show PASS/WARN status. Any inconsistencies? If issues found *in report generation*, propose fixes. If okay, confirm readiness. } ]
       *   **Present & Await User Confirmation:** Present the PASS reports and internal reflection outcome. **Await explicit user confirmation** that *no further validation is needed*.
