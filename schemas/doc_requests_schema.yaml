@@ -1,0 +1,26 @@
+type: array
+items:
+  type: object
+  required:
+    - library_id
+    - reason
+  properties:
+    library_id:
+      type: string
+      description: Fully-qualified Context7 library identifier (e.g., "fastapi/docs").
+    reason:
+      type: string
+      description: Short description of why docs are needed or why retrieval failed.
+    resolved:
+      type: boolean
+      description: Whether docs have since been embedded.
+      default: false
+    requested_at:
+      type: string
+      format: date-time
+      description: ISO timestamp when entry was created.
+    resolved_at:
+      type: string
+      format: date-time
+      description: ISO timestamp when entry was resolved.
+additionalProperties: false 

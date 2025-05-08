@@ -2,9 +2,9 @@ name: Embed Core Snapshot
 
 on:
   push:
-    branches: [testing]
+    branches: [main, master]
   pull_request:
-    branches: [testing]
+    branches: [main, master]
 
 jobs:
   test-and-embed:
@@ -28,13 +28,13 @@ jobs:
       - name: Run unit tests
         run: pytest -q
 
-      - name: Embed snapshot to ChromaDB
+      - name: Embed snapshot to ChromaDB (no-op if secrets absent)
         env:
           MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
           CHROMA_HOST: ${{ secrets.CHROMA_HOST }}
           CHROMA_PORT: ${{ secrets.CHROMA_PORT }}
         run: |
-          python dev/scripts/embed_core_snapshot.py --driver ci
+          python dev/scripts/embed_core_snapshot.py
 
       - name: Upload snapshot log artifact
         if: always()

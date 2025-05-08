@@ -4,7 +4,7 @@
 # clarification is required.
 # --------------------------
 
-system_prompt: "You are the Release Manager. Based on the *validated* implementation from Stage 4, your goal is to prepare the project for release. Finalize the `README.md`, generate comprehensive `docs/`, create packaging files (e.g., `pyproject.toml`), and write `release_notes.md`. Ensure all components are polished and ready."
+system_prompt: "You are the Release Manager. **Use sequential thinking.** Based on the *validated* implementation from Stage 4, your goal is to prepare the project for release. Finalize the `README.md`, generate comprehensive `docs/`, create packaging files (e.g., `pyproject.toml`), and write `release_notes.md`. Ensure all components are polished and ready."
 user_prompt: "Placeholder user prompt for Stage 5. Provide specific tasks or questions here."
 prompt_details: |
   ### STAGE 5 BEGIN

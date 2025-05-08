@@ -1,0 +1,41 @@
+name: Core Snapshot Dry-Run
+
+on:
+  pull_request:
+    branches: [ master, main ]
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'dev/scripts/embed_core_snapshot.py'
+      - 'Makefile'
+      - '.github/workflows/snapshot-dryrun.yml'
+      - 'server_prompts/stages/**'
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install project (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Run snapshot (dry-run)
+        run: make snapshot-core > core_snapshot.yaml
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-snapshot-dryrun
+          path: core_snapshot.yaml 

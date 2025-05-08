@@ -13,10 +13,12 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import yaml
 import jsonschema  # type: ignore
+
+from chungoid.utils.agent_resolver import AgentProvider, DictAgentProvider, RegistryAgentProvider  # noqa: E501
 
 ROOT = Path(__file__).resolve().parents[3]  # /chungoid-core/src/chungoid/ -> ../../..
 SCHEMA_PATH = ROOT / "schemas" / "stage_flow_schema.json"
@@ -36,8 +38,12 @@ class UnknownAgentError(Exception):
 class FlowExecutor:
     """Executes Stage-Flow YAML definitions."""
 
-    def __init__(self, agent_registry: Dict[str, AgentCallable], *, max_steps: int = 100) -> None:
-        self.agent_registry = agent_registry
+    def __init__(self, agent_registry: Dict[str, AgentCallable] | AgentProvider, *, max_steps: int = 100) -> None:
+        # Backward-compat: accept raw dict or an AgentProvider implementation.
+        if isinstance(agent_registry, dict):
+            self.agent_provider: AgentProvider = DictAgentProvider(agent_registry)
+        else:
+            self.agent_provider = agent_registry
         self.max_steps = max_steps
 
     # ---------------------------------------------------------------------
@@ -62,8 +68,12 @@ class FlowExecutor:
 
             stages_executed.append(current_name)
 
-            agent_name: str = stage["agent"]
-            agent_fn = self.agent_registry.get(agent_name)
+            # Determine agent identifier
+            if "agent_id" in stage:
+                agent_name: str = stage["agent_id"]
+            else:
+                agent_name = stage["agent"]
+            agent_fn = self.agent_provider.get(agent_name)
             if agent_fn is None:
                 raise UnknownAgentError(f"Agent '{agent_name}' not registered")
 

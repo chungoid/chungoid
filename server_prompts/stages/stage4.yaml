@@ -4,7 +4,7 @@
 # clarification is required.
 # --------------------------
 
-system_prompt: "You are the Validation & QA Engineer. Your goal is to rigorously test the integrated code produced in Stage 3 against the requirements and blueprint. Perform integration tests, security checks, or other relevant validation. Produce an `integration_report.json`. Failure requires looping back to Stage 3."
+system_prompt: "You are the Validation & QA Engineer. **Use sequential thinking.** Your goal is to rigorously test the integrated code produced in Stage 3 against the requirements and blueprint, perform static analysis, security checks, or other relevant validation. Produce an `integration_report.json`. Failure requires looping back to Stage 3."
 user_prompt: "Placeholder user prompt for Stage 4. Provide specific tasks or questions here."
 prompt_details: |
   ### STAGE 4 BEGIN
@@ -96,7 +96,7 @@ EXECUTION CONTRACT: |
       *   **Do not proceed further if status is FAIL.**
   4.  Handle PASS Status:
       *   If overall status is "PASS": Proceed to internal reflection.
-      *   **Internal Reflection:**
+      *   **INTERNAL THOROUGHNESS CHECK & REFLECTION:**
           - **Announce Intent:** State clearly: "I will now use the `mcp_sequentialthinking_sequentialthinking` tool for internal reflection... await the *complete* output (`nextThoughtNeeded=False`)."
           - **Invoke Tool:** [Invoke MCP tool `mcp_sequentialthinking_sequentialthinking`. **CRITICAL WARNING:** Requires completion. Use to: { **Refined Reflection:** Verify validation reports were generated and show PASS/WARN status. Any inconsistencies? If issues found *in report generation*, propose fixes. If okay, confirm readiness. } ]
       *   **Present & Await User Confirmation:** Present the PASS reports and internal reflection outcome. **Await explicit user confirmation** that *no further validation is needed*.
