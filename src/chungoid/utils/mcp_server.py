@@ -8,6 +8,7 @@ Key endpoints
 -------------
 GET  /metadata               → current snapshot (commit, version, tools, stage files)
 POST /invoke                 → invoke a registered tool (json: {"tool_name": str, "args": {…}})
+GET  /tools                  → list all tools (no auth)
 
 Security: simple API-Key via `X-API-Key` header.  The expected key is read from
 `MCP_API_KEY` env-var at startup (default "dev-key" in testing branch).
@@ -25,6 +26,8 @@ from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND, HTTP_500
 import importlib
 import subprocess
 import yaml
+from .core_snapshot_utils import build_snapshot
+from .core_snapshot_utils import _get_tool_specs  # internal helper
 
 # ---------------------------------------------------------------------------
 # Helpers (lightweight – mirror logic from dev/scripts/embed_core_snapshot.py)
@@ -78,28 +81,19 @@ def _check_api_key(x_api_key: str | None):  # noqa: N802 (FastAPI header style)
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Chungoid FastMCP", version="0.1.0-dev")
+app = FastAPI(title="Chungoid MCP", version="0.1.0")
 
 
-@app.get("/metadata")
-async def metadata(x_api_key: str | None = Header(None, alias="X-API-Key")):
-    _check_api_key(x_api_key)
+@app.get("/metadata", tags=["meta"])
+async def get_metadata():
+    """Return the latest core snapshot JSON."""
+    return build_snapshot()
 
-    if _engine is None:
-        raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Engine import failed at startup: {_ENGINE_IMPORT_ERR}",
-        )
 
-    snapshot = {
-        "type": "core_snapshot_live",
-        "core_commit": _git("rev-parse", "--short", "HEAD"),
-        "core_version": _git("describe", "--tags", "--abbrev=0"),
-        "generated": _dt.datetime.utcnow().isoformat() + "Z",
-        "tool_specs": _engine.get_mcp_tools(),  # type: ignore[attr-defined]
-        "stage_files": _stage_files,
-    }
-    return JSONResponse(snapshot)
+@app.get("/tools", tags=["meta"])
+async def list_tools():
+    """Return short spec of all registered MCP tools (no auth)."""
+    return _get_tool_specs()
 
 
 @app.post("/invoke")
@@ -138,7 +132,7 @@ def main(host: str = "0.0.0.0", port: int = 9000):  # pragma: no cover
     """Launch with `python -m chungoid.utils.mcp_server` for quick dev."""
     import uvicorn  # local import to avoid mandatory dep for non-server users
 
-    uvicorn.run("chungoid.utils.mcp_server:app", host=host, port=port, reload=False)
+    uvicorn.run(app, host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":  # pragma: no cover
