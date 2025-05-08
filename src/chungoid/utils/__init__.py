@@ -11,7 +11,6 @@ Utility modules for chungoid
 from .prompt_manager import PromptManager
 from .logger_setup import setup_logging  # noqa: F401
 from .config_loader import load_config  # noqa: F401
-from .analysis_utils import summarise_code  # noqa: F401
 
 # Reflection store
 from .reflection_store import ReflectionStore, Reflection
@@ -26,7 +25,6 @@ __all__ = [
     # "extract_stage_prompts"
     "setup_logging",
     "load_config",
-    "summarise_code",
     "ReflectionStore",
     "Reflection",
     "FeedbackStore",
