@@ -12,7 +12,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
-pytest.xfail("Doc manifest coverage not enforced in CI yet.")
+pytest.xfail("Doc manifest coverage not enforced in CI yet.", allow_module_level=True)
 
 def _dependencies() -> list[tuple[str, str]]:
     data = tomllib.loads(PYPROJECT.read_text())
