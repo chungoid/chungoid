@@ -8,10 +8,16 @@ prompt_details: |
 
   TASK CHECKLIST
   0. **Prerequisite:** Ensure Stage –1 (Goal Draft) is PASS and read `dev-docs/design/goal_draft.md`. If missing, instruct user to run Stage –1.
-      ```tool_code
-      print(default_api.mcp_chungoid_get_file(relative_path="dev-docs/design/goal_draft.md"))
-      ```
-  1. **Context & Research:**
+      0.5 **Retrieve Latest Core Snapshot** (context for library/tool selection):
+          ```tool_code
+          # Fetch live core metadata from FastMCP (falls back to Chroma snapshot if server down)
+          try:
+              print(default_api.core_mcp_client.get_metadata())
+          except Exception:
+              print(default_api.chroma_query(collection_name="meta_core_snapshot_history", n_results=1))
+          ```
+          • Summarise version, commit SHA, and available tool list.
+  1. **Context & Research (after snapshot processing):**
       • Summarise refined goal, scope, KPIs, non-goals.
       • Identify at least 3 candidate libraries / APIs that may help achieve the goal.
   2. **Library Documentation Retrieval:** For each candidate library:

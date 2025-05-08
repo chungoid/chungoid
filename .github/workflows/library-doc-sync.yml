@@ -1,0 +1,42 @@
+name: Sync Library Docs
+
+on:
+  push:
+    paths:
+      - 'chungoid-core/pyproject.toml'
+      - 'dev/scripts/sync_library_docs.py'
+  schedule:
+    - cron: '0 3 * * *' # nightly at 03:00 UTC
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies (core only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./chungoid-core
+          pip install chromadb tiktoken pyyaml tomli
+
+      - name: Sync docs for all dependencies
+        env:
+          CHROMA_HOST: ${{ secrets.CHROMA_HOST }}
+          CHROMA_PORT: ${{ secrets.CHROMA_PORT }}
+        run: |
+          python dev/scripts/sync_library_docs.py --scan-all
+
+      - name: Upload log artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: library-doc-sync-logs
+          path: dev/llms-txt/**/manifest.yaml 

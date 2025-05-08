@@ -42,6 +42,13 @@ prompt_details: |
           ```
       *   Verify the `status` field in `validation_report.json` is "PASS".
       *   If necessary files cannot be located/read or validation didn't PASS, report error and stop.
+  1.5 **Ensure Library Documentation Synced**
+      *   Parse dependency list (`pyproject.toml` -> `[project.dependencies]`).
+      *   For each dependency call:
+          ```tool_code
+          print(default_api.run_script("dev/scripts/sync_library_docs.py", args=["--lib", "<pkg>==<version>"]))
+          ```
+      *   Summarise which libraries were newly embedded (use manifest logs).
   2.  **Implementation Planning:**
       *   Based on the retrieved blueprint and requirements, break down components into actionable implementation tasks.
       *   **Mandatory:** Define clear dependencies between tasks. **Estimate relative effort/complexity (e.g., T-shirt sizes S/M/L) for prioritization.**

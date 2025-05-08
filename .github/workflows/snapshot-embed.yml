@@ -1,0 +1,44 @@
+name: Embed Core Snapshot
+
+on:
+  push:
+    branches: [testing]
+  pull_request:
+    branches: [testing]
+
+jobs:
+  test-and-embed:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies (core + test extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[test]
+          pip install chromadb httpx
+
+      - name: Run unit tests
+        run: pytest -q
+
+      - name: Embed snapshot to ChromaDB
+        env:
+          MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
+          CHROMA_HOST: ${{ secrets.CHROMA_HOST }}
+          CHROMA_PORT: ${{ secrets.CHROMA_PORT }}
+        run: |
+          python dev/scripts/embed_core_snapshot.py --driver ci
+
+      - name: Upload snapshot log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-snapshot-log
+          path: .snapshot_embed.log 
