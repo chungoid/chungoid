@@ -3,7 +3,7 @@ from pathlib import Path
 from chungoid.utils.feedback_store import FeedbackStore, ProcessFeedback
 
 def test_feedback_add_and_query(tmp_path: Path):
-    store = FeedbackStore(project_root=tmp_path, chroma_mode="persistent")
+    store = FeedbackStore(project_root=tmp_path, chroma_mode="memory")
 
     fb = ProcessFeedback(
         conversation_id="conv123",

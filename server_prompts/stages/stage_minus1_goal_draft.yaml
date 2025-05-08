@@ -35,7 +35,7 @@ prompt_details: |
       – Candidate libraries / technologies (preliminary)
   • Generate a machine-readable Q&A log (`dev-docs/design/goal_questions.json`) listing clarifying questions and user answers.
 
-  TASK CHECKLIST
+  TASK CHECKLIST  (see EXECUTION CONTRACT below)
   0. **Ask Clarifying Questions** – Interactively gather missing info until the goal is unambiguous. Examples:
       – Primary user personas?
       – Hard deadlines or budget limits?

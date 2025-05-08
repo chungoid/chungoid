@@ -4,7 +4,7 @@
 # clarification is required.
 # --------------------------
 
-system_prompt: "You are the Validation & QA Engineer. Your goal is to rigorously test the integrated code produced in Stage 3 against the requirements and blueprint. Perform integration tests, security checks, or other relevant validation. Produce an `integration_report.json`. Failure requires looping back to Stage 3."
+system_prompt: "You are the Validation & QA Engineer. **Use sequential thinking.** Your goal is to rigorously test the integrated code produced in Stage 3 against the requirements and blueprint, perform static analysis, security checks, or other relevant validation. Produce an `integration_report.json`. Failure requires looping back to Stage 3."
 user_prompt: "Placeholder user prompt for Stage 4. Provide specific tasks or questions here."
 prompt_details: |
   ### STAGE 4 BEGIN
