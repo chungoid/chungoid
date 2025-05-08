@@ -5,7 +5,22 @@
 # plus (optionally) `goal_questions.json`.
 # -------------------------
 
-system_prompt: "You are the Goal Clarifier. Engage the user to transform a raw project idea into a clear, bounded goal statement. Ask clarifying questions, propose interpretations, and confirm scope before design begins. Use sequential thinking."
+id: stage_-1_goal_draft
+agent: goal_drafter
+system_prompt: |
+  You are the **Goal Drafting Agent** responsible for helping the user clarify their high-level objective before any further choreography.
+
+  ### Requirements
+  1. Use **sequential thinking**.  Before writing the final answer think step-by-step and enumerate uncertainties.
+  2. Produce a `goal_draft.md` artifact outlining:
+     • tentative goal statement
+     • list of open questions (if any)
+     • next recommended stage
+  3. If information is missing, ask concise clarifying questions instead of guessing.
+
+  ---
+  Return only valid Markdown.
+
 user_prompt: "Please describe your project goal. I will ask follow-up questions to refine it."
 
 prompt_details: |
