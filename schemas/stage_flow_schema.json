@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stage-Flow DSL",
+  "description": "Defines a multi-stage agent execution flow for Chungoid.  Each stage delegates to a named agent and optionally routes to another stage based on a simple condition expression.",
+  "type": "object",
+  "required": ["name", "start_stage", "stages"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable identifier for the flow"
+    },
+    "description": {
+      "type": "string",
+      "description": "Long-form description (optional)"
+    },
+    "version": {
+      "type": "string",
+      "description": "Optional semantic version for the flow file"
+    },
+    "start_stage": {
+      "type": "string",
+      "description": "Identifier of the first stage to execute (must exist in stages)"
+    },
+    "stages": {
+      "type": "object",
+      "description": "Dictionary keyed by stage id",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-zA-Z_][\\w-]*$": {
+          "$ref": "#/$defs/stage"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "required": ["agent"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Agent identifier that will own this stage"
+        },
+        "inputs": {
+          "type": "object",
+          "description": "Static key/value inputs passed to the agent at runtime",
+          "additionalProperties": true
+        },
+        "next": {
+          "description": "Routing logic after this stage completes",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Next stage id (unconditional)"
+            },
+            {
+              "type": "null",
+              "description": "End of flow"
+            },
+            {
+              "type": "object",
+              "required": ["condition", "true", "false"],
+              "additionalProperties": false,
+              "properties": {
+                "condition": {
+                  "type": "string",
+                  "description": "Boolean expression evaluated by the runtime"
+                },
+                "true": {
+                  "type": "string",
+                  "description": "Next stage if condition evaluates truthy"
+                },
+                "false": {
+                  "type": "string",
+                  "description": "Next stage if condition evaluates falsy"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+} 
