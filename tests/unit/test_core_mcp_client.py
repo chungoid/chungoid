@@ -8,6 +8,11 @@ import pytest
 
 # Dynamically load the client module because it lives in dev/scripts (not a package)
 CLIENT_PATH = Path(__file__).resolve().parents[3] / "dev" / "scripts" / "core_mcp_client.py"
+
+# In the standalone *public* chungoid-core repo the helper script may be absent.
+if not CLIENT_PATH.exists():  # pragma: no cover
+    pytest.skip("core_mcp_client helper script not present", allow_module_level=True)
+
 spec = importlib.util.spec_from_file_location("core_mcp_client", CLIENT_PATH)
 module = importlib.util.module_from_spec(spec)  # type: ignore
 assert spec and spec.loader
