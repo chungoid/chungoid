@@ -49,6 +49,29 @@
     ```
 Your new project directory (`~/my_new_chungoid_project`) will now have a `.chungoid/` folder, ready for Stage –1.
 
+> 🔐 **API key for local runs**  
+> The MCP server protects its `/metadata`, `/tools`, and `/invoke` routes with the HTTP header `X-API-Key`.  
+> • **If you don't set anything, the server defaults to `dev-key`.**  
+> • For a brand-new, purely local project you can just use that value (or even omit the environment variable entirely).  
+>  
+> Example — start the server in one terminal *(local-only)*:  
+> ```bash
+> # Either be explicit …
+> export MCP_API_KEY=dev-key  # optional; this is the implicit default
+> uvicorn chungoid.utils.mcp_server:app --port 9000 &
+> ```  
+>  
+> When you **expose the server outside your laptop** (Docker, a VM, teammate access, etc.) pick a stronger key:  
+> ```bash
+> # On the server
+> export MCP_API_KEY="random-long-string"
+> uvicorn chungoid.utils.mcp_server:app --port 9000 &
+>
+> # In every client / script
+> CoreMCPClient("http://server:9000", api_key="random-long-string")
+> ```  
+> The key only needs to match between server and client — no extra config files required.
+
 > **Quick demo with Agent Registry**
 > ```bash
 > # 1. start MCP server in another terminal
