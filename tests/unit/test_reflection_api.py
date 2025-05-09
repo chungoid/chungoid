@@ -40,4 +40,18 @@ def test_post_reflection_ok(tmp_path, monkeypatch):
     r = store.get(payload["message_id"])
     assert r is not None
     assert r.agent_id == payload["agent_id"]
-    assert r.content == payload["content"] 
+    assert r.content == payload["content"]
+
+
+def test_get_reflection_query(monkeypatch):
+    """GET /reflection should return list with stored reflection."""
+    monkeypatch.setenv("MCP_API_KEY", "dev-key")
+
+    # insert one reflection first
+    payload = _make_payload()
+    CLIENT.post("/reflection", json=payload, headers={"X-API-Key": "dev-key"})
+
+    resp = CLIENT.get(f"/reflection?conversation_id={payload['conversation_id']}&limit=10")
+    assert resp.status_code == 200
+    arr = resp.json()
+    assert isinstance(arr, list) and any(item["message_id"] == payload["message_id"] for item in arr) 

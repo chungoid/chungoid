@@ -37,15 +37,13 @@
   "$defs": {
     "stage": {
       "type": "object",
-      "anyOf": [
-        {"required": ["agent"]},
-        {"required": ["agent_id"]}
-      ],
+      "required": ["agent_id"],
       "additionalProperties": false,
       "properties": {
         "agent": {
           "type": "string",
-          "description": "Agent identifier that will own this stage"
+          "description": "DEPRECATED: Use 'agent_id' instead.",
+          "deprecated": true
         },
         "agent_id": {
           "type": "string",

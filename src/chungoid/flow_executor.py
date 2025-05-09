@@ -96,8 +96,17 @@ class FlowExecutor:
             # Determine agent identifier
             if "agent_id" in stage:
                 agent_name: str = stage["agent_id"]
-            else:
+            elif "agent" in stage:
+                import warnings
+
+                warnings.warn(
+                    "'agent' field is deprecated; rename to 'agent_id' in stage_flow YAML.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
                 agent_name = stage["agent"]
+            else:
+                raise FlowValidationError("Stage missing required 'agent_id' field")
             agent_fn = self.agent_provider.get(agent_name)
             if agent_fn is None:
                 raise UnknownAgentError(f"Agent '{agent_name}' not registered")

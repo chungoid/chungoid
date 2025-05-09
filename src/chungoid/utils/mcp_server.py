@@ -34,10 +34,11 @@ from typing import TYPE_CHECKING
 
 try:
     from .reflection_store import Reflection, ReflectionStore
-except Exception:  # pragma: no cover – allow server to start even if chromadb missing
-    if TYPE_CHECKING:
-        from typing import Any as Reflection  # type: ignore[assignment]
-        from typing import Any as ReflectionStore  # type: ignore[assignment]
+except Exception:  # pragma: no cover – reflection store may fail if chromadb missing
+    if TYPE_CHECKING:  # Provide type hints during static analysis
+        from typing import Any as Reflection  # type: ignore
+        from typing import Any as ReflectionStore  # type: ignore
+
     Reflection = None  # type: ignore # noqa: N816
     ReflectionStore = None  # type: ignore # noqa: N816
 
@@ -168,6 +169,42 @@ async def add_reflection(
         ) from exc
 
     return JSONResponse({"status": "ok", "message_id": reflection.message_id})
+
+
+# ---------------------------------------------------------------------------
+# Reflection query endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/reflection", tags=["reflection"])
+async def list_reflections(
+    conversation_id: str | None = None,
+    agent_id: str | None = None,
+    limit: int = 100,
+):
+    """Return reflections filtered by conversation / agent.
+
+    No API-key required for read-only access (could be tightened later).
+    """
+
+    if ReflectionStore is None or Reflection is None:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Reflection subsystem unavailable",
+        )
+
+    try:
+        store = ReflectionStore(project_root=Path.cwd())
+        reflections = store.query(
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            limit=limit,
+        )
+        return [r.dict() for r in reflections]
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
