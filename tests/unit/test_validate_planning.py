@@ -7,6 +7,11 @@ import pytest
 from importlib.util import spec_from_file_location, module_from_spec
 
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "dev" / "scripts" / "validate_planning_files.py"
+
+# Skip the entire module if the helper script is absent (e.g., in slim public repo)
+if not SCRIPT_PATH.exists():  # pragma: no cover
+    pytest.skip("validate_planning_files.py not present", allow_module_level=True)
+
 spec = spec_from_file_location("validate_planning", SCRIPT_PATH)
 validate_planning = module_from_spec(spec)
 spec.loader.exec_module(validate_planning)
