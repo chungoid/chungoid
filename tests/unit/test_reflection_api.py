@@ -29,35 +29,43 @@ if not _STORE_AVAILABLE:
 # ---------------------------------------------------------------------------
 
 
-if not _STORE_AVAILABLE:
-    _memory: dict[str, dict] = {}
+_memory: dict[str, dict] = {}
 
-    class _DummyStore:  # noqa: D401
-        def __init__(self, *_, **__):
-            pass
+class _DummyStore:  # noqa: D401
+    def __init__(self, *_, **__):
+        pass
 
-        def add(self, reflection):  # type: ignore[no-self-use]
-            _memory[reflection.message_id] = reflection.dict()
+    def add(self, reflection):  # type: ignore[no-self-use]
+        _memory[reflection.message_id] = reflection.dict()
 
-        def get(self, msg_id):  # noqa: D401
-            from pydantic import BaseModel
+    def get(self, msg_id):  # noqa: D401
+        from pydantic import BaseModel
 
-            if msg_id not in _memory:
-                return None
+        if msg_id not in _memory:
+            return None
 
-            class _Reflection(BaseModel):
-                __root__: dict
+        class _Reflection(BaseModel):
+            __root__: dict
 
-            return _Reflection(__root__=_memory[msg_id])
+        return _Reflection(__root__=_memory[msg_id])
 
-        def query(self, **_kwargs):  # noqa: D401
-            return list(_memory.values())
+    class _DummyObj:
+        def __init__(self, d):
+            self._d = d
 
-    # Monkey-patch server's ReflectionStore symbol
-    import importlib
+        def dict(self, *_, **__):  # noqa: D401
+            return self._d
 
-    mcp_mod = importlib.import_module("chungoid.utils.mcp_server")
-    mcp_mod.ReflectionStore = _DummyStore  # type: ignore[attr-defined]
+    def query(self, **_kwargs):  # noqa: D401
+        return [self._DummyObj(v) for v in _memory.values()]
+
+# Monkey-patch server's ReflectionStore symbol (regardless of availability)
+import importlib
+
+mcp_mod = importlib.import_module("chungoid.utils.mcp_server")
+mcp_mod.ReflectionStore = _DummyStore  # type: ignore[attr-defined]
+
+_STORE_AVAILABLE = False
 
 CLIENT = TestClient(app)
 

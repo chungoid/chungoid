@@ -48,14 +48,12 @@ def test_cli_send_and_pull(monkeypatch, tmp_path):
 
     test_client = TestClient(app)
     transport = _LocalTransport(test_client)
-    monkeypatch.setattr(cli, "httpx", httpx.Client)
-
-    # Patch _API to use our custom client
-    def _patched_api(base_url: str, api_key: str):
-        return httpx.Client(base_url=base_url, headers={"X-API-Key": api_key}, transport=transport)
-
     monkeypatch.setattr(cli, "httpx", httpx)  # ensure module imported
     monkeypatch.setattr(cli.httpx, "Client", lambda *a, **kw: _patched_api(*a, **kw))
+
+    # Patch _API to use our custom client
+    def _patched_api(*a, **kw):  # noqa: D401
+        return httpx.Client(*a, transport=transport, **kw)
 
     # Write reflection JSON file
     payload = {
