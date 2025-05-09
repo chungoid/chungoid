@@ -4,8 +4,21 @@ from pathlib import Path
 import yaml
 from jsonschema import validate, Draft202012Validator
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "schemas" / "stage_flow_schema.json"
-EXAMPLE_PATH = Path(__file__).resolve().parents[3] / "dev" / "examples" / "sample_flow.yaml"
+# Resolve repo root (three parents up from tests/unit/)
+ROOT = Path(__file__).resolve().parents[3]
+
+# The schema lives under ./schemas/ in meta repo and under ./chungoid-core/schemas/ in public repo.
+_schema = ROOT / "schemas" / "stage_flow_schema.json"
+if not _schema.exists():
+    _schema = ROOT / "chungoid-core" / "schemas" / "stage_flow_schema.json"
+
+# Example flow likewise.
+_example = ROOT / "dev" / "examples" / "sample_flow.yaml"
+if not _example.exists():
+    _example = ROOT / "chungoid-core" / "dev" / "examples" / "sample_flow.yaml"
+
+SCHEMA_PATH = _schema
+EXAMPLE_PATH = _example
 
 
 def test_example_flow_validates():
