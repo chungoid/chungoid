@@ -29,6 +29,18 @@ import yaml
 from .core_snapshot_utils import build_snapshot
 from .core_snapshot_utils import _get_tool_specs  # internal helper
 
+# Reflection model & store (for /reflection endpoint)
+from typing import TYPE_CHECKING
+
+try:
+    from .reflection_store import Reflection, ReflectionStore
+except Exception:  # pragma: no cover – allow server to start even if chromadb missing
+    if TYPE_CHECKING:
+        from typing import Any as Reflection  # type: ignore[assignment]
+        from typing import Any as ReflectionStore  # type: ignore[assignment]
+    Reflection = None  # type: ignore # noqa: N816
+    ReflectionStore = None  # type: ignore # noqa: N816
+
 # ---------------------------------------------------------------------------
 # Helpers (lightweight – mirror logic from dev/scripts/embed_core_snapshot.py)
 # ---------------------------------------------------------------------------
@@ -122,6 +134,40 @@ async def invoke(
         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     return JSONResponse({"status": "ok", "result": result})
+
+
+# ---------------------------------------------------------------------------
+# Reflection endpoint
+# ---------------------------------------------------------------------------
+
+@app.post("/reflection", tags=["reflection"])
+async def add_reflection(
+    reflection: "Reflection",  # type: ignore[name-defined]
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+):
+    """Persist one Reflection document to Chroma.
+
+    Body must follow the `Reflection` Pydantic model (see JSON schema).
+    """
+
+    _check_api_key(x_api_key)
+
+    if ReflectionStore is None or Reflection is None:  # chromadb not installed or import failed
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Reflection subsystem unavailable (chromadb missing)",
+        )
+
+    try:
+        store = ReflectionStore(project_root=Path.cwd())
+        store.add(reflection)
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    return JSONResponse({"status": "ok", "message_id": reflection.message_id})
 
 
 # ---------------------------------------------------------------------------
