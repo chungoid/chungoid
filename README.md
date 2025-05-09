@@ -49,7 +49,7 @@
     ```
 Your new project directory (`~/my_new_chungoid_project`) will now have a `.chungoid/` folder, ready for Stage –1.
 
-> 🔐 **API key for local runs**  
+> **API key for local runs**  
 > The MCP server protects its `/metadata`, `/tools`, and `/invoke` routes with the HTTP header `X-API-Key`.  
 > • **If you don't set anything, the server defaults to `dev-key`.**  
 > • For a brand-new, purely local project you can just use that value (or even omit the environment variable entirely).  
