@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Stage Flow Schema",
+  "type": "object",
+  "required": ["name", "start_stage", "stages"],
+  "properties": {
+    "name": {"type": "string"},
+    "start_stage": {"type": "string"},
+    "stages": {
+      "type": "object",
+      "patternProperties": {
+        "^.+$": {
+          "type": "object",
+          "required": ["agent_id"],
+          "properties": {
+            "agent": {"type": "string"},
+            "agent_id": {"type": "string"},
+            "next": {
+              "oneOf": [
+                {"type": "string"},
+                {
+                  "type": "object",
+                  "properties": {
+                    "condition": {"type": "string"},
+                    "true": {"type": ["string", "null"]},
+                    "false": {"type": ["string", "null"]}
+                  },
+                  "required": ["condition", "true", "false"],
+                  "additionalProperties": false
+                },
+                {"type": ["null"]}
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+} 

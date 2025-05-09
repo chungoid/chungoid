@@ -22,13 +22,20 @@ from chungoid.utils.agent_resolver import AgentProvider, DictAgentProvider, Regi
 
 ROOT = Path(__file__).resolve()
 
-# Determine schema path in a way that works for both:
-# 1) meta-monorepo: <root>/schemas/…
-# 2) standalone core repo: <root>/chungoid-core/schemas/…
+# Primary locations to look for the Stage-Flow JSON schema.
+#
+# 1) In-repo development (monorepo or standalone) – the file lives at
+#    <repo_root>/schemas/stage_flow_schema.json.
+# 2) Installed wheel / editable install – we also package the schema under
+#    the python package itself:  chungoid/schemas/…
 
 _repo_root_candidates = [
-    Path(__file__).resolve().parents[3],            # monorepo root
-    Path(__file__).resolve().parents[3] / "chungoid-core",  # standalone root == this path, but include for safety
+    # a) meta-monorepo: <root>/schemas/…
+    Path(__file__).resolve().parents[3],
+    # b) standalone core checkout: <root>/chungoid-core/schemas/…
+    Path(__file__).resolve().parents[3] / "chungoid-core",
+    # c) packaged module (site-packages/.../chungoid): <pkg>/schemas/…
+    Path(__file__).resolve().parent / "schemas",
 ]
 
 SCHEMA_PATH = None
