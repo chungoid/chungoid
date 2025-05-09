@@ -328,7 +328,7 @@ Refer to the [`LICENSE`](../LICENSE) file for the full legal text and how to app
 
 --- 
 
-> **What's New (May 2025)**  
+> **What's New (May 8 2025)**  
 > • Stage-Flow DSL v0.2 with `agent_id` (replaces legacy `agent`)  
 > • **Agent Registry + AgentResolver** → reference tools by slug, no hard-coded callables  
 > • Live MCP dispatch: if `uvicorn chungoid.utils.mcp_server` is running, tool calls are executed automatically.  
