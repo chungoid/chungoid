@@ -20,6 +20,10 @@ except RuntimeError:  # pragma: no cover – Chroma running in http-only mode
     _STORE_AVAILABLE = False
 
 
+if not _STORE_AVAILABLE:
+    pytest.skip("Chroma persistent client unavailable; skipping reflection API tests", allow_module_level=True)
+
+
 # ---------------------------------------------------------------------------
 # Test client (with optional dummy store)
 # ---------------------------------------------------------------------------
@@ -101,11 +105,4 @@ def test_get_reflection_query(monkeypatch):
     resp = CLIENT.get(f"/reflection?conversation_id={payload['conversation_id']}&limit=10")
     assert resp.status_code == 200
     arr = resp.json()
-    assert isinstance(arr, list) and any(item["message_id"] == payload["message_id"] for item in arr)
-
-# If ReflectionStore not available at all, skip this entire module when running in
-# environments like github-hosted runners where Chroma persistent client is
-# disabled.
-
-if not _STORE_AVAILABLE:
-    pytest.skip("Chroma persistent client unavailable; skipping reflection API tests", allow_module_level=True) 
+    assert isinstance(arr, list) and any(item["message_id"] == payload["message_id"] for item in arr) 
