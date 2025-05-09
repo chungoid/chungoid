@@ -34,8 +34,8 @@ _repo_root_candidates = [
     Path(__file__).resolve().parents[3],
     # b) standalone core checkout: <root>/chungoid-core/schemas/…
     Path(__file__).resolve().parents[3] / "chungoid-core",
-    # c) packaged module (site-packages/.../chungoid): <pkg>/schemas/…
-    Path(__file__).resolve().parent / "schemas",
+    # c) packaged module (site-packages/.../chungoid/schemas): parent already is <pkg>/chungoid
+    Path(__file__).resolve().parent,
 ]
 
 SCHEMA_PATH = None

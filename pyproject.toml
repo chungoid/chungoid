@@ -169,6 +169,13 @@ docs = [
     "sphinxcontrib-serializinghtml==2.0.0",
 ]
 
+# Keep GitHub workflows working (some use `pip install -e .[test]`)
+test = [
+    "pytest>=8.3,<8.4",
+    "pytest-asyncio",
+    "pytest-cov",
+]
+
 # Declare console-script entry-point
 [project.scripts]
 chungoid-server = "chungoid.mcp:main"
@@ -176,11 +183,17 @@ chungoid = "chungoid.cli:cli"
 
 [tool.setuptools]
 # package_dir = {"" = "src"} # This line is removed as per GitHub feedback
+# Ship non-Python files declared in package-data
+include-package-data = true
 
 # --- Packaging layout migrated to `src/` (Phase P1) ---
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["chungoid", "chungoid.*"]
+
+# Ensure non-Python resources (JSON/YAML schemas) are shipped in the wheel.
+[tool.setuptools.package-data]
+"chungoid.schemas" = ["*.json", "*.yaml", "*.yml"]
 
 # Additional config keys (e.g., include-package-data) can be set later
 
