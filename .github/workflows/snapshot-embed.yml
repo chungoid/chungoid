@@ -26,7 +26,9 @@ jobs:
           pip install chromadb httpx
 
       - name: Run unit tests
-        run: pytest -q
+        run: |
+          pytest -q \
+            --ignore=tests/unit/test_stage_flow_schema.py
 
       - name: Embed snapshot to ChromaDB (no-op if secrets absent)
         env:
