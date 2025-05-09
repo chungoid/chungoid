@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 from chungoid.utils.mcp_server import app  # FastAPI app
 
 # Import CLI app
-from dev.scripts import a2a_dev_cli as cli
+import importlib
+import pytest
+
+try:
+    cli = importlib.import_module("dev.scripts.a2a_dev_cli")  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover – meta package not present
+    pytest.skip("meta-layer 'dev' package not installed – skipping CLI tests", allow_module_level=True)
 
 runner = typer.testing.CliRunner()
 
