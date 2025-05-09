@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import importlib
 import importlib.metadata as importlib_metadata
+from datetime import timezone
 
 CORE_DIR = Path(__file__).resolve().parents[3] / "chungoid-core"
 
@@ -58,7 +59,7 @@ def build_snapshot() -> Dict[str, Any]:
         "type": "core_snapshot",
         "core_commit": _git("rev-parse", "--short", "HEAD"),
         "core_version": _get_core_version(),
-        "created": _dt.datetime.utcnow().isoformat() + "Z",
+        "created": _dt.datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "stage_files": _get_stage_files(),
         "tool_specs": _get_tool_specs(),
     } 

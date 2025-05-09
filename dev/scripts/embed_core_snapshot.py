@@ -34,6 +34,7 @@ import typer
 import yaml
 import importlib
 import importlib.metadata as importlib_metadata
+from datetime import timezone
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = SCRIPT_DIR.parent.parent  # <repo root>
@@ -98,7 +99,7 @@ def _build_snapshot() -> Dict[str, Any]:
         "type": "core_snapshot",
         "core_commit": commit,
         "core_version": version,
-        "created": _dt.datetime.utcnow().isoformat() + "Z",
+        "created": _dt.datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "author": author,
         "author_email": email,
         "stage_files": _get_stage_files(),

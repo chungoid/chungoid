@@ -69,7 +69,7 @@ class FeedbackStore:
     # Public API
     # ------------------------------------------------------------------
     def add(self, fb: ProcessFeedback) -> None:
-        meta = fb.dict(exclude={"comment"})
+        meta = fb.model_dump(exclude={"comment"})
         self._coll.add(documents=[fb.comment], ids=[self._make_id(fb)], metadatas=[meta])
 
     def add_many(self, fbs: Sequence[ProcessFeedback]) -> None:
@@ -77,7 +77,7 @@ class FeedbackStore:
             return
         ids = [self._make_id(f) for f in fbs]
         docs = [f.comment for f in fbs]
-        metas = [f.dict(exclude={"comment"}) for f in fbs]
+        metas = [f.model_dump(exclude={"comment"}) for f in fbs]
         self._coll.add(documents=docs, ids=ids, metadatas=metas)
 
     def query(
@@ -100,7 +100,7 @@ class FeedbackStore:
                 continue
             comment = all_meta["documents"][i]
             meta["comment"] = comment
-            results.append(ProcessFeedback.parse_obj(meta))
+            results.append(ProcessFeedback.model_validate(meta))
         return results
 
     # ------------------------------------------------------------------
