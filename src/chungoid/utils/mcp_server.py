@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict
 import datetime as _dt
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Body
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 import importlib
@@ -29,6 +29,8 @@ import yaml
 from .core_snapshot_utils import build_snapshot
 from .core_snapshot_utils import _get_tool_specs  # internal helper
 from .flow_registry import FlowRegistry, FlowCard  # NEW
+from .flow_api import get_router as get_flow_router
+from chungoid.runtime.orchestrator import ExecutionPlan, AsyncOrchestrator
 
 # Reflection model & store (for /reflection endpoint)
 from typing import TYPE_CHECKING
@@ -96,6 +98,13 @@ def _check_api_key(x_api_key: str | None):  # noqa: N802 (FastAPI header style)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Chungoid MCP", version="0.1.0")
+
+# Register sub-routers (keeps main file slim)
+app.include_router(get_flow_router(_check_api_key))
+
+# Expose API key check for submodules
+def get_api_key_checker():
+    return _check_api_key
 
 
 @app.get("/metadata", tags=["meta"])
@@ -207,9 +216,14 @@ async def query_reflections(
 
 # Choose in-memory store automatically when running under pytest to avoid
 # touching the developer's persistent DB.
-_FLOW_REG_MODE = (
-    "memory" if any(k.startswith("PYTEST_") for k in os.environ) else os.getenv("FLOW_REGISTRY_MODE", "persistent")
-)
+_FLOW_REG_MODE = os.getenv("FLOW_REGISTRY_MODE", "persistent")
+
+if _FLOW_REG_MODE not in {"persistent", "http", "memory"}:
+    _FLOW_REG_MODE = "memory"
+
+# Default to in-memory when running under pytest or when Chroma is HTTP-only
+if "PYTEST_CURRENT_TEST" in os.environ or os.getenv("CHROMA_API_IMPL") == "http" or _FLOW_REG_MODE == "persistent" and os.getenv("CHROMA_SERVER_HOST"):
+    _FLOW_REG_MODE = "memory"
 
 _flow_registry = FlowRegistry(project_root=Path.cwd(), chroma_mode=_FLOW_REG_MODE)
 
@@ -259,6 +273,31 @@ async def add_flow(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return JSONResponse({"status": "ok", "flow_id": card.flow_id})
+
+
+# ---------------------------------------------------------------------------
+# Flow execution endpoint (Phase-6)
+# ---------------------------------------------------------------------------
+
+@app.post("/run/{flow_id}", tags=["flow"])
+async def run_flow(
+    flow_id: str,
+    context: dict = Body(default_factory=dict),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+):
+    """Execute a flow by ID with optional context (input, user, etc)."""
+    _check_api_key(x_api_key)
+
+    # Find flow YAML from registry
+    reg = FlowRegistry(project_root=Path.cwd())
+    card = reg.get(flow_id)
+    if not card:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail=f"Flow {flow_id} not found")
+
+    plan = ExecutionPlan.from_yaml(card.yaml_text, flow_id=flow_id)
+    orch = AsyncOrchestrator(plan)
+    visited = await orch.run(context=context)
+    return {"visited": visited, "flow_id": flow_id}
 
 
 # ---------------------------------------------------------------------------

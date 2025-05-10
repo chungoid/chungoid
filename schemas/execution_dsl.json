@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chungoid.org/schemas/execution_dsl.json",
+  "title": "Chungoid Execution DSL",
+  "description": "Schema for Chungoid flow execution plans (YAML/JSON).",
+  "type": "object",
+  "properties": {
+    "start_stage": {
+      "type": "string",
+      "description": "The name of the first stage to execute."
+    },
+    "stages": {
+      "type": "object",
+      "description": "Mapping of stage names to stage definitions.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string" },
+          "next": { "type": "string" },
+          "next_if": {
+            "type": "object",
+            "description": "Conditional branching: keys are condition strings, values are stage names.",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "required": ["agent_id"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["start_stage", "stages"],
+  "additionalProperties": true
+} 
