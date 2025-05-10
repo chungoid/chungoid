@@ -233,14 +233,29 @@ def run(
 
 
 # Add a trivial root callback so Typer keeps `run` as an explicit sub-command
-# (otherwise, with a single command, Typer promotes it to the root command and
-# passing the word "run" becomes an "unexpected extra argument").
+# (otherwise, with a single command, Typer promotes it to the root command).  We
+# ALSO forward calls when no sub-command is provided so existing scripts like
+# `make snapshot-core --dry-run` continue to work.
 
 
-@app.callback(invoke_without_command=False)
-def _root() -> None:  # pragma: no cover
-    """Top-level callback (does nothing). Keeps `run` as a sub-command."""
-    pass
+@app.callback(invoke_without_command=True)
+def _root_callback(
+    ctx: typer.Context,
+    dry_run: bool = typer.Option(False, "--dry-run", help="Do not embed, just print YAML"),
+    tarball: Path | None = typer.Option(None, "--tarball", exists=True, file_okay=True, dir_okay=False, help="Path to a core snapshot tarball."),
+    chroma_host: str = typer.Option("localhost", "--chroma-host", help="ChromaDB host"),
+    chroma_port: int = typer.Option(8000, "--chroma-port", help="ChromaDB port"),
+) -> None:  # pragma: no cover – thin wrapper
+    """Delegate to *run* when invoked without sub-command."""
+
+    if ctx.invoked_subcommand is None:
+        # Call the real implementation directly.
+        run(  # type: ignore[arg-types]
+            dry_run=dry_run,
+            tarball=tarball,
+            chroma_host=chroma_host,
+            chroma_port=chroma_port,
+        )
 
 
 if __name__ == "__main__":
