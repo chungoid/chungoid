@@ -2,32 +2,68 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://chungoid.org/schemas/execution_dsl.json",
   "title": "Chungoid Execution DSL",
-  "description": "Schema for Chungoid flow execution plans (YAML/JSON).",
+  "description": "Unified schema for Chungoid flow execution plans.",
   "type": "object",
   "properties": {
-    "start_stage": {
-      "type": "string",
-      "description": "The name of the first stage to execute."
-    },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "version": { "type": "string" },
+    "start_stage": { "type": "string" },
     "stages": {
       "type": "object",
-      "description": "Mapping of stage names to stage definitions.",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "agent_id": { "type": "string" },
-          "next": { "type": "string" },
-          "next_if": {
-            "type": "object",
-            "description": "Conditional branching: keys are condition strings, values are stage names.",
-            "additionalProperties": { "type": "string" }
-          }
-        },
-        "required": ["agent_id"],
-        "additionalProperties": true
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-zA-Z_][\\w-]*$": {
+          "type": "object",
+          "required": ["agent_id"],
+          "properties": {
+            "agent_id": { "type": "string" },
+            "inputs": { "type": "object", "additionalProperties": true },
+            "next": {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["condition", "true", "false"],
+                  "properties": {
+                    "condition": { "type": "string" },
+                    "true": { "type": "string" },
+                    "false": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "on_error": {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["condition", "true", "false"],
+                  "properties": {
+                    "condition": { "type": "string" },
+                    "true": { "type": "string" },
+                    "false": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "parallel_group": { "type": "string" },
+            "plugins": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "extra": { "type": "object", "additionalProperties": true }
+          },
+          "additionalProperties": false
+        }
       }
     }
   },
   "required": ["start_stage", "stages"],
-  "additionalProperties": true
+  "additionalProperties": false
 } 

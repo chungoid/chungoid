@@ -31,9 +31,14 @@ class StageSpec(BaseModel):
     """Specification of a single stage inside a flow."""
 
     agent_id: str = Field(..., description="ID of the agent to invoke for this stage")
-    input: Optional[str] = Field(None, description="Expression or literal passed to the agent")
+    inputs: Optional[dict] = Field(None, description="Input parameters for the agent")
+    next: Optional[Any] = Field(None, description="Next stage or conditional object")
+    on_error: Optional[Any] = Field(None, description="Error handler stage or conditional object")
+    parallel_group: Optional[str] = Field(None, description="Group name for parallel execution")
+    plugins: Optional[List[str]] = Field(None, description="List of plugin names to apply at this stage")
+    extra: Optional[dict] = Field(None, description="Arbitrary extra data for extensibility")
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class ExecutionPlan(BaseModel):
@@ -84,58 +89,84 @@ class SyncOrchestrator:
     replaced by real agent invocation later.
     """
 
-    def __init__(self, plan: ExecutionPlan) -> None:
+    def __init__(self, plan: ExecutionPlan, *, metrics_store: "Optional[MetricsStore]" = None) -> None:
         self.plan = plan
+        self._metrics_store = metrics_store
 
     def run(self, *, max_hops: int = 64, context: dict | None = None) -> List[str]:
         """Execute the plan and return a list of stage names that were 'run'.
-        If a stage has `next_if`, evaluate conditions using the provided context.
+        Supports conditional branching via 'next' and error handling via 'on_error'.
         """
+        from datetime import datetime, timezone
+        import time
+
         visited: List[str] = []
+        run_id = context.get("_run_id") if context else None
+        if run_id is None:
+            import uuid
+
+            run_id = str(uuid.uuid4())
+            if context is not None:
+                context["_run_id"] = run_id
+
         current = self.plan.start_stage
         context = context or {}
         for _ in range(max_hops):
-            visited.append(current)
-            stage_spec = self.plan.stages[current]
-            next_stage = None
-            if hasattr(stage_spec, "next_if") and getattr(stage_spec, "next_if", None):
-                cond_map = getattr(stage_spec, "next_if")
-                if isinstance(cond_map, dict) and cond_map:
-                    for cond, candidate in cond_map.items():
-                        if cond == "always":
-                            next_stage = candidate
-                            break
-                        # Enhanced evaluator: support input ==, !=, >, <, >=, <= value
-                        parsed = self._parse_condition(cond)
-                        if parsed:
-                            key, op, val = parsed
-                            if key in context:
-                                ctx_val = context[key]
-                                # Try to convert both to float if possible
-                                try:
-                                    ctx_val_num = float(ctx_val)
-                                    val_num = float(val)
-                                    compare_type = "numeric"
-                                except Exception:
-                                    ctx_val_num = ctx_val
-                                    val_num = val
-                                    compare_type = "string"
-                                if self._eval_condition(ctx_val_num, op, val_num):
-                                    next_stage = candidate
-                                    break
-                    # fallback: if nothing matched, next_stage remains None
-            if not next_stage:
-                next_stage = getattr(stage_spec, "next", None)  # type: ignore[attr-defined]
-            if not next_stage:
-                break
-            if next_stage not in self.plan.stages:
-                raise KeyError(f"Unknown next stage '{next_stage}' referenced from '{current}'")
-            current = next_stage
+            stage_name = current
+            start_t = time.perf_counter()
+            status = "success"
+            error_msg: str | None = None
+            try:
+                visited.append(stage_name)
+                stage_spec = self.plan.stages[stage_name]
+                next_stage = None
+                # Handle 'next' field (string, null, or conditional object)
+                next_field = getattr(stage_spec, "next", None)
+                if isinstance(next_field, dict) and next_field.get("condition"):
+                    # Conditional branching
+                    cond = next_field["condition"]
+                    true_stage = next_field["true"]
+                    false_stage = next_field["false"]
+                    if self._eval_condition_expr(cond, context):
+                        next_stage = true_stage
+                    else:
+                        next_stage = false_stage
+                elif isinstance(next_field, str):
+                    next_stage = next_field
+                # If next is null or not set, stop
+                if not next_stage:
+                    break
+                if next_stage not in self.plan.stages:
+                    raise KeyError(f"Unknown next stage '{next_stage}' referenced from '{current}'")
+                current = next_stage
+            except Exception as exc:
+                status = "error"
+                error_msg = str(exc)
+                # Re-raise after recording metric
+                raise
+            finally:
+                duration_ms = int((time.perf_counter() - start_t) * 1000)
+                if self._metrics_store:
+                    from chungoid.utils.metrics_store import MetricEvent
+
+                    evt = MetricEvent(
+                        run_id=run_id,
+                        stage_id=stage_name,
+                        duration_ms=duration_ms,
+                        status=status,
+                        error_message=error_msg,
+                        tags={"flow_id": self.plan.id},
+                    )
+                    try:
+                        self._metrics_store.add(evt)
+                    except Exception:  # pragma: no cover
+                        # Metrics must never break execution path.
+                        pass
+
         return visited
 
     @staticmethod
     def _parse_condition(cond: str):
-        # Only allow simple conditions: <key> <op> <value>
         import re
         pattern = r"^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$"
         m = re.match(pattern, cond)
@@ -160,6 +191,26 @@ class SyncOrchestrator:
         if op == "<=":
             return left <= right
         return False
+
+    @classmethod
+    def _eval_condition_expr(cls, cond: str, context: dict) -> bool:
+        parsed = cls._parse_condition(cond)
+        if not parsed:
+            return False
+        key, op, val = parsed
+        if key not in context:
+            return False
+        ctx_val = context[key]
+        try:
+            ctx_val_num = float(ctx_val)
+            val_num = float(val)
+            return cls._eval_condition(ctx_val_num, op, val_num)
+        except Exception:
+            # If numeric conversion fails and operator is a numeric comparison, treat as False
+            if op in {">", "<", ">=", "<="}:
+                return False
+            # Equality/inequality fall back to string compare
+            return cls._eval_condition(str(ctx_val), op, str(val))
 
 
 # ---------------------------------------------------------------------------

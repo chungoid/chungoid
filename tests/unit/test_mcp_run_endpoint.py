@@ -24,9 +24,10 @@ def test_run_endpoint_input_branching():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "input == foo": s2
-                  always: s3
+                next:
+                  condition: "input == foo"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
@@ -70,9 +71,10 @@ def test_run_endpoint_numeric_branching():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "input > 5": s2
-                  always: s3
+                next:
+                  condition: "input > 5"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
@@ -116,9 +118,10 @@ def test_run_endpoint_string_inequality():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "input != foo": s2
-                  always: s3
+                next:
+                  condition: "input != foo"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
@@ -162,9 +165,10 @@ def test_run_endpoint_numeric_less_than():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "input < 5": s2
-                  always: s3
+                next:
+                  condition: "input < 5"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
@@ -208,9 +212,10 @@ def test_run_endpoint_type_mismatch():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "input > 5": s2
-                  always: s3
+                next:
+                  condition: "input > 5"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
@@ -245,9 +250,10 @@ def test_run_endpoint_missing_context_key():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "foo > 5": s2
-                  always: s3
+                next:
+                  condition: "foo > 5"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
@@ -282,9 +288,10 @@ def test_run_endpoint_user_context_branching():
             stages:
               s1:
                 agent_id: a1
-                next_if:
-                  "user == admin": s2
-                  always: s3
+                next:
+                  condition: "user == admin"
+                  "true": s2
+                  "false": s3
               s2:
                 agent_id: a2
               s3:
