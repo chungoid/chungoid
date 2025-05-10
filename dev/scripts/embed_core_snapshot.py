@@ -139,7 +139,7 @@ def _build_snapshot(core_root: Path | None = None) -> Dict[str, Any]:
 # CLI
 # ---------------------------------------------------------------------------
 
-@app.command()
+@app.command(name="run")
 def run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not embed, just print YAML"),
     tarball: Path | None = typer.Option(None, "--tarball", exists=True, file_okay=True, dir_okay=False, help="Path to a core snapshot tarball. If supplied, snapshot is built from extracted archive instead of current workspace."),

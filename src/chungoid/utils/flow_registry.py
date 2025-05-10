@@ -68,7 +68,8 @@ class FlowRegistry:
 
     def get(self, flow_id: str) -> Optional[FlowCard]:
         res = self._coll.get(ids=[flow_id])
-        if not res["ids"]:
+        # Chroma may return empty lists if *flow_id* was not found or after deletion.
+        if not res["documents"]:
             return None
         doc = res["documents"][0]
         meta = res["metadatas"][0]
