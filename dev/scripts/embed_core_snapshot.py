@@ -35,6 +35,7 @@ import yaml
 import importlib
 import importlib.metadata as importlib_metadata
 from datetime import timezone
+import tarfile
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = SCRIPT_DIR.parent.parent  # <repo root>
@@ -89,11 +90,36 @@ def _get_stage_files() -> List[str]:
     return sorted(str(p.relative_to(CORE_DIR)) for p in stage_dir.glob("*.yaml"))
 
 
-def _build_snapshot() -> Dict[str, Any]:
-    commit = _git("rev-parse", "--short", "HEAD")
-    version = _get_core_version()
-    author = _git("config", "user.name") or None
-    email = _git("config", "user.email") or None
+def _prepare_temp_extract(tarball: Path) -> Path:
+    """Extract *tarball* into a temporary directory and return the path."""
+    import tempfile
+    tmpdir = Path(tempfile.mkdtemp(prefix="core_snapshot_extract_"))
+    with tarfile.open(tarball, "r:*") as tf:
+        tf.extractall(tmpdir)
+    return tmpdir
+
+
+def _build_snapshot(core_root: Path) -> Dict[str, Any]:
+    # commit may be unavailable in extracted tarball
+    commit = _git("rev-parse", "--short", "HEAD", cwd=core_root) if (core_root / ".git").exists() else "TARBALL"
+    # ... version reading from core_root
+    pyproject = core_root / "pyproject.toml"
+    version = "UNKNOWN"
+    if pyproject.exists():
+        for line in pyproject.read_text().splitlines():
+            if line.strip().startswith("version"):
+                version = line.split("=")[-1].strip().strip('"')
+                break
+    author = _git("config", "user.name", cwd=core_root) or None
+    email = _git("config", "user.email", cwd=core_root) or None
+
+    stage_dir = core_root / "server_prompts" / "stages"
+    stage_files = sorted(str(p.relative_to(core_root)) for p in stage_dir.glob("*.yaml")) if stage_dir.exists() else []
+
+    # tool specs skipped when tarball because import path not on PYTHONPATH; best-effort
+    tool_specs: List[Dict[str, Any]] = []
+    if core_root == WORKSPACE_ROOT:
+        tool_specs = _get_tool_specs()
 
     snapshot: Dict[str, Any] = {
         "type": "core_snapshot",
@@ -102,8 +128,8 @@ def _build_snapshot() -> Dict[str, Any]:
         "created": _dt.datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "author": author,
         "author_email": email,
-        "stage_files": _get_stage_files(),
-        "tool_specs": _get_tool_specs(),
+        "stage_files": stage_files,
+        "tool_specs": tool_specs,
     }
     return snapshot
 
@@ -115,11 +141,19 @@ def _build_snapshot() -> Dict[str, Any]:
 @app.command()
 def run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not embed, just print YAML"),
+    tarball: Path | None = typer.Option(None, "--tarball", exists=True, file_okay=True, dir_okay=False, help="Path to a core snapshot tarball. If supplied, snapshot is built from extracted archive instead of current workspace."),
     chroma_host: str = typer.Option("localhost", help="ChromaDB host"),
     chroma_port: int = typer.Option(8000, help="ChromaDB port"),
 ):
     """Generate snapshot (and optionally embed it)."""
-    snapshot = _build_snapshot()
+    core_root = WORKSPACE_ROOT
+    temp_dir: Path | None = None
+    if tarball:
+        typer.secho(f"[INFO] Using tarball {tarball} for snapshot generation", fg=typer.colors.BLUE)
+        temp_dir = _prepare_temp_extract(tarball)
+        core_root = temp_dir
+
+    snapshot = _build_snapshot(core_root)
 
     yaml_doc = yaml.safe_dump(snapshot, sort_keys=False)
 
@@ -189,6 +223,10 @@ def run(
             "--chroma-host", chroma_host,
             "--chroma-port", str(chroma_port),
         ])
+
+    if temp_dir:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     typer.secho("[SUCCESS] Core snapshot embedded.", fg=typer.colors.GREEN)
 
