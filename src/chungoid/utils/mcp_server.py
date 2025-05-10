@@ -28,6 +28,7 @@ import subprocess
 import yaml
 from .core_snapshot_utils import build_snapshot
 from .core_snapshot_utils import _get_tool_specs  # internal helper
+from .flow_registry import FlowRegistry, FlowCard  # NEW
 
 # Reflection model & store (for /reflection endpoint)
 from typing import TYPE_CHECKING
@@ -172,21 +173,21 @@ async def add_reflection(
 
 
 # ---------------------------------------------------------------------------
-# Reflection query endpoint
+# Reflection query endpoint (read-only)
 # ---------------------------------------------------------------------------
 
 @app.get("/reflection", tags=["reflection"])
-async def list_reflections(
+async def query_reflections(
     conversation_id: str | None = None,
     agent_id: str | None = None,
     limit: int = 100,
 ):
-    """Return reflections filtered by conversation / agent.
+    """Return reflections matching optional filters.
 
-    No API-key required for read-only access (could be tightened later).
+    No authentication enforced for reads (subject to change).
     """
 
-    if ReflectionStore is None or Reflection is None:
+    if ReflectionStore is None:
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Reflection subsystem unavailable",
@@ -194,17 +195,70 @@ async def list_reflections(
 
     try:
         store = ReflectionStore(project_root=Path.cwd())
-        reflections = store.query(
-            conversation_id=conversation_id,
-            agent_id=agent_id,
-            limit=limit,
-        )
-        return [r.dict() for r in reflections]
-    except Exception as exc:  # pylint: disable=broad-except
-        raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+        results = store.query(conversation_id=conversation_id, agent_id=agent_id, limit=limit)
+        return [r.dict() for r in results]
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Flow Registry helper & endpoints
+# ---------------------------------------------------------------------------
+
+# Choose in-memory store automatically when running under pytest to avoid
+# touching the developer's persistent DB.
+_FLOW_REG_MODE = (
+    "memory" if any(k.startswith("PYTEST_") for k in os.environ) else os.getenv("FLOW_REGISTRY_MODE", "persistent")
+)
+
+_flow_registry = FlowRegistry(project_root=Path.cwd(), chroma_mode=_FLOW_REG_MODE)
+
+
+@app.get("/flows", tags=["flow"])
+async def list_flows(limit: int = 100):
+    """Return brief metadata for recent flows (no auth)."""
+    cards = _flow_registry.list(limit=limit)
+    return [c.model_dump(exclude={"yaml_text"}) for c in cards]
+
+
+@app.get("/flows/{flow_id}", tags=["flow"])
+async def get_flow(flow_id: str):
+    """Return full FlowCard for given *flow_id*."""
+    card = _flow_registry.get(flow_id)
+    if card is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Flow not found")
+    return card.model_dump()
+
+
+@app.post("/flows", tags=["flow"])
+async def add_flow(
+    payload: Dict[str, Any],
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+):
+    """Add a new flow definition to the registry (API-key protected)."""
+    _check_api_key(x_api_key)
+
+    required = {"flow_id", "name", "yaml_text"}
+    missing = required - payload.keys()
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Missing fields: {', '.join(sorted(missing))}")
+
+    card = FlowCard(
+        flow_id=payload["flow_id"],
+        name=payload["name"],
+        yaml_text=payload["yaml_text"],
+        description=payload.get("description"),
+        version=payload.get("version", "0.1"),
+        tags=payload.get("tags", []),
+        owner=payload.get("owner"),
+    )
+
+    try:
+        _flow_registry.add(card, overwrite=bool(payload.get("overwrite", False)))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return JSONResponse({"status": "ok", "flow_id": card.flow_id})
 
 
 # ---------------------------------------------------------------------------
