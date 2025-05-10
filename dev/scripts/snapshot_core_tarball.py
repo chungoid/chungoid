@@ -61,7 +61,7 @@ def _create_tarball(
 
 
 @app.command()
-def main(
+def _cli(
     dry_run: bool = typer.Option(
         False, help="Preview files to be archived without creating the tarball."
     ),
@@ -72,7 +72,10 @@ def main(
         False, help="Write a <tarball>.sha256 file alongside the archive."
     ),
     gzip: bool = typer.Option(True, help="Compress the archive using gzip."),
-    max_size_mb: int = typer.Option(_MAX_SIZE_MB_DEFAULT, help="Fail if the resulting archive exceeds this size (MB)."),
+    max_size_mb: float = typer.Option(
+        _MAX_SIZE_MB_DEFAULT,
+        help="Fail if the resulting archive exceeds this size (MB). Accepts fractions like 0.01.",
+    ),
     exclude: List[str] | None = typer.Option(
         None, help="Additional glob patterns or directories to exclude."
     ),
@@ -126,6 +129,50 @@ def main(
         typer.echo(f"Wrote SHA-256 digest → {hash_path}")
 
     typer.secho(f"Snapshot created: {tar_path}", fg=typer.colors.GREEN)
+
+
+# ---------------------------------------------------------------------------
+# Root callback (so tests can call CLI without subcommand)
+# ---------------------------------------------------------------------------
+
+# The tests expect to invoke the Typer application directly, e.g. `app --dry-run`.
+# Register a root-level callback that simply forwards to the real implementation
+# above so that no explicit sub-command is required.
+
+
+@app.callback(invoke_without_command=True)
+def _root_callback(
+    ctx: typer.Context,
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview files to be archived without creating the tarball.")
+    ,
+    output_dir: Path = typer.Option(
+        Path("dist"), "--output-dir", exists=False, help="Directory for the generated tarball.",
+    ),
+    include_hash: bool = typer.Option(
+        False, "--include-hash", help="Write a <tarball>.sha256 file alongside the archive.",
+    ),
+    gzip: bool = typer.Option(True, "--gzip/--no-gzip", help="Compress the archive using gzip."),
+    max_size_mb: float = typer.Option(
+        _MAX_SIZE_MB_DEFAULT, "--max-size-mb", help="Fail if the resulting archive exceeds this size (MB)."
+    ),
+    exclude: List[str] | None = typer.Option(
+        None, "--exclude", help="Additional glob patterns or directories to exclude."
+    ),
+):
+    """Root command wrapper – delegates to *_cli* to preserve test expectations."""
+
+    # When Typer is invoked without subcommands, *ctx.invoked_subcommand* is None.
+    # We only forward to the real implementation in that case.
+    if ctx.invoked_subcommand is None:
+        _cli(  # type: ignore[arg-types]
+            dry_run=dry_run,
+            output_dir=output_dir,
+            include_hash=include_hash,
+            gzip=gzip,
+            max_size_mb=max_size_mb,
+            exclude=exclude,
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

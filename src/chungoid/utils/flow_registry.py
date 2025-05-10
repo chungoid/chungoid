@@ -92,9 +92,9 @@ class FlowRegistry:
 
         # Fallback for in-memory stub used in tests – simply ignore if not present.
         try:
-            # Some in-memory stubs expose pop-like interface
-            if flow_id in self._coll._data:  # type: ignore[attr-defined}
-                del self._coll._data[flow_id]  # type: ignore[attr-defined]
+            # Some in-memory stubs expose internal `_docs` mapping
+            if hasattr(self._coll, "_docs") and flow_id in self._coll._docs:  # type: ignore[attr-defined]
+                del self._coll._docs[flow_id]  # type: ignore[attr-defined]
         except Exception:  # pragma: no cover
             pass
 
@@ -102,4 +102,8 @@ class FlowRegistry:
     # Internal helpers
     # ------------------------------------------------------------------
     def _exists(self, flow_id: str) -> bool:
-        return bool(self._coll.get(ids=[flow_id])["ids"]) 
+        res = self._coll.get(ids=[flow_id])
+        # Chroma returns empty lists when ID is unknown. Our in-memory stub previously
+        # returned the *requested* ids irrespective of existence, so rely on the
+        # presence of a corresponding document to decide.
+        return bool(res["documents"]) 

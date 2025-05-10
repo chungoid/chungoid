@@ -99,22 +99,23 @@ def _prepare_temp_extract(tarball: Path) -> Path:
     return tmpdir
 
 
-def _build_snapshot(core_root: Path) -> Dict[str, Any]:
+def _build_snapshot(core_root: Path | None = None) -> Dict[str, Any]:
     # commit may be unavailable in extracted tarball
-    commit = _git("rev-parse", "--short", "HEAD", cwd=core_root) if (core_root / ".git").exists() else "TARBALL"
+    base_root = core_root or CORE_DIR
+    commit = _git("rev-parse", "--short", "HEAD", cwd=base_root) if (base_root / ".git").exists() else "TARBALL"
     # ... version reading from core_root
-    pyproject = core_root / "pyproject.toml"
+    pyproject = base_root / "pyproject.toml"
     version = "UNKNOWN"
     if pyproject.exists():
         for line in pyproject.read_text().splitlines():
             if line.strip().startswith("version"):
                 version = line.split("=")[-1].strip().strip('"')
                 break
-    author = _git("config", "user.name", cwd=core_root) or None
-    email = _git("config", "user.email", cwd=core_root) or None
+    author = _git("config", "user.name", cwd=base_root) or None
+    email = _git("config", "user.email", cwd=base_root) or None
 
-    stage_dir = core_root / "server_prompts" / "stages"
-    stage_files = sorted(str(p.relative_to(core_root)) for p in stage_dir.glob("*.yaml")) if stage_dir.exists() else []
+    stage_dir = base_root / "server_prompts" / "stages"
+    stage_files = sorted(str(p.relative_to(base_root)) for p in stage_dir.glob("*.yaml")) if stage_dir.exists() else []
 
     # tool specs skipped when tarball because import path not on PYTHONPATH; best-effort
     tool_specs: List[Dict[str, Any]] = []
