@@ -232,5 +232,16 @@ def run(
     typer.secho("[SUCCESS] Core snapshot embedded.", fg=typer.colors.GREEN)
 
 
+# Add a trivial root callback so Typer keeps `run` as an explicit sub-command
+# (otherwise, with a single command, Typer promotes it to the root command and
+# passing the word "run" becomes an "unexpected extra argument").
+
+
+@app.callback(invoke_without_command=False)
+def _root() -> None:  # pragma: no cover
+    """Top-level callback (does nothing). Keeps `run` as a sub-command."""
+    pass
+
+
 if __name__ == "__main__":
     app() 
