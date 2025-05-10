@@ -86,3 +86,13 @@ def test_embed_snapshot_with_tarball(tmp_path: Path) -> None:
     result = runner.invoke(embed_mod.app, ["run", "--dry-run", "--tarball", str(tarball)])
     assert result.exit_code == 0, result.output
     assert "core_snapshot" in result.output 
+
+def test_size_guard_triggers(tmp_path: Path) -> None:
+    """CLI should fail with non-zero exit when max_size_mb is set lower than archive size and should clean up file."""
+    cli_module = _load_cli_module()
+    result = runner.invoke(
+        cli_module.app,
+        ["--output-dir", str(tmp_path), "--max-size-mb", "0.01"],
+    )
+    assert result.exit_code == 1, result.output
+    assert not list(tmp_path.glob("core_snapshot_*.tar.gz")), "Tarball should be removed on failure" 
