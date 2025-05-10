@@ -91,11 +91,21 @@ def _get_stage_files() -> List[str]:
 
 
 def _prepare_temp_extract(tarball: Path) -> Path:
-    """Extract *tarball* into a temporary directory and return the path."""
+    """Extract *tarball* into a temporary directory and return the path.
+
+    Some archives may contain files with restrictive permissions (e.g. root‐only
+    sockets from local dev runs).  We attempt a best-effort extraction and skip
+    members that raise `PermissionError` so the snapshot process can still
+    succeed (we only need metadata like `pyproject.toml`)."""
     import tempfile
     tmpdir = Path(tempfile.mkdtemp(prefix="core_snapshot_extract_"))
     with tarfile.open(tarball, "r:*") as tf:
-        tf.extractall(tmpdir)
+        for member in tf.getmembers():
+            try:
+                tf.extract(member, tmpdir, set_attrs=False)
+            except PermissionError:
+                # Skip problematic entry; not fatal for snapshot generation
+                continue
     return tmpdir
 
 

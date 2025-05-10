@@ -35,7 +35,7 @@ _DEFAULT_EXCLUDES: Set[str] = {
     ".env",
 }
 
-_MAX_SIZE_MB_DEFAULT = 200
+_MAX_SIZE_MB_DEFAULT = 1500
 
 
 def _should_include(path: Path, exclude_patterns: Set[str]) -> bool:
