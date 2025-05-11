@@ -18,8 +18,8 @@ def create_prompt_tree(tmp_path: Path):
     # Stage 0 file
     (stages_dir / "stage0.yaml").write_text(
         """\
-    system_prompt: "Sys {{ value }}"
-    user_prompt: "User {{ value }}"
+    system_prompt: "Sys {{ context_data.value }}"
+    user_prompt: "User {{ context_data.value }}"
     prompt_details: Something
     """
     )

@@ -295,8 +295,8 @@ class PromptManager:
                  raise PromptLoadError(f"Stage {stage_number} definition is missing both 'system_prompt' and 'user_prompt'.")
 
             # Merge context: Stage-specific context overrides common context if keys conflict
-            # For now, just pass the provided context_data
-            render_context = context_data
+            # Wrap context_data in a dict so templates can use {{ context_data.key }}
+            render_context = {"context_data": context_data}
 
             # Render parts
             rendered_system = ""

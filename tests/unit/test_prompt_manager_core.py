@@ -1,56 +1,77 @@
-import unittest
-import tempfile
-from pathlib import Path
-import shutil
-from chungoid.utils.prompt_manager import PromptManager, PromptLoadError
 import pytest
+from pathlib import Path
+from chungoid.utils.prompt_manager import PromptManager, PromptLoadError
 
-pytestmark = pytest.mark.legacy
+# Original unittest.TestCase and pytestmark removed
 
-class TestPromptManagerCore(unittest.TestCase):
-    """Covers loading & rendering logic of PromptManager with minimal YAML."""
+@pytest.fixture
+def prompt_manager_core_setup_valid(tmp_path: Path):
+    """Sets up a valid prompt structure for successful rendering tests."""
+    stages_dir = tmp_path / "stages"
+    stages_dir.mkdir()
+    common_file = tmp_path / "common.yaml"
 
-    def setUp(self):
-        # temp dir with stage definitions and common template
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.stages_dir = self.temp_dir / "stages"
-        self.stages_dir.mkdir()
-        self.common_file = self.temp_dir / "common.yaml"
+    common_file.write_text(
+        """preamble: |\n  PRE\npostamble: |\n  POST\n""", encoding="utf-8"
+    )
 
-        # minimal common template
-        self.common_file.write_text("""preamble: |\n  PRE\npostamble: |\n  POST\n""", encoding="utf-8")
+    (stages_dir / "stage0.yaml").write_text(
+        """
+        system_prompt: "Greetings {{ context_data.name }}"
+        user_prompt: "What is up?"
+        prompt_details: "Details for stage 0"
+        """,
+        encoding="utf-8",
+    )
+    return stages_dir, common_file
 
-        # stage0 definition (valid)
-        (self.stages_dir / "stage0.yaml").write_text(
-            """
-            system_prompt: "Greetings {{ name }}"
-            user_prompt: "What is up?"
-            """,
-            encoding="utf-8",
-        )
-        # stage1 missing keys (invalid)
-        (self.stages_dir / "stage1.yaml").write_text(
-            """
-            system_prompt: "Only system prompt"
-            """,
-            encoding="utf-8",
-        )
 
-    def tearDown(self):
-        shutil.rmtree(self.temp_dir)
+@pytest.fixture
+def prompt_manager_core_setup_invalid_stage(tmp_path: Path):
+    """Sets up a prompt structure with one invalid stage file for error testing."""
+    stages_dir = tmp_path / "stages"
+    stages_dir.mkdir()
+    common_file = tmp_path / "common.yaml"
 
-    def test_render_prompt_success(self):
-        pm = PromptManager(server_stages_dir=str(self.stages_dir), common_template_path=str(self.common_file))
-        rendered = pm.get_rendered_prompt(0, {"name": "Alice"})
-        # Ensure context substituted and common pre/post not empty
-        self.assertIn("Alice", rendered)
-        self.assertIn("PRE", rendered)
-        self.assertIn("POST", rendered)
+    common_file.write_text(
+        """preamble: |\n  PRE\npostamble: |\n  POST\n""", encoding="utf-8"
+    )
 
-    def test_load_stage_missing_keys_raises(self):
-        # Expect PromptLoadError on init because stage1 lacks 'user_prompt'
-        with self.assertRaises(PromptLoadError):
-            PromptManager(server_stages_dir=str(self.stages_dir), common_template_path=str(self.common_file))
+    # Valid stage0 (might not be loaded if invalid stage1 causes early init failure)
+    (stages_dir / "stage0.yaml").write_text(
+        """
+        system_prompt: "Greetings {{ context_data.name }}"
+        user_prompt: "What is up?"
+        prompt_details: "Details for stage 0"
+        """,
+        encoding="utf-8",
+    )
 
-if __name__ == "__main__":
-    unittest.main() 
+    # Invalid stage1 (missing user_prompt and prompt_details)
+    (stages_dir / "stage1.yaml").write_text(
+        """system_prompt: "Only system prompt"        
+        """,  # Note: Original had '"""system_prompt: "Only system prompt"        """' which has extra quote. Corrected.
+        encoding="utf-8"
+    )
+    return stages_dir, common_file
+
+
+def test_core_render_prompt_success(prompt_manager_core_setup_valid):
+    """Tests successful prompt rendering with valid setup."""
+    stages_dir, common_file = prompt_manager_core_setup_valid
+    pm = PromptManager(
+        server_stages_dir=str(stages_dir), common_template_path=str(common_file)
+    )
+    rendered = pm.get_rendered_prompt(0, {"name": "Alice"})
+    assert "Alice" in rendered
+    assert "PRE" in rendered
+    assert "POST" in rendered
+
+
+def test_core_load_stage_missing_keys_raises(prompt_manager_core_setup_invalid_stage):
+    """Tests that PromptLoadError is raised if a stage file is missing required keys."""
+    stages_dir, common_file = prompt_manager_core_setup_invalid_stage
+    with pytest.raises(PromptLoadError):
+        PromptManager(
+            server_stages_dir=str(stages_dir), common_template_path=str(common_file)
+        ) 
