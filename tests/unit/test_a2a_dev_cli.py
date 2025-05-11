@@ -30,11 +30,28 @@ class _LocalTransport(httpx.BaseTransport):
         # Convert httpx request to ASGI via TestClient
         method = request.method
         url = request.url
-        path = url.raw_path.decode()
-        query = url.raw_query.decode()
+
+        # Get decoded path (e.g. "/my/path")
+        path_only_str = url.path
+        
+        # Get raw query bytes (e.g. b"a=1&b=2") and decode to string
+        query_bytes = url.query
+        query_str = query_bytes.decode() if query_bytes else ""
+
+        # Construct the target URL path for TestClient (e.g. "/my/path?a=1&b=2")
+        target_url_for_client = path_only_str
+        if query_str:
+            target_url_for_client += "?" + query_str
+
         headers = dict(request.headers)
-        body = request.read()
-        response = self._client.request(method, path + ("?" + query if query else ""), headers=headers, content=body)
+        body_content = request.read() # Use a different name to avoid conflict with TestClient params
+        
+        response = self._client.request(
+            method,
+            target_url_for_client,
+            headers=headers,
+            content=body_content # Pass content/body correctly
+        )
         return httpx.Response(
             status_code=response.status_code,
             headers=response.headers,
@@ -48,12 +65,21 @@ def test_cli_send_and_pull(monkeypatch, tmp_path):
 
     test_client = TestClient(app)
     transport = _LocalTransport(test_client)
-    monkeypatch.setattr(cli, "httpx", httpx)  # ensure module imported
-    monkeypatch.setattr(cli.httpx, "Client", lambda *a, **kw: _patched_api(*a, **kw))
 
-    # Patch _API to use our custom client
-    def _patched_api(*a, **kw):  # noqa: D401
-        return httpx.Client(*a, transport=transport, **kw)
+    # Ensure cli.httpx points to the global httpx from the test file
+    monkeypatch.setattr(cli, "httpx", httpx)
+
+    # Store the original httpx.Client constructor from the (now global) httpx module
+    original_httpx_client_constructor = httpx.Client 
+
+    # Define the replacement constructor that will be used by the patched code
+    def patched_client_constructor(*a, **kw):
+        kw.pop('transport', None) # Remove any transport passed by original code
+        # Use the original constructor to create the client, but with our special transport
+        return original_httpx_client_constructor(*a, transport=transport, **kw)
+
+    # Patch httpx.Client (which cli.httpx.Client now refers to) to use our replacement
+    monkeypatch.setattr(cli.httpx, "Client", patched_client_constructor)
 
     # Write reflection JSON file
     payload = {

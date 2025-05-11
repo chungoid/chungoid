@@ -34,10 +34,14 @@ def _branching_yaml(tmp_path: Path) -> Path:
         stages:
           s1:
             agent_id: a1
-            next_if:
-              always: s2
+            next:
+              condition: "input == 'force_true_path'" # Condition expects 'input' from context
+              "true": s2 # Quoted key
+              "false": s_end_false_branch # Quoted key, schema requires a string here
           s2:
             agent_id: a2
+          s_end_false_branch: # Dummy stage for schema compliance
+            agent_id: a_dummy_end
         """
     )
     p = tmp_path / "branching.yaml"
@@ -51,9 +55,10 @@ def _input_branching_yaml(tmp_path: Path) -> Path:
         stages:
           s1:
             agent_id: a1
-            next_if:
-              "input == foo": s2
-              always: s3
+            next:
+              condition: "input == 'foo'" # Note: string values in conditions need quotes
+              "true": s2 # Quoted key
+              "false": s3 # Quoted key
           s2:
             agent_id: a2
           s3:
@@ -72,7 +77,7 @@ def test_cli_sync(tmp_path: Path):
 
 def test_cli_branching(tmp_path: Path):
     flow_file = _branching_yaml(tmp_path)
-    result = runner.invoke(cli_mod.app, [str(flow_file)])
+    result = runner.invoke(cli_mod.app, [str(flow_file), "--input", "force_true_path"])
     assert result.exit_code == 0
     assert "s1" in result.output and "s2" in result.output 
 

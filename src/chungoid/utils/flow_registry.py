@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
+import json
 
 from pydantic import BaseModel, Field
 
@@ -63,26 +64,69 @@ class FlowRegistry:
                 raise ValueError(f"Flow {card.flow_id} already exists")
             # If overwriting, remove first to avoid duplicate ids error
             self.remove(card.flow_id)
-        meta = card.model_dump(exclude={"yaml_text"})
-        self._coll.add(ids=[card.flow_id], documents=[card.yaml_text], metadatas=[meta])
+
+        # Define fields to exclude from direct dump IF they are handled separately
+        # or are not part of metadata (like yaml_text).
+        # `tags` is a list and will be serialized to _tags_str.
+        excluded_fields_for_dump = {"yaml_text", "tags"}
+
+        meta_from_model = card.model_dump(exclude=excluded_fields_for_dump)
+
+        final_chroma_meta = {}
+        for key, value in meta_from_model.items():
+            if value is None: # Exclude keys if value is None (e.g., description, owner)
+                continue
+            if isinstance(value, datetime): # Explicitly convert datetime to ISO string
+                final_chroma_meta[key] = value.isoformat()
+            else:
+                # Assumes str, int, float, bool are Chroma-compatible
+                final_chroma_meta[key] = value
+
+        # Serialize 'tags' list to string
+        # Store as empty string if card.tags is None (it's default_factory=list, so not None) or empty.
+        final_chroma_meta["_tags_str"] = ",".join(card.tags or [])
+
+        self._coll.add(ids=[card.flow_id], documents=[card.yaml_text], metadatas=[final_chroma_meta])
 
     def get(self, flow_id: str) -> Optional[FlowCard]:
         res = self._coll.get(ids=[flow_id])
         # Chroma may return empty lists if *flow_id* was not found or after deletion.
         if not res["documents"]:
             return None
+        
         doc = res["documents"][0]
-        meta = res["metadatas"][0]
-        meta["yaml_text"] = doc
-        return FlowCard.model_validate(meta)
+        retrieved_meta_from_chroma = res["metadatas"][0].copy()
+
+        # Data to build FlowCard
+        card_data = retrieved_meta_from_chroma # Start with what Chroma gave us
+        card_data["yaml_text"] = doc # Add document back
+
+        # Deserialize 'tags'
+        tags_str = card_data.pop("_tags_str", "") # Default to empty string if key missing
+        card_data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+        
+        # Pydantic will handle parsing ISO strings back to datetime for 'created' and 'updated'.
+        # Optional fields like 'description', 'owner' will be None if they were excluded during add and thus missing.
+        return FlowCard.model_validate(card_data)
 
     def list(self, limit: int = 100) -> List[FlowCard]:
-        peek = self._coll.peek(limit)
+        peek_results = self._coll.peek(limit=limit) # Pass limit
         cards: List[FlowCard] = []
-        for i, fid in enumerate(peek.get("ids", [])):
-            meta = peek["metadatas"][i]
-            meta["yaml_text"] = peek["documents"][i]
-            cards.append(FlowCard.model_validate(meta))
+        
+        retrieved_ids = peek_results.get("ids", []) 
+        retrieved_metadatas = peek_results.get("metadatas", [])
+        retrieved_documents = peek_results.get("documents", [])
+
+        for i in range(len(retrieved_ids)):
+            current_chroma_meta = retrieved_metadatas[i].copy()
+            
+            card_data = current_chroma_meta
+            card_data["yaml_text"] = retrieved_documents[i]
+
+            tags_str = card_data.pop("_tags_str", "")
+            card_data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+            
+            cards.append(FlowCard.model_validate(card_data))
         return cards
 
     def remove(self, flow_id: str) -> None:

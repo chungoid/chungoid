@@ -17,7 +17,7 @@ import os
 import sys
 import tarfile
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Optional
 
 import typer
 
@@ -60,6 +60,32 @@ def _create_tarball(
             tar.add(fs_path, arcname=str(fs_path.relative_to(root)))
 
 
+def find_repo_root(start_path: Path) -> Optional[Path]:
+    """Search upwards from start_path to find the metachungoid repository root."""
+    current = start_path.resolve()
+    # Stop at filesystem root or if current stops changing (e.g. permissions error)
+    while current != current.parent:
+        # Reliable markers for metachungoid project root:
+        # - .git directory
+        # - A pyproject.toml file (the meta-project one)
+        # - A chungoid-core subdirectory
+        if (
+            (current / ".git").is_dir()
+            and (current / "pyproject.toml").is_file()
+            and (current / "chungoid-core").is_dir()
+        ):
+            return current
+        current = current.parent
+    # Check the last path if loop terminated because current == current.parent (filesystem root)
+    if (
+        (current / ".git").is_dir()
+        and (current / "pyproject.toml").is_file()
+        and (current / "chungoid-core").is_dir()
+    ):
+        return current
+    return None
+
+
 @app.command()
 def _cli(
     dry_run: bool = typer.Option(
@@ -86,12 +112,42 @@ def _cli(
     script from the repository root for predictable results.
     """
 
-    repo_root = Path.cwd()
-    if (repo_root / "pyproject.toml").exists() is False:
+    initial_cwd = Path.cwd()
+    repo_root = find_repo_root(initial_cwd)
+
+    if repo_root is None:
         typer.secho(
-            "[warning] Running outside repository root – tarball contents may be unexpected.",
-            fg=typer.colors.YELLOW,
+            f"[ERROR] Could not determine the metachungoid repository root from {initial_cwd}. Ensure script is run from within the project.",
+            fg=typer.colors.RED,
         )
+        raise typer.Exit(code=1)
+
+    if initial_cwd != repo_root:
+        # This warning is about the CWD of invocation, not about the resolved repo_root.
+        # The old warning was about (repo_root / "pyproject.toml").exists()
+        # which is now part of find_repo_root.
+        typer.secho(
+            f"[info] Script invoked from {initial_cwd}, repository root identified as {repo_root}.",
+            fg=typer.colors.BLUE, # Changed to info, as it's not necessarily a problem now
+        )
+    
+    # Check for the meta-project's pyproject.toml at the identified repo_root to be sure
+    if not (repo_root / "pyproject.toml").is_file():
+         typer.secho(
+            f"[ERROR] Identified repo root {repo_root} does not contain a pyproject.toml. This is unexpected.",
+            fg=typer.colors.RED,
+        )
+         raise typer.Exit(code=1)
+
+
+    # Define the root for archiving to be the chungoid-core directory
+    core_project_root = repo_root / "chungoid-core"
+    if not core_project_root.is_dir():
+        typer.secho(
+            f"[ERROR] chungoid-core directory not found at {core_project_root}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
 
     excludes: Set[str] = set(_DEFAULT_EXCLUDES)
     if exclude:
@@ -110,7 +166,7 @@ def _cli(
         )
         sys.exit(0)
 
-    _create_tarball(repo_root, tar_path, excludes, gzip=gzip)
+    _create_tarball(core_project_root, tar_path, excludes, gzip=gzip)
 
     # Size check
     size_mb = tar_path.stat().st_size / (1024 * 1024)
