@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Agent registry backed by Chroma collection `a2a_agent_registry`."""
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -24,6 +24,7 @@ class AgentCard(BaseModel):
     stage_focus: Optional[str] = None
     capabilities: List[str] = Field(default_factory=list)
     tool_names: List[str] = Field(default_factory=list)
+    mcp_tool_input_schemas: Optional[Dict[str, Any]] = Field(None, description="Summarized input schemas for exposed MCP tools.")
     metadata: dict = Field(default_factory=dict)
     created: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -41,7 +42,7 @@ class AgentRegistry:
             if not overwrite:
                 raise ValueError(f"Agent {card.agent_id} already exists")
         
-        excluded_fields_for_dump = {"description", "capabilities", "tool_names", "metadata"}
+        excluded_fields_for_dump = {"description", "capabilities", "tool_names", "mcp_tool_input_schemas", "metadata"}
         # Dump the model. Datetimes will be included here as datetime objects by default
         # if mode='python' (default for model_dump).
         meta_from_model = card.model_dump(exclude=excluded_fields_for_dump) 
@@ -70,6 +71,9 @@ class AgentRegistry:
         # Ensure it's always present as a string (empty JSON object if original is None/empty)
         final_chroma_meta["_agent_card_metadata_json"] = json.dumps(card.metadata or {})
 
+        # Serialize the new mcp_tool_input_schemas field
+        final_chroma_meta["_mcp_tool_input_schemas_json"] = json.dumps(card.mcp_tool_input_schemas or {})
+
         self._coll.add(ids=[card.agent_id], documents=[card.description or ""], metadatas=[final_chroma_meta])
 
     def get(self, agent_id: str) -> Optional[AgentCard]:
@@ -96,6 +100,10 @@ class AgentRegistry:
         metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}") # Default to empty JSON object string
         card_data["metadata"] = json.loads(metadata_json_str)
         
+        # Deserialize the new mcp_tool_input_schemas field
+        mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "{}")
+        card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
+
         # Fields like 'agent_id', 'name', 'stage_focus', 'created' (as ISO string)
         # are expected to be directly in card_data and will be validated by Pydantic.
         # Pydantic automatically converts ISO strings to datetime objects for datetime fields.
@@ -125,6 +133,10 @@ class AgentRegistry:
             metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}")
             card_data["metadata"] = json.loads(metadata_json_str)
             
+            # Deserialize the new mcp_tool_input_schemas field
+            mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "{}")
+            card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
+
             # Pydantic will handle 'created' (from ISO string in card_data) and other direct fields.
             cards.append(AgentCard.model_validate(card_data))
         return cards
