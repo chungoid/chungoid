@@ -142,7 +142,7 @@ Requires-Dist: build==1.2.2.post1; extra == "dev"
 Provides-Extra: docs
 Requires-Dist: Sphinx~=7.2.6; extra == "docs"
 Requires-Dist: sphinx-rtd-theme==3.0.2; extra == "docs"
-Requires-Dist: alabaster==1.0.0; extra == "docs"
+Requires-Dist: alabaster<0.8,>=0.7; extra == "docs"
 Requires-Dist: Babel==2.17.0; extra == "docs"
 Requires-Dist: imagesize==1.4.1; extra == "docs"
 Requires-Dist: snowballstemmer==2.2.0; extra == "docs"

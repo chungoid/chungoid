@@ -9,6 +9,7 @@ src/chungoid/mcp.py
 src/chungoid/runtime/__init__.py
 src/chungoid/runtime/orchestrator.py
 src/chungoid/schemas/__init__.py
+src/chungoid/schemas/common_enums.py
 src/chungoid/schemas/stage_flow_schema.json
 src/chungoid/utils/__init__.py
 src/chungoid/utils/agent_registry.py

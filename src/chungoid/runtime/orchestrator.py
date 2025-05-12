@@ -8,11 +8,21 @@ surface incrementally.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Callable, Awaitable
 
 import datetime as _dt
+from datetime import datetime, timezone
 import yaml
 from pydantic import BaseModel, Field, ConfigDict
+from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider
+from chungoid.utils.state_manager import StateManager
+from chungoid.schemas.common_enums import StageStatus
+from chungoid.schemas.errors import AgentErrorDetails
+from chungoid.schemas.flows import PausedRunDetails
+
+import logging
+import traceback
+import copy
 
 __all__ = [
     "StageSpec",
@@ -32,7 +42,11 @@ class StageSpec(BaseModel):
 
     agent_id: str = Field(..., description="ID of the agent to invoke for this stage")
     inputs: Optional[dict] = Field(None, description="Input parameters for the agent")
-    next: Optional[Any] = Field(None, description="Next stage or conditional object")
+    condition: Optional[str] = Field(None, description="Condition for branching")
+    next_stage_true: Optional[str] = Field(None, description="Next stage if condition is true")
+    next_stage_false: Optional[str] = Field(None, description="Next stage if condition is false")
+    next_stage: Optional[str] = Field(None, description="Next stage or conditional object")
+    number: Optional[float] = Field(None, description="Unique stage number for status tracking")
     on_error: Optional[Any] = Field(None, description="Error handler stage or conditional object")
     parallel_group: Optional[str] = Field(None, description="Group name for parallel execution")
     plugins: Optional[List[str]] = Field(None, description="List of plugin names to apply at this stage")
@@ -89,128 +103,110 @@ class SyncOrchestrator:
     replaced by real agent invocation later.
     """
 
-    def __init__(self, plan: ExecutionPlan, *, metrics_store: "Optional[MetricsStore]" = None) -> None:
-        self.plan = plan
-        self._metrics_store = metrics_store
+    def __init__(self, project_config: Dict[str, Any]):
+        self.project_config = project_config
+        self.logger = logging.getLogger(__name__)
 
-    def run(self, *, max_hops: int = 64, context: dict | None = None) -> List[str]:
-        """Execute the plan and return a list of stage names that were 'run'.
-        Supports conditional branching via 'next' and error handling via 'on_error'.
-        """
-        from datetime import datetime, timezone
-        import time
+    def _parse_condition(self, condition_str: str, context: Dict[str, Any]) -> bool:
+        if not condition_str:
+            return True # No condition means proceed
 
-        visited: List[str] = []
-        run_id = context.get("_run_id") if context else None
-        if run_id is None:
-            import uuid
-
-            run_id = str(uuid.uuid4())
-            if context is not None:
-                context["_run_id"] = run_id
-
-        current = self.plan.start_stage
-        context = context or {}
-        for _ in range(max_hops):
-            stage_name = current
-            start_t = time.perf_counter()
-            status = "success"
-            error_msg: str | None = None
-            try:
-                visited.append(stage_name)
-                stage_spec = self.plan.stages[stage_name]
-                next_stage = None
-                # Handle 'next' field (string, null, or conditional object)
-                next_field = getattr(stage_spec, "next", None)
-                if isinstance(next_field, dict) and next_field.get("condition"):
-                    # Conditional branching
-                    cond = next_field["condition"]
-                    true_stage = next_field["true"]
-                    false_stage = next_field["false"]
-                    if self._eval_condition_expr(cond, context):
-                        next_stage = true_stage
-                    else:
-                        next_stage = false_stage
-                elif isinstance(next_field, str):
-                    next_stage = next_field
-                # If next is null or not set, stop
-                if not next_stage:
-                    break
-                if next_stage not in self.plan.stages:
-                    raise KeyError(f"Unknown next stage '{next_stage}' referenced from '{current}'")
-                current = next_stage
-            except Exception as exc:
-                status = "error"
-                error_msg = str(exc)
-                # Re-raise after recording metric
-                raise
-            finally:
-                duration_ms = int((time.perf_counter() - start_t) * 1000)
-                if self._metrics_store:
-                    from chungoid.utils.metrics_store import MetricEvent
-
-                    evt = MetricEvent(
-                        run_id=run_id,
-                        stage_id=stage_name,
-                        duration_ms=duration_ms,
-                        status=status,
-                        error_message=error_msg,
-                        tags={"flow_id": self.plan.id},
-                    )
-                    try:
-                        self._metrics_store.add(evt)
-                    except Exception:  # pragma: no cover
-                        # Metrics must never break execution path.
-                        pass
-
-        return visited
-
-    @staticmethod
-    def _parse_condition(cond: str):
-        import re
-        pattern = r"^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$"
-        m = re.match(pattern, cond)
-        if not m:
-            return None
-        key, op, val = m.groups()
-        val = val.strip().strip('"\'')
-        return key, op, val
-
-    @staticmethod
-    def _eval_condition(left, op, right):
-        if op == "==":
-            return left == right
-        if op == "!=":
-            return left != right
-        if op == ">":
-            return left > right
-        if op == "<":
-            return left < right
-        if op == ">=":
-            return left >= right
-        if op == "<=":
-            return left <= right
-        return False
-
-    @classmethod
-    def _eval_condition_expr(cls, cond: str, context: dict) -> bool:
-        parsed = cls._parse_condition(cond)
-        if not parsed:
-            return False
-        key, op, val = parsed
-        if key not in context:
-            return False
-        ctx_val = context[key]
+        self.logger.debug(f"Parsing condition: {condition_str}")
+        # Example: "outputs.stage_a.result == 'go_left'"
+        # This needs to be evaluated in the context of `context`
         try:
-            ctx_val_num = float(ctx_val)
-            val_num = float(val)
-            return cls._eval_condition(ctx_val_num, op, val_num)
-        except Exception:
-            # If numeric conversion fails and operator is a numeric comparison, treat as False
-            if op in {">", "<", ">=", "<="}:
+            # Simplified evaluation logic, vulnerable to injection if condition_str is untrusted.
+            # In a real scenario, use a safer evaluation method like ast.literal_eval or a sandbox.
+            
+            # Split by common comparators, check for variable existence before eval
+            parts = []
+            comparator = None
+            if '==' in condition_str:
+                parts = condition_str.split('==', 1)
+                comparator = '=='
+            elif '!=' in condition_str:
+                parts = condition_str.split('!=', 1)
+                comparator = '!='
+            # Add more comparators as needed (>, <, >=, <=, in, not in)
+            else:
+                self.logger.error(f"Unsupported condition format: {condition_str}")
+                return False # Default to false on parse error
+
+            if len(parts) != 2:
+                self.logger.error(f"Invalid condition structure: {condition_str}")
                 return False
-            # Equality/inequality fall back to string compare
-            return cls._eval_condition(str(ctx_val), op, str(val))
+
+            var_path_str = parts[0].strip()
+            expected_value_str = parts[1].strip()
+
+            # Resolve var_path_str from context (e.g., outputs.stage_a.result)
+            current_val = context
+            for key in var_path_str.split('.'):
+                if isinstance(current_val, dict) and key in current_val:
+                    current_val = current_val[key]
+                else:
+                    self.logger.warning(f"Condition variable path '{var_path_str}' not fully found in context.")
+                    return False # Path not found, condition is false
+            
+            # Convert expected_value_str to the type of current_val for comparison
+            # This is a simplification; robust type conversion is needed.
+            try:
+                if isinstance(current_val, bool):
+                    expected_value = expected_value_str.lower() in ['true', '1']
+                elif isinstance(current_val, int):
+                    expected_value = int(expected_value_str.strip("'\""))
+                elif isinstance(current_val, float):
+                    expected_value = float(expected_value_str.strip("'\""))
+                else: # Assume string
+                    expected_value = expected_value_str.strip("'\"") # Remove quotes for string comparison
+            except ValueError as e:
+                self.logger.error(f"Type conversion error for expected value in condition '{condition_str}': {e}")
+                return False
+
+            self.logger.debug(f"Condition check: '{current_val}' {comparator} '{expected_value}'")
+            if comparator == '==':
+                return current_val == expected_value
+            elif comparator == '!=':
+                return current_val != expected_value
+            
+            return False # Should not reach here if comparator is supported
+
+        except Exception as e:
+            self.logger.exception(f"Error evaluating condition '{condition_str}': {e}")
+            return False # Default to false on any error
+
+    def run(self, plan: ExecutionPlan, context: Dict[str, Any]) -> Dict[str, Any]:
+        # This is a placeholder for the synchronous orchestrator logic
+        self.logger.info("SyncOrchestrator.run called (placeholder)")
+        # Simple sequential execution for now, ignoring conditions
+        current_stage_name = plan.start_stage
+        max_hops = len(plan.stages) + 5 # Safety break
+        hops = 0
+
+        while current_stage_name and hops < max_hops:
+            hops += 1
+            if hops >= max_hops:
+                self.logger.warning("Max hops reached, breaking execution.")
+                break
+
+            stage = plan.stages.get(current_stage_name)
+            if not stage:
+                self.logger.error(f"Stage '{current_stage_name}' not found in plan. Aborting.")
+                break
+
+            self.logger.info(f"Executing stage: {current_stage_name} (Agent: {stage.agent_id})")
+            # Placeholder for actual agent execution and context update
+            # context['outputs'][current_stage_name] = {"message": f"Output from {current_stage_name}"}
+            
+            if stage.condition:
+                if self._parse_condition(stage.condition, context):
+                    current_stage_name = stage.next_stage_true
+                else:
+                    current_stage_name = stage.next_stage_false
+            else:
+                current_stage_name = stage.next_stage
+        
+        return context
 
 
 # ---------------------------------------------------------------------------
@@ -218,24 +214,307 @@ class SyncOrchestrator:
 # ---------------------------------------------------------------------------
 
 
-class AsyncOrchestrator:
-    """Asynchronous wrapper around *SyncOrchestrator*.
+class BaseOrchestrator:
+    """Base class for orchestrators."""
 
-    This class will evolve into a *true* async engine (awaiting agent IO, etc.).
-    For now it simply delegates to the synchronous implementation while keeping
-    an `async def run()` API so we can start writing async tests and integrate
-    into FastAPI endpoints.
-    """
+    def __init__(
+        self,
+        pipeline_def: ExecutionPlan,
+        config: Dict[str, Any],
+    ):
+        self.pipeline_def = pipeline_def
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
 
-    def __init__(self, plan: ExecutionPlan) -> None:  # noqa: D401
-        self._delegate = SyncOrchestrator(plan)
+    def _get_next_stage(self, current_stage_name: str, context: Dict[str, Any]) -> str | None:
+        stage_def = self.pipeline_def.stages[current_stage_name]
+        next_stage = stage_def.next_stage
 
-    async def run(self, *, max_hops: int = 64, context: dict | None = None) -> List[str]:
-        """Run the plan asynchronously and return visited stage names."""
+        if isinstance(next_stage, dict) and next_stage.get("condition"):
+            cond = next_stage["condition"]
+            true_stage = next_stage["true"]
+            false_stage = next_stage["false"]
+            self.logger.debug(f"Evaluating condition '{cond}' for stage '{current_stage_name}'")
+            condition_met = SyncOrchestrator._eval_condition_expr(cond, context)
+            next_stage = true_stage if condition_met else false_stage
+            self.logger.debug(f"Condition result: {condition_met}, next stage: '{next_stage}'")
+        elif isinstance(next_stage, str):
+            self.logger.debug(f"Direct next stage: '{next_stage}'")
+        elif next_stage is None:
+            self.logger.debug(f"No next stage defined after '{current_stage_name}'.")
+        else:
+            self.logger.warning(f"Invalid 'next' field type ({type(next_stage)}) for stage '{current_stage_name}'. Ending flow.")
+            next_stage = None
 
-        # In a future commit this will perform `await agent.call()` etc.
-        # For now we just run synchronously inside the event loop.
-        return self._delegate.run(max_hops=max_hops, context=context)
+        return next_stage
+
+
+class AsyncOrchestrator(BaseOrchestrator):
+    """Orchestrates pipeline execution asynchronously, invoking agents."""
+
+    def __init__(
+        self,
+        pipeline_def: ExecutionPlan,
+        config: Dict[str, Any],
+        agent_provider: AgentProvider,
+        state_manager: StateManager
+    ):
+        super().__init__(pipeline_def, config)
+        self._agent_provider = agent_provider
+        self._state_manager = state_manager
+
+    def _parse_condition(self, condition_str: str, context: Dict[str, Any]) -> bool:
+        if not condition_str:
+            return True # No condition means proceed
+
+        self.logger.debug(f"Parsing condition: {condition_str}")
+        # Example: "outputs.stage_a.result == 'go_left'"
+        # This needs to be evaluated in the context of `context`
+        try:
+            # Simplified evaluation logic, vulnerable to injection if condition_str is untrusted.
+            # In a real scenario, use a safer evaluation method like ast.literal_eval or a sandbox.
+            
+            # Split by common comparators, check for variable existence before eval
+            parts = []
+            comparator = None
+            if '==' in condition_str:
+                parts = condition_str.split('==', 1)
+                comparator = '=='
+            elif '!=' in condition_str:
+                parts = condition_str.split('!=', 1)
+                comparator = '!='
+            # Add more comparators as needed (>, <, >=, <=, in, not in)
+            else:
+                self.logger.error(f"Unsupported condition format: {condition_str}")
+                return False # Default to false on parse error
+
+            if len(parts) != 2:
+                self.logger.error(f"Invalid condition structure: {condition_str}")
+                return False
+
+            var_path_str = parts[0].strip()
+            expected_value_str = parts[1].strip()
+
+            # Resolve var_path_str from context (e.g., outputs.stage_a.result)
+            current_val = context
+            for key in var_path_str.split('.'):
+                if isinstance(current_val, dict) and key in current_val:
+                    current_val = current_val[key]
+                else:
+                    self.logger.warning(f"Condition variable path '{var_path_str}' not fully found in context.")
+                    return False # Path not found, condition is false
+            
+            # Convert expected_value_str to the type of current_val for comparison
+            # This is a simplification; robust type conversion is needed.
+            try:
+                if isinstance(current_val, bool):
+                    expected_value = expected_value_str.lower() in ['true', '1']
+                elif isinstance(current_val, int):
+                    expected_value = int(expected_value_str.strip("'\""))
+                elif isinstance(current_val, float):
+                    expected_value = float(expected_value_str.strip("'\""))
+                else: # Assume string
+                    expected_value = expected_value_str.strip("'\"") # Remove quotes for string comparison
+            except ValueError as e:
+                self.logger.error(f"Type conversion error for expected value in condition '{condition_str}': {e}")
+                return False
+
+            self.logger.debug(f"Condition check: '{current_val}' {comparator} '{expected_value}'")
+            if comparator == '==':
+                return current_val == expected_value
+            elif comparator == '!=':
+                return current_val != expected_value
+            
+            return False # Should not reach here if comparator is supported
+
+        except Exception as e:
+            self.logger.exception(f"Error evaluating condition '{condition_str}': {e}")
+            return False # Default to false on any error
+
+    async def run(self, plan: ExecutionPlan, context: Dict[str, Any]) -> Dict[str, Any]:
+        self.logger.info(f"AsyncOrchestrator running plan starting with: {plan.start_stage}")
+        current_stage_name = plan.start_stage
+        if 'outputs' not in context:
+            context['outputs'] = {}
+        max_hops = len(plan.stages) + 5
+        hops = 0
+        while current_stage_name and hops < max_hops:
+            hops += 1
+            
+            # Get stage definition first
+            stage = plan.stages.get(current_stage_name)
+            if not stage:
+                self.logger.error(f"Stage '{current_stage_name}' not found in plan. Aborting.")
+                # Attempt to use previous stage index or a default if start stage is missing
+                fallback_idx = -1.0 # Or potentially retrieve last known good index
+                await self._state_manager.update_status(stage=fallback_idx, status=StageStatus.FAILURE, artifacts=[], reason=f"Stage '{current_stage_name}' not found in plan")
+                break
+
+            # Get stage number reliably
+            current_stage_idx = stage.number if stage.number is not None else -1.0
+            if current_stage_idx == -1.0:
+                 self.logger.warning(f"Stage '{current_stage_name}' does not have a numeric identifier. Using -1.0. Status tracking might be affected.")
+
+            # Check max hops *after* getting stage info
+            if hops >= max_hops:
+                self.logger.warning(f"Max hops ({max_hops}) reached, breaking execution at stage '{current_stage_name}'.")
+                await self._state_manager.update_status(stage=current_stage_idx, status=StageStatus.FAILURE, artifacts=[], reason="Max hops reached")
+                break
+            
+            # --- Check if this is a purely conditional stage ---
+            # A conditional stage might not have an agent_id if its sole purpose is routing
+            # is_conditional_routing_stage = stage.condition is not None and not stage.agent_id 
+            # Even if it has an agent_id, we might treat stages with conditions differently later,
+            # but for now, let's assume if there's a condition, we evaluate it first.
+            
+            if stage.condition:
+                self.logger.info(f"Evaluating Condition for Stage: '{current_stage_name}' (Definition: {stage.condition})")
+                condition_met = self._parse_condition(stage.condition, context) # Evaluate against current context
+                next_stage_name = None
+                if condition_met:
+                    self.logger.info(f"Condition TRUE for stage '{current_stage_name}', next: {stage.next_stage_true}")
+                    next_stage_name = stage.next_stage_true
+                else:
+                    self.logger.info(f"Condition FALSE for stage '{current_stage_name}', next: {stage.next_stage_false}")
+                    next_stage_name = stage.next_stage_false
+                
+                # Set the next stage name and continue the loop immediately
+                # This skips any agent execution attempt for the current conditional stage itself
+                current_stage_name = next_stage_name
+                if not current_stage_name:
+                     self.logger.info(f"Condition evaluated for '{stage.agent_id}', but no next stage defined. Orchestration complete.")
+                     break # End loop if condition leads nowhere
+                else:
+                     self.logger.debug(f"Continuing loop to process next stage: '{current_stage_name}'")
+                     continue # Go to next loop iteration
+
+            # --- If not conditional stage, proceed with agent execution ---
+            self.logger.info(f"Processing Agent for Stage: {current_stage_name} (Agent: {stage.agent_id})")
+            try:
+                # If agent_id is missing here, it's an invalid plan for a non-conditional stage
+                if not stage.agent_id:
+                     self.logger.error(f"Stage '{current_stage_name}' is missing agent_id. Aborting.")
+                     await self._state_manager.update_status(stage=current_stage_idx, status=StageStatus.FAILURE, artifacts=[], reason="Stage missing agent_id")
+                     break
+
+                agent_callable = await self._agent_provider.get(stage.agent_id)
+                if agent_callable is None:
+                    self.logger.error(f"Agent '{stage.agent_id}' not found for Stage '{current_stage_name}'. Aborting.")
+                    await self._state_manager.update_status(stage=current_stage_idx, status=StageStatus.FAILURE, artifacts=[], reason="Agent not found")
+                    break
+                
+                # Prepare the specific context for this agent invocation
+                # Use deepcopy to prevent issues with nested mutable objects like context['outputs']
+                agent_input_context = copy.deepcopy(context) 
+                if stage.inputs:
+                    resolved_inputs = {}
+                    for key, value in stage.inputs.items():
+                        if isinstance(value, str) and value.startswith("context."):
+                            path = value.split('.')[1:]
+                            resolved_value = context # Resolve from the main context
+                            try:
+                                for p_item in path:
+                                    resolved_value = resolved_value[p_item]
+                            except (KeyError, TypeError):
+                                self.logger.warning(f"Could not resolve input path '{value}' for stage '{current_stage_name}'. Using original string.")
+                                resolved_value = value
+                            resolved_inputs[key] = resolved_value
+                        else:
+                            resolved_inputs[key] = value
+                    # Merge resolved inputs, overwriting keys from global context if necessary
+                    agent_input_context.update(resolved_inputs)
+                
+                self.logger.debug(f"Executing Agent '{stage.agent_id}' for Stage '{current_stage_name}' with input context keys: {list(agent_input_context.keys())}")
+                
+                # Execute the agent with its specific input context
+                stage_output = await agent_callable(agent_input_context)
+                
+                # Merge output back into the main context
+                context['outputs'][current_stage_name] = stage_output
+                
+                self.logger.info(f"Agent '{stage.agent_id}' completed Stage '{current_stage_name}'.")
+                await self._state_manager.update_status(stage=current_stage_idx, status=StageStatus.SUCCESS, artifacts=[])
+            except KeyError as e:
+                self.logger.error(f"Agent '{stage.agent_id}' not resolved (KeyError) for Stage '{current_stage_name}': {e}. Aborting.")
+                await self._state_manager.update_status(stage=current_stage_idx, status=StageStatus.FAILURE, artifacts=[], reason="Agent resolution failed")
+                break
+            except Exception as e:
+                self.logger.exception(f"Agent '{stage.agent_id}' failed during execution of stage '{current_stage_name}'. Attempting to pause state.")
+
+                # 1. Create error details
+                error_details = AgentErrorDetails(
+                    error_type=type(e).__name__,
+                    message=str(e),
+                    traceback=traceback.format_exc(),
+                    agent_id=stage.agent_id,
+                    stage_id=current_stage_name
+                )
+
+                # 2. Get current run_id
+                run_id = self._state_manager.get_or_create_current_run_id()
+                if run_id is None:
+                    self.logger.error("Failed to get run_id from StateManager. Cannot save paused state.")
+                    # Fallback: Log failure and break
+                    self._state_manager.update_status(
+                        stage=current_stage_name,
+                        status=StageStatus.FAILURE.value,
+                        artifacts=[],
+                        reason=f"Agent execution failed (could not get run_id): {type(e).__name__}",
+                        error_details=error_details
+                    )
+                    break
+
+                # 3. Create PausedRunDetails
+                try:
+                    paused_details = PausedRunDetails(
+                        run_id=str(run_id),
+                        paused_at_stage_id=current_stage_name,
+                        timestamp=datetime.now(timezone.utc),
+                        context_snapshot=context,
+                        error_details=error_details,
+                        reason="Paused due to agent error"
+                    )
+                except Exception as pause_create_e:
+                    self.logger.exception(f"Failed to create PausedRunDetails: {pause_create_e}")
+                    # Fallback: Update status and break
+                    self._state_manager.update_status(
+                        stage=current_stage_name,
+                        status=StageStatus.FAILURE.value,
+                        artifacts=[],
+                        reason=f"Agent execution failed (could not create pause details): {type(e).__name__}",
+                        error_details=error_details
+                    )
+                    break
+
+                # 4. Save paused state
+                save_success = self._state_manager.save_paused_flow_state(paused_details)
+                if not save_success:
+                    self.logger.error(f"Failed to save paused state for run {run_id} stage {current_stage_name}.")
+                    # Optionally add note to reason?
+                    final_reason = f"PAUSED_ON_ERROR (Save Failed): Agent execution failed: {type(e).__name__}"
+                else:
+                    final_reason = f"PAUSED_ON_ERROR: Agent execution failed: {type(e).__name__}"
+
+                # 5. Update main status (indicate pause/failure)
+                # Ensure this is awaited regardless of save success
+                await self._state_manager.update_status(
+                    stage=current_stage_idx, # Use the parsed stage index
+                    status=StageStatus.FAILURE.value,
+                    artifacts=[],
+                    reason=final_reason,
+                    error_details=error_details
+                )
+                # 6. Break execution loop
+                break
+            
+            # Determine next stage ONLY if not handled by condition evaluation above
+            # (This block is now only reached by non-conditional stages)
+            current_stage_name = stage.next_stage
+            if not current_stage_name:
+                 self.logger.info(f"No next stage defined after non-conditional stage '{stage.agent_id}'. Orchestration complete.")
+
+        self.logger.info(f"AsyncOrchestrator run finished. Final context output keys: {list(context.get('outputs', {}).keys())}")
+        return context
 
 
 try:

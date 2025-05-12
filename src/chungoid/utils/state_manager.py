@@ -15,6 +15,10 @@ import contextlib
 
 import filelock  # Ensure filelock is installed
 from . import chroma_utils
+from ..schemas.errors import AgentErrorDetails # Correct relative import
+from ..schemas.flows import PausedRunDetails # <<< Import PausedRunDetails
+import json # Add for JSONDecodeError
+from pydantic import ValidationError # Add for Pydantic validation error
 
 
 class StatusFileError(Exception):
@@ -102,11 +106,29 @@ class StateManager:
             )
         # <<< END ADDED CODE >>>
         self.target_dir_path = Path(target_directory).resolve()
+        self.server_stages_dir = Path(server_stages_dir).resolve()
+
+        # Directory existence checks
+        if not self.target_dir_path.is_dir():
+            self.logger.error(f"Target project directory not found or not a directory: {self.target_dir_path}")
+            raise ValueError(f"Target project directory not found or not a directory: {self.target_dir_path}")
+        if not self.server_stages_dir.is_dir():
+             self.logger.error(f"Server stages directory not found or not a directory: {self.server_stages_dir}")
+             raise ValueError(f"Server stages directory not found or not a directory: {self.server_stages_dir}")
+
         self.chungoid_dir = self.target_dir_path / ".chungoid"
-        self.status_file_path = str(self.chungoid_dir / "project_status.json")
-        self.lock_file_path = f"{self.status_file_path}.lock"
+        self.status_file_path: Path = self.chungoid_dir / "project_status.json"
+        self.lock_file_path = f"{str(self.status_file_path)}.lock"
         self.use_locking = use_locking
-        self.server_stages_dir = Path(server_stages_dir).resolve()  # Ensure resolved Path
+
+        # --- Initialize Lock EARLY --- 
+        if self.use_locking:
+            self._lock = filelock.FileLock(self.lock_file_path)
+            self.logger.debug("Using real file lock: %s", self.lock_file_path)
+        else:
+            self._lock = DummyFileLock()
+            self.logger.debug("File locking is disabled.")
+        # --- End Lock Init ---
 
         # --- Set ChromaDB Project Context ---
         # This must be called before the first call to get_chroma_client() in this context
@@ -144,6 +166,7 @@ class StateManager:
 
         # Ensure the .chungoid directory exists
         try:
+            # This should only be called AFTER confirming target_dir_path exists and is a dir
             self.chungoid_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug("Ensured .chungoid directory exists: %s", self.chungoid_dir)
         except OSError as e:
@@ -152,24 +175,11 @@ class StateManager:
             )
             raise StatusFileError(f"Failed to create .chungoid directory: {e}") from e
 
-        # Verify server_stages_dir exists during init
-        if not self.server_stages_dir.is_dir():
-            self.logger.error(
-                "Server stages directory not found or not a directory: %s", self.server_stages_dir
-            )
-            # This is critical for finding stages, raise error
-            raise ValueError(
-                f"Server stages directory not found or not a directory: {server_stages_dir}"
-            )
-
-        # Setup lock
-        if self.use_locking:
-            self._lock = filelock.FileLock(self.lock_file_path, timeout=10)
-            self.logger.debug("Using real file lock: %s", self.lock_file_path)
-        else:
-            self._lock = DummyFileLock()
-            self.logger.debug("File locking is disabled.")
-
+        # Initial read of the status file
+        self._status_data = self._read_status_file()
+        # <<< Add Logging Point >>>
+        self.logger.debug("Initial status file read successful.")
+        # <<< End Logging Point >>>
         self.logger.info("StateManager initialized for file: %s", self.status_file_path)
 
         # Validate status file on init, but don't attempt ChromaDB connection here
@@ -207,14 +217,14 @@ class StateManager:
         try:
             with lock:
                 self.logger.debug("Attempting to read status file: %s", self.status_file_path)
-                if not os.path.exists(self.status_file_path):
+                if not self.status_file_path.exists():
                     self.logger.warning(
                         "Status file not found at %s, returning empty structure {'runs': []}.",
                         self.status_file_path,
                     )
                     return {"runs": []}  # Return default structure
 
-                with open(self.status_file_path, "r", encoding="utf-8") as f:
+                with self.status_file_path.open("r", encoding="utf-8") as f:
                     content = f.read().strip()
                     if not content:
                         self.logger.warning(
@@ -276,7 +286,7 @@ class StateManager:
                     self.logger.error(err_msg)
                     raise StatusFileError(err_msg)
 
-                with open(self.status_file_path, "w", encoding="utf-8") as f:
+                with self.status_file_path.open("w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2)  # Use indent for readability
                     f.flush()
                     os.fsync(f.fileno())
@@ -284,7 +294,7 @@ class StateManager:
             self.logger.debug("Lock released after write.")
 
             try:
-                with open(self.status_file_path, "r", encoding="utf-8") as f_verify:
+                with self.status_file_path.open("r", encoding="utf-8") as f_verify:
                     content_after_write = f_verify.read()
                 self.logger.debug(
                     "Read file back immediately after write. Content: %s", content_after_write
@@ -465,6 +475,7 @@ class StateManager:
         artifacts: List[str],
         reason: Optional[str] = None,
         reflection_text: Optional[str] = None, # This is for direct passing
+        error_details: Optional[AgentErrorDetails] = None, # <<< New argument
     ) -> bool:
         """Updates the status file by adding a new entry to the *latest run*.
 
@@ -481,6 +492,7 @@ class StateManager:
             reason: Optional reason, e.g., for FAIL status.
             reflection_text: Optional reflection text for this stage update. If None,
                              will try to use and clear _pending_reflection_text.
+            error_details: Optional structured details about an agent error. # <<< Updated docstring
 
         Returns:
             True if the update was successful, False otherwise.
@@ -519,6 +531,9 @@ class StateManager:
             new_entry["reason"] = reason
         if final_reflection_text is not None: # Use the determined reflection text
             new_entry["reflection_text"] = final_reflection_text
+        if error_details is not None: # <<< Add error details if provided
+            # Store as JSON string to ensure serializability
+            new_entry["error_details"] = error_details.model_dump_json(indent=2)
 
         try:
             # Read the current state
@@ -543,36 +558,40 @@ class StateManager:
                 )
             else:
                 # Find the latest run based on highest existing run_id
-                latest_run = max(runs, key=lambda r: r.get("run_id", -1))
-                target_run_id = latest_run.get("run_id", -1) # Get the ID of the latest run
+                try:
+                    # Ensure key function always returns comparable types (int)
+                    latest_run = max(runs, key=lambda r: r.get("run_id") if isinstance(r.get("run_id"), int) else -1)
+                    current_run_id = latest_run.get("run_id")
+                    
+                    # Validate the run_id
+                    if current_run_id is None or not isinstance(current_run_id, int) or current_run_id < 0:
+                        self.logger.error(f"Found invalid run_id '{current_run_id}' (type: {type(current_run_id)}) in latest run: {latest_run}")
+                        return False
+                        
+                    # Find the index of the latest run to modify it
+                    for i, run in enumerate(runs):
+                        if run.get("run_id") == current_run_id:
+                            target_run_index = i
+                            break
 
-                # --- Add validation for existing target_run_id --- #
-                if target_run_id == -1 or not isinstance(target_run_id, int):
-                    # This indicates a malformed status file if runs exist but no valid run_id
-                    err_msg = f"Could not determine a valid integer run_id for the latest run in status file. Found: {target_run_id}"
-                    self.logger.error(err_msg)
-                    raise StatusFileError(err_msg)
-                # --- End validation ---
+                    if target_run_index == -1:
+                        # Should not happen if target_run_id was found
+                        raise StatusFileError(
+                            f"Internal error: Could not find index for run_id {current_run_id}."
+                        )
 
-                # Find the index of the latest run to modify it
-                for i, run in enumerate(runs):
-                    if run.get("run_id") == target_run_id:
-                        target_run_index = i
-                        break
+                    # Append the new status to the latest run's updates
+                    if "status_updates" not in runs[target_run_index]:
+                        runs[target_run_index][
+                            "status_updates"
+                        ] = []  # Initialize if missing (defensive)
+                    runs[target_run_index]["status_updates"].append(new_entry)
+                    self.logger.info(f"Appending status update to latest run (id: {current_run_id}).")
 
-                if target_run_index == -1:
-                    # Should not happen if target_run_id was found
-                    raise StatusFileError(
-                        f"Internal error: Could not find index for run_id {target_run_id}."
-                    )
-
-                # Append the new status to the latest run's updates
-                if "status_updates" not in runs[target_run_index]:
-                    runs[target_run_index][
-                        "status_updates"
-                    ] = []  # Initialize if missing (defensive)
-                runs[target_run_index]["status_updates"].append(new_entry)
-                self.logger.info(f"Appending status update to latest run (id: {target_run_id}).")
+                except (ValueError, TypeError) as e:
+                    # Error if run_id is missing, not an int, or list is empty/malformed
+                    self.logger.error(f"Error processing run list to find latest run_id: {e}")
+                    return False
 
             # Write the modified structure back
             self._write_status_file({"runs": runs})
@@ -1013,7 +1032,7 @@ class StateManager:
 
         # If, for some reason, _read_status_file didn't create it (e.g., if it only returned default
         # without writing), or if we want to ensure it's physically present after this call:
-        if not Path(self.status_file_path).exists():
+        if not self.status_file_path.exists():
             # Ensure current_status_data is suitable for writing, especially if _read_status_file
             # might return something not directly writable (though it should return a dict).
             # The default from _read_status_file when file is missing is {'runs': []}
@@ -1153,6 +1172,160 @@ async def get_chungoid_project_status(ide_services):
         except Exception as e:
             self.logger.error(f"Failed to export Cursor rule to {rule_file_path}: {e}", exc_info=True)
             return None
+
+    # <<< New method for saving paused flow state >>>
+    def save_paused_flow_state(self, paused_details: PausedRunDetails) -> bool:
+        """Saves the state of a paused run to a dedicated JSON file.
+
+        Args:
+            paused_details: The PausedRunDetails object containing state to save.
+
+        Returns:
+            True if saving was successful, False otherwise.
+        """
+        paused_runs_dir = self.status_file_path.parent / "paused_runs"
+        try:
+            paused_runs_dir.mkdir(parents=True, exist_ok=True)
+            file_path = paused_runs_dir / f"{paused_details.run_id}.json"
+            
+            self.logger.info(f"Saving paused flow state for run_id '{paused_details.run_id}' to {file_path}")
+            
+            with file_path.open("w", encoding="utf-8") as f:
+                f.write(paused_details.model_dump_json(indent=2))
+            
+            # Optional: fsync for durability, if supported and needed
+            # with file_path.open('r') as f_for_sync: # Re-open in read mode for fsync on some OS
+            #     if hasattr(os, 'fsync'):
+            #         os.fsync(f_for_sync.fileno())
+            
+            self.logger.info(f"Successfully saved paused state for run_id '{paused_details.run_id}'.")
+            return True
+        except IOError as e:
+            self.logger.error(f"IOError saving paused state for run '{paused_details.run_id}' to {file_path}: {e}")
+            return False
+        except Exception as e:
+            self.logger.exception(f"Unexpected error saving paused state for run '{paused_details.run_id}': {e}")
+            return False
+
+    # <<< New method for loading paused flow state >>>
+    def load_paused_flow_state(self, run_id: str) -> Optional[PausedRunDetails]:
+        """Loads the state of a paused run from its JSON file.
+
+        Args:
+            run_id: The unique ID of the paused run to load.
+
+        Returns:
+            A PausedRunDetails object if successful, None otherwise.
+        """
+        paused_runs_dir = self.status_file_path.parent / "paused_runs"
+        file_path = paused_runs_dir / f"{run_id}.json"
+
+        if not file_path.exists() or not file_path.is_file():
+            self.logger.info(f"Paused state file for run_id '{run_id}' not found at {file_path}.")
+            return None
+
+        try:
+            self.logger.info(f"Loading paused flow state for run_id '{run_id}' from {file_path}")
+            content = file_path.read_text(encoding="utf-8")
+            paused_details = PausedRunDetails.model_validate_json(content)
+            self.logger.info(f"Successfully loaded paused state for run_id '{run_id}'.")
+            return paused_details
+        except FileNotFoundError:
+            # Should be caught by the earlier check, but good for robustness
+            self.logger.info(f"Paused state file for run_id '{run_id}' not found (FileNotFoundError) at {file_path}.")
+            return None
+        except json.JSONDecodeError as e: # Pydantic v2 uses this under the hood for model_validate_json
+            self.logger.error(f"JSONDecodeError loading paused state for run '{run_id}' from {file_path}: {e}")
+            return None
+        except ValidationError as e: # Pydantic ValidationError
+            self.logger.error(f"Pydantic ValidationError loading paused state for run '{run_id}' from {file_path}: {e}")
+            return None
+        except IOError as e:
+            self.logger.error(f"IOError loading paused state for run '{run_id}' from {file_path}: {e}")
+            return None
+        except Exception as e:
+            self.logger.exception(f"Unexpected error loading paused state for run '{run_id}' from {file_path}: {e}")
+            return None
+
+    # <<< New method for deleting paused flow state >>>
+    def delete_paused_flow_state(self, run_id: str) -> bool:
+        """Deletes the saved state file for a given paused run.
+
+        Args:
+            run_id: The unique ID of the paused run whose state file should be deleted.
+
+        Returns:
+            True if the file was successfully deleted or did not exist, False if an error occurred during deletion.
+        """
+        paused_runs_dir = self.status_file_path.parent / "paused_runs"
+        file_path = paused_runs_dir / f"{run_id}.json"
+
+        try:
+            if file_path.exists() and file_path.is_file():
+                self.logger.info(f"Deleting paused flow state file for run_id '{run_id}' at {file_path}")
+                file_path.unlink() # Use unlink() to delete the file
+                self.logger.info(f"Successfully deleted paused state file for run_id '{run_id}'.")
+                return True
+            elif not file_path.exists():
+                self.logger.info(f"Paused state file for run_id '{run_id}' not found at {file_path}. No deletion needed.")
+                return True # Consider not found as success in terms of the state being gone
+            else:
+                # Path exists but is not a file (e.g., a directory)
+                self.logger.warning(f"Path for paused state run_id '{run_id}' exists but is not a file: {file_path}. Cannot delete.")
+                return False
+        except OSError as e:
+            self.logger.error(f"OSError deleting paused state file for run '{run_id}' at {file_path}: {e}")
+            return False
+        except Exception as e:
+            self.logger.exception(f"Unexpected error deleting paused state file for run '{run_id}' from {file_path}: {e}")
+            return False
+
+    def get_or_create_current_run_id(self) -> Optional[int]:
+        """Gets the run_id of the latest run, or determines the next one (0 if none exist).
+
+        This method reads the status file to find the highest existing run_id.
+        It does NOT modify the status file.
+
+        Returns:
+            The integer run_id of the latest run (or 0 if no runs exist), 
+            or None if an error occurs or run_ids are invalid.
+        """
+        self.logger.debug("Attempting to get current run_id.")
+        try:
+            # Read the current state using the locking read method
+            status_data = self._read_status_file()
+            runs = status_data.get("runs", [])
+
+            if not runs:
+                # No runs exist yet, the next run will be 0
+                self.logger.info("No existing runs found, next run_id will be 0.")
+                return 0
+            else:
+                # Find the latest run based on highest existing run_id
+                try:
+                    # Ensure key function always returns comparable types (int)
+                    latest_run = max(runs, key=lambda r: r.get("run_id") if isinstance(r.get("run_id"), int) else -1)
+                    current_run_id = latest_run.get("run_id")
+                    
+                    # Validate the run_id
+                    if current_run_id is None or not isinstance(current_run_id, int) or current_run_id < 0:
+                        self.logger.error(f"Found invalid run_id '{current_run_id}' (type: {type(current_run_id)}) in latest run: {latest_run}")
+                        return None # Indicate error
+                        
+                    self.logger.info(f"Determined current run_id: {current_run_id}")
+                    return current_run_id
+                except (ValueError, TypeError) as e:
+                    # This except block should now only catch errors from max() if runs is empty after filtering,
+                    # or other unexpected TypeErrors during comparison if the key func has issues.
+                    self.logger.error(f"Error processing run list to find latest run_id: {e}")
+                    return None # Indicate error
+
+        except StatusFileError as e:
+            self.logger.error(f"Failed to get current run_id due to StatusFileError: {e}")
+            return None # Indicate error reading status file
+        except Exception as e:
+            self.logger.exception(f"Unexpected error getting current run_id: {e}")
+            return None # Indicate unexpected error
 
 
 # Example usage (for testing or demonstration)

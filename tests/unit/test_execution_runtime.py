@@ -1,6 +1,10 @@
 import textwrap
 import pytest
-from chungoid.runtime.orchestrator import ExecutionPlan, SyncOrchestrator
+from chungoid.runtime.orchestrator import ExecutionPlan, SyncOrchestrator, AsyncOrchestrator, StageSpec
+from pathlib import Path
+from unittest.mock import patch, MagicMock, AsyncMock
+from chungoid.utils.agent_resolver import AgentProvider
+from chungoid.utils.state_manager import StateManager
 
 
 def _linear_yaml():
@@ -207,4 +211,69 @@ def test_sync_orchestrator_on_error_conditional():
     # error_code == 404
     visited = orch.run(context={"error_code": 404})
     # Only s1 is visited, as on_error is not triggered in this simple run
-    assert visited == ["s1"] 
+    assert visited == ["s1"]
+
+
+@pytest.fixture
+def mock_agent_provider() -> MagicMock:
+    return MagicMock(spec=AgentProvider)
+
+@pytest.fixture
+def mock_state_manager() -> MagicMock:
+    manager = MagicMock(spec=StateManager)
+    manager.update_status = MagicMock()
+    return manager
+
+@pytest.fixture
+def mock_config() -> dict:
+    return {"logging": {"level": "INFO"}}
+
+# Example Flow YAML for testing
+FLOW_YAML_SIMPLE = """
+start_stage: stage1
+stages:
+  stage1:
+    agent_id: agent1
+    next: stage2
+  stage2:
+    agent_id: agent2
+    next: null
+"""
+
+def test_execution_plan_from_yaml():
+    """Verify ExecutionPlan can parse minimal valid YAML."""
+    plan = ExecutionPlan.from_yaml(FLOW_YAML_SIMPLE, flow_id="test-flow")
+    assert plan.id == "test-flow"
+    assert plan.start_stage == "stage1"
+    assert "stage1" in plan.stages
+    assert "stage2" in plan.stages
+    assert plan.stages["stage1"].agent_id == "agent1"
+    assert plan.stages["stage2"].agent_id == "agent2"
+
+@pytest.mark.asyncio
+async def test_async_orchestrator_runs(
+    mock_agent_provider: MagicMock, 
+    mock_state_manager: MagicMock, 
+    mock_config: dict
+): 
+    """Basic test to ensure AsyncOrchestrator can be instantiated and run."""
+    plan = ExecutionPlan.from_yaml(FLOW_YAML_SIMPLE, flow_id="test-async")
+    
+    # Setup basic mocks for agent calls
+    async def dummy_agent(context): return {"output": "ok"}
+    mock_agent_provider.get.return_value = AsyncMock(side_effect=dummy_agent)
+    
+    # Instantiate with required args
+    orchestrator = AsyncOrchestrator(plan, mock_config, mock_agent_provider, mock_state_manager)
+    
+    # Run
+    final_context = await orchestrator.run(run_id="async-run-1", context={}, max_hops=5)
+    
+    # Basic assertions
+    assert mock_agent_provider.get.call_count == 2
+    mock_agent_provider.get.assert_any_call("agent1")
+    mock_agent_provider.get.assert_any_call("agent2")
+    assert "outputs" in final_context
+    assert "stage1" in final_context["outputs"]
+    assert "stage2" in final_context["outputs"]
+    assert mock_state_manager.update_status.call_count >= 2 # At least called for each stage success 
