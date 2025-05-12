@@ -33,7 +33,7 @@ Requires-Dist: coloredlogs==15.0.1
 Requires-Dist: Deprecated==1.2.18
 Requires-Dist: dill==0.4.0
 Requires-Dist: distro==1.9.0
-Requires-Dist: docutils==0.21.2
+Requires-Dist: docutils~=0.20.1
 Requires-Dist: durationpy==0.9
 Requires-Dist: exceptiongroup==1.2.2
 Requires-Dist: fastapi==0.115.9
@@ -81,7 +81,7 @@ Requires-Dist: opentelemetry-semantic-conventions==0.53b1
 Requires-Dist: opentelemetry-util-http==0.53b1
 Requires-Dist: orjson==3.10.18
 Requires-Dist: overrides==7.7.0
-Requires-Dist: packaging==25.0
+Requires-Dist: packaging~=24.0
 Requires-Dist: pbr==6.1.1
 Requires-Dist: pluggy==1.5.0
 Requires-Dist: posthog==4.0.1
@@ -140,7 +140,7 @@ Requires-Dist: types-filelock; extra == "dev"
 Requires-Dist: types-requests; extra == "dev"
 Requires-Dist: build==1.2.2.post1; extra == "dev"
 Provides-Extra: docs
-Requires-Dist: Sphinx==8.2.3; extra == "docs"
+Requires-Dist: Sphinx~=7.2.6; extra == "docs"
 Requires-Dist: sphinx-rtd-theme==3.0.2; extra == "docs"
 Requires-Dist: alabaster==1.0.0; extra == "docs"
 Requires-Dist: Babel==2.17.0; extra == "docs"
@@ -153,13 +153,17 @@ Requires-Dist: sphinxcontrib-jquery==4.1; extra == "docs"
 Requires-Dist: sphinxcontrib-jsmath==1.0.1; extra == "docs"
 Requires-Dist: sphinxcontrib-qthelp==2.0.0; extra == "docs"
 Requires-Dist: sphinxcontrib-serializinghtml==2.0.0; extra == "docs"
+Provides-Extra: test
+Requires-Dist: pytest<8.4,>=8.3; extra == "test"
+Requires-Dist: pytest-asyncio; extra == "test"
+Requires-Dist: pytest-cov; extra == "test"
 Dynamic: license-file
 
 # Chungoid — Model-Context-Protocol (MCP) Server
 
 <!--[BADGES]-->
 <!-- CI badge: replace <owner>/<repo> with your GitHub slug if the fork is elsewhere -->
-[![Tests](https://github.com/chungoid/chungoid/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/chungoid/chungoid/actions/workflows/test.yml)
+[![Tests](https://github.com/chungoid/metachungoid/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/chungoid/metachungoid/actions/workflows/test.yml)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%2B-brightgreen)
 ![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
 
@@ -205,6 +209,58 @@ Dynamic: license-file
     # - Then, begin the workflow with `@chungoid prepare_next_stage`.
     ```
 Your new project directory (`~/my_new_chungoid_project`) will now have a `.chungoid/` folder, ready for Stage –1.
+
+> **API key for local runs**  
+> The MCP server protects its `/metadata`, `/tools`, and `/invoke` routes with the HTTP header `X-API-Key`.  
+> • **If you don't set anything, the server defaults to `dev-key`.**  
+> • For a brand-new, purely local project you can just use that value (or even omit the environment variable entirely).  
+>  
+> Example — start the server in one terminal *(local-only)*:  
+> ```bash
+> # Either be explicit …
+> export MCP_API_KEY=dev-key  # optional; this is the implicit default
+> uvicorn chungoid.utils.mcp_server:app --port 9000 &
+> ```  
+>  
+> When you **expose the server outside your laptop** (Docker, a VM, teammate access, etc.) pick a stronger key:  
+> ```bash
+> # On the server
+> export MCP_API_KEY="random-long-string"
+> uvicorn chungoid.utils.mcp_server:app --port 9000 &
+>
+> # In every client / script
+> CoreMCPClient("http://server:9000", api_key="random-long-string")
+> ```  
+> The key only needs to match between server and client — no extra config files required.
+
+> **Quick demo with Agent Registry**
+> ```bash
+> # 1. start MCP server in another terminal
+> MCP_API_KEY=dev-key uvicorn chungoid.utils.mcp_server:app --port 9000 &
+>
+> # 2. register a scaffolder agent (maps to built-in project_scaffolder tool)
+> python - <<'PY'
+> from pathlib import Path
+> from chungoid.utils.agent_registry import AgentRegistry, AgentCard
+> reg = AgentRegistry(project_root=Path('.'))
+> reg.add(AgentCard(agent_id='web_scaffolder', tool_names=['project_scaffolder'], name='FastAPI Scaffolder'), overwrite=True)
+> PY
+>
+> # 3. write a minimal flow
+> echo "\nname: demo\nstart_stage: s\nstages:\n  s: {agent_id: web_scaffolder, next: null}" > flow.yaml
+>
+> # 4. run it
+> python - <<'PY'
+> from chungoid.flow_executor import FlowExecutor
+> from chungoid.utils.agent_resolver import RegistryAgentProvider
+> from chungoid.utils.agent_registry import AgentRegistry
+> from pathlib import Path
+>
+> provider = RegistryAgentProvider(AgentRegistry(Path('.')))
+> print(FlowExecutor(provider).run('flow.yaml'))
+> PY
+> ```
+> Output should be `['s']` plus real scaffolded files in `./fastapi_demo`.
 
 ---
 
@@ -292,6 +348,9 @@ store state artifacts, research artifacts, documentation artifacts, etc.
 *   **Artifacts:** Files generated or modified during a stage (code, documents, reports).
 *   **Reflections:** Your thoughts, analysis, or rationale recorded during a stage, stored for context.
 *   **Context:** Information (status, artifacts, reflections) gathered and potentially passed into stage prompts.
+*   **Agent Registry**: Chroma collection `a2a_agent_registry`; stores `AgentCard` entries that map `agent_id` → one or more MCP `tool_names`.
+*   **AgentResolver**: Runtime adapter that looks up an `AgentCard` and invokes the corresponding MCP tool (`/invoke`)—falls back to a stub when the server is offline.
+*   **agent_id**: Preferred identifier in Stage-Flow v0.2 YAML.  Replaces legacy `agent` for unambiguous lookup in the registry.
 
 ## Compute Stacking — Optional Chungoid Power-Ups
 
@@ -427,5 +486,13 @@ This strongest copyleft license ensures:
 * Contributors and original authors receive credit via preserved copyright headers.
 
 Refer to the [`LICENSE`](../LICENSE) file for the full legal text and how to apply headers in source files.
+
+--- 
+
+> **What's New (May 8 2025)**  
+> • Stage-Flow DSL v0.2 with `agent_id` (replaces legacy `agent`)  
+> • **Agent Registry + AgentResolver** → reference tools by slug, no hard-coded callables  
+> • Live MCP dispatch: if `uvicorn chungoid.utils.mcp_server` is running, tool calls are executed automatically.  
+> • Migration helper `dev/scripts/migrate_stage_flows.py` auto-adds `agent_id`.
 
 --- 

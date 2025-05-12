@@ -42,7 +42,7 @@ dependencies = [
     "Deprecated==1.2.18",
     "dill==0.4.0", # Potential serialization lib
     "distro==1.9.0", # Used by opentelemetry
-    "docutils==0.21.2", # Used by Sphinx, readme rendering
+    "docutils~=0.20.1", # Used by Sphinx, readme rendering
     "durationpy==0.9", # Used by posthog
     "exceptiongroup==1.2.2", # Required by anyio < 4.3 on Python < 3.11
     "fastapi==0.115.9",
@@ -90,7 +90,7 @@ dependencies = [
     "opentelemetry-util-http==0.53b1",
     "orjson==3.10.18", # Used by fastapi
     "overrides==7.7.0", # Used by chromadb
-    "packaging==25.0", # Used by sphinx, setuptools, etc.
+    "packaging~=24.0", # Used by sphinx, setuptools, etc.
     "pbr==6.1.1", # Used by stevedore
     "pluggy==1.5.0", # Used by pytest
     "posthog==4.0.1", # Analytics? Check if needed
@@ -154,9 +154,9 @@ dev = [
     # Add other dev dependencies as needed
 ]
 docs = [
-    "Sphinx==8.2.3",
+    "Sphinx~=7.2.6",
     "sphinx-rtd-theme==3.0.2",
-    "alabaster==1.0.0", # Sphinx theme
+    "alabaster<0.8,>=0.7", # Sphinx theme (compatible with Sphinx 7.x)
     "Babel==2.17.0", # Needed by Sphinx for i18n
     "imagesize==1.4.1", # Needed by Sphinx
     "snowballstemmer==2.2.0", # Needed by Sphinx
