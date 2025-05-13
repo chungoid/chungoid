@@ -42,37 +42,8 @@ class AgentRegistry:
             if not overwrite:
                 raise ValueError(f"Agent {card.agent_id} already exists")
         
-        excluded_fields_for_dump = {"description", "capabilities", "tool_names", "mcp_tool_input_schemas", "metadata"}
-        # Dump the model. Datetimes will be included here as datetime objects by default
-        # if mode='python' (default for model_dump).
-        meta_from_model = card.model_dump(exclude=excluded_fields_for_dump) 
-
-        final_chroma_meta = {}
-        # Process fields from the model dump, ensuring correct types for ChromaDB
-        for key, value in meta_from_model.items():
-            if value is None:
-                continue # Exclude keys with None values (Strategy from Thought 2)
-            
-            if isinstance(value, datetime):
-                # Explicitly convert datetime to ISO format string
-                final_chroma_meta[key] = value.isoformat()
-            else:
-                # This assumes other types (str, int, float, bool) are already Chroma-compatible
-                # or will be handled by subsequent specific serialization if they were complex types
-                # not caught by initial exclusion (though they should be excluded).
-                final_chroma_meta[key] = value
-
-        # Serialize list fields (Strategy from Thought 3)
-        # Ensure these are always present as strings (empty if original is None/empty)
-        final_chroma_meta["_capabilities_str"] = ",".join(card.capabilities or [])
-        final_chroma_meta["_tool_names_str"] = ",".join(card.tool_names or [])
-        
-        # Serialize the AgentCard's 'metadata' dict field to a JSON string
-        # Ensure it's always present as a string (empty JSON object if original is None/empty)
-        final_chroma_meta["_agent_card_metadata_json"] = json.dumps(card.metadata or {})
-
-        # Serialize the new mcp_tool_input_schemas field
-        final_chroma_meta["_mcp_tool_input_schemas_json"] = json.dumps(card.mcp_tool_input_schemas or {})
+        # Use the helper method to prepare metadata
+        final_chroma_meta = self._agent_card_to_chroma_metadata(card)
 
         self._coll.add(ids=[card.agent_id], documents=[card.description or ""], metadatas=[final_chroma_meta])
 
@@ -83,30 +54,22 @@ class AgentRegistry:
         
         retrieved_meta_from_chroma = res["metadatas"][0].copy() 
         
-        # Start building the dictionary for AgentCard.model_validate
-        # Pydantic will handle parsing ISO string back to datetime for 'created' field
         card_data = retrieved_meta_from_chroma.copy() 
-        card_data["description"] = res["documents"][0] # Add document field
+        card_data["description"] = res["documents"][0]
 
-        # Deserialize list fields
-        # Pop the key to avoid passing it to model_validate if it's not part of the model
-        capabilities_str = card_data.pop("_capabilities_str", "") # Default to empty string if key missing
+        capabilities_str = card_data.pop("_capabilities_str", "")
         card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
             
-        tool_names_str = card_data.pop("_tool_names_str", "") # Default to empty string
+        tool_names_str = card_data.pop("_tool_names_str", "")
         card_data["tool_names"] = [name.strip() for name in tool_names_str.split(",") if name.strip()]
 
-        # Deserialize the AgentCard's 'metadata' field from JSON string
-        metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}") # Default to empty JSON object string
+        metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}")
         card_data["metadata"] = json.loads(metadata_json_str)
         
         # Deserialize the new mcp_tool_input_schemas field
-        mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "{}")
+        # Default to "null" so json.loads results in None if key is missing
+        mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null") 
         card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
-
-        # Fields like 'agent_id', 'name', 'stage_focus', 'created' (as ISO string)
-        # are expected to be directly in card_data and will be validated by Pydantic.
-        # Pydantic automatically converts ISO strings to datetime objects for datetime fields.
 
         return AgentCard.model_validate(card_data)
 
@@ -134,13 +97,34 @@ class AgentRegistry:
             card_data["metadata"] = json.loads(metadata_json_str)
             
             # Deserialize the new mcp_tool_input_schemas field
-            mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "{}")
+            # Default to "null" so json.loads results in None if key is missing
+            mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null")
             card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
 
-            # Pydantic will handle 'created' (from ISO string in card_data) and other direct fields.
             cards.append(AgentCard.model_validate(card_data))
         return cards
 
     # Helpers -----------------------------------------------------------
     def _exists(self, agent_id: str) -> bool:
         return bool(self._coll.get(ids=[agent_id])["ids"]) 
+
+    def _agent_card_to_chroma_metadata(self, agent_card: AgentCard) -> Dict[str, Any]:
+        """Converts AgentCard fields to a dictionary suitable for ChromaDB metadata."""
+        metadata = {
+            "agent_id": agent_card.agent_id,
+            "name": agent_card.name,
+            "stage_focus": agent_card.stage_focus,
+            # Store datetime as ISO 8601 string (ChromaDB compatibility)
+            "created": agent_card.created.isoformat(),
+            # Store lists as comma-separated strings (simple approach)
+            "_capabilities_str": ",".join(agent_card.capabilities or []),
+            "_tool_names_str": ",".join(agent_card.tool_names or []),
+            # Store complex metadata dictionary as a JSON string
+            "_agent_card_metadata_json": json.dumps(agent_card.metadata or {}),
+            # Store tool input schemas as JSON string, ONLY IF PRESENT
+        }
+        # Only add schemas if they exist and are not None/empty
+        if agent_card.mcp_tool_input_schemas:
+            metadata["_mcp_tool_input_schemas_json"] = json.dumps(agent_card.mcp_tool_input_schemas)
+        
+        return metadata 

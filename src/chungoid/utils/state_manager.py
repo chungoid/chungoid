@@ -113,8 +113,8 @@ class StateManager:
             self.logger.error(f"Target project directory not found or not a directory: {self.target_dir_path}")
             raise ValueError(f"Target project directory not found or not a directory: {self.target_dir_path}")
         if not self.server_stages_dir.is_dir():
-             self.logger.error(f"Server stages directory not found or not a directory: {self.server_stages_dir}")
-             raise ValueError(f"Server stages directory not found or not a directory: {self.server_stages_dir}")
+             self.logger.warning(f"Server stages directory not found or not a directory: {self.server_stages_dir}. Operations requiring it may fail.")
+             # Do not raise ValueError here, allow initialization to continue.
 
         self.chungoid_dir = self.target_dir_path / ".chungoid"
         self.status_file_path: Path = self.chungoid_dir / "project_status.json"

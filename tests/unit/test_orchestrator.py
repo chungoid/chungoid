@@ -275,7 +275,9 @@ class TestAsyncOrchestrator:
         mock_state_manager.get_or_create_current_run_id.return_value = test_run_id
 
         initial_context = {"input": "value"}
-        final_context = await orchestrator.run(basic_plan, initial_context.copy())
+        # Make sure the orchestrator uses the basic_plan with its ID
+        orchestrator._plan = basic_plan 
+        final_context = await orchestrator.run(basic_plan, initial_context.copy()) # Pass plan here too
 
         mock_agent_provider.get.assert_awaited_once_with("agent_a")
         agent_a_mock.assert_awaited_once()
@@ -286,9 +288,10 @@ class TestAsyncOrchestrator:
         saved_paused_details: PausedRunDetails = mock_state_manager.save_paused_flow_state.call_args[0][0]
         assert isinstance(saved_paused_details, PausedRunDetails)
         assert saved_paused_details.run_id == str(test_run_id)
+        assert saved_paused_details.flow_id == basic_plan.id # Verify flow_id is saved
         assert saved_paused_details.paused_at_stage_id == "stage0"
         assert saved_paused_details.reason == "Paused due to agent error"
-        assert saved_paused_details.context_snapshot == {"input": "value", "outputs": {}}
+        assert saved_paused_details.context_snapshot == {"input": "value", "outputs": {}} # Initial context + empty outputs
         assert isinstance(saved_paused_details.error_details, AgentErrorDetails)
         assert saved_paused_details.error_details.error_type == "ValueError"
         assert saved_paused_details.error_details.message == "Agent A failed spectacularly!"
@@ -328,3 +331,290 @@ class TestAsyncOrchestrator:
         assert "PAUSED_ON_ERROR (Save Failed): Agent execution failed: RuntimeError" in passed_kwargs['reason']
         assert isinstance(passed_kwargs['error_details'], AgentErrorDetails)
         assert passed_kwargs['error_details'].error_type == "RuntimeError"
+
+    # --- Tests for AW1.5 (Resumption Logic) ---
+
+    @pytest.fixture
+    def paused_run_details(self) -> PausedRunDetails:
+        """Fixture for a sample PausedRunDetails object."""
+        return PausedRunDetails(
+            run_id="test_run_123",
+            flow_id="test_plan_basic", # Add the flow_id here
+            paused_at_stage_id="stage1",
+            timestamp=datetime.now(timezone.utc),
+            context_snapshot={"input": "original", "outputs": {"stage0": {"data": "from_stage0"}}},
+            error_details=AgentErrorDetails(
+                error_type="ValueError",
+                message="Something failed",
+                traceback="Traceback...",
+                agent_id="agent_b",
+                stage_id="stage1"
+            ),
+            reason="Paused due to agent error"
+        )
+
+    @pytest.fixture
+    def orchestrator_for_resume(self, mock_agent_provider, mock_state_manager, mock_project_config, basic_plan) -> AsyncOrchestrator:
+        """Creates an AsyncOrchestrator specifically for resume tests, maybe pre-configured."""
+        # Use basic_plan for simplicity, can override in specific tests if needed
+        return AsyncOrchestrator(
+            pipeline_def=basic_plan,
+            config=mock_project_config,
+            agent_provider=mock_agent_provider,
+            state_manager=mock_state_manager
+        )
+
+    async def test_resume_flow_retry(self, orchestrator_for_resume, mock_state_manager, paused_run_details, basic_plan):
+        """Test resuming with 'retry' action."""
+        run_id = paused_run_details.run_id
+        paused_stage_id = paused_run_details.paused_at_stage_id # "stage1"
+        original_context = paused_run_details.context_snapshot
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        
+        # Mock the execute_loop to verify it's called correctly
+        orchestrator_for_resume._execute_loop = AsyncMock(return_value={"final": "context"})
+
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="retry")
+
+        mock_state_manager.get_paused_run_details.assert_awaited_once_with(run_id)
+        mock_state_manager.load_context.assert_awaited_once_with(run_id)
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_awaited_once_with(
+            start_stage_name=paused_stage_id, 
+            context=original_context
+        )
+        assert result == {"final": "context"}
+
+    async def test_resume_flow_retry_with_inputs_valid(self, orchestrator_for_resume, mock_state_manager, paused_run_details):
+        """Test resuming with 'retry_with_inputs' action and valid inputs."""
+        run_id = paused_run_details.run_id
+        paused_stage_id = paused_run_details.paused_at_stage_id
+        original_context = paused_run_details.context_snapshot
+        new_inputs = {"input": "updated", "extra_param": True}
+        expected_context = original_context.copy()
+        expected_context.update(new_inputs) # Simple dict update logic
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock(return_value={"final": "context_updated"})
+
+        result = await orchestrator_for_resume.resume_flow(
+            run_id=run_id, action="retry_with_inputs", action_data={"inputs": new_inputs}
+        )
+
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_awaited_once_with(
+            start_stage_name=paused_stage_id,
+            context=expected_context # Verify context was updated
+        )
+        assert result == {"final": "context_updated"}
+
+    async def test_resume_flow_retry_with_inputs_invalid(self, orchestrator_for_resume, mock_state_manager, paused_run_details):
+        """Test resuming with 'retry_with_inputs' action but invalid/missing inputs data."""
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock()
+
+        # Case 1: Missing 'inputs' key
+        result_missing = await orchestrator_for_resume.resume_flow(
+            run_id=run_id, action="retry_with_inputs", action_data={"other_key": "value"}
+        )
+        assert "error" in result_missing
+        assert "requires a dictionary under the 'inputs' key" in result_missing["error"]
+        mock_state_manager.clear_paused_run_details.assert_not_awaited()
+        orchestrator_for_resume._execute_loop.assert_not_awaited()
+
+        # Case 2: 'inputs' key is not a dictionary
+        result_wrong_type = await orchestrator_for_resume.resume_flow(
+            run_id=run_id, action="retry_with_inputs", action_data={"inputs": "not_a_dict"}
+        )
+        assert "error" in result_wrong_type
+        assert "requires a dictionary under the 'inputs' key" in result_wrong_type["error"]
+        # Ensure mocks weren't called from previous failure if state wasn't reset (it shouldn't be)
+        mock_state_manager.clear_paused_run_details.assert_not_awaited() 
+        orchestrator_for_resume._execute_loop.assert_not_awaited()
+
+
+    async def test_resume_flow_skip_stage_to_next(self, orchestrator_for_resume, mock_state_manager, paused_run_details, basic_plan):
+        """Test resuming with 'skip_stage' where there is a next stage."""
+        # Modify paused details to pause at stage0, which has a next stage (stage1)
+        paused_run_details.paused_at_stage_id = "stage0"
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+        expected_next_stage = "stage1" # From basic_plan
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock(return_value={"final": "context_skipped"})
+
+        # Inject basic_plan into the orchestrator instance for this test
+        orchestrator_for_resume._plan = basic_plan 
+
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="skip_stage")
+
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_awaited_once_with(
+            start_stage_name=expected_next_stage,
+            context=original_context # Context should not change for skip
+        )
+        assert result == {"final": "context_skipped"}
+
+    async def test_resume_flow_skip_stage_to_end(self, orchestrator_for_resume, mock_state_manager, paused_run_details, basic_plan):
+        """Test resuming with 'skip_stage' where the skipped stage is the last one."""
+        # Paused at stage1 (last stage in basic_plan)
+        paused_run_details.paused_at_stage_id = "stage1" 
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock()
+
+        # Inject basic_plan
+        orchestrator_for_resume._plan = basic_plan 
+
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="skip_stage")
+
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_not_awaited() # Loop should not run
+        # The function should return the context directly when skipping the last stage
+        assert result == original_context 
+
+
+    async def test_resume_flow_force_branch_valid(self, orchestrator_for_resume, mock_state_manager, paused_run_details, basic_plan):
+        """Test resuming with 'force_branch' to a valid stage."""
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+        target_stage = "stage0" # Branch back to the start (or any valid stage)
+
+        assert target_stage in basic_plan.stages # Ensure target is actually in the plan
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock(return_value={"final": "context_branched"})
+
+        # Inject basic_plan
+        orchestrator_for_resume._plan = basic_plan 
+
+        result = await orchestrator_for_resume.resume_flow(
+            run_id=run_id, action="force_branch", action_data={"target_stage_id": target_stage}
+        )
+
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_awaited_once_with(
+            start_stage_name=target_stage,
+            context=original_context # Context shouldn't change
+        )
+        assert result == {"final": "context_branched"}
+
+
+    async def test_resume_flow_force_branch_invalid(self, orchestrator_for_resume, mock_state_manager, paused_run_details, basic_plan):
+        """Test resuming with 'force_branch' to an invalid/non-existent stage."""
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+        invalid_target = "stage_does_not_exist"
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock()
+
+        # Inject basic_plan
+        orchestrator_for_resume._plan = basic_plan 
+
+        result = await orchestrator_for_resume.resume_flow(
+            run_id=run_id, action="force_branch", action_data={"target_stage_id": invalid_target}
+        )
+
+        assert "error" in result
+        assert "Invalid target_stage_id" in result["error"]
+        mock_state_manager.clear_paused_run_details.assert_not_awaited()
+        orchestrator_for_resume._execute_loop.assert_not_awaited()
+
+        # Also test missing target_stage_id in action_data
+        result_missing = await orchestrator_for_resume.resume_flow(
+            run_id=run_id, action="force_branch", action_data={} # Missing key
+        )
+        assert "error" in result_missing
+        assert "Invalid target_stage_id" in result_missing["error"]
+
+
+    async def test_resume_flow_abort(self, orchestrator_for_resume, mock_state_manager, paused_run_details):
+        """Test resuming with 'abort' action."""
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+        expected_context = original_context.copy()
+        expected_context["status"] = "ABORTED" # Check for the status marker
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock()
+
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="abort")
+
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_not_awaited() # Loop should not run
+        assert result == expected_context
+
+
+    async def test_resume_flow_run_not_found(self, orchestrator_for_resume, mock_state_manager):
+        """Test attempting to resume a run_id that doesn't exist or isn't paused."""
+        run_id = "non_existent_run"
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=None) # Simulate not found
+        mock_state_manager.load_context = AsyncMock()
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock()
+        
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="retry")
+
+        assert "error" in result
+        assert "No paused run found" in result["error"]
+        mock_state_manager.load_context.assert_not_awaited()
+        mock_state_manager.clear_paused_run_details.assert_not_awaited()
+        orchestrator_for_resume._execute_loop.assert_not_awaited()
+
+
+    async def test_resume_flow_context_load_failure(self, orchestrator_for_resume, mock_state_manager, paused_run_details):
+        """Test failure during context loading after finding paused details."""
+        run_id = paused_run_details.run_id
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=None) # Simulate context load failure
+        mock_state_manager.clear_paused_run_details = AsyncMock()
+        orchestrator_for_resume._execute_loop = AsyncMock()
+        
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="retry")
+
+        assert "error" in result
+        assert "Context not found for paused run_id" in result["error"]
+        mock_state_manager.clear_paused_run_details.assert_not_awaited()
+        orchestrator_for_resume._execute_loop.assert_not_awaited()
+
+
+    async def test_resume_flow_clear_state_failure(self, orchestrator_for_resume, mock_state_manager, paused_run_details):
+        """Test failure during clearing of the paused state."""
+        run_id = paused_run_details.run_id
+        original_context = paused_run_details.context_snapshot
+
+        mock_state_manager.get_paused_run_details = AsyncMock(return_value=paused_run_details)
+        mock_state_manager.load_context = AsyncMock(return_value=original_context)
+        mock_state_manager.clear_paused_run_details = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+        orchestrator_for_resume._execute_loop = AsyncMock()
+
+        result = await orchestrator_for_resume.resume_flow(run_id=run_id, action="retry")
+
+        assert "error" in result
+        assert "Failed to clear paused state" in result["error"]
+        mock_state_manager.clear_paused_run_details.assert_awaited_once_with(run_id)
+        orchestrator_for_resume._execute_loop.assert_not_awaited() # Execution should abort if clear fails

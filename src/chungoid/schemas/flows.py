@@ -3,7 +3,7 @@
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .errors import AgentErrorDetails # Import for use in PausedRunDetails
 
@@ -39,10 +39,15 @@ class FlowDefinition(BaseModel):
 
 # --- New Model for Paused Runs --- #
 class PausedRunDetails(BaseModel):
-    """Holds information about a paused workflow run, typically due to an error requiring intervention."""
-    run_id: str = Field(..., description="The unique ID of the paused run.")
-    paused_at_stage_id: str = Field(..., description="The ID of the stage where the execution paused.")
-    timestamp: datetime = Field(default_factory=datetime.now, description="Timestamp when the run was paused.")
-    context_snapshot: Dict[str, Any] = Field(..., description="Snapshot of the execution context at the time of pausing.")
-    error_details: Optional[AgentErrorDetails] = Field(None, description="Details of the agent error that caused the pause, if applicable.")
-    reason: Optional[str] = Field(None, description="Optional brief reason for the pause (e.g., 'Manual Pause', 'Agent Error').") 
+    """Schema for data saved when a flow run is paused, typically on error."""
+    run_id: str = Field(..., description="Unique identifier for this specific execution run.")
+    flow_id: str = Field(..., description="Identifier of the FlowDefinition being executed.")
+    paused_at_stage_id: str = Field(..., description="The ID of the stage where execution paused.")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When the pause occurred.")
+    context_snapshot: Dict[str, Any] = Field(..., description="The full execution context at the time of pause.")
+    error_details: Optional[AgentErrorDetails] = Field(None, description="Details of the error that caused the pause, if applicable.")
+    reason: str = Field("Unknown", description="Reason for the pause (e.g., 'Paused due to agent error', 'Manual pause').")
+
+class StageRunRecord(BaseModel):
+    """Record of a single stage execution within a run."""
+    # ... existing code ... 
