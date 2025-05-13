@@ -43,8 +43,9 @@ class TestStateManagerCore(unittest.TestCase):
         self.assertTrue(ok)
         status = sm.get_full_status()
         self.assertEqual(len(status["runs"]), 1)
-        self.assertEqual(status["runs"][0]["stage"], 0)
-        self.assertEqual(status["runs"][0]["status"], "DONE")
+        self.assertEqual(status["runs"][0]["status_updates"][0]["stage"], 0.0)
+        self.assertEqual(status["runs"][0]["status_updates"][0]["status"], "DONE")
+        self.assertIn("a.txt", status["runs"][0]["status_updates"][0]["artifacts"])
 
 if __name__ == "__main__":
     unittest.main() 

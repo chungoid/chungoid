@@ -1,5 +1,8 @@
 """Utilities for interacting with ChromaDB for context storage."""
 
+print("!!!!!! CHROMA_UTILS.PY TOP LEVEL PRINT !!!!!!!!!!") # ADDED THIS
+# raise Exception("CHROMA_UTILS.PY WAS IMPORTED") # Optional: for more aggressive check
+
 import logging
 from typing import List, Dict, Any, Optional
 # import asyncio # No longer needed for this module directly
@@ -11,6 +14,7 @@ import subprocess
 import time
 import socket
 import shutil
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,8 @@ _client_mode: Optional[str] = None  # Track mode used during init
 
 # --- Public ChromaDB Client Accessor ---
 
+# !!!!!!!!!! DEBUG PRINT !!!!!!!!!!!
+_GET_CHROMA_CLIENT_CALL_COUNT = 0
 
 def get_chroma_client() -> Optional[chromadb.ClientAPI]:
     """
@@ -59,16 +65,32 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
     Returns:
         An initialized ChromaDB client (HttpClient or PersistentClient) or None if config fails.
     """
-    global _client, _client_project_context, _current_project_directory, _client_mode
+    # Debug prints for module/function identity
+    print(f"CHROMA_UTILS: id(get_config) inside get_chroma_client: {id(get_config)}")
+    print(f"CHROMA_UTILS: get_config IS {get_config}")
+    print(f"CHROMA_UTILS: type(get_config) inside get_chroma_client: {type(get_config)}")
 
-    cfg = get_config().get("chromadb", {})
-    desired_mode = cfg.get("mode", "auto")
+    global _client, _client_project_context, _current_project_directory, _client_mode
+    # global _GET_CHROMA_CLIENT_CALL_COUNT
+    # _GET_CHROMA_CLIENT_CALL_COUNT += 1
+    # print(f"!!!! ENTERING get_chroma_client (call #{_GET_CHROMA_CLIENT_CALL_COUNT}) !!!!")
+
+    cfg_chroma = get_config().get("chromadb", {})
+    desired_mode = cfg_chroma.get("mode", "auto")
     if desired_mode == "auto":
         desired_mode = "http" if os.getenv("CHROMA_API_IMPL", "").lower() == "http" else "persistent"
 
     # Re-init reasons: project context changed, or mode changed via env/config between calls
     if _client is not None:
-        if _client_project_context != _current_project_directory or desired_mode != _client_mode:
+        # For persistent mode, if the _current_project_directory (global context) has changed,
+        # it must re-initialize, even if _client_project_context (context at client init time) matched before.
+        # For http mode, _current_project_directory is irrelevant for re-init based on context.
+        context_changed = (
+            desired_mode == "persistent" and _client_project_context != _current_project_directory
+        )
+        mode_changed = desired_mode != _client_mode
+        
+        if context_changed or mode_changed:
             logger.info(
                 "Re-initialising Chroma client due to context/mode change: context %s→%s, mode %s→%s",
                 _client_project_context,
@@ -76,45 +98,51 @@ def get_chroma_client() -> Optional[chromadb.ClientAPI]:
                 _client_mode,
                 desired_mode,
             )
-            _client = None
+            _client = None # Force re-initialization
+        # else: client already exists and matches current criteria, no re-init needed.
 
     if _client is None:
         try:
-            server_url = cfg.get("server_url", "")
+            server_url = cfg_chroma.get("server_url", "")
 
             if desired_mode == "persistent" and _current_project_directory is None:
                 logger.error("Persistent mode requested but project context not set via set_chroma_project_context().")
-                return None
+                return None # Cannot proceed with persistent if context is explicitly needed but not set
 
-            project_dir = _current_project_directory or Path.cwd()
+            # Fallback to current working directory if persistent mode is chosen and no specific project context was set.
+            # This allows using persistent mode without explicit set_chroma_project_context for simple cases.
+            project_dir_for_factory = _current_project_directory or Path.cwd() 
 
             try:
-                _client = _factory_get_client(desired_mode, project_dir, server_url=server_url or None)
-                _client_project_context = _current_project_directory
-                _client_mode = desired_mode
+                _client = _factory_get_client(desired_mode, project_dir_for_factory, server_url=server_url or None)
+                _client_project_context = _current_project_directory # Store context used for this _client instance
+                _client_mode = desired_mode # Store mode used for this _client instance
                 logger.info(f"ChromaDB client initialised in {desired_mode} mode.")
+
             except RuntimeError as rt_err:
-                # Detect the common http-only build error when asking for persistent mode
+                # This specific RuntimeError from ChromaDB happens when it's a http-only client
+                # and persistent mode is attempted.
                 if (
                     desired_mode == "persistent"
                     and "http-only client mode" in str(rt_err).lower()
                 ):
-                    fallback_url = server_url or cfg.get("server_url") or "http://localhost:8000"
+                    # Fallback to HTTP if persistent fails due to http-only build
+                    fallback_url = server_url or cfg_chroma.get("server_url") or "http://localhost:8000"
                     logger.warning(
                         "Chroma library is compiled http-only – falling back to HttpClient (%s).", fallback_url
                     )
                     try:
-                        _client = _factory_get_client("http", project_dir, server_url=fallback_url)
-                        _client_project_context = _current_project_directory
-                        _client_mode = "http"
+                        _client = _factory_get_client("http", project_dir_for_factory, server_url=fallback_url)
+                        _client_project_context = _current_project_directory # Still store the context (even if None)
+                        _client_mode = "http" # Mode is now http
                         logger.info("ChromaDB HttpClient initialised as fallback.")
-                    except Exception as http_err:
+                    except Exception as http_err: # Catch potential errors from http fallback
                         logger.error(
                             "Fallback HttpClient initialisation failed: %s", http_err, exc_info=True
                         )
-                        _client = None
+                        _client = None # Ensure client is None if fallback also fails
                 else:
-                    raise
+                    raise # Re-raise other RuntimeErrors
         except Exception as e:
             logger.error(f"Failed to initialise Chroma client: {e}", exc_info=True)
             _client = None
@@ -344,16 +372,51 @@ def get_persistent_chroma_client(project_directory: Path) -> chromadb.ClientAPI:
 # tests without touching import machinery.  Production code path remains the
 # same because we call the wrapper.
 
-def _factory_get_client(mode: str, project_dir: Path, *, server_url: str | None = None):
-    """Wrapper around utils.chroma_client_factory.get_client.
+def _factory_get_client(
+    mode: str,
+    project_dir: Path, # project_dir here is a fallback/default, _current_project_directory takes precedence for persistent
+    server_url: Optional[str] = None,
+) -> chromadb.ClientAPI:
+    """Internal factory to create and return a ChromaDB client based on mode."""
+    settings = chromadb.config.Settings()
 
-    This indirection exists solely to allow tests to monkey-patch a single
-    symbol (`utils.chroma_utils._factory_get_client`) instead of deep
-    patching import targets inside the function body.
-    """
-    from .chroma_client_factory import get_client as _real_get_client
+    if mode == "http":
+        logger.debug(f"Attempting to create HttpClient. Server URL: '{server_url}'")
+        if not server_url:
+            raise ValueError("server_url must be provided for http mode")
+        parsed_url = urlparse(server_url)
+        host = parsed_url.hostname
+        port = parsed_url.port
+        ssl_enabled = parsed_url.scheme == "https"
 
-    host = "localhost"
-    port = 8000
+        if not host or not port:
+            raise ValueError(
+                f"Invalid server_url for http mode: '{server_url}'. Could not parse host/port."
+            )
+        
+        # Default headers can be added here if needed, e.g., for auth
+        headers: Dict[str, str] = {}
+        # settings.chroma_client_auth_provider = "chromadb.auth.token.TokenAuthClientProvider"
+        # settings.chroma_client_auth_credentials = "your_token_here" # Or from config
 
-    return _real_get_client(mode, project_dir, server_url=server_url)
+        logger.debug(f"HttpClient params: host='{host}', port={port}, ssl={ssl_enabled}, headers={headers}")
+        return chromadb.HttpClient(
+            host=host,
+            port=port,
+            ssl=ssl_enabled,
+            settings=settings,
+            headers=headers,
+        )
+    elif mode == "persistent":
+        actual_project_dir = _current_project_directory or project_dir # Prioritize explicitly set context
+        logger.debug(f"Attempting to create PersistentClient. Project dir: '{actual_project_dir}'")
+        if not actual_project_dir:
+            # This case should ideally be caught by get_chroma_client before calling factory
+            raise ValueError("Project directory must be set for persistent mode.")
+        
+        db_path = actual_project_dir.resolve() / ".chungoid" / "chroma_db"
+        logger.debug(f"PersistentClient db_path: '{db_path}'")
+        os.makedirs(str(db_path), exist_ok=True)
+        return chromadb.PersistentClient(path=str(db_path), settings=settings)
+    else:
+        raise ValueError(f"Unsupported ChromaDB mode: '{mode}'")

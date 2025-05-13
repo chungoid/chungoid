@@ -30,7 +30,7 @@ def mock_agent_provider() -> MagicMock:
 def mock_state_manager() -> MagicMock:
     manager = MagicMock(spec=StateManager)
     # Setup default async mocks for methods called by orchestrator
-    manager.update_status = AsyncMock(return_value=True)
+    manager.update_status = MagicMock(return_value=True)
     manager.get_or_create_current_run_id = MagicMock(return_value=0) # Sync method
     manager.save_paused_flow_state = MagicMock(return_value=True) # Sync method
     return manager
@@ -124,7 +124,7 @@ class TestAsyncOrchestrator:
         assert final_context['outputs']['stage0'] == {"output_a": "value_a"}
         assert final_context['outputs']['stage1'] == {"output_b": "value_b"}
         assert final_context['global_input'] == "start_value"
-        mock_state_manager.update_status.assert_has_awaits([
+        mock_state_manager.update_status.assert_has_calls([
             call(stage=0.0, status='PASS', artifacts=[]),
             call(stage=1.0, status='PASS', artifacts=[]),
         ])
@@ -189,46 +189,56 @@ class TestAsyncOrchestrator:
     async def test_run_conditional_branching_true(self, orchestrator, mock_agent_provider, mock_state_manager, conditional_plan):
         """Test conditional branching when condition is true."""
         input_agent_mock = AsyncMock(return_value={"result": "go_left"})
+        condition_checker_mock = AsyncMock(return_value={"cond_check": "done"}) # Mock for the condition stage
         left_agent_mock = AsyncMock(return_value={"left_out": "ok"})
-        right_agent_mock = AsyncMock()
-        mock_agent_provider.get.side_effect = [input_agent_mock, left_agent_mock]
-
+        right_agent_mock = AsyncMock() # Should not be called
+        # Order matters: input_agent, then condition_checker, then left_agent (if true)
+        mock_agent_provider.get.side_effect = [input_agent_mock, condition_checker_mock, left_agent_mock]
+    
         initial_context = {}
         await orchestrator.run(conditional_plan, initial_context.copy())
 
-        mock_agent_provider.get.assert_has_calls([call("input_agent"), call("left_agent")])
+        mock_agent_provider.get.assert_has_calls([call("input_agent"), call("condition_checker"), call("left_agent")])
         input_agent_mock.assert_awaited_once()
+        condition_checker_mock.assert_awaited_once()
         left_agent_mock.assert_awaited_once()
         right_agent_mock.assert_not_called()
 
         stage_input_num = self._get_stage_num(conditional_plan, "stage_input")
+        stage_cond_num = self._get_stage_num(conditional_plan, "stage_cond") # Added for the conditional stage
         stage_left_num = self._get_stage_num(conditional_plan, "stage_left")
-
-        mock_state_manager.update_status.assert_has_awaits([
+    
+        mock_state_manager.update_status.assert_has_calls([
             call(stage=stage_input_num, status='PASS', artifacts=[]),
+            call(stage=stage_cond_num, status='PASS', artifacts=[]), # Added call for conditional stage
             call(stage=stage_left_num, status='PASS', artifacts=[]),
         ], any_order=False) # Order should be deterministic here
 
     async def test_run_conditional_branching_false(self, orchestrator, mock_agent_provider, mock_state_manager, conditional_plan):
         """Test conditional branching when condition is false."""
         input_agent_mock = AsyncMock(return_value={"result": "go_right"})
-        left_agent_mock = AsyncMock()
+        condition_checker_mock = AsyncMock(return_value={"cond_check": "done"}) # Mock for the condition stage
+        left_agent_mock = AsyncMock() # Should not be called
         right_agent_mock = AsyncMock(return_value={"right_out": "ok"})
-        mock_agent_provider.get.side_effect = [input_agent_mock, right_agent_mock]
-
+        # Order matters: input_agent, then condition_checker, then right_agent (if false)
+        mock_agent_provider.get.side_effect = [input_agent_mock, condition_checker_mock, right_agent_mock]
+    
         initial_context = {}
         await orchestrator.run(conditional_plan, initial_context.copy())
 
-        mock_agent_provider.get.assert_has_calls([call("input_agent"), call("right_agent")])
+        mock_agent_provider.get.assert_has_calls([call("input_agent"), call("condition_checker"), call("right_agent")])
         input_agent_mock.assert_awaited_once()
+        condition_checker_mock.assert_awaited_once()
         right_agent_mock.assert_awaited_once()
         left_agent_mock.assert_not_called()
 
         stage_input_num = self._get_stage_num(conditional_plan, "stage_input")
+        stage_cond_num = self._get_stage_num(conditional_plan, "stage_cond") # Added for the conditional stage
         stage_right_num = self._get_stage_num(conditional_plan, "stage_right")
 
-        mock_state_manager.update_status.assert_has_awaits([
+        mock_state_manager.update_status.assert_has_calls([
              call(stage=stage_input_num, status='PASS', artifacts=[]),
+             call(stage=stage_cond_num, status='PASS', artifacts=[]), # Added call for conditional stage
              call(stage=stage_right_num, status='PASS', artifacts=[]),
         ], any_order=False) # Order should be deterministic
 
@@ -240,11 +250,11 @@ class TestAsyncOrchestrator:
         await orchestrator.run(basic_plan, initial_context.copy())
 
         mock_agent_provider.get.assert_awaited_once_with("agent_a")
-        mock_state_manager.update_status.assert_awaited_once_with(
+        mock_state_manager.update_status.assert_called_once_with(
             stage=0.0,
             status=StageStatus.FAILURE.value,
             artifacts=[],
-            reason="Agent 'agent_a' not found"
+            reason=f"Agent 'agent_a' resolved to None"
         )
         mock_state_manager.save_paused_flow_state.assert_not_called()
 
@@ -267,12 +277,12 @@ class TestAsyncOrchestrator:
 
         max_hops = len(plan.stages) + 5 # 7
         # The agent provider should be called max_hops - 1 times before the loop breaks
-        assert mock_agent_provider.get.await_count == max_hops - 1 
-        assert mock_state_manager.update_status.await_count == max_hops
+        assert mock_agent_provider.get.await_count == max_hops - 1
+        assert mock_state_manager.update_status.call_count == max_hops
 
         # It will execute stage 1 (hop 1), stage 2 (hop 2), stage 1 (hop 3), stage 2 (hop 4), stage 1 (hop 5), stage 2 (hop 6)
         # On hop 7, it will try to execute stage 1 again, hit max hops, and record failure for stage 1.
-        mock_state_manager.update_status.assert_has_awaits([
+        mock_state_manager.update_status.assert_has_calls([
             call(stage=1.0, status='PASS', artifacts=[]), # Hop 1
             call(stage=2.0, status='PASS', artifacts=[]), # Hop 2
             call(stage=1.0, status='PASS', artifacts=[]), # Hop 3
@@ -319,8 +329,8 @@ class TestAsyncOrchestrator:
         assert saved_paused_details.error_details.stage_id == "stage0"
         assert "Traceback (most recent call last):" in saved_paused_details.error_details.traceback
 
-        mock_state_manager.update_status.assert_awaited_once()
-        update_call_args = mock_state_manager.update_status.await_args
+        mock_state_manager.update_status.assert_called_once()
+        update_call_args = mock_state_manager.update_status.call_args
         # Check args passed to update_status
         passed_kwargs = update_call_args[1]
         assert passed_kwargs['stage'] == 0.0 # Check stage number passed correctly
@@ -343,9 +353,9 @@ class TestAsyncOrchestrator:
         await orchestrator.run(basic_plan, initial_context.copy())
 
         mock_state_manager.save_paused_flow_state.assert_called_once()
-        mock_state_manager.update_status.assert_awaited_once()
+        mock_state_manager.update_status.assert_called_once()
 
-        update_call_args = mock_state_manager.update_status.await_args
+        update_call_args = mock_state_manager.update_status.call_args
         passed_kwargs = update_call_args[1]
         assert passed_kwargs['stage'] == 0.0
         assert passed_kwargs['status'] == StageStatus.FAILURE.value

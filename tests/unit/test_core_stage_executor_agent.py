@@ -5,6 +5,8 @@ from pathlib import Path
 import tempfile
 import shutil
 import yaml
+import os
+import time
 
 from chungoid.runtime.agents.core_stage_executor import core_stage_executor_agent, CoreStageExecutorInputs
 # We will be mocking ChungoidEngine and its parts, so direct import might not be strictly needed if fully mocked.
@@ -37,7 +39,7 @@ class TestCoreStageExecutorAgent(unittest.TestCase):
         
         # Configure the mocked engine instance's prompt_manager
         self.mock_engine_instance.prompt_manager = MagicMock()
-        self.server_stages_path = self.test_project_dir / "test_server_prompts" / "stages"
+        self.server_stages_path = self.test_project_dir / "server_prompts" / "stages"
         self.server_stages_path.mkdir(parents=True, exist_ok=True)
         self.mock_engine_instance.prompt_manager.server_stages_dir = self.server_stages_path
 
@@ -46,8 +48,15 @@ class TestCoreStageExecutorAgent(unittest.TestCase):
         shutil.rmtree(self.test_project_dir)
 
     def _write_stage_yaml(self, filename: str, content: dict):
-        with open(self.server_stages_path / filename, 'w') as f:
+        file_path = self.server_stages_path / filename
+        print(f"DEBUG TEST: Writing stage YAML to: {file_path.resolve()}") # DEBUG PRINT
+        with open(file_path, 'w') as f:
             yaml.dump(content, f)
+            f.flush() # Ensure buffer is flushed
+            os.fsync(f.fileno()) # Ensure written to disk
+        time.sleep(0.1) # Small delay
+        print(f"DEBUG TEST: File exists after write? {file_path.exists()}") # DEBUG PRINT
+        return file_path
 
     def test_input_validation_missing_filename(self):
         context = {
@@ -73,6 +82,10 @@ class TestCoreStageExecutorAgent(unittest.TestCase):
 
     def test_engine_initialization_failure(self):
         self.MockChungoidEngineClass.side_effect = RuntimeError("Engine boom!")
+        # Provide a minimal valid stage file so that loading succeeds and engine init is attempted
+        minimal_stage_content = {"name": "Stage 0 for engine fail test"} 
+        self._write_stage_yaml("stage0.yaml", minimal_stage_content)
+
         context = {
             "inputs": {
                 "stage_definition_filename": "stage0.yaml",
@@ -153,10 +166,10 @@ class TestCoreStageExecutorAgent(unittest.TestCase):
         self.assertEqual(result["executed_mcp_results"][0]["status"], "tool_success")
 
         self.mock_engine_instance.execute_mcp_tool.assert_any_call(
-            "test_tool_1", {"arg1": "val1"}, ANY
+            "test_tool_1", {"arg1": "val1"}, tool_call_id=ANY
         )
         self.mock_engine_instance.execute_mcp_tool.assert_any_call(
-            "test_tool_2", {"arg_from_context": "resolved_value"}, ANY
+            "test_tool_2", {"arg_from_context": "resolved_value"}, tool_call_id=ANY
         )
         self.assertIn("test_tool_1_0", result["final_context"]["outputs"])
         self.assertIn("test_tool_2_1", result["final_context"]["outputs"])

@@ -36,7 +36,7 @@ async def run_flow(plan_dict, initial_context, agent_provider, state_manager, co
     """Helper function to run a flow defined by a dictionary."""
     plan = ExecutionPlan(id="test-flow", start_stage=plan_dict['start_stage'], stages=plan_dict['stages'])
     orchestrator = AsyncOrchestrator(plan, config, agent_provider, state_manager)
-    return await orchestrator.run(run_id="mcp-test-run", context=initial_context)
+    return await orchestrator.run(plan=plan, context=initial_context)
 
 def test_run_endpoint_input_branching():
     api_key = os.environ.get("MCP_API_KEY", "dev-key")
@@ -373,14 +373,13 @@ async def test_run_endpoint_input_branching(mock_agent_provider, mock_state_mana
         'stages': {
             'stage1': StageSpec(
                 agent_id='agent1',
-                next={
-                    'condition': 'input_branch == "A"',
-                    'true': 'stageA',
-                    'false': 'stageB'
-                }
+                condition='input_branch == "A"',
+                next_stage_true='stageA',
+                next_stage_false='stageB',
+                next_stage=None
             ),
-            'stageA': StageSpec(agent_id='agentA', next=None),
-            'stageB': StageSpec(agent_id='agentB', next=None)
+            'stageA': StageSpec(agent_id='agentA', next_stage=None),
+            'stageB': StageSpec(agent_id='agentB', next_stage=None)
         }
     }
 

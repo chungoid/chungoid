@@ -46,7 +46,7 @@ def run(
 
         visited = asyncio.run(_go())
     else:
-        orch = SyncOrchestrator(plan)
-        visited = orch.run(max_hops=max_hops, context=context)
+        orch = SyncOrchestrator(project_config={})
+        visited = orch.run(plan=plan, context=context)
 
     typer.secho(" → Executed stages: " + ", ".join(visited), fg=typer.colors.GREEN) 
