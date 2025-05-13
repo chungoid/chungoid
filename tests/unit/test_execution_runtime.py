@@ -2,9 +2,10 @@ import textwrap
 import pytest
 from chungoid.runtime.orchestrator import ExecutionPlan, SyncOrchestrator, AsyncOrchestrator, StageSpec
 from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock, call
 from chungoid.utils.agent_resolver import AgentProvider
 from chungoid.utils.state_manager import StateManager
+from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
 
 
 def _linear_yaml():
@@ -16,7 +17,7 @@ def _linear_yaml():
             agent_id: system-greeter
             inputs:
               message: "hello"
-            next: farewell
+            next_stage: farewell
           farewell:
             agent_id: system-greeter
             inputs:
@@ -32,10 +33,9 @@ def _conditional_yaml():
         stages:
           s1:
             agent_id: a1
-            next:
-              condition: "input > 5"
-              "true": s2
-              "false": s3
+            condition: "input > 5"
+            next_stage_true: s2
+            next_stage_false: s3
           s2:
             agent_id: a2
           s3:
@@ -73,7 +73,7 @@ def _plugins_extra_yaml():
             plugins: ["log", "audit"]
             extra:
               custom: 42
-            next: s2
+            next_stage: s2
           s2:
             agent_id: a2
         """
@@ -89,27 +89,27 @@ def test_execution_plan_parses():
 
 def test_sync_orchestrator_runs_linear_flow():
     plan = ExecutionPlan.from_yaml(_linear_yaml())
-    orch = SyncOrchestrator(plan)
-    visited = orch.run()
+    orch = SyncOrchestrator(project_config={})
+    visited = orch.run(plan, context={})
     assert visited == ["greet", "farewell"]
 
 
 def test_sync_orchestrator_conditional_next():
     plan = ExecutionPlan.from_yaml(_conditional_yaml())
-    orch = SyncOrchestrator(plan)
+    orch = SyncOrchestrator(project_config={})
     # input > 5 (input=10)
-    visited = orch.run(context={"input": 10})
+    visited = orch.run(plan, context={"input": 10})
     assert visited == ["s1", "s2"]
     # input <= 5 (input=3)
-    visited2 = orch.run(context={"input": 3})
+    visited2 = orch.run(plan, context={"input": 3})
     assert visited2 == ["s1", "s3"]
 
 
 def test_sync_orchestrator_on_error_conditional():
     plan = ExecutionPlan.from_yaml(_on_error_yaml())
-    orch = SyncOrchestrator(plan)
+    orch = SyncOrchestrator(project_config={})
     # error_code == 404
-    visited = orch.run(context={"error_code": 404})
+    visited = orch.run(plan, context={"error_code": 404})
     # Only s1 is visited, as on_error is not triggered in this simple run
     assert visited == ["s1"]
 
@@ -128,16 +128,18 @@ def test_sync_orchestrator_loop_guard():
         stages:
           s1:
             agent_id: a1
-            next: s2
+            next_stage: s2
           s2:
             agent_id: a2
-            next: s1
+            next_stage: s1
         """
     )
     plan = ExecutionPlan.from_yaml(yaml_text)
-    orch = SyncOrchestrator(plan)
-    visited = orch.run(max_hops=5)
-    assert visited == ["s1", "s2", "s1", "s2", "s1"]
+    orch = SyncOrchestrator(project_config={})
+    visited = orch.run(plan, context={})
+    # Check against expected visited stages (internal max_hops = len(plan.stages) + 5 = 2 + 5 = 7)
+    # Loop should execute 6 times before hops (7) >= max_hops (7) condition stops it *before* 7th execution.
+    assert visited == ["s1", "s2", "s1", "s2", "s1", "s2"]
 
 
 def test_schema_validation_missing_required():
@@ -147,7 +149,7 @@ def test_schema_validation_missing_required():
         stages:
           s1:
             # agent_id missing
-            next: s2
+            next_stage: s2
         """
     )
     with pytest.raises(ValueError) as exc:
@@ -163,7 +165,7 @@ def test_schema_validation_extra_field():
           s1:
             agent_id: a1
             not_in_schema: 123
-            next: s2
+            next_stage: s2
         """
     )
     with pytest.raises(ValueError) as exc:
@@ -178,7 +180,7 @@ def test_schema_validation_invalid_type():
         stages:
           s1:
             agent_id: 123  # should be string
-            next: s2
+            next_stage: s2
         """
     )
     with pytest.raises(ValueError) as exc:
@@ -199,19 +201,10 @@ def test_async_orchestrator_runs(event_loop):
 
 def test_sync_orchestrator_next_if():
     plan = ExecutionPlan.from_yaml(_conditional_yaml())
-    orch = SyncOrchestrator(plan)
-    visited = orch.run()
+    orch = SyncOrchestrator(project_config={})
+    visited = orch.run(plan, context={})
     # No context, so input > 5 is not met; should take 'false' branch
     assert visited == ["s1", "s3"]
-
-
-def test_sync_orchestrator_on_error_conditional():
-    plan = ExecutionPlan.from_yaml(_on_error_yaml())
-    orch = SyncOrchestrator(plan)
-    # error_code == 404
-    visited = orch.run(context={"error_code": 404})
-    # Only s1 is visited, as on_error is not triggered in this simple run
-    assert visited == ["s1"]
 
 
 @pytest.fixture
@@ -234,10 +227,10 @@ start_stage: stage1
 stages:
   stage1:
     agent_id: agent1
-    next: stage2
+    next_stage: stage2
   stage2:
     agent_id: agent2
-    next: null
+    next_stage: null
 """
 
 def test_execution_plan_from_yaml():
@@ -256,24 +249,56 @@ async def test_async_orchestrator_runs(
     mock_state_manager: MagicMock, 
     mock_config: dict
 ): 
-    """Basic test to ensure AsyncOrchestrator can be instantiated and run."""
-    plan = ExecutionPlan.from_yaml(FLOW_YAML_SIMPLE, flow_id="test-async")
+    """Test that AsyncOrchestrator runs a basic linear flow (using MasterExecutionPlan)."""
+    # Define a plan using MasterExecutionPlan and MasterStageSpec
+    master_plan = MasterExecutionPlan(
+        id="test_async_linear",
+        name="Test Async Linear",
+        start_stage="greet_master",
+        stages={
+            "greet_master": MasterStageSpec(
+                agent_id="system-greeter-master", 
+                inputs={"message": "hello async"}, 
+                next_stage="farewell_master", 
+                number=1.0
+            ),
+            "farewell_master": MasterStageSpec(
+                agent_id="system-greeter-master", 
+                inputs={"message": "bye async"},
+                next_stage=None,
+                number=2.0
+            ),
+        }
+    )
+
+    # Mock agents expected by this plan
+    greet_agent_mock = AsyncMock(return_value={"greet_output": "ok"})
+    farewell_agent_mock = AsyncMock(return_value={"farewell_output": "ok"})
+    mock_agent_provider.get = AsyncMock(side_effect=[greet_agent_mock, farewell_agent_mock])
     
-    # Setup basic mocks for agent calls
-    async def dummy_agent(context): return {"output": "ok"}
-    mock_agent_provider.get.return_value = AsyncMock(side_effect=dummy_agent)
+    # Instantiate AsyncOrchestrator correctly
+    orch = AsyncOrchestrator(
+        pipeline_def=master_plan, 
+        config=mock_config, 
+        agent_provider=mock_agent_provider, 
+        state_manager=mock_state_manager
+    )
     
-    # Instantiate with required args
-    orchestrator = AsyncOrchestrator(plan, mock_config, mock_agent_provider, mock_state_manager)
-    
-    # Run
-    final_context = await orchestrator.run(run_id="async-run-1", context={}, max_hops=5)
-    
-    # Basic assertions
-    assert mock_agent_provider.get.call_count == 2
-    mock_agent_provider.get.assert_any_call("agent1")
-    mock_agent_provider.get.assert_any_call("agent2")
-    assert "outputs" in final_context
-    assert "stage1" in final_context["outputs"]
-    assert "stage2" in final_context["outputs"]
-    assert mock_state_manager.update_status.call_count >= 2 # At least called for each stage success 
+    initial_context = {"run_type": "async_test"}
+    final_context = await orch.run(master_plan, initial_context.copy()) # Pass plan and context
+
+    # Assertions
+    mock_agent_provider.get.assert_has_calls([
+        call("system-greeter-master"), 
+        call("system-greeter-master")
+    ])
+    greet_agent_mock.assert_awaited_once()
+    farewell_agent_mock.assert_awaited_once()
+    assert final_context['outputs']['greet_master'] == {"greet_output": "ok"}
+    assert final_context['outputs']['farewell_master'] == {"farewell_output": "ok"}
+    assert final_context['run_type'] == "async_test"
+    # Use assert_has_calls for AsyncMock, it checks awaited calls
+    mock_state_manager.update_status.assert_has_calls([
+        call(stage=1.0, status='PASS', artifacts=[]),
+        call(stage=2.0, status='PASS', artifacts=[]),
+    ])

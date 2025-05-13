@@ -176,10 +176,11 @@ class SyncOrchestrator:
             self.logger.exception(f"Error evaluating condition '{condition_str}': {e}")
             return False # Default to false on any error
 
-    def run(self, plan: ExecutionPlan, context: Dict[str, Any]) -> Dict[str, Any]:
+    def run(self, plan: ExecutionPlan, context: Dict[str, Any]) -> List[str]:
         # This is a placeholder for the synchronous orchestrator logic
         self.logger.info("SyncOrchestrator.run called (placeholder)")
         # Simple sequential execution for now, ignoring conditions
+        visited_stages: List[str] = [] # List to track visited stages
         current_stage_name = plan.start_stage
         max_hops = len(plan.stages) + 5 # Safety break
         hops = 0
@@ -196,6 +197,7 @@ class SyncOrchestrator:
                 break
 
             self.logger.info(f"Executing stage: {current_stage_name} (Agent: {stage.agent_id})")
+            visited_stages.append(current_stage_name) # Add visited stage to list
             # Placeholder for actual agent execution and context update
             # context['outputs'][current_stage_name] = {"message": f"Output from {current_stage_name}"}
             
@@ -207,7 +209,7 @@ class SyncOrchestrator:
             else:
                 current_stage_name = stage.next_stage
         
-        return context
+        return visited_stages # Return list of visited stages
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +343,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             if not stage:
                 self.logger.error(f"MASTER Stage '{current_stage_name}' not found in plan. Aborting loop.")
                 fallback_idx = -1.0 
-                self._state_manager.update_status(
+                await self._state_manager.update_status(
                     stage=fallback_idx, 
                     status=StageStatus.FAILURE.value, 
                     artifacts=[], 
@@ -355,7 +357,7 @@ class AsyncOrchestrator(BaseOrchestrator):
 
             if hops >= max_hops:
                 self.logger.warning(f"Max hops ({max_hops}) reached, breaking MASTER execution at stage '{current_stage_name}'.")
-                self._state_manager.update_status(
+                await self._state_manager.update_status(
                     stage=current_stage_idx, 
                     status=StageStatus.FAILURE.value, 
                     artifacts=[], 
@@ -381,7 +383,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             try:
                 if not stage.agent_id:
                      self.logger.error(f"MASTER Stage '{current_stage_name}' is missing agent_id. Aborting.")
-                     self._state_manager.update_status(
+                     await self._state_manager.update_status(
                          stage=current_stage_idx, 
                          status=StageStatus.FAILURE.value, 
                          artifacts=[], 
@@ -392,7 +394,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 agent_callable = await self._agent_provider.get(stage.agent_id)
                 if agent_callable is None:
                     self.logger.error(f"Agent '{stage.agent_id}' not found for MASTER Stage '{current_stage_name}'. Aborting.")
-                    self._state_manager.update_status(
+                    await self._state_manager.update_status(
                         stage=current_stage_idx, 
                         status=StageStatus.FAILURE.value, 
                         artifacts=[], 
@@ -432,7 +434,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 context['outputs'][current_stage_name] = stage_output
                 
                 self.logger.info(f"Agent '{stage.agent_id}' completed MASTER Stage '{current_stage_name}'.")
-                self._state_manager.update_status(
+                await self._state_manager.update_status(
                     stage=current_stage_idx, 
                     status=StageStatus.SUCCESS.value, 
                     artifacts=[]
@@ -450,7 +452,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 run_id = self._state_manager.get_or_create_current_run_id()
                 if run_id is None:
                     self.logger.error("Failed to get run_id from StateManager. Cannot save paused state.")
-                    self._state_manager.update_status(
+                    await self._state_manager.update_status(
                         stage=current_stage_idx, 
                         status=StageStatus.FAILURE.value, 
                         artifacts=[], 
@@ -474,7 +476,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     self.logger.exception(f"Failed to create/save PausedRunDetails: {pause_create_e}")
                     final_reason = f"Agent '{stage.agent_id}' failed (pause state save failed): {type(e).__name__}"
                 
-                self._state_manager.update_status(
+                await self._state_manager.update_status(
                     stage=current_stage_idx, 
                     status=StageStatus.FAILURE.value, 
                     artifacts=[], 

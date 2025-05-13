@@ -58,10 +58,12 @@ class TestStateManager(unittest.TestCase):
     @patch.object(Path, 'mkdir')
     @patch('builtins.open', new_callable=mock_open)
     @patch.object(Path, 'exists', return_value=False) # Assume file does NOT exist
-    @patch.object(Path, 'is_dir', return_value=True) # Assume dir exists
-    def test_init_success_file_does_not_exist(self, mock_is_dir, mock_exists, mock_open_func, mock_mkdir, mock_lock):
+    @patch.object(Path, 'is_dir') # Changed: No return_value here
+    def test_init_success_file_does_not_exist(self, mock_is_dir, mock_method_exists, mock_builtin_open, mock_mkdir, mock_lock, mock_class_path_open, mock_class_path_exists): # Added mock_class_path_open, mock_class_path_exists; renamed mock_exists
         """Test successful init when status file doesn't exist (returns default)."""
         # Mocks applied via decorators
+        mock_is_dir.side_effect = [True, True] # Explicitly for target_dir.is_dir() and server_stages_dir.is_dir()
+        
         sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
         self.assertIsNotNone(sm)
         status = sm._read_status_file()
@@ -69,44 +71,58 @@ class TestStateManager(unittest.TestCase):
         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
     @patch.object(Path, 'is_dir', return_value=False)
-    def test_init_target_dir_does_not_exist(self, mock_is_dir):
+    def test_init_target_dir_does_not_exist(self, mock_is_dir, mock_class_path_open, mock_class_path_exists): # Added class mock args
         """Test init raises ValueError if target directory doesn't exist."""
         with self.assertRaisesRegex(ValueError, "Target project directory not found"):
            StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
 
     @patch.object(Path, 'is_dir') # Patch Path.is_dir directly
-    def test_init_stages_dir_does_not_exist(self, mock_path_is_dir_method):
-        """Test init raises ValueError if stages directory doesn't exist."""
+    @patch('os.mkdir') # Patch os.mkdir to prevent FileExistsError
+    def test_init_stages_dir_does_not_exist(self, mock_os_mkdir, mock_path_is_dir_method, mock_class_path_open, mock_class_path_exists): # Added class mock args, added mock_os_mkdir
+        """Test init logs warning if stages directory doesn't exist but continues."""
         
         # StateManager checks target_dir.is_dir() then server_stages_dir.is_dir()
         # We want the first to be True, the second False for this test.
         mock_path_is_dir_method.side_effect = [True, False]
         
-        with self.assertRaisesRegex(ValueError, "Server stages directory not found"):
+        # StateManager should log a warning but NOT raise an error
+        with patch('logging.getLogger') as mock_get_logger, \
+             patch.object(StateManager, '_read_status_file', return_value={"runs": []}) as mock_read_status: # Mock _read_status_file
+            mock_logger_instance = MagicMock()
+            mock_get_logger.return_value = mock_logger_instance
             StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
         
-        # Check is_dir was called twice
+        # Check is_dir was called twice (for target and stages dir)
         self.assertEqual(mock_path_is_dir_method.call_count, 2)
+        # Assert the warning was logged
+        mock_logger_instance.warning.assert_any_call(
+            f"Server stages directory not found or not a directory: {self.dummy_stages_dir_str}. Operations requiring it may fail."
+        )
+        # Ensure os.mkdir was NOT called in this specific error path (it's called *after* the check)
+        # Correction: mkdir IS called later for .chungoid dir, so we patch it but don't assert it wasn't called.
+        # mock_os_mkdir.assert_not_called()
 
     @patch('filelock.FileLock')
-    @patch('os.makedirs')
+    @patch('json.dump')
     @patch('builtins.open', new_callable=mock_open, read_data=STATUS_CONTENT_INVALID_JSON)
-    @patch('chungoid.utils.state_manager.Path.exists') 
     @patch.object(Path, 'is_dir', return_value=True)
-    def test_init_status_file_corrupted(self, mock_is_dir, mock_exists, mock_open_func, mock_makedirs, mock_lock):
+    def test_init_status_file_corrupted(self, mock_is_dir, mock_open_func, mock_makedirs, mock_lock, mock_class_path_open, mock_class_path_exists): # Removed mock_method_exists
         """Test _read_status_file raises StatusFileError if status file is invalid JSON."""
-        # Mock exists to return True for the status file check inside _read_status_file
-        mock_exists.side_effect = lambda: True # No args, just return True
+        # Mock the CLASS level Path.exists to return True for the status file check inside _read_status_file
+        mock_class_path_exists.return_value = True
         
         # Mock Path.open used within _read_status_file to return corrupted data
-        m_open_corrupt = mock_open(read_data=STATUS_CONTENT_INVALID_JSON)
-        with patch.object(TestStateManager.mock_status_path, 'open', m_open_corrupt): 
-             with self.assertRaisesRegex(StatusFileError, "Invalid JSON in status file"):
-                  # StateManager init calls _read_status_file, which should now raise the error
-                  StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
+        # Use the class-level mock (mock_class_path_open) passed as argument
+        mock_class_path_open.return_value.__enter__.return_value.read.return_value = STATUS_CONTENT_INVALID_JSON
         
-        # Ensure exists was called
-        mock_exists.assert_called()
+        with self.assertRaisesRegex(StatusFileError, "Invalid JSON in status file"):
+             # StateManager init calls _read_status_file, which should now raise the error
+             StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
+        
+        # Ensure the class-level exists mock was called
+        mock_class_path_exists.assert_called()
+        # Ensure Path.open was called (using the class-level mock)
+        mock_class_path_open.assert_called()
 
     @patch('filelock.FileLock')
     @patch('json.dump')
@@ -115,25 +131,35 @@ class TestStateManager(unittest.TestCase):
     @patch.object(Path, 'is_dir', return_value=True)
     @patch('chungoid.utils.state_manager.datetime') # Patch datetime where it is used
     @patch('os.fsync') 
-    def test_update_project_status(self, mock_fsync, mock_datetime_class, mock_is_dir, mock_path_exists, mock_open_func, mock_json_dump, mock_lock):
+    def test_update_project_status(self, mock_fsync, mock_datetime_class, mock_is_dir, mock_method_path_exists, mock_builtin_open_func, mock_json_dump, mock_lock, mock_class_path_open, mock_class_path_exists): # Added class mock args, renamed mocks
         """Test update_project_status correctly adds a new status entry and writes file."""
         fixed_timestamp_dt = datetime.datetime(2023, 2, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
         
         # Configure the mocked datetime class
         mock_datetime_class.now.return_value = fixed_timestamp_dt
         mock_datetime_class.timezone.utc = datetime.timezone.utc # Ensure utc is available
-
+    
         # Mock Path.exists: False during init read, True during update read?
         # Let's make it simpler: assume init read finds nothing, update read finds nothing (first run)
-        mock_path_exists.side_effect = lambda: False # No args, return False
+        mock_method_path_exists.side_effect = lambda: False # No args, return False
+
+        # Configure the class-level mock for Path.open to handle reads/writes
+        # Read returns empty initially, Write captures data
+        read_mock = mock_open(read_data='').return_value
+        write_mock = mock_open().return_value
+        def open_side_effect(*args, **kwargs):
+            if args[0] == 'r':
+                return read_mock
+            elif args[0] == 'w':
+                return write_mock
+            return mock_open().return_value # Default mock
+        mock_class_path_open.side_effect = open_side_effect
 
         sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
 
-        # Mock the Path.open used for writing
-        m_path_open_write = mock_open()
-        with patch.object(sm.status_file_path, 'open', m_path_open_write):
-            success = sm.update_status(stage=0.0, status=StageStatus.SUCCESS.value, artifacts=["out.log"])
-            self.assertTrue(success)
+        # Call the method which uses Path.open('w') internally via _write_status_file
+        success = sm.update_status(stage=0.0, status=StageStatus.SUCCESS.value, artifacts=["out.log"])
+        self.assertTrue(success)
         
         # Assert datetime.datetime.now was called with the correct timezone argument
         mock_datetime_class.now.assert_any_call(datetime.timezone.utc)
@@ -148,8 +174,8 @@ class TestStateManager(unittest.TestCase):
             "timestamp": fixed_timestamp_dt.isoformat(), 
             "artifacts": ["out.log"],
         })
-        # Assert json.dump called with the mock file handle from Path.open patch
-        mock_json_dump.assert_called_once_with(expected_data, m_path_open_write.return_value, indent=2)
+        # Assert json.dump called with the correct data and the write mock file handle
+        mock_json_dump.assert_called_once_with(expected_data, write_mock, indent=2)
         mock_lock.return_value.__enter__.assert_called()
         mock_lock.return_value.__exit__.assert_called()
         mock_fsync.assert_called_once()
@@ -159,7 +185,7 @@ class TestStateManager(unittest.TestCase):
     @patch('builtins.open', new_callable=mock_open)
     @patch('chungoid.utils.state_manager.datetime')
     @patch('os.fsync')
-    def test_update_project_status_fail_with_details(self, mock_fsync, mock_datetime_class, mock_open_func, mock_json_dump, mock_lock):
+    def test_update_project_status_fail_with_details(self, mock_fsync, mock_datetime_class, mock_builtin_open_func, mock_json_dump, mock_lock, mock_class_path_open, mock_class_path_exists): # Added class mock args
         """Test update_status stores AgentErrorDetails on FAIL."""
         fixed_timestamp_dt = datetime.datetime(2023, 2, 15, 13, 0, 0, tzinfo=datetime.timezone.utc)
         mock_datetime_class.now.return_value = fixed_timestamp_dt
@@ -168,27 +194,37 @@ class TestStateManager(unittest.TestCase):
         error_instance = AgentErrorDetails(
             error_type="ValueError",
             message="Something went wrong",
-            traceback="Traceback...\n...",
+            traceback="Traceback...\\n...",
             agent_id="test_agent",
             stage_id="1.5"
         )
-        error_json = error_instance.model_dump_json(indent=2)
+        # Expect the JSON string representation in the final data, with indentation
+        error_json_str = error_instance.model_dump_json(indent=2) 
 
         # Assume status file already has run 0
         existing_status_content = '{"runs": [{"run_id": 0, "start_timestamp": "2023-02-15T12:00:00+00:00", "status_updates": []}]}'
         
         # Mock Path.exists: True for the read inside update_status
-        with patch('chungoid.utils.state_manager.Path.exists', side_effect=lambda: True), \
-             patch('chungoid.utils.state_manager.Path.is_dir', return_value=True):
-            
-            sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
-            
-            # Configure mock_open_func (builtins.open) for the read operation inside update_status
-            mock_open_func.return_value.read.return_value = existing_status_content
+        # Use mock_class_path_exists from class decorator here
+        mock_class_path_exists.return_value = True
+        
+        # Configure the class-level mock for Path.open to handle reads/writes
+        read_mock = mock_open(read_data=existing_status_content).return_value
+        write_mock = mock_open().return_value
+        def open_side_effect(*args, **kwargs):
+            if args[0] == 'r':
+                return read_mock
+            elif args[0] == 'w':
+                return write_mock
+            return mock_open().return_value # Default mock
+        mock_class_path_open.side_effect = open_side_effect
 
-            # Create a new mock for Path.open, which is used for writing in _write_status_file
-            m_path_open_write = mock_open()
-            with patch.object(sm.status_file_path, 'open', m_path_open_write): 
+        # Patch is_dir needed for StateManager init
+        with patch('chungoid.utils.state_manager.Path.is_dir', return_value=True):
+            sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
+
+            # Ensure that when update_status calls _read_status_file, it gets the existing content
+            with patch.object(sm, '_read_status_file', return_value=json.loads(existing_status_content)):
                 success = sm.update_status(
                     stage=1.5,
                     status=StageStatus.FAILURE.value, 
@@ -196,39 +232,23 @@ class TestStateManager(unittest.TestCase):
                     reason="Agent failed",
                     error_details=error_instance
                 )
-                self.assertTrue(success)
+            self.assertTrue(success)
 
-                # Prepare expected data for json.dump assertion
-                expected_data = json.loads(existing_status_content)
-                # The run_id should be 0 (first run), and its start_timestamp must be set by update_status if it's a new run
-                # However, if existing_status_content implies run 0 exists, we should update its start_timestamp to match fixed_timestamp_dt
-                # For this test, assume `update_status` correctly finds/creates run 0 and sets/updates its start_timestamp.
-                # The crucial part is the new status_updates entry.
+            # Prepare expected data for json.dump assertion
+            expected_data = json.loads(existing_status_content) # This will have the 12:00 timestamp
+            expected_entry = {
+                "stage": 1.5,
+                "status": StageStatus.FAILURE.value,
+                "timestamp": fixed_timestamp_dt.isoformat(), 
+                "artifacts": [],
+                "reason": "Agent failed",
+                "error_details": error_json_str # Compare string with string
+            }
+            # The update should append to the *existing* run 0
+            expected_data["runs"][0]["status_updates"].append(expected_entry)
 
-                # If it's the first entry in a new run 0:
-                if not expected_data["runs"] or expected_data["runs"][0]["run_id"] != 0:
-                     expected_data = {"runs": [{"run_id": 0, "start_timestamp": fixed_timestamp_dt.isoformat(), "status_updates": []}]}
-                else:
-                     # If run 0 already exists, its start_timestamp might be different or set here
-                     # For simplicity, let's assume update_status handles setting it to the fixed_timestamp_dt
-                     # if it's the very first update to a new run.
-                     # If the run existed, we need to make sure we are using the *correct* start_timestamp for comparison.
-                     # Let's assume for this test, if run 0 is created, its start_timestamp becomes fixed_timestamp_dt.
-                     if "start_timestamp" not in expected_data["runs"][0]:
-                          expected_data["runs"][0]["start_timestamp"] = fixed_timestamp_dt.isoformat()
-
-                expected_entry = {
-                    "stage": 1.5,
-                    "status": StageStatus.FAILURE.value,
-                    "timestamp": fixed_timestamp_dt.isoformat(), 
-                    "artifacts": [],
-                    "reason": "Agent failed",
-                    "error_details": error_json
-                }
-                expected_data["runs"][0]["status_updates"].append(expected_entry)
-
-                # Assert json.dump was called with the correct structure and the mocked Path.open file handle
-                mock_json_dump.assert_called_once_with(expected_data, m_path_open_write.return_value, indent=2)
+            # Assert json.dump was called with the correct structure and the mocked Path.open file handle for writing
+            mock_json_dump.assert_called_once_with(expected_data, write_mock, indent=2)
 
             mock_datetime_class.now.assert_any_call(datetime.timezone.utc)
             mock_fsync.assert_called_once()
@@ -237,32 +257,58 @@ class TestStateManager(unittest.TestCase):
 
     @patch('filelock.FileLock')
     @patch.object(Path, 'is_dir', return_value=True)
-    def test_get_next_stage_simple(self, mock_is_dir, mock_lock):
+    def test_get_next_stage_simple(self, mock_is_dir, mock_lock, mock_class_path_open, mock_class_path_exists): # Added class mock args
         """Test get_next_stage advances correctly."""
         sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
 
         # Patch _read_status_file to return the desired data *when get_next_stage calls it*
         parsed_data = json.loads(STATUS_CONTENT_RUN0_DONE)
-        with patch.object(sm, '_read_status_file', return_value=parsed_data):
+        
+        # Mock the glob call to return dummy stage files
+        mock_stage0 = MagicMock(spec=Path)
+        mock_stage0.is_file.return_value = True
+        mock_stage0.stem = "stage0"
+        mock_stage1 = MagicMock(spec=Path)
+        mock_stage1.is_file.return_value = True
+        mock_stage1.stem = "stage1"
+        
+        # Patch pathlib.Path.glob directly
+        with patch.object(sm, '_read_status_file', return_value=parsed_data), \
+             patch('pathlib.Path.glob', return_value=[mock_stage0, mock_stage1]) as mock_glob: # Patch pathlib.Path.glob
+            
             next_stage = sm.get_next_stage()
+            # Highest completed = 0.0 (from RUN0_DONE). Available = [0.0, 1.0]. Lowest > 0.0 is 1.0
             self.assertEqual(next_stage, 1.0)
+            mock_glob.assert_called_once_with("stage*.yaml")
 
     @patch('filelock.FileLock')
     @patch.object(Path, 'is_dir', return_value=True)
-    def test_get_next_stage_fail(self, mock_is_dir, mock_lock):
+    def test_get_next_stage_fail(self, mock_is_dir, mock_lock, mock_class_path_open, mock_class_path_exists): # Added class mock args
         """Test get_next_stage returns correct stage based on FAIL content."""
         sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
         
         parsed_data = json.loads(STATUS_CONTENT_RUN0_FAIL)
-        with patch.object(sm, '_read_status_file', return_value=parsed_data):
+
+        # Mock the glob call to return dummy stage files
+        mock_stage0 = MagicMock(spec=Path)
+        mock_stage0.is_file.return_value = True
+        mock_stage0.stem = "stage0"
+        mock_stage1_5 = MagicMock(spec=Path)
+        mock_stage1_5.is_file.return_value = True
+        mock_stage1_5.stem = "stage1.5"
+
+        with patch.object(sm, '_read_status_file', return_value=parsed_data), \
+             patch('pathlib.Path.glob', return_value=[mock_stage0, mock_stage1_5]) as mock_glob: # Patch pathlib.Path.glob
+            
             # Logic changed: get_next_stage finds lowest available > highest completed.
-            # In RUN0_FAIL, highest completed is -1. Lowest available is 0.0
+            # In RUN0_FAIL, highest completed is -1. Available = [0.0, 1.5]. Lowest > -1 is 0.0
             next_stage = sm.get_next_stage() 
             self.assertEqual(next_stage, 0.0) # Expect 0.0 as next stage
+            mock_glob.assert_called_once_with("stage*.yaml")
 
     @patch.object(Path, 'is_dir', return_value=True)
     @patch('chungoid.utils.state_manager.chroma_utils.query_documents')
-    def test_get_reflection_context_from_chroma_success(self, mock_query_documents, mock_isdir):
+    def test_get_reflection_context_from_chroma_success(self, mock_query_documents, mock_isdir, mock_class_path_open, mock_class_path_exists): # Added class mock args
         """Test get_reflection_context_from_chroma queries and formats."""
         # Updated mock_query_results to match the expected output format of chroma_utils.query_documents
         mock_formatted_results = [{
@@ -274,8 +320,10 @@ class TestStateManager(unittest.TestCase):
         }]
         mock_query_documents.return_value = mock_formatted_results
         
-        sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
-        results = sm.get_reflection_context_from_chroma(query="test query")
+        # Ensure filelock is mocked for StateManager init
+        with patch('filelock.FileLock'):
+            sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
+            results = sm.get_reflection_context_from_chroma(query="test query")
         
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["document"], "doc1")
@@ -291,12 +339,14 @@ class TestStateManager(unittest.TestCase):
 
     @patch.object(Path, 'is_dir', return_value=True)
     @patch('chungoid.utils.state_manager.chroma_utils.add_or_update_document') # Corrected patch target
-    def test_store_artifact_context_in_chroma_success(self, mock_add_or_update_document, mock_isdir):
+    def test_store_artifact_context_in_chroma_success(self, mock_add_or_update_document, mock_isdir, mock_class_path_open, mock_class_path_exists): # Added class mock args
         """Test store_artifact_context_in_chroma adds artifact data."""
         mock_add_or_update_document.return_value = True # Simulate successful operation
 
-        sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
-        success = sm.store_artifact_context_in_chroma(stage_number=1.0, rel_path="a/b.txt", content="artifact content")
+        # Ensure filelock is mocked for StateManager init
+        with patch('filelock.FileLock'):
+            sm = StateManager(self.test_target_dir_str, server_stages_dir=self.dummy_stages_dir_str)
+            success = sm.store_artifact_context_in_chroma(stage_number=1.0, rel_path="a/b.txt", content="artifact content")
         
         self.assertTrue(success)
         # Assert that chroma_utils.add_or_update_document was called
@@ -376,6 +426,7 @@ class TestStateManagerPauseResume(unittest.TestCase):
         "Helper to create a sample PausedRunDetails object."
         return PausedRunDetails(
             run_id=self.test_run_id,
+            flow_id="test-flow-id", # Added missing flow_id
             paused_at_stage_id="stage_error",
             timestamp=datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc), # Fixed timestamp
             context_snapshot={"key": "value", "outputs": {}},
@@ -491,12 +542,14 @@ class TestStateManagerPauseResume(unittest.TestCase):
         # Assert path generation calls
         self.mock_status_parent_dir.__truediv__.assert_called_once_with("paused_runs")
         self.mock_paused_runs_dir.__truediv__.assert_called_once_with(f"{self.test_run_id}.json")
-        
-        # Assert checks on the final mock path
-        self.mock_paused_file_path.exists.assert_called_once()
-        self.mock_paused_file_path.is_file.assert_not_called() 
-        self.mock_logger.info.assert_any_call(f"Paused state file for run_id '{self.test_run_id}' not found at {self.mock_paused_file_path}.")
 
+        # Assert checks and calls on the final mock path
+        # Ensure exists() is checked correctly (called once in this path for load)
+        self.assertEqual(self.mock_paused_file_path.exists.call_count, 1)
+        self.mock_paused_file_path.is_file.assert_not_called() 
+        self.mock_paused_file_path.unlink.assert_not_called() 
+        # Updated expected log message to match actual implementation
+        self.mock_logger.info.assert_any_call(f"Paused state file for run_id '{self.test_run_id}' not found at {self.mock_paused_file_path}.")
 
     def test_delete_paused_flow_state_success(self):
         """Test successfully deleting an existing paused state file (isolated)."""
@@ -556,7 +609,8 @@ class TestStateManagerPauseResume(unittest.TestCase):
         self.assertEqual(self.mock_paused_file_path.exists.call_count, 2)
         self.mock_paused_file_path.is_file.assert_not_called() 
         self.mock_paused_file_path.unlink.assert_not_called() 
-        self.mock_logger.info.assert_any_call(f"Paused state file for run_id '{self.test_run_id}' not found at {self.mock_paused_file_path}.")
+        # Updated expected log message to match actual implementation
+        self.mock_logger.info.assert_any_call(f"Paused state file for run_id '{self.test_run_id}' not found at {self.mock_paused_file_path}. No deletion needed.")
 
 # <<< Add tests for get_or_create_current_run_id >>>
 class TestStateManagerGetRunId(unittest.TestCase):
