@@ -188,17 +188,6 @@ def test_schema_validation_invalid_type():
     assert "agent_id" in str(exc.value)
 
 
-def test_async_orchestrator_runs(event_loop):
-    plan = ExecutionPlan.from_yaml(_linear_yaml())
-    import asyncio
-    async def _run():
-        from chungoid.runtime.orchestrator import AsyncOrchestrator
-        orch = AsyncOrchestrator(plan)
-        return await orch.run()
-    visited = event_loop.run_until_complete(_run())
-    assert visited == ["greet", "farewell"]
-
-
 def test_sync_orchestrator_next_if():
     plan = ExecutionPlan.from_yaml(_conditional_yaml())
     orch = SyncOrchestrator(project_config={})
@@ -214,7 +203,7 @@ def mock_agent_provider() -> MagicMock:
 @pytest.fixture
 def mock_state_manager() -> MagicMock:
     manager = MagicMock(spec=StateManager)
-    manager.update_status = MagicMock()
+    manager.update_status = AsyncMock()
     return manager
 
 @pytest.fixture

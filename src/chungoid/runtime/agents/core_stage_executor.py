@@ -93,7 +93,37 @@ async def core_stage_executor_agent(context: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"Project root for sub-stage execution: {current_project_root}")
     logger.info(f"Executing sub-stage definition file: {stage_def_filename}")
 
-    # Initialize a temporary ChungoidEngine for this sub-stage execution
+    # <<< FIX: Load sub-stage YAML directly, not via PromptManager >>>
+    # Construct the path relative to the provided project root
+    stages_dir_path = Path(current_project_root) / "server_prompts" / "stages"
+    sub_stage_yaml_path = stages_dir_path / stage_def_filename
+    logger.info(f"Attempting to load sub-stage YAML directly from: {sub_stage_yaml_path}")
+
+    if not sub_stage_yaml_path.exists():
+        logger.error(f"Sub-stage YAML file not found at expected path: {sub_stage_yaml_path}")
+        return {"status": "error", "message": f"Sub-stage YAML file not found: {stage_def_filename}"}
+
+    try:
+        with open(sub_stage_yaml_path, 'r', encoding='utf-8') as f:
+            sub_stage_yaml_content = yaml.safe_load(f)
+        if not isinstance(sub_stage_yaml_content, dict):
+            raise PromptLoadError(f"Sub-stage YAML content is not a dictionary: {sub_stage_yaml_path}")
+    except FileNotFoundError:
+        # This check is slightly redundant due to exists() above, but good practice
+        logger.error(f"Sub-stage YAML file not found during open: {sub_stage_yaml_path}")
+        return {"status": "error", "message": f"Sub-stage YAML file not found: {stage_def_filename}"}
+    except (yaml.YAMLError, PromptLoadError) as e:
+        logger.error(f"Error loading/parsing sub-stage YAML {sub_stage_yaml_path}: {e}")
+        return {"status": "error", "message": f"Cannot load/parse sub-stage YAML: {e}"}
+    except Exception as e:
+        logger.exception(f"Unexpected error loading sub-stage YAML {sub_stage_yaml_path}: {e}")
+        return {"status": "error", "message": f"Unexpected error loading sub-stage YAML: {e}"}
+
+
+    # Initialize a temporary ChungoidEngine for executing MCP actions within this sub-stage
+    # Note: We load the YAML *before* initializing the engine to ensure the file exists.
+    # The engine itself might *also* try to load standard stage files via its PromptManager,
+    # but that's okay - we primarily use this engine instance to call execute_mcp_tool.
     try:
         temp_engine = ChungoidEngine(project_directory=current_project_root)
     except NameError: # If ChungoidEngine import failed
@@ -103,19 +133,6 @@ async def core_stage_executor_agent(context: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Failed to initialize temporary ChungoidEngine for project {current_project_root}: {engine_init_err}")
         return {"status": "error", "message": f"Failed to initialize engine for sub-stage: {engine_init_err}"}
     
-    # --- Load Sub-Stage YAML --- 
-    sub_stage_yaml_path = temp_engine.prompt_manager.server_stages_dir / stage_def_filename
-    if not sub_stage_yaml_path.exists():
-        logger.error(f"Sub-stage YAML file not found by PromptManager: {sub_stage_yaml_path}")
-        return {"status": "error", "message": f"Sub-stage YAML file not found: {stage_def_filename}"}
-
-    try:
-        with open(sub_stage_yaml_path, 'r') as f:
-            sub_stage_yaml_content = yaml.safe_load(f)
-    except Exception as e:
-        logger.error(f"Error loading/parsing sub-stage YAML {sub_stage_yaml_path}: {e}")
-        return {"status": "error", "message": f"Cannot load/parse sub-stage YAML: {e}"}
-
     # --- Prepare Sub-Stage Context --- 
     # Start with a clean slate or copy from master? Let's copy master context for now.
     # This allows sub-stage actions to potentially use outputs from previous master stages.

@@ -113,7 +113,7 @@ class AgentRegistry:
         metadata = {
             "agent_id": agent_card.agent_id,
             "name": agent_card.name,
-            "stage_focus": agent_card.stage_focus,
+            "stage_focus": agent_card.stage_focus if agent_card.stage_focus is not None else "",
             # Store datetime as ISO 8601 string (ChromaDB compatibility)
             "created": agent_card.created.isoformat(),
             # Store lists as comma-separated strings (simple approach)

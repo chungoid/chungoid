@@ -85,14 +85,19 @@ class RegistryAgentProvider:
         if identifier in self._cache:
             return self._cache[identifier]
 
+        # If the identifier is directly mapped in the fallback, use that callable.
+        if identifier in self._fallback:
+            callable_from_fallback = self._fallback[identifier]
+            self._cache[identifier] = callable_from_fallback # Cache it
+            return callable_from_fallback # Return the (potentially async) callable
+
+        # If not in fallback, check registry card
         card = self._registry.get(identifier)
         if card is None:
-            # graceful fallback to mapping if present
-            if identifier in self._fallback:
-                return self._fallback[identifier]
-            raise KeyError(f"Agent '{identifier}' not found in registry")
+            # Not in fallback and no card found in registry.
+            raise KeyError(f"Agent '{identifier}' not found in registry or direct fallback.")
 
-        # Build callable depending on MCP availability & card metadata
+        # Card exists. Try to use MCP tool dispatch if possible.
         if self._CoreMCPClient and card.tool_names:
             tool_name = card.tool_names[0]
 
@@ -109,9 +114,10 @@ class RegistryAgentProvider:
             self._cache[identifier] = _sync_callable
             return _sync_callable
 
-        # Fallback stub (no MCP client or no tool mapping)
+        # Card exists, not in fallback, and no MCP tool/client.
+        # Return the stub as the last resort.
         def _stub(stage: StageDict) -> Dict[str, object]:  # type: ignore[override]
-            return {"agent_id": identifier, "stage_inputs": stage.get("inputs", {})}
+            return {"agent_id": identifier, "stage_inputs": stage.get("inputs", {}), "message": "Agent is a stub (card found, no tool/fallback)."}
 
         self._cache[identifier] = _stub
         return _stub

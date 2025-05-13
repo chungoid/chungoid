@@ -85,10 +85,16 @@ from chungoid.runtime.orchestrator import AsyncOrchestrator #, ExecutionPlan no 
 from chungoid.schemas.master_flow import MasterExecutionPlan # <<< Import MasterExecutionPlan
 from chungoid.utils.agent_resolver import RegistryAgentProvider # Example provider
 # from chungoid.utils.flow_registry import FlowRegistry # No longer used directly for master plans
-from chungoid.utils.master_flow_registry import MasterFlowRegistry # <<< Import MasterFlowRegistry
+from chungoid.utils.master_flow_registry import MasterFlowRegistry
 from chungoid.utils.agent_registry import AgentRegistry # Import AgentRegistry
 from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card, core_stage_executor_agent # <<< For registration
 from chungoid.schemas.flows import PausedRunDetails # Ensure this is imported
+from chungoid.utils.config_loader import get_config # For default config
+# <<< Import patch and AsyncMock >>>
+from unittest.mock import patch, AsyncMock 
+
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helper utilities
@@ -337,16 +343,16 @@ def flow_run(ctx: click.Context, master_flow_id: str, project_dir_opt: Path, ini
         logger.info(f"Loaded MasterExecutionPlan '{master_plan.id}' for execution.")
 
         # --- Agent Registry (and register core agents) ---
-        agent_registry = AgentRegistry()
-        try:
-            agent_registry.add(core_stage_executor_card, core_stage_executor_agent)
-            logger.info(f"Registered built-in agent: {core_stage_executor_card.agent_id}")
-        except Exception as reg_err:
-            logger.exception(f"Fatal: Failed to register core agent '{core_stage_executor_card.agent_id}': {reg_err}")
-            click.echo(f"Error: Failed to register core executor agent. Cannot proceed.", err=True)
-            sys.exit(1)
-        
-        agent_provider = RegistryAgentProvider(registry=agent_registry)
+        agent_registry = AgentRegistry(project_root=Path.cwd())
+        agent_registry.add(card=core_stage_executor_card) # Agent function registration handled by RegistryAgentProvider?
+        # <<< PROVIDE FALLBACK AGENT >>>
+        fallback_agents = {core_stage_executor_card.agent_id: core_stage_executor_agent}
+        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents)
+        # <<< NOTE: RegistryAgentProvider needs the actual agent function >>>
+        # The CLI needs to ensure agents used by the flow are registered SOMEWHERE.
+        # For core_stage_executor, perhaps the provider should handle it?
+        # Let's assume RegistryAgentProvider handles mapping ID to function if needed.
+        # For custom agents, a registration mechanism would be required (e.g., config, plugins).
 
         # --- Orchestrator --- 
         orchestrator = AsyncOrchestrator(
@@ -444,25 +450,75 @@ def flow_resume(ctx: click.Context, run_id: str, action: str, inputs: Optional[s
     # --- Async runner --- 
     async def do_resume():
         # --- Find server_stages_dir (for StateManager) ---
-        core_package_dir = Path(__file__).parent.resolve()
-        server_stages_dir = core_package_dir / "server_prompts" / "stages"
-        if not server_stages_dir.is_dir():
-            # Fallback if not found relative to cli.py (e.g., in a weird install state)
-            logger.warning(f"Default server_stages_dir not found at {server_stages_dir}. Trying alternative based on 'chungoid' package path.")
-            try:
-                import chungoid
-                # Assuming chungoid package is installed and has a __path__
-                # This might be fragile depending on how chungoid is packaged/installed.
-                chungoid_pkg_root = Path(list(chungoid.__path__)[0]).resolve()
-                server_stages_dir = chungoid_pkg_root / "server_prompts" / "stages"
-                if not server_stages_dir.is_dir():
-                    click.echo(f"Error: Critical - could not locate server_prompts/stages directory. Looked at {core_package_dir / 'server_prompts' / 'stages'} and {server_stages_dir}. Cannot proceed.", err=True)
-                    sys.exit(1)
-                logger.info(f"Using alternative server_stages_dir: {server_stages_dir}")
-            except Exception as e_ssd_fallback:
-                logger.error(f"Failed to find server_stages_dir via fallback: {e_ssd_fallback}")
-                click.echo(f"Error: Critical - could not locate server_prompts/stages directory. Fallback failed. {e_ssd_fallback}. Cannot proceed.", err=True)
-                sys.exit(1)
+        # Problem: If run from a temp dir, Path(__file__).parent might not be correct
+        # relative to the installed package. Need a reliable way to find package data.
+        server_stages_dir = None
+        default_stages_dir = None # Initialize for error message
+        try:
+            # <<< START NEW LOGIC >>>
+            # Method 1: Check relative to Current Working Directory
+            cwd = Path.cwd()
+            cwd_stages_dir = cwd / "server_prompts" / "stages"
+            if cwd_stages_dir.is_dir():
+                server_stages_dir = cwd_stages_dir
+                logger.info(f"Found server_stages_dir relative to CWD: {server_stages_dir}")
+            else:
+                logger.warning(f"Server prompts not found relative to CWD ({cwd_stages_dir}). Trying other methods.")
+                # Method 2: Assume standard project structure relative to cli.py
+                core_root = Path(__file__).resolve().parent # chungoid/cli.py -> chungoid/
+                default_stages_dir = core_root / "server_prompts" / "stages"
+                if default_stages_dir.is_dir():
+                    server_stages_dir = default_stages_dir
+                    logger.info(f"Found server_stages_dir via standard structure: {server_stages_dir}")
+                else:
+                    logger.warning(f"Default server_stages_dir not found at {default_stages_dir}. Trying alternative based on 'chungoid' package path.")
+                    # Method 3: Try using importlib.resources (more robust for installed packages)
+                    try:
+                        import importlib.resources
+                        # Use files() API for Python 3.9+
+                        # Access chungoid.server_prompts.stages directly if possible?
+                        # No, need the parent folder 'server_prompts' first.
+                        # <<< ADJUST importlib path access >>>
+                        # Try to get the path to the 'server_prompts' directory itself
+                        # Note: This requires 'server_prompts' to be treated as a package resource folder
+                        # which might need an __init__.py inside it, or using traversable API.
+                        # Simpler approach for now: target a known file within it.
+                        try:
+                             # Attempt to find the path via a known file like 'common.yaml'
+                             with importlib.resources.path("chungoid.server_prompts", "common.yaml") as common_yaml_path:
+                                 sp_path = common_yaml_path.parent # Get the server_prompts dir
+                                 alt_stages_dir = sp_path / "stages"
+                                 if alt_stages_dir.is_dir():
+                                     server_stages_dir = alt_stages_dir
+                                     logger.info(f"Found server_stages_dir via importlib (using common.yaml): {server_stages_dir}")
+                                 else:
+                                     logger.error(f"Alternative server_stages_dir not found via importlib at {alt_stages_dir}")
+                        except (FileNotFoundError, ModuleNotFoundError):
+                            logger.warning("Could not locate 'chungoid.server_prompts.common.yaml' via importlib. Trying package root.")
+                            # Fallback: try finding package root and construct path
+                            import chungoid
+                            if hasattr(chungoid, '__path__'):
+                                package_root = Path(chungoid.__path__[0]).parent # Go up from src/chungoid to src/ usually
+                                alt_stages_dir_fallback = package_root / "server_prompts" / "stages"
+                                if alt_stages_dir_fallback.is_dir():
+                                     server_stages_dir = alt_stages_dir_fallback
+                                     logger.info(f"Found server_stages_dir via package root fallback: {server_stages_dir}")
+                                else:
+                                    logger.error(f"Alternative server_stages_dir not found via package root fallback at {alt_stages_dir_fallback}")
+
+                    except (ImportError, ModuleNotFoundError, FileNotFoundError, AttributeError) as e_importlib:
+                        logger.error(f"Failed to find server_stages_dir using importlib/package path: {e_importlib}")
+            # <<< END NEW LOGIC >>>
+
+        except Exception as e_path:
+            logger.error(f"Unexpected error locating server_stages_dir: {e_path}")
+
+        if not server_stages_dir:
+             # <<< CRITICAL ERROR >>>
+             err_msg = ("Error: Critical - could not locate server_prompts/stages directory. "
+                        f"Looked relative to CWD ({cwd_stages_dir}), relative to package structure ({default_stages_dir}), and via importlib/package root. Cannot proceed.")
+             click.echo(err_msg, err=True)
+             sys.exit(1) # Exit if stages dir cannot be found
 
         # --- State Manager (must be initialized first to load PausedRunDetails) ---
         state_manager = StateManager(
@@ -496,16 +552,16 @@ def flow_resume(ctx: click.Context, run_id: str, action: str, inputs: Optional[s
         logger.info(f"Successfully loaded MasterExecutionPlan '{master_plan.id}' (Name: {master_plan.name or 'N/A'}) for resume.")
 
         # --- Agent Registry (and register core agents) ---
-        agent_registry = AgentRegistry()
-        try:
-            agent_registry.add(core_stage_executor_card, core_stage_executor_agent)
-            logger.info(f"Registered built-in agent: {core_stage_executor_card.agent_id}")
-        except Exception as reg_err:
-            logger.exception(f"Fatal: Failed to register core agent '{core_stage_executor_card.agent_id}': {reg_err}")
-            click.echo(f"Error: Failed to register core executor agent. Cannot proceed.", err=True)
-            sys.exit(1)
-        
-        agent_provider = RegistryAgentProvider(registry=agent_registry)
+        agent_registry = AgentRegistry(project_root=Path.cwd())
+        agent_registry.add(card=core_stage_executor_card) # Agent function registration handled by RegistryAgentProvider?
+        # <<< PROVIDE FALLBACK AGENT >>>
+        fallback_agents = {core_stage_executor_card.agent_id: core_stage_executor_agent}
+        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents)
+        # <<< NOTE: RegistryAgentProvider needs the actual agent function >>>
+        # The CLI needs to ensure agents used by the flow are registered SOMEWHERE.
+        # For core_stage_executor, perhaps the provider should handle it?
+        # Let's assume RegistryAgentProvider handles mapping ID to function if needed.
+        # For custom agents, a registration mechanism would be required (e.g., config, plugins).
 
         # --- Orchestrator --- 
         orchestrator = AsyncOrchestrator(

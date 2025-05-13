@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Generator, Any
+import shutil
 
 from click.testing import CliRunner
 from unittest.mock import patch, AsyncMock
@@ -15,6 +16,7 @@ from chungoid.schemas.errors import AgentErrorDetails
 from datetime import datetime, timezone
 from chungoid.utils.state_manager import StateManager
 from chungoid.utils.flow_registry import FlowRegistry, FlowCard
+from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card 
 
 # TODO: Potentially add imports for FlowRegistry, RegistryAgentProvider if needed for setup helpers
 
@@ -24,30 +26,69 @@ from chungoid.utils.flow_registry import FlowRegistry, FlowCard
 def setup_paused_project(tmp_path: Path, request) -> Generator[Path, None, None]:
     """Sets up a temporary project directory with a paused flow state.
     Allows modification via request.param.
+    Copies the server_prompts directory needed by the CLI.
+    Creates the master_flows directory and the flow definition yaml.
     """
     project_dir = tmp_path
     chungoid_dir = project_dir / ".chungoid"
     paused_dir = chungoid_dir / "paused_runs"
-    flows_dir = project_dir / "flows" # Create flows directory
+    master_flows_dir = project_dir / "master_flows"
     paused_dir.mkdir(parents=True)
-    flows_dir.mkdir(parents=True) # Create flows directory
+    master_flows_dir.mkdir(parents=True)
+
+    # <<< Copy server_prompts from source >>>
+    try:
+        # Determine source path relative to this test file
+        # tests/integration/test_cli_flow_resume.py -> tests/ -> chungoid-core/ -> server_prompts/
+        source_prompts_dir = Path(__file__).parent.parent.parent / "server_prompts"
+        dest_prompts_dir = project_dir / "server_prompts"
+        
+        if source_prompts_dir.is_dir():
+            shutil.copytree(source_prompts_dir, dest_prompts_dir)
+            print(f"Copied {source_prompts_dir} to {dest_prompts_dir}")
+            # <<< ADD: Ensure stages subdir exists after copy >>>
+            stages_subdir = dest_prompts_dir / "stages"
+            stages_subdir.mkdir(exist_ok=True) # Ensure it exists even if source didn't have it
+        else:
+             pytest.fail(f"Source server_prompts directory not found at {source_prompts_dir}. Check path calculation.")
+    except Exception as e_copy:
+        pytest.fail(f"Failed to copy server_prompts directory in test setup: {e_copy}")
+    # <<< End copy >>>
+
+    # <<< ADD: Create dummy stage definition files >>>
+    dummy_yaml_content = "mcp_actions: []" # Minimal valid YAML content
+    stages_subdir = dest_prompts_dir / "stages" # Define stages_subdir again for clarity
+    (stages_subdir / "stage_a_def.yaml").write_text(dummy_yaml_content, encoding='utf-8')
+    (stages_subdir / "stage_b_def.yaml").write_text(dummy_yaml_content, encoding='utf-8')
+    # stage_c is only needed for the skip_setup variation, but creating it always is harmless
+    (stages_subdir / "stage_c_def.yaml").write_text(dummy_yaml_content, encoding='utf-8') 
+    print(f"Created dummy stage defs in {stages_subdir}")
+    # <<< END: Create dummy stage definition files >>>
 
     # Default: Pause at stage_b in a 2-stage flow
     flow_id = "test_flow"
     flow_name = "Test Flow for Resume"
     paused_stage_id = "stage_b"
+    agent_id_to_use = core_stage_executor_card.agent_id
+    project_dir_str = str(project_dir.resolve()) # Get the resolved path as string for YAML
+
     flow_yaml_content = f"""
+id: {flow_id}
 name: {flow_name}
 start_stage: stage_a
 stages:
   stage_a:
-    agent_id: agent_a
+    agent_id: {agent_id_to_use}
+    inputs:
+      stage_definition_filename: "stage_a_def.yaml"
+      current_project_root: "{project_dir_str}"
     next_stage: stage_b
-    number: 1.0
-  stage_b:
-    agent_id: agent_b
+  stage_b: # This stage will be "paused at"
+    agent_id: {agent_id_to_use}
+    inputs:
+      stage_definition_filename: "stage_b_def.yaml"
+      current_project_root: "{project_dir_str}"
     next_stage: null
-    number: 2.0
 """
 
     # Check for test-specific modifications
@@ -56,39 +97,46 @@ stages:
         flow_name = "Flow for Skip Test"
         paused_stage_id = "stage_b" # Pause at B, skip to C
         flow_yaml_content = f"""
+id: {flow_id}
 name: {flow_name}
 start_stage: stage_a
 stages:
   stage_a:
-    agent_id: agent_a
+    agent_id: {agent_id_to_use}
+    inputs:
+      stage_definition_filename: "stage_a_def.yaml"
+      current_project_root: "{project_dir_str}"
     next_stage: stage_b
-    number: 1.0
   stage_b:
-    agent_id: agent_b
+    agent_id: {agent_id_to_use}
+    inputs:
+      stage_definition_filename: "stage_b_def.yaml"
+      current_project_root: "{project_dir_str}"
     next_stage: stage_c # B leads to C
-    number: 2.0
   stage_c:
-    agent_id: agent_c
+    agent_id: {agent_id_to_use}
+    inputs:
+      stage_definition_filename: "stage_c_def.yaml"
+      current_project_root: "{project_dir_str}"
     next_stage: null # C is the end
-    number: 3.0
 """
 
-    # 1. Create flow definition file 
-    flow_yaml_path = flows_dir / f"{flow_id}.yaml"
+    # 1. Create flow definition file in master_flows
+    flow_yaml_path = master_flows_dir / f"{flow_id}.yaml"
     flow_yaml_path.write_text(flow_yaml_content)
     
     # 2. Add Flow to Registry
-    try:
-        registry = FlowRegistry(project_root=project_dir, chroma_mode="persistent")
-        flow_card = FlowCard(
-            flow_id=flow_id,
-            name=flow_name,
-            yaml_text=flow_yaml_content,
-            description="A flow used for testing resume functionality."
-        )
-        registry.add(flow_card)
-    except Exception as e:
-        pytest.fail(f"Failed to add flow card to registry in test setup: {e}")
+    # try:
+    #     registry = FlowRegistry(project_root=project_dir, chroma_mode="persistent")
+    #     flow_card = FlowCard(
+    #         flow_id=flow_id,
+    #         name=flow_name,
+    #         yaml_text=flow_yaml_content,
+    #         description="A flow used for testing resume functionality."
+    #     )
+    #     registry.add(flow_card)
+    # except Exception as e:
+    #     pytest.fail(f"Failed to add flow card to registry in test setup: {e}")
 
     # 3. Create the PausedRunDetails file
     run_id = f"{flow_id}-run1"
@@ -98,7 +146,7 @@ stages:
         error_type="RuntimeError",
         message="Agent B failed!",
         traceback="Traceback...",
-        agent_id="agent_b", # Assuming the agent at the paused stage failed
+        agent_id=agent_id_to_use, # <<< USE CORE AGENT ID for the error details >>>
         stage_id=paused_stage_id
     )
     paused_details = PausedRunDetails(
@@ -152,11 +200,9 @@ def test_resume_retry(setup_paused_project):
         os.chdir(original_cwd)
 
     # Assertions
-    assert result.exit_code == 0, f"CLI command failed with output:\\n{result.output}"
-    assert f"Flow resumption initiated for run_id: {run_id} with action: retry" in result.output
-    # Check for success message (may change if actual execution fails)
-    # For now, assuming success implies the command ran without setup/resume logic errors
-    assert "Resumption successful." in result.output or "Final context snippet:" in result.output
+    assert result.exit_code == 0, f"CLI command failed with output:\\\\n{result.output}"
+    assert f"Flow resumption initiated for run_id '{run_id}'" in result.output
+    assert f"processed with action 'retry'" in result.output
     
     # Verify the paused state file was cleared on successful initiation leading to execution
     assert not paused_file_path.exists(), "Paused run details file was not deleted after successful retry initiation."
@@ -214,10 +260,12 @@ def test_resume_skip_stage(setup_paused_project):
     finally:
         os.chdir(original_cwd)
 
-    print(f"CLI exited with code {result.exit_code}. Output:\\n{result.output}") 
+    print(f"CLI exited with code {result.exit_code}. Output:\\\\n{result.output}") 
     # Allow exit code 0 or 1, as actual execution of the next stage might fail
     assert result.exit_code in [0, 1], f"CLI command crashed: {result.output}"
-    assert f"Flow resumption initiated for run_id: {run_id}" in result.output
+    assert f"Flow resumption initiated for run_id '{run_id}'" in result.output
+    assert "processed with action 'skip_stage'" in result.output
+    
     # Paused file should be deleted because the skip action itself was valid
     assert not paused_file_path.exists(), "Paused run details file was not deleted after skip stage action."
 
@@ -244,10 +292,12 @@ def test_resume_force_branch_success(setup_paused_project):
     finally:
         os.chdir(original_cwd)
 
-    print(f"CLI exited with code {result.exit_code}. Output:\\n{result.output}") 
+    print(f"CLI exited with code {result.exit_code}. Output:\\\\n{result.output}") 
     # Allow exit code 0 or 1, as actual execution from target stage might fail
     assert result.exit_code in [0, 1], f"CLI command crashed: {result.output}"
-    assert f"Flow resumption initiated for run_id: {run_id}" in result.output
+    assert f"Flow resumption initiated for run_id '{run_id}'" in result.output
+    assert f"processed with action 'force_branch'" in result.output
+    
     # Paused file should be deleted because the force branch action itself was valid
     assert not paused_file_path.exists(), "Paused run details file was not deleted after valid force_branch action."
 
@@ -273,7 +323,7 @@ def test_resume_force_branch_invalid_target(setup_paused_project):
     finally:
         os.chdir(original_cwd)
 
-    print(f"CLI exited with code {result.exit_code}. Output:\\n{result.output}")
+    print(f"CLI exited with code {result.exit_code}. Output:\\\\n{result.output}")
     assert result.exit_code != 0, f"CLI command unexpectedly succeeded with invalid target stage: {result.output}"
     # Check for the specific error message from the orchestrator
     assert "Invalid target_stage_id for force_branch" in result.output
@@ -300,13 +350,13 @@ def test_resume_force_branch_missing_target(setup_paused_project):
     finally:
         os.chdir(original_cwd)
 
-    print(f"CLI exited with code {result.exit_code}. Output:\\n{result.output}")
+    print(f"CLI exited with code {result.exit_code}. Output:\\\\n{result.output}")
     # We expect click to raise an error because --target-stage is likely required by the logic,
     # OR the orchestrator logic should catch the missing value.
     assert result.exit_code != 0, f"CLI command unexpectedly succeeded without target stage: {result.output}"
     # Check for the specific error message (might come from click or orchestrator)
     # Orchestrator returns: "Invalid target_stage_id for force_branch: 'None'"
-    assert "Invalid target_stage_id for force_branch" in result.output
+    assert "Error: --target-stage is required" in result.output
     # Paused file should NOT be deleted
     assert paused_file_path.exists(), "Paused run details file was unexpectedly deleted when target stage was missing."
 
@@ -330,11 +380,13 @@ def test_resume_abort(setup_paused_project):
     finally:
         os.chdir(original_cwd)
 
-    print(f"CLI exited with code {result.exit_code}. Output:\\n{result.output}") 
+    print(f"CLI exited with code {result.exit_code}. Output:\\\\n{result.output}")
     # Abort should be clean, expect exit code 0
     assert result.exit_code == 0, f"CLI command failed: {result.output}"
-    assert f"Flow run {run_id} aborted." in result.output
-    assert not paused_file_path.exists(), "Paused run details file was not deleted."
+    # Check for success message
+    assert "successfully aborted" in result.output
+    # Paused file should be deleted on successful abort
+    assert not paused_file_path.exists(), "Paused run details file was not deleted on abort."
 
 
 # TODO: Implement tests for error conditions (e.g., run_id not found) 

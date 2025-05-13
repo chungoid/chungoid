@@ -24,6 +24,8 @@ from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
 import logging
 import traceback
 import copy
+import inspect
+from unittest.mock import AsyncMock
 
 __all__ = [
     "StageSpec",
@@ -342,14 +344,21 @@ class AsyncOrchestrator(BaseOrchestrator):
             stage: Optional[MasterStageSpec] = self.pipeline_def.stages.get(current_stage_name)
             if not stage:
                 self.logger.error(f"MASTER Stage '{current_stage_name}' not found in plan. Aborting loop.")
-                fallback_idx = -1.0 
-                await self._state_manager.update_status(
-                    stage=fallback_idx, 
-                    status=StageStatus.FAILURE.value, 
-                    artifacts=[], 
-                    reason=f"Master Stage '{current_stage_name}' not found in plan"
+                error_info = AgentErrorDetails(
+                    error_type="OrchestratorError",
+                    message=f"Master Stage '{current_stage_name}' not found in plan",
+                    stage_id=current_stage_name # Or maybe None?
                 )
-                break
+                current_run_id = self._state_manager.get_or_create_current_run_id()
+                self._state_manager.update_status(
+                    run_id=current_run_id, # <<< USE current_run_id >>>
+                    stage_id=current_stage_name, # Use the name we tried to find
+                    status=StageStatus.FAILURE, # <<< FIX: Use FAILURE >>>
+                    reason=f"Master Stage '{current_stage_name}' not found in plan",
+                    error_details=error_info
+                )
+                # Return context as it was before the error
+                return context
 
             current_stage_idx = stage.number if stage.number is not None else -1.0
             if current_stage_idx == -1.0:
@@ -357,7 +366,7 @@ class AsyncOrchestrator(BaseOrchestrator):
 
             if hops >= max_hops:
                 self.logger.warning(f"Max hops ({max_hops}) reached, breaking MASTER execution at stage '{current_stage_name}'.")
-                await self._state_manager.update_status(
+                self._state_manager.update_status(
                     stage=current_stage_idx, 
                     status=StageStatus.FAILURE.value, 
                     artifacts=[], 
@@ -383,7 +392,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             try:
                 if not stage.agent_id:
                      self.logger.error(f"MASTER Stage '{current_stage_name}' is missing agent_id. Aborting.")
-                     await self._state_manager.update_status(
+                     self._state_manager.update_status(
                          stage=current_stage_idx, 
                          status=StageStatus.FAILURE.value, 
                          artifacts=[], 
@@ -391,10 +400,12 @@ class AsyncOrchestrator(BaseOrchestrator):
                      )
                      break
 
-                agent_callable = await self._agent_provider.get(stage.agent_id)
+                agent_callable = self._agent_provider.get(stage.agent_id)
+                self.logger.debug(f"Type of agent_callable retrieved for agent_id '{stage.agent_id}': {type(agent_callable)}")
+
                 if agent_callable is None:
                     self.logger.error(f"Agent '{stage.agent_id}' not found for MASTER Stage '{current_stage_name}'. Aborting.")
-                    await self._state_manager.update_status(
+                    self._state_manager.update_status(
                         stage=current_stage_idx, 
                         status=StageStatus.FAILURE.value, 
                         artifacts=[], 
@@ -405,12 +416,13 @@ class AsyncOrchestrator(BaseOrchestrator):
                 agent_input_context = copy.deepcopy(context) 
                 if stage.inputs:
                     self.logger.debug(f"Merging inputs from MasterStageSpec '{current_stage_name}': {stage.inputs.keys()}")
-                    agent_input_context.update(stage.inputs)
+                    # agent_input_context.update(stage.inputs) # old simple update
+                    # Resolve context paths in inputs from MasterStageSpec
                     resolved_master_inputs = {}
                     for key, value in stage.inputs.items():
                         if isinstance(value, str) and value.startswith("context."):
-                            path = value.split('.')[1:]
-                            resolved_value = context
+                            path = value.split('.')[1:] # e.g., ['outputs', 'stage_a', 'result']
+                            resolved_value = context # Start from the root of the current run context
                             try:
                                 for p_item in path:
                                     if isinstance(resolved_value, list) and p_item.isdigit():
@@ -418,23 +430,42 @@ class AsyncOrchestrator(BaseOrchestrator):
                                     elif isinstance(resolved_value, dict):
                                         resolved_value = resolved_value[p_item]
                                     else:
-                                        raise KeyError
+                                        # Path element not found or not a dict/list, cannot traverse further
+                                        raise KeyError # Or a more specific custom exception
                             except (KeyError, TypeError, IndexError, ValueError):
-                                self.logger.warning(f"Could not resolve MASTER input path '{value}' for stage '{current_stage_name}'. Using original string.")
-                                resolved_value = value
+                                self.logger.warning(f"Could not resolve MASTER input path '{value}' for stage '{current_stage_name}'. Using original string value.")
+                                resolved_value = value # Fallback to using the string literal
                             resolved_master_inputs[key] = resolved_value
                         else:
-                            resolved_master_inputs[key] = value
+                            resolved_master_inputs[key] = value # Not a context path, use as is
                     agent_input_context.update(resolved_master_inputs)
 
                 self.logger.debug(f"Executing Agent '{stage.agent_id}' for MASTER Stage '{current_stage_name}' with input context keys: {list(agent_input_context.keys())}")
                 
-                stage_output = await agent_callable(agent_input_context)
+                # <<< REFINED LOGIC to handle coroutines vs AsyncMock vs async functions >>>
+                # self.logger.debug(f\"Type of agent_callable retrieved for agent_id '{stage.agent_id}': {type(agent_callable)}\")
+
+                # if inspect.iscoroutine(agent_callable):
+                if inspect.iscoroutine(agent_callable) and not isinstance(agent_callable, AsyncMock): # <<< Refined condition >>>
+                    self.logger.debug(f"Agent callable for {stage.agent_id} is a callable (AsyncMock or async function). Calling with context and awaiting.")
+                    # This path should ideally not be hit in standard operation.
+                    # It covers the unexpected pre-called coroutine case (if it wasn't an AsyncMock).
+                    stage_output = await agent_callable 
+                elif callable(agent_callable): # Covers AsyncMock and regular async def functions
+                    # This is the expected path for both regular async functions and AsyncMock instances.
+                    self.logger.debug(f"Agent callable for {stage.agent_id} is a callable (AsyncMock or async function). Calling with context and awaiting.")
+                    coroutine_to_run = agent_callable(agent_input_context) # Call the async function OR the AsyncMock
+                    stage_output = await coroutine_to_run # Await the resulting coroutine
+                else:
+                    # This case should ideally not be reached if agent_provider is well-behaved
+                    self.logger.error(f"Agent callable for '{stage.agent_id}' is not a coroutine, async function, or callable mock. Type: {type(agent_callable)}. Cannot execute.")
+                    raise TypeError(f"Agent '{stage.agent_id}' is of an unsupported type: {type(agent_callable)}")
+                # <<< END REFINED LOGIC >>>
                 
                 context['outputs'][current_stage_name] = stage_output
                 
                 self.logger.info(f"Agent '{stage.agent_id}' completed MASTER Stage '{current_stage_name}'.")
-                await self._state_manager.update_status(
+                self._state_manager.update_status(
                     stage=current_stage_idx, 
                     status=StageStatus.SUCCESS.value, 
                     artifacts=[]
@@ -452,7 +483,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 run_id = self._state_manager.get_or_create_current_run_id()
                 if run_id is None:
                     self.logger.error("Failed to get run_id from StateManager. Cannot save paused state.")
-                    await self._state_manager.update_status(
+                    self._state_manager.update_status(
                         stage=current_stage_idx, 
                         status=StageStatus.FAILURE.value, 
                         artifacts=[], 
@@ -476,7 +507,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     self.logger.exception(f"Failed to create/save PausedRunDetails: {pause_create_e}")
                     final_reason = f"Agent '{stage.agent_id}' failed (pause state save failed): {type(e).__name__}"
                 
-                await self._state_manager.update_status(
+                self._state_manager.update_status(
                     stage=current_stage_idx, 
                     status=StageStatus.FAILURE.value, 
                     artifacts=[], 

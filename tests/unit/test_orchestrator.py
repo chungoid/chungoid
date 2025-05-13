@@ -80,18 +80,17 @@ def conditional_plan() -> MasterExecutionPlan:
     )
 
 @pytest.fixture
-def orchestrator_for_resume(mock_agent_provider, mock_state_manager, basic_plan):
-    """Fixture to create an AsyncOrchestrator instance for resume tests."""
-    # Note: pipeline_def (basic_plan) is often overridden in specific tests
-    config = {"some_config": "value"}
+def orchestrator_for_resume(mock_agent_provider, mock_state_manager, mock_project_config, basic_plan) -> AsyncOrchestrator:
+    """Creates an AsyncOrchestrator specifically for resume tests, maybe pre-configured."""
+    # Use basic_plan for simplicity, can override in specific tests if needed
     instance = AsyncOrchestrator(
-        pipeline_def=basic_plan, # Initial plan, might be replaced by test 
-        config=config,
+        pipeline_def=basic_plan,
+        config=mock_project_config,
         agent_provider=mock_agent_provider,
         state_manager=mock_state_manager
     )
-    # Ensure _execute_loop is always mocked for resume tests, even if not awaited
-    instance._execute_loop = AsyncMock(return_value={"final_context_from_loop": True})
+    # Ensure _execute_loop is always an AsyncMock for consistent assertion capability
+    instance._execute_loop = AsyncMock(return_value={"final_context_from_fixture_loop_mock": True})
     return instance
 
 
@@ -374,17 +373,6 @@ class TestAsyncOrchestrator:
                 stage_id="stage1"
             ),
             reason="Paused due to agent error"
-        )
-
-    @pytest.fixture
-    def orchestrator_for_resume(self, mock_agent_provider, mock_state_manager, mock_project_config, basic_plan) -> AsyncOrchestrator:
-        """Creates an AsyncOrchestrator specifically for resume tests, maybe pre-configured."""
-        # Use basic_plan for simplicity, can override in specific tests if needed
-        return AsyncOrchestrator(
-            pipeline_def=basic_plan,
-            config=mock_project_config,
-            agent_provider=mock_agent_provider,
-            state_manager=mock_state_manager
         )
 
     async def test_resume_flow_retry(self, orchestrator_for_resume, mock_state_manager, paused_run_details, basic_plan):

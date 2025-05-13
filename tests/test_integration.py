@@ -4,31 +4,23 @@ import shutil
 from pathlib import Path
 import sys
 import asyncio
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock, MagicMock, ANY
 import chromadb
 import logging
 import json
 import yaml
 import pytest
 
-# Try importing necessary components
+# <<< MOVE CHUNGOIDENGINE IMPORT OUTSIDE TRY/EXCEPT >>>
+from chungoid.engine import ChungoidEngine
+
+# Try importing other necessary components
 try:
-    from chungoidmcp import (
-        handle_initialize_project,
-        handle_get_project_status,
-        handle_submit_stage_artifacts,
-        handle_load_reflections,
-        handle_retrieve_reflections_tool as handle_retrieve_reflections, # Alias for clarity
-        handle_get_file,
-        handle_prepare_next_stage,
-        # Import exceptions used in tests if needed
-    )
-    from utils.state_manager import StateManager, StatusFileError, ChromaOperationError
-    # Import other necessary utils if testing them directly
-    import utils.chroma_utils
-    import chromadb
+    from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
+    from chungoid.utils import chroma_utils
 except ImportError as e:
     print(f"Failed to import necessary components: {e}")
+    pass
 
 pytestmark = pytest.mark.legacy
 
@@ -39,49 +31,70 @@ class TestIntegration(unittest.TestCase):
     logger = logging.getLogger(__name__)
 
     def setUp(self):
-        # Create a clean test directory for each test
         if self.TEST_DIR.exists():
             shutil.rmtree(self.TEST_DIR)
         self.TEST_DIR.mkdir()
-        # We need to simulate the server context or modify handlers to accept paths
-        # For now, let's assume handlers can accept target_directory directly
+        # Ensure parent of TEST_DIR is added to sys.path if needed for imports during engine init?
+        # Typically pytest handles this, but double-check if engine init fails.
 
     def tearDown(self):
-        # Clean up the test directory after each test
         if self.TEST_DIR.exists():
             shutil.rmtree(self.TEST_DIR)
 
     def test_01_initialize_and_get_status(self):
-        """Test initializing a project and then getting its status."""
+        """Test initializing a project and then getting its status via engine."""
         print(f"\nRunning test: test_01_initialize_and_get_status in {os.getcwd()}")
 
-        # Define an async inner function to run the async handlers
+        # Define an async inner function (might not be needed if all calls are sync)
+        # Keeping for consistency for now.
         async def run_async_test():
-            # Initialize
-            print(f"Initializing project in: {self.TEST_DIR.resolve()}")
-            # Call with target_directory and ctx=None
-            init_result = await handle_initialize_project(
-                target_directory=str(self.TEST_DIR.resolve()), ctx=None
+            # <<< CHANGE START >>>
+            # Instantiate the engine
+            print(f"Instantiating ChungoidEngine for: {self.TEST_DIR.resolve()}")
+            try:
+                engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+            except Exception as e:
+                self.fail(f"ChungoidEngine failed to initialize: {e}")
+            print("Engine instantiated.")
+
+            # Call initialize_project tool via engine
+            print("Executing initialize_project tool...")
+            init_result = engine.execute_mcp_tool(
+                tool_name="initialize_project",
+                tool_arguments={}, # Uses engine's context
+                tool_call_id="init-call-1"
             )
             print(f"Initialization result: {init_result}")
             self.assertTrue(
                 self.CHUNGOID_DIR.exists(), msg="Chungoid directory should exist after init"
             )
             self.assertTrue(self.STATUS_FILE.exists(), msg="Status file should exist after init")
-            self.assertIn(
-                "Project initialized successfully",
-                init_result.get("message", ""),
-                msg="Init success message expected",
-            )
+            # Check new result structure
+            self.assertIsInstance(init_result.get("content"), list)
+            self.assertEqual(init_result["content"][0]["type"], "text")
+            self.assertIn("Project initialized at", init_result["content"][0]["text"])
+            self.assertEqual(init_result.get("toolCallId"), "init-call-1")
 
-            # Get Status - Pass target_directory for test isolation
-            print(f"Getting project status from: {self.TEST_DIR.resolve()}")
-            status_result = await handle_get_project_status(
-                target_directory=str(self.TEST_DIR.resolve()), ctx=None
+            # Call get_project_status tool via engine
+            print("Executing get_project_status tool...")
+            status_result = engine.execute_mcp_tool(
+                tool_name="get_project_status",
+                tool_arguments={},
+                tool_call_id="status-call-1"
             )
             print(f"Status result: {status_result}")
-            self.assertEqual(status_result.get("status"), "success", msg="Getting status failed")
-            self.assertIsInstance(status_result.get("runs"), list, msg="Status should have a 'runs' list")
+            # Check new result structure (assuming it returns the status dict directly)
+            self.assertEqual(status_result.get("toolCallId"), "status-call-1")
+            self.assertIsInstance(status_result.get("content"), list)
+            self.assertEqual(len(status_result["content"]), 1)
+            self.assertEqual(status_result["content"][0]["type"], "text")
+            status_json_string = status_result["content"][0]["text"]
+            try:
+                status_data = json.loads(status_json_string)
+            except json.JSONDecodeError:
+                self.fail(f"Failed to decode JSON from get_project_status result: {status_json_string}")
+            self.assertIsInstance(status_data.get("runs"), list, msg="Parsed status data should have a 'runs' list")
+            # <<< CHANGE END >>>
             print("Initialize and Get Status test passed.")
 
         # Run the async function using asyncio.run()
@@ -103,7 +116,7 @@ class TestIntegration(unittest.TestCase):
 
             collection_name = "test_integration_coll"
             # Mock get_chroma_client to return our test_client instance
-            with patch('utils.chroma_utils.get_chroma_client', return_value=test_client):
+            with patch('chungoid.utils.chroma_utils.get_chroma_client', return_value=test_client):
 
                 # Test get_or_create_collection
                 # <<< Assuming get_or_create_collection itself is now ASYNC >>>
@@ -135,288 +148,332 @@ class TestIntegration(unittest.TestCase):
             shutil.rmtree(temp_chroma_dir, ignore_errors=True)
             print("Cleaned up temp dir: {self.TEST_DIR.resolve()}")
 
-    # --- Tests for Reflection Loading/Retrieval Error Handling ---
+    # --- Tests for Reflection Loading/Retrieval Error Handling via Engine ---
 
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_08_load_reflections_chroma_unavailable(self, MockStateManager):
-        """Test handle_load_reflections when ChromaDB operation fails."""
-        print(f"\nRunning test: test_08_load_reflections_chroma_unavailable in {os.getcwd()}")
+    def test_08_engine_load_reflections_query_chroma_unavailable(self):
+        """Test engine's 'load_reflections' tool when ChromaDB query operation fails."""
+        print(f"\nRunning test: test_08_engine_load_reflections_query_chroma_unavailable in {os.getcwd()}")
 
-        async def run_async_test():
-            # Mock _initialize_state_manager_for_target to raise ChromaOperationError
-            with patch("chungoidmcp._initialize_state_manager_for_target") as mock_init_sm:
-                # Simulate Chroma client failing *within* StateManager, e.g., during get_all_reflections
-                mock_sm_instance = MagicMock()
-                mock_sm_instance.get_all_reflections.side_effect = ChromaOperationError("ChromaDB client is not available.")
-                mock_init_sm.return_value = mock_sm_instance
-
-                print("Attempting to load reflections with mocked unavailable Chroma client...")
-                load_result = await handle_load_reflections(
-                    target_directory=str(self.TEST_DIR.resolve())
+        # Instantiate the real engine
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            # Configure the mock instance's method
+            mock_sm_instance.get_reflection_context_from_chroma.side_effect = ChromaOperationError("ChromaDB query client is not available.")
+            
+            async def run_async_test():
+                print("Attempting to load reflections via engine with mocked state_manager instance...")
+                load_result = engine.execute_mcp_tool(
+                    tool_name="load_reflections",
+                    tool_arguments={"query_text": "test query", "n_results": 1},
+                    tool_call_id="load-reflect-fail-08"
                 )
-                print(f"Load reflections result: {load_result}")
-                self.assertEqual(load_result.get("status"), "error", msg="Load reflections should fail")
-                # Check that the original error message is part of the returned message
-                self.assertIn("ChromaDB client is not available", load_result.get("message", ""), "Original error missing from response")
+                print(f"Load reflections tool result: {load_result}")
 
-        asyncio.run(run_async_test())
+                # Assert the method call on the mocked instance
+                mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(query="test query", n_results=1)
 
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_09_load_reflections_success_empty(self, MockStateManager):
-        """Test handle_load_reflections success path when ChromaDB returns no reflections."""
-        print(f"\nRunning test: test_09_load_reflections_success_empty in {os.getcwd()}")
+                # Assert the error structure
+                self.assertIsInstance(load_result.get("error"), dict)
+                self.assertIn("ChromaDB query client is not available.", load_result["error"].get("message", ""))
+                self.assertEqual(load_result["error"].get("code"), -32001) # Generic tool execution error
+                self.assertEqual(load_result.get("toolCallId"), "load-reflect-fail-08")
 
-        # Configure the mock StateManager instance that will be created inside the handler
-        mock_state_manager_instance = MockStateManager.return_value
-        # Make the get_all_reflections method return an empty list
-        mock_state_manager_instance.get_all_reflections = AsyncMock(return_value=[])
+            asyncio.run(run_async_test())
 
-        async def run_async_test():
-            # Initialize project (needed for directory structure, though StateManager is mocked)
-            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
-            # We don't need the real init side effects here as StateManager is mocked
-            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
-            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
-            print("Mock project initialized.")
 
-            # Call load_reflections
-            print("Calling load_reflections with mocked StateManager (empty result)...")
-            # Need to make handle_load_reflections use the patched StateManager
-            # One way is to patch StateManager globally or use dependency injection if available
-            # Assuming the handler instantiates StateManager internally for this test setup:
-            load_result = await handle_load_reflections(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
-            print(f"Load reflections result: {load_result}")
+    def test_09_engine_load_reflections_query_success_empty(self):
+        """Test engine's 'load_reflections' tool success when ChromaDB query returns no reflections."""
+        print(f"\nRunning test: test_09_engine_load_reflections_query_success_empty in {os.getcwd()}")
+        
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            mock_sm_instance.get_reflection_context_from_chroma.return_value = [] # Direct return_value, not AsyncMock
 
-            # Check that StateManager was instantiated correctly within the handler call scope
-            MockStateManager.assert_called_once()
-            # Check that get_all_reflections was called on the instance
-            mock_state_manager_instance.get_all_reflections.assert_called_once()
+            async def run_async_test():
+                if not self.CHUNGOID_DIR.exists(): self.CHUNGOID_DIR.mkdir(parents=True)
+                if not self.STATUS_FILE.exists(): self.STATUS_FILE.write_text(json.dumps({"runs": []}))
+                print("Mock project initialized for engine.")
 
-            # Expect success response with empty data
-            self.assertEqual(load_result.get("status"), "success", msg="Load reflections should succeed")
-            self.assertIn("No reflections found", load_result.get("summary", ""))
-            mock_state_manager_instance.get_all_reflections.assert_called_once()
-            print("Load reflections succeeded with empty data.")
-
-        asyncio.run(run_async_test())
-
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_10_load_reflections_success_with_data(self, MockStateManager):
-        """Test handle_load_reflections success path when ChromaDB returns reflections."""
-        print(f"\nRunning test: test_10_load_reflections_success_with_data in {os.getcwd()}")
-
-        # Sample data that get_all_reflections would return
-        sample_reflections = [
-            {
-                'id': 'uuid1',
-                'metadata': {'stage_number': 1.0, 'timestamp': '2025-01-01T10:00:00Z'},
-                'document': 'Reflection from stage 1',
-                'timestamp': '2025-01-01T10:00:00Z' # Added by get_all_reflections
-            },
-            {
-                'id': 'uuid2',
-                'metadata': {'stage_number': 0.0, 'timestamp': '2025-01-01T09:00:00Z'},
-                'document': 'Reflection from stage 0',
-                'timestamp': '2025-01-01T09:00:00Z' # Added by get_all_reflections
-            }
-        ]
-
-        # Configure the mock StateManager instance
-        mock_state_manager_instance = MockStateManager.return_value
-        mock_state_manager_instance.get_all_reflections = AsyncMock(return_value=sample_reflections)
-
-        async def run_async_test():
-            # Initialize project
-            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
-            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
-            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
-            print("Mock project initialized.")
-
-            # Call load_reflections
-            print("Calling load_reflections with mocked StateManager (with data)...")
-            load_result = await handle_load_reflections(target_directory=str(self.TEST_DIR.resolve()), ctx=None)
-            print(f"Load reflections result: {load_result}")
-
-            MockStateManager.assert_called()
-            mock_state_manager_instance.get_all_reflections.assert_called_once_with(limit=20)
-            self.assertEqual(load_result.get("status"), "success", msg="Load reflections should succeed")
-            self.assertIn("Loaded 1 reflections.", load_result.get("summary", ""))
-            mock_state_manager_instance.get_all_reflections.assert_called_once_with(limit=20)
-
-        asyncio.run(run_async_test())
-
-    # --- Tests for handle_retrieve_reflections_tool --- #
-
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_11_retrieve_reflections_chroma_unavailable(self, MockStateManager):
-        """Test retrieve_reflections handles ChromaDB unavailable."""
-        print(f"\nRunning test: test_11_retrieve_reflections_chroma_unavailable in {os.getcwd()}")
-
-        async def run_async_test():
-            # Mock _initialize_state_manager_for_target to raise ChromaOperationError during query
-            with patch("chungoidmcp._initialize_state_manager_for_target") as mock_init_sm:
-                # Simulate Chroma query failing within StateManager
-                mock_sm_instance = MagicMock()
-                mock_sm_instance.get_reflection_context_from_chroma.side_effect = ChromaOperationError("ChromaDB query operation failed for collection 'chungoid_reflections'. Check logs for details.")
-                mock_init_sm.return_value = mock_sm_instance
-
-                print("Attempting to retrieve reflections with mocked unavailable Chroma client...")
-                retrieve_result = await handle_retrieve_reflections(
-                    target_directory=str(self.TEST_DIR.resolve()), query="test query"
+                print("Calling load_reflections tool via engine (expecting empty result)...")
+                load_result = engine.execute_mcp_tool(
+                    tool_name="load_reflections",
+                    tool_arguments={"query_text": "empty query", "n_results": 5},
+                    tool_call_id="load-reflect-empty-09"
                 )
-                print(f"Retrieve reflections result: {retrieve_result}")
+                print(f"Load reflections tool result: {load_result}")
 
-                self.assertEqual(retrieve_result.get("status"), "error", msg="Retrieve reflections should fail")
-                # Check that the original error message is part of the returned message
-                self.assertIn("ChromaDB query operation failed", retrieve_result.get("message", ""), "Original error missing from response")
+                # mock_sm_instance = MockStateManagerClass.return_value # No longer need this
+                # MockStateManagerClass.assert_called_once_with(target_directory=str(self.TEST_DIR.resolve()), server_stages_dir=ANY, chroma_client=ANY) # Not applicable with patch.object
+                
+                # <<< CHANGE query_text to query in assertion >>>
+                mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
+                    query="empty query", n_results=5 # Use 'query' here
+                )
 
-        asyncio.run(run_async_test())
+                self.assertIsInstance(load_result.get("content"), list)
+                self.assertEqual(len(load_result["content"]), 1)
+                self.assertEqual(load_result["content"][0]["type"], "text")
+                self.assertEqual(load_result["content"][0]["text"], "[]") # Expecting JSON string of empty list
+                self.assertEqual(load_result.get("toolCallId"), "load-reflect-empty-09")
+                print("Load reflections tool succeeded with empty data.")
 
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_12_retrieve_reflections_success_empty(self, MockStateManager):
-        """Test handle_retrieve_reflections_tool success path with no results."""
-        print(f"\nRunning test: test_12_retrieve_reflections_success_empty in {os.getcwd()}")
-        mock_sm_instance = MockStateManager.return_value
-        mock_sm_instance.get_reflection_context_from_chroma.return_value = [] # Empty list
+            asyncio.run(run_async_test())
 
-        async def run_async_test():
-            # Initialize project (structure only)
-            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
-            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
-            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
-            print("Mock project initialized.")
 
-            # Call retrieve_reflections
-            print("Calling retrieve_reflections with mocked StateManager (empty result)...")
-            retrieve_result = await handle_retrieve_reflections(
-                target_directory=str(self.TEST_DIR.resolve()),
-                query="test query",
-                n_results=3,
-                ctx=None
-            )
-            print(f"Retrieve reflections result: {retrieve_result}")
+    def test_10_engine_load_reflections_query_success_with_data(self):
+        """Test engine's 'load_reflections' tool success when ChromaDB query returns reflections."""
+        print(f"\nRunning test: test_10_engine_load_reflections_query_success_with_data in {os.getcwd()}")
 
-            MockStateManager.assert_called_once()
-            mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
-                query="test query", n_results=3, filter_stage_min=None
-            )
-
-            # Expect success response with empty list
-            self.assertEqual(retrieve_result.get("status"), "success")
-            self.assertEqual(retrieve_result.get("reflections", None), [])
-            mock_sm_instance.get_reflection_context_from_chroma.assert_called_once()
-            print("Retrieve reflections succeeded with empty data.")
-
-        asyncio.run(run_async_test())
-
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_13_retrieve_reflections_success_with_data(self, MockStateManager):
-        """Test handle_retrieve_reflections_tool success path with sample data."""
-        print(f"\nRunning test: test_13_retrieve_reflections_success_with_data in {os.getcwd()}")
-        mock_sm_instance = MockStateManager.return_value
-        mock_retrieved_data = [
-            {"id": "r1", "metadata": {"stage": 0.0}, "document": "Retrieved 1"}
+        sample_reflections_from_query = [
+            {'id': 'uuid1', 'document': 'Queried Reflection 1', 'metadata': {'stage': 1.0}},
+            {'id': 'uuid2', 'document': 'Queried Reflection 2', 'metadata': {'stage': 0.0}}
         ]
-        mock_sm_instance.get_reflection_context_from_chroma.return_value = mock_retrieved_data
+        
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            # <<< Mock return value directly (it's a sync method) >>>
+            mock_sm_instance.get_reflection_context_from_chroma.return_value = sample_reflections_from_query
 
-        async def run_async_test():
-            # Initialize project (structure only)
-            print(f"Initializing project in: {self.TEST_DIR.resolve()} (structure only)")
-            if not self.TEST_DIR.exists(): self.TEST_DIR.mkdir()
-            if not (self.TEST_DIR / ".chungoid").exists(): (self.TEST_DIR / ".chungoid").mkdir()
-            print("Mock project initialized.")
+            async def run_async_test():
+                if not self.CHUNGOID_DIR.exists(): self.CHUNGOID_DIR.mkdir(parents=True)
+                if not self.STATUS_FILE.exists(): self.STATUS_FILE.write_text(json.dumps({"runs": []}))
+                print("Mock project initialized for engine.")
 
-            # Call retrieve_reflections
-            print("Calling retrieve_reflections with mocked StateManager (with data)...")
-            retrieve_result = await handle_retrieve_reflections(
-                target_directory=str(self.TEST_DIR.resolve()),
-                query="another query",
-                n_results=1,
-                filter_stage_min="0.0",
-                ctx=None
-            )
-            print(f"Retrieve reflections result: {retrieve_result}")
+                print("Calling load_reflections tool via engine (expecting data)...")
+                load_result = engine.execute_mcp_tool(
+                    tool_name="load_reflections",
+                    tool_arguments={"query_text": "data query", "n_results": 2},
+                    tool_call_id="load-reflect-data-10"
+                )
+                print(f"Load reflections tool result: {load_result}")
 
-            MockStateManager.assert_called_once()
-            mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
-                query="another query", n_results=1, filter_stage_min=0.0 # Should convert str to float
-            )
+                # MockStateManagerClass.assert_called_once_with(...) # Remove old assertion
+                
+                # <<< CHANGE query_text to query in assertion >>>
+                mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(query="data query", n_results=2)
+                
+                self.assertIsInstance(load_result.get("content"), list)
+                self.assertEqual(len(load_result["content"]), 1)
+                self.assertEqual(load_result["content"][0]["type"], "text")
+                
+                returned_json_str = load_result["content"][0]["text"]
+                try:
+                    returned_data = json.loads(returned_json_str)
+                except json.JSONDecodeError:
+                    self.fail(f"Failed to decode JSON from load_reflections result: {returned_json_str}")
+                
+                self.assertEqual(returned_data, sample_reflections_from_query)
+                self.assertEqual(load_result.get("toolCallId"), "load-reflect-data-10")
+                print("Load reflections tool succeeded with data.")
 
-            # Expect success response with data
-            self.assertEqual(retrieve_result.get("status"), "success")
-            self.assertEqual(len(retrieve_result.get("reflections", [])), 1)
-            self.assertEqual(retrieve_result["reflections"][0]["document"], "Retrieved 1")
-            mock_sm_instance.get_reflection_context_from_chroma.assert_called_once()
-            print("Retrieve reflections succeeded with data.")
+            asyncio.run(run_async_test())
 
-        asyncio.run(run_async_test())
+    # Tests 11, 12, 13 for 'retrieve_reflections' are functionally similar to 08, 09, 10
+    # now that 'load_reflections' tool in engine handles querying. Renaming for clarity.
 
-    # --- Tests for handle_submit_stage_artifacts --- #
+    def test_11_engine_retrieve_reflections_chroma_unavailable(self):
+        """Test engine's 'load_reflections' (as retrieval) when ChromaDB query fails."""
+        print(f"\nRunning test: test_11_engine_retrieve_reflections_chroma_unavailable in {os.getcwd()}")
+        
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            mock_sm_instance.get_reflection_context_from_chroma.side_effect = ChromaOperationError("ChromaDB query failed for retrieval.")
 
-    @patch('chungoidmcp._initialize_state_manager_for_target')
-    def test_14_submit_artifacts_chroma_error_on_store(self, mock_init_sm):
-        """Test handle_submit_stage_artifacts when storing artifact context fails."""
-        print(f"\nRunning test: test_14_submit_artifacts_chroma_error_on_store in {os.getcwd()}")
+            async def run_async_test():
+                if not self.CHUNGOID_DIR.exists(): self.CHUNGOID_DIR.mkdir(parents=True)
+                if not self.STATUS_FILE.exists(): self.STATUS_FILE.write_text(json.dumps({"runs": []}))
+                
+                print("Attempting to retrieve reflections via engine tool with mocked unavailable Chroma client...")
+                retrieve_result = engine.execute_mcp_tool(
+                    tool_name="load_reflections", # Using 'load_reflections' as the query tool
+                    tool_arguments={"query_text": "some query for retrieval", "n_results": 3},
+                    tool_call_id="retrieve-fail-11"
+                )
+                print(f"Retrieve reflections tool result: {retrieve_result}")
 
-        async def run_async_test():
-            # Initialize project
-            print(f"Initializing project in: {self.TEST_DIR.resolve()}")
-            await handle_initialize_project(target_directory=str(self.TEST_DIR.resolve()))
+                # MockStateManagerClass.assert_called_once_with(...) # Remove old assertion
+                
+                # <<< Check call with query= >>>
+                mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(query="some query for retrieval", n_results=3)
 
-            # Mock StateManager methods to simulate failure during artifact context storage
-            mock_sm_instance = MagicMock()
-            # Configure the specific method to raise an error
-            mock_sm_instance.store_artifact_context_in_chroma.side_effect = ChromaOperationError("Simulated Chroma DB Error")
-            # Configure other methods to return successful values
-            mock_sm_instance.get_latest_run_id.return_value = 0 # Needed for reflection persistence
-            mock_sm_instance.persist_reflections_to_chroma.return_value = None # Returns None on success
-            mock_sm_instance.update_status.return_value = True
+                self.assertIsInstance(retrieve_result.get("error"), dict)
+                self.assertIn("ChromaDB query failed for retrieval.", retrieve_result["error"].get("message", ""))
+                self.assertEqual(retrieve_result["error"].get("code"), -32001)
+                self.assertEqual(retrieve_result.get("toolCallId"), "retrieve-fail-11")
 
-            # Make the patched helper return our configured mock instance
-            mock_init_sm.return_value = mock_sm_instance
+            asyncio.run(run_async_test())
 
-            # Prepare data for submission
-            artifacts_to_submit = {"dev-docs/reflections.md": "Some reflection text"}
-            reflection_text_to_submit = "This is the reflection text for the stage."
+    def test_12_engine_retrieve_reflections_success_empty(self):
+        """Test engine's 'load_reflections' (as retrieval) success when ChromaDB query returns no results."""
+        print(f"\nRunning test: test_12_engine_retrieve_reflections_success_empty in {os.getcwd()}")
 
-            # Call the handler
-            print("Calling submit_artifacts with mock causing Chroma store error...")
-            submit_result = await handle_submit_stage_artifacts(
-                target_directory=str(self.TEST_DIR.resolve()), # Pass target dir
-                stage_number=1,
-                generated_artifacts=artifacts_to_submit,
-                reflection_text=reflection_text_to_submit,
-                stage_result_status="PASS",
-            )
-            print(f"Submit artifacts result: {submit_result}")
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            mock_sm_instance.get_reflection_context_from_chroma.return_value = []
 
-            mock_init_sm.assert_called_once() # Check the patched helper was called
-            mock_init_sm.return_value.persist_reflections_to_chroma.assert_called_once()
-            mock_init_sm.return_value.store_artifact_context_in_chroma.assert_called_once() # Verify the failing method was called
+            async def run_async_test():
+                if not self.CHUNGOID_DIR.exists(): self.CHUNGOID_DIR.mkdir(parents=True)
+                if not self.STATUS_FILE.exists(): self.STATUS_FILE.write_text(json.dumps({"runs": []}))
 
-            # Check the response indicates an error during artifact storage
-            self.assertEqual(submit_result.get("status"), "error", "Expected error status")
+                print("Calling retrieve_reflections via engine tool (empty result)...")
+                retrieve_result = engine.execute_mcp_tool(
+                    tool_name="load_reflections",
+                    tool_arguments={"query_text": "empty retrieval query", "n_results": 5},
+                    tool_call_id="retrieve-empty-12"
+                )
+                print(f"Retrieve reflections tool result: {retrieve_result}")
 
-        asyncio.run(run_async_test())
+                # MockStateManagerClass.assert_called_once_with(...) # Remove old assertion
+                
+                # <<< Check call with query= >>>
+                mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
+                    query="empty retrieval query", n_results=5
+                )
+
+                self.assertIsInstance(retrieve_result.get("content"), list)
+                self.assertEqual(retrieve_result["content"][0]["text"], "[]")
+                self.assertEqual(retrieve_result.get("toolCallId"), "retrieve-empty-12")
+                print("Retrieve reflections via engine tool succeeded with empty data.")
+
+            asyncio.run(run_async_test())
+
+    def test_13_engine_retrieve_reflections_success_with_data(self):
+        """Test engine's 'load_reflections' (as retrieval) success when ChromaDB query returns results."""
+        print(f"\nRunning test: test_13_engine_retrieve_reflections_success_with_data in {os.getcwd()}")
+
+        sample_results_for_retrieval = [
+            {"id": "doc_r1", "document": "Relevant retrieved reflection 1", "metadata": {"stage": 1}},
+            {"id": "doc_r2", "document": "Relevant retrieved reflection 2", "metadata": {"stage": 2}},
+        ]
+        
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            mock_sm_instance.get_reflection_context_from_chroma.return_value = sample_results_for_retrieval
+
+            async def run_async_test():
+                if not self.CHUNGOID_DIR.exists(): self.CHUNGOID_DIR.mkdir(parents=True)
+                if not self.STATUS_FILE.exists(): self.STATUS_FILE.write_text(json.dumps({"runs": []}))
+
+                print("Calling retrieve_reflections via engine tool (with data)...")
+                query = "data retrieval query"
+                num_results = 2
+                retrieve_result = engine.execute_mcp_tool(
+                    tool_name="load_reflections",
+                    tool_arguments={"query_text": query, "n_results": num_results},
+                    tool_call_id="retrieve-data-13"
+                )
+                print(f"Retrieve reflections tool result: {retrieve_result}")
+
+                # MockStateManagerClass.assert_called_once_with(...) # Remove old assertion
+                
+                # <<< Check call with query= >>>
+                mock_sm_instance.get_reflection_context_from_chroma.assert_called_once_with(
+                    query=query, n_results=num_results
+                )
+
+                self.assertIsInstance(retrieve_result.get("content"), list)
+                returned_json_str = retrieve_result["content"][0]["text"]
+                try:
+                    returned_data = json.loads(returned_json_str)
+                except json.JSONDecodeError:
+                    self.fail(f"Failed to decode JSON from retrieve_result: {returned_json_str}")
+                self.assertEqual(returned_data, sample_results_for_retrieval)
+                self.assertEqual(retrieve_result.get("toolCallId"), "retrieve-data-13")
+                print("Retrieve reflections via engine tool succeeded with data.")
+
+            asyncio.run(run_async_test())
+
+    # --- Tests for handle_submit_stage_artifacts via Engine --- #
+
+    # @patch('chungoid.utils.state_manager.StateManager') # REMOVED
+    def test_14_engine_submit_artifacts_update_status_fails(self): # <<< RENAME TEST & REMOVE ARG
+        """Test engine's 'submit_stage_artifacts' tool when the underlying state_manager.update_status call fails."""
+        print(f"\nRunning test: test_14_engine_submit_artifacts_update_status_fails in {os.getcwd()}")
+
+        engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+        # <<< USE PATCH.OBJECT ON THE ENGINE'S state_manager INSTANCE >>>
+        with patch.object(engine, 'state_manager', autospec=True) as mock_sm_instance:
+            # <<< Mock update_status to return False >>>
+            mock_sm_instance.update_status.return_value = False
+            # persist_reflections_to_chroma is NOT called by the wrapper, so no need to mock it here.
+
+            async def run_async_test():
+                if not self.CHUNGOID_DIR.exists(): self.CHUNGOID_DIR.mkdir(parents=True)
+                if not self.STATUS_FILE.exists(): self.STATUS_FILE.write_text(json.dumps({"runs": []}))
+                print("Mock project initialized for engine.")
+
+                artifact_rel_path = "output/stage1_output.txt"
+                artifact_full_path = self.TEST_DIR / artifact_rel_path
+                artifact_full_path.parent.mkdir(parents=True, exist_ok=True)
+                artifact_full_path.write_text("Stage 1 output content")
+
+                print("Submitting artifacts via engine (expecting update_status to fail)...")
+                submit_result = engine.execute_mcp_tool(
+                    tool_name="submit_stage_artifacts",
+                    tool_arguments={
+                        "stage_number": 1.0,
+                        "stage_result_status": "PASS",
+                        "generated_artifacts": {artifact_rel_path: "Stage 1 output content"},
+                        "reflection_text": "This is a reflection text for stage 1."
+                    },
+                    tool_call_id="submit-artifact-fail-14"
+                )
+                print(f"Submit artifacts tool result: {submit_result}")
+
+                # Check that update_status was called correctly
+                mock_sm_instance.update_status.assert_called_once_with(
+                    stage=1.0,
+                    status="PASS",
+                    artifacts=[artifact_rel_path],
+                    reflection_text="This is a reflection text for stage 1."
+                    # error_details is not passed in this call
+                )
+                
+                # Check that persist_reflections_to_chroma was NOT called by this flow
+                mock_sm_instance.persist_reflections_to_chroma.assert_not_called()
+
+                # Assert the error structure from the caught RuntimeError
+                self.assertIsInstance(submit_result.get("error"), dict)
+                self.assertIn("Failed to update status for stage 1.0", submit_result["error"].get("message", "")) # Error from wrapper
+                self.assertEqual(submit_result["error"].get("code"), -32001) # Generic tool execution error
+                self.assertEqual(submit_result.get("toolCallId"), "submit-artifact-fail-14")
+
+            asyncio.run(run_async_test())
 
     # --- Tests for handle_get_file --- #
 
     def test_15_get_file(self):
-        """Test the get_file tool handler for success and failure cases."""
+        """Test the get_file tool handler for success and failure cases via engine."""
         print(f"\nRunning test: test_15_get_file in {os.getcwd()}")
 
-        async def run_async_test():
-            # --- Setup: Initialize Project and Create Test File ---
-            print(f"Initializing project in: {self.TEST_DIR.resolve()}")
-            from chungoidmcp import handle_get_file # <<< ADDED IMPORT INSIDE ASYNC SCOPE
+        async def run_async_test(): # Keep async for potential future async setup/teardown
+            # <<< CHANGE START >>>
+            # Instantiate the engine
+            print(f"Instantiating ChungoidEngine for: {self.TEST_DIR.resolve()}")
+            try:
+                engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+            except Exception as e:
+                self.fail(f"ChungoidEngine failed to initialize: {e}")
+            print("Engine instantiated.")
 
-            # Initialize project
-            print("Initializing project...")
-            init_result = await handle_initialize_project(
-                target_directory=str(self.TEST_DIR.resolve()), ctx=None
+            # Initialize project using the engine tool
+            print("Initializing project via engine...")
+            init_result = engine.execute_mcp_tool(
+                tool_name="initialize_project",
+                tool_arguments={},
+                tool_call_id="init-call-15"
             )
-            self.assertEqual(init_result.get("status"), "success", msg="Initialization failed")
+            # Basic check for init success (detailed check in test_01)
+            self.assertIsInstance(init_result.get("content"), list)
             print("Project initialized.")
+            # <<< CHANGE END >>>
 
             # Create a dummy file
             docs_dir = self.TEST_DIR / "docs"
@@ -428,52 +485,74 @@ class TestIntegration(unittest.TestCase):
             print(f"Created test file: {test_file_path}")
 
             # --- Test Success Case ---
-            print("Testing get_file success case...")
-            success_result = await handle_get_file(target_directory=str(self.TEST_DIR.resolve()), relative_path="docs/myfile.txt")
-            self.assertEqual(success_result.get("status"), "success", msg="Get file should succeed")
-            self.assertEqual(
-                success_result.get("content"),
-                test_content,
-                msg="File content does not match",
+            print("Testing get_file success case via engine...")
+            # <<< CHANGE START >>>
+            success_result = engine.execute_mcp_tool(
+                tool_name="get_file",
+                tool_arguments={"relative_path": "docs/myfile.txt"},
+                tool_call_id="get-file-success"
             )
+            # Check result structure
+            self.assertIsInstance(success_result.get("content"), list)
+            self.assertEqual(len(success_result["content"]), 1)
+            self.assertEqual(success_result["content"][0]["type"], "text")
+            # Adjust assertion to expect the prepended string
+            expected_success_text = f"Content of {test_file_path.resolve()}:\\n\\n{test_content}"
+            self.assertEqual(
+                success_result["content"][0]["text"],
+                expected_success_text,
+                msg="File content does not match expected format",
+            )
+            self.assertEqual(success_result.get("toolCallId"), "get-file-success")
+            # <<< CHANGE END >>>
             print("Get file success case passed.")
 
             # --- Test Not Found Case ---
-            print("Testing get_file not found case...")
-            not_found_result = await handle_get_file(target_directory=str(self.TEST_DIR.resolve()), relative_path="docs/nosuchfile.txt")
-            print(f"Not found result: {not_found_result}")
-            self.assertEqual(not_found_result.get("status"), "error", msg="Get file should fail with status 'error'")
-            self.assertIn("Tool execution error", not_found_result.get("message", ""), msg="Error message should indicate tool execution error")
-            self.assertIn("Could not find the requested file", not_found_result.get("message", ""), msg="Specific file not found message missing")
+            print("Testing get_file not found case via engine...")
+            # <<< CHANGE START >>>
+            not_found_result = engine.execute_mcp_tool(
+                tool_name="get_file",
+                tool_arguments={"relative_path": "docs/nosuchfile.txt"},
+                tool_call_id="get-file-notfound"
+            )
+            # Check error structure (execute_mcp_tool should catch and format)
+            self.assertIsInstance(not_found_result.get("error"), dict)
+            self.assertIn("File not found", not_found_result["error"].get("message", ""))
+            self.assertEqual(not_found_result["error"].get("code"), -32001) # Generic tool execution error
+            self.assertEqual(not_found_result.get("toolCallId"), "get-file-notfound")
+            # <<< CHANGE END >>>
             print("Not found case passed.")
 
-            # --- Test Access Denied Case ---
-            print("Testing get_file access denied case...")
-            self.assertEqual(not_found_result.get("status"), "error", msg="Get file should fail")
-            self.assertIn(
-                "File not found",
-                not_found_result.get("error", ""),
-                msg="Expected 'File not found' error",
-            )
-            print("Get file not found case passed.")
+            # --- Test Access Denied Case (Simulated via path traversal) ---
+            print("Testing get_file access denied/invalid path case via engine...")
+            # <<< ADD START >>>
+            # Create dummy file outside project dir for traversal test
+            outside_file_path = self.TEST_DIR.parent / "outside.txt"
+            outside_file_content = "This content is outside the project."
+            with open(outside_file_path, "w") as f:
+                f.write(outside_file_content)
+            print(f"Created temporary outside file: {outside_file_path}")
+            # <<< ADD END >>>
 
-            # --- Test Path Traversal Attempt ---
-            print("Testing get_file path traversal case...")
-            # Need handle_get_file definition to call it
-            from chungoidmcp import handle_get_file # Ensure imported
-
-            traversal_result = await handle_get_file(
-                target_directory=str(self.TEST_DIR.resolve()),
-                relative_path="../outside.txt", # Attempt to go outside project dir
-                ctx=None,
+            # <<< CHANGE START >>>
+            traversal_result = engine.execute_mcp_tool(
+                tool_name="get_file",
+                tool_arguments={"relative_path": "../outside.txt"},
+                tool_call_id="get-file-traversal"
             )
-            print(f"Traversal result: {traversal_result}")
-            self.assertEqual(traversal_result.get("status"), "error", msg="Path traversal should fail")
-            self.assertIn(
-                "Invalid path", # Check for generic invalid path error
-                traversal_result.get("error", ""),
-                msg="Expected invalid path error message",
-            )
+            # Check error structure
+            self.assertIsInstance(traversal_result.get("error"), dict)
+            self.assertIn("is outside the project directory", traversal_result["error"].get("message", ""))
+            self.assertEqual(traversal_result["error"].get("code"), -32001)
+            self.assertEqual(traversal_result.get("toolCallId"), "get-file-traversal")
+            # <<< CHANGE END >>>
+            
+            # <<< ADD START >>>
+            # Clean up dummy outside file
+            if outside_file_path.exists():
+                outside_file_path.unlink()
+                print(f"Cleaned up temporary outside file: {outside_file_path}")
+            # <<< ADD END >>>
             print("Get file path traversal case passed.")
 
         asyncio.run(run_async_test())
@@ -485,7 +564,7 @@ class TestIntegration(unittest.TestCase):
 
         # Import the specific handler function needed
         # Ensure engine is also imported or accessible if needed directly (shouldn't be)
-        from chungoidmcp import handle_prepare_next_stage, handle_initialize_project, handle_submit_stage_artifacts
+        from chungoid.mcp import handle_prepare_next_stage, handle_initialize_project, handle_submit_stage_artifacts
         from engine import ChungoidEngine # Needed for mocking potentially
 
         async def run_async_test():
