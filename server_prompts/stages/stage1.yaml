@@ -31,7 +31,7 @@ prompt_details: |
 
   # ### STAGE 1 END
 
-user_prompt: "User prompt for Stage 1. Last status was {{ last_status.status }}"
+user_prompt: "User prompt for Stage 1. Last status was {{ context_data.last_status.status }}"
 
 EXECUTION CONTRACT: |
   • Create `dev-docs/design/` directory if needed.

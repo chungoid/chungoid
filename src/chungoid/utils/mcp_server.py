@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict
 import datetime as _dt
 
-from fastapi import FastAPI, Header, HTTPException, Body
+from fastapi import FastAPI, Header, HTTPException, Body, Depends
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 import importlib
@@ -31,6 +31,8 @@ from .core_snapshot_utils import _get_tool_specs  # internal helper
 from .flow_registry import FlowRegistry, FlowCard  # NEW
 from .flow_api import get_router as get_flow_router
 from chungoid.runtime.orchestrator import ExecutionPlan, AsyncOrchestrator
+from chungoid.utils.agent_resolver import AgentProvider
+from chungoid.utils.state_manager import StateManager
 
 # Reflection model & store (for /reflection endpoint)
 from typing import TYPE_CHECKING
@@ -244,6 +246,13 @@ async def get_flow(flow_id: str):
     return card.model_dump()
 
 
+# ---------------------------------------------------------------------------
+# Flow execution endpoint (Phase-6)
+# ---------------------------------------------------------------------------
+
+# The @app.post("/run/{flow_id}", tags=["flow"]) endpoint defined directly in this file is removed.
+# Its functionality is now handled by the router from flow_api.py.
+
 @app.post("/flows", tags=["flow"])
 async def add_flow(
     payload: Dict[str, Any],
@@ -273,43 +282,3 @@ async def add_flow(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return JSONResponse({"status": "ok", "flow_id": card.flow_id})
-
-
-# ---------------------------------------------------------------------------
-# Flow execution endpoint (Phase-6)
-# ---------------------------------------------------------------------------
-
-@app.post("/run/{flow_id}", tags=["flow"])
-async def run_flow(
-    flow_id: str,
-    context: dict = Body(default_factory=dict),
-    x_api_key: str | None = Header(None, alias="X-API-Key"),
-):
-    """Execute a flow by ID with optional context (input, user, etc)."""
-    _check_api_key(x_api_key)
-
-    # Find flow YAML from registry
-    reg = FlowRegistry(project_root=Path.cwd())
-    card = reg.get(flow_id)
-    if not card:
-        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail=f"Flow {flow_id} not found")
-
-    plan = ExecutionPlan.from_yaml(card.yaml_text, flow_id=flow_id)
-    orch = AsyncOrchestrator(plan)
-    visited = await orch.run(context=context)
-    return {"visited": visited, "flow_id": flow_id}
-
-
-# ---------------------------------------------------------------------------
-# Entrypoint helper
-# ---------------------------------------------------------------------------
-
-def main(host: str = "0.0.0.0", port: int = 9000):  # pragma: no cover
-    """Launch with `python -m chungoid.utils.mcp_server` for quick dev."""
-    import uvicorn  # local import to avoid mandatory dep for non-server users
-
-    uvicorn.run(app, host=host, port=port, reload=False)
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main() 

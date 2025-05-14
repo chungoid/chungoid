@@ -176,10 +176,7 @@ class StateManager:
             raise StatusFileError(f"Failed to create .chungoid directory: {e}") from e
 
         # Initial read of the status file
-        self._status_data = self._read_status_file()
-        # <<< Add Logging Point >>>
-        self.logger.debug("Initial status file read successful.")
-        # <<< End Logging Point >>>
+        self._initialize_status_file_if_needed()
         self.logger.info("StateManager initialized for file: %s", self.status_file_path)
 
         # Validate status file on init, but don't attempt ChromaDB connection here
@@ -187,16 +184,28 @@ class StateManager:
             _ = self._read_status_file()  # Read to check format
             self.logger.debug("Initial status file read successful.")
         except StatusFileError as e:
-            self.logger.warning(
-                "Initial status file validation failed: %s. Assuming empty/will be created.", e
-            )
-        except Exception as e:
-            self.logger.exception("Unexpected error during StateManager init read: %s", e)
-            raise StatusFileError(f"Unexpected error reading status file on init: {e}") from e
-
-        # Remove or comment out the deferred connection log message
-        # self.logger.debug("ChromaDB client connection deferred to first use.")
+            if "Invalid JSON" in str(e) or "Status file content is not a valid JSON object" in str(e):
+                self.logger.error(f"Critical error: Initial status file is corrupted and unrecoverable: {e}")
+                raise ChromaOperationError(f"Initial status file is corrupted: {e}") from e
+            
+            self.logger.warning(f"Initial status file validation failed: {e}. Assuming empty/will be created.")
+            self._status_data = {"runs": []} # Default/recovery
+        
         self._pending_reflection_text = None # Explicitly initialize in __init__
+
+    def _initialize_status_file_if_needed(self) -> None:
+        try:
+            self._status_data = self._read_status_file()
+            self.logger.debug("Initial status file read successful.")
+        except StatusFileError as e:
+            if "Invalid JSON" in str(e) or "Status file content is not a valid JSON object" in str(e):
+                self.logger.error(f"Critical error: Initial status file is corrupted and unrecoverable: {e}")
+                raise ChromaOperationError(f"Initial status file is corrupted: {e}") from e
+            
+            self.logger.warning(f"Initial status file validation failed: {e}. Assuming empty/will be created.")
+            self._status_data = {"runs": []} # Default/recovery
+        
+        self.logger.info(f"StateManager initialized for file: {self.status_file_path}")
 
     def _get_lock(self) -> Union[filelock.FileLock, DummyFileLock]:
         """Returns the appropriate lock object based on configuration."""

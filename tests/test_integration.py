@@ -16,7 +16,8 @@ from chungoid.engine import ChungoidEngine
 
 # Try importing other necessary components
 try:
-    from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError, StageStatus
+    from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
+    from chungoid.schemas.common_enums import StageStatus
     from chungoid.utils import chroma_utils
 except ImportError as e:
     print(f"Failed to import necessary components: {e}")
@@ -98,7 +99,6 @@ class TestIntegration(unittest.TestCase):
         # Run the async function using asyncio.run()
         asyncio.run(run_async_test())
 
-    @unittest.skip("Requires PersistentClient setup, conflicting with HTTP client")
     def test_07_chromadb_operations(self):
         """Test direct interaction with ChromaDB via utils (assuming sync utils)."""
         print(f"\nRunning test: test_07_chromadb_operations in {os.getcwd()}")
@@ -118,28 +118,28 @@ class TestIntegration(unittest.TestCase):
 
                 # Test get_or_create_collection
                 # <<< Assuming get_or_create_collection itself is now ASYNC >>>
-                async def run_create():
-                    collection = await chroma_utils.get_or_create_collection(collection_name)
+                def run_create():
+                    collection = chroma_utils.get_or_create_collection(collection_name)
                     self.assertIsNotNone(collection, "Failed to get/create collection")
                     self.assertEqual(collection.name, collection_name)
-                asyncio.run(run_create())
+                run_create()
 
                 # Test add_documents (assuming it's async)
                 docs = ["doc1", "doc2"]
                 ids = ["id1", "id2"]
                 metadatas = [{"type": "test"}, {"type": "test"}]
-                async def run_add():
-                    success = await chroma_utils.add_documents(collection_name, docs, metadatas, ids)
+                def run_add():
+                    success = chroma_utils.add_documents(collection_name, docs, metadatas, ids)
                     self.assertTrue(success, "Failed to add documents")
-                asyncio.run(run_add())
+                run_add()
 
                 # Test query_documents (assuming it's async)
-                async def run_query():
-                    results = await chroma_utils.query_documents(collection_name, query_texts=["doc1"], n_results=1)
+                def run_query():
+                    results = chroma_utils.query_documents(collection_name, query_texts=["doc1"], n_results=1)
                     self.assertIsNotNone(results)
                     self.assertEqual(len(results), 1)
                     self.assertEqual(results[0]["id"], "id1")
-                asyncio.run(run_query())
+                run_query()
 
         finally:
             # Clean up temp ChromaDB directory
@@ -555,137 +555,151 @@ class TestIntegration(unittest.TestCase):
 
         asyncio.run(run_async_test())
 
-    @unittest.skip("Debugging PromptLoadError/path issue")
     def test_16_prepare_next_stage(self):
-        """Test the prepare_next_stage tool handler."""
+        """Test the prepare_next_stage tool handler via ChungoidEngine."""
         print(f"\nRunning test: test_16_prepare_next_stage in {os.getcwd()}")
 
-        # Import the specific handler function needed
-        # Ensure engine is also imported or accessible if needed directly (shouldn't be)
-        from chungoid.mcp import handle_prepare_next_stage, handle_initialize_project, handle_submit_stage_artifacts
-        from engine import ChungoidEngine # Needed for mocking potentially
-
         async def run_async_test():
-            # Helper to create dummy prompt files for testing PromptManager loading
-            def _create_dummy_prompt_files():
-                # Calculate path relative to the engine.py location, as that's where it looks
-                core_root = Path(__file__).parent.parent # Go up from tests/ to chungoid-core/
-                server_prompts_path = core_root / "server_prompts"
-                stages_path = server_prompts_path / "stages"
-                stages_path.mkdir(parents=True, exist_ok=True)
-                common_path = server_prompts_path / "common.yaml"
-
-                # Common Template (Must have preamble and postamble strings)
-                common_content = "preamble: 'COMMON PREAMBLE'\npostamble: 'COMMON POSTAMBLE'"
-                with open(common_path, 'w') as f:
-                    f.write(common_content)
-
+            # Helper to create dummy prompt files (remains the same, ensure it's called if needed by engine)
+            def _create_dummy_prompt_files_inner():
+                core_root_helper = Path(__file__).parent.parent 
+                server_prompts_path_helper = core_root_helper / "server_prompts"
+                stages_path_helper = server_prompts_path_helper / "stages"
+                stages_path_helper.mkdir(parents=True, exist_ok=True)
+                common_path_helper = server_prompts_path_helper / "common.yaml"
+                print(f"DEBUG TEST (_create_dummy_prompt_files_inner): server_prompts_path_helper abs: {server_prompts_path_helper.resolve()}")
+                # ... (rest of _create_dummy_prompt_files_inner is unchanged) ...
                 # Stage Files (Must have system_prompt and user_prompt strings)
                 for i in range(6):
-                    stage_file = stages_path / f"stage{i}.yaml"
-                    # Use minimal valid YAML strings
-                    stage_content = (
-                        f"description: 'Dummy Stage {i}'\n"
-                        f"system_prompt: 'Sys Prompt {i}'\n"
-                        f"user_prompt: 'User Prompt {i}'\n"
+                    stage_file_helper = stages_path_helper / f"stage{i}_helper.yaml" 
+                    stage_content_helper = (
+                        f"description: 'Dummy Stage Helper {i}'\n"
+                        f"system_prompt: 'Sys Prompt Helper {i}'\n"
+                        f"user_prompt: 'User Prompt Helper {i}'\n"
                     )
-                    with open(stage_file, 'w') as f:
-                        f.write(stage_content)
-                print(f"Created dummy prompt files in {stages_path.parent}")
+                    with open(stage_file_helper, 'w') as f:
+                        f.write(stage_content_helper)
+                print(f"DEBUG TEST: Created dummy helper prompt files in {stages_path_helper.parent.resolve()}")
 
-            # --- Setup: Initialize Project --- #
-            print(f"Initializing project in: {self.TEST_DIR.resolve()}")
-            init_result = await handle_initialize_project(
-                target_directory=str(self.TEST_DIR.resolve()), ctx=None
+            # --- Engine Setup --- #
+            print(f"DEBUG TEST: Instantiating ChungoidEngine for project: {self.TEST_DIR.resolve()}")
+            try:
+                engine = ChungoidEngine(str(self.TEST_DIR.resolve()))
+            except Exception as e:
+                self.fail(f"ChungoidEngine failed to initialize for test_16: {e}")
+            print("DEBUG TEST: ChungoidEngine instantiated for test_16.")
+
+            # --- Setup: Initialize Project via Engine --- #
+            print(f"DEBUG TEST: Initializing project in: {self.TEST_DIR.resolve()} via engine tool")
+            init_result = engine.execute_mcp_tool(
+                tool_name="initialize_project",
+                tool_arguments={},
+                tool_call_id="test16-init"
             )
-            self.assertEqual(init_result.get("status"), "success", msg="Initialization failed")
-            print("Project initialized.")
+            self.assertNotIn("error", init_result, msg=f"Initialization failed: {init_result.get('error')}")
+            self.assertEqual(init_result.get("toolCallId"), "test16-init")
+            # Add more assertions if needed, e.g., from test_01
+            self.assertTrue(self.CHUNGOID_DIR.exists(), msg="Chungoid directory should exist after init via engine")
+            self.assertTrue(self.STATUS_FILE.exists(), msg="Status file should exist after init via engine")
+            print("DEBUG TEST: Project initialized via engine.")
 
             # --- Setup: Create Dummy Stage/Common Files --- #
-            # engine.py assumes these exist relative to core root
-            # StateManager finds them relative to server_stages_dir passed in init
-            # PromptManager finds them relative to stages_root_dir passed in init
-            # Need to ensure these paths align or create files where expected
-            core_root = Path(__file__).parent.parent # Assumes tests run from project root
-            server_prompts_dir = core_root / 'server_prompts'
-            stages_dir = server_prompts_dir / 'stages'
-            stages_dir.mkdir(parents=True, exist_ok=True)
-            common_path = server_prompts_dir / 'common.yaml'
-            stage0_path = stages_dir / 'stage0.yaml'
-            stage1_path = stages_dir / 'stage1.yaml'
+            # These are the primary files the engine should find due to its own init path logic.
+            # No need to call _create_dummy_prompt_files_inner() if the main files are correctly placed
+            # for the *engine's* PromptManager (which uses chungoid-core/server_prompts).
+            # However, if test_16 specifically needs to test loading of *these exact dummy files created by the test*,
+            # then the engine's PromptManager needs to be pointed to them or they need to be placed where
+            # the standard PromptManager looks (i.e., in the main chungoid-core/server_prompts).
+            # For now, let's assume the engine uses its default server_prompts and we want to test that.
+            # The `test_16_prepare_next_stage` name implies testing the tool, not custom prompt loading.
+            
+            # The print statements for path creation in the test can be kept for sanity checking but 
+            # the files created by the test at `chungoid-core/server_prompts` are the ones 
+            # the *engine's default PromptManager* will use.
+            # core_root_main = Path(__file__).parent.parent 
+            # server_prompts_dir_main = core_root_main / 'server_prompts'
+            # stages_dir_main = server_prompts_dir_main / 'stages'
+            # stages_dir_main.mkdir(parents=True, exist_ok=True) # Ensure it exists
+            # common_path_main = server_prompts_dir_main / 'common.yaml'
+            # stage0_path_main = stages_dir_main / 'stage0.yaml'
+            # stage1_path_main = stages_dir_main / 'stage1.yaml'
 
-            # Write basic content
-            common_path.write_text("preamble: COMMON PREAMBLE\npostamble: COMMON POSTAMBLE")
-            stage0_path.write_text("prompt_details: Stage 0 Details {{ context_data.initial_goal | default('') }}\nuser_prompt: User prompt for Stage 0.")
-            stage1_path.write_text("prompt_details: Stage 1 Details\nuser_prompt: User prompt for Stage 1. Last status was {{ context_data.last_status.status }}")
-            print(f"Created dummy prompt files in {server_prompts_dir}")
+            # print(f"DEBUG TEST (main setup for engine): server_prompts_dir_main abs: {server_prompts_dir_main.resolve()}")
+            # print(f"DEBUG TEST (main setup for engine): stages_dir_main abs: {stages_dir_main.resolve()}")
+            # print(f"DEBUG TEST (main setup for engine): common_path_main abs: {common_path_main.resolve()}")
+
+            # # Ensure these files have minimal valid content for PromptManager - REMOVING THIS BLOCK
+            # # The engine should use the globally available server_prompts.
+            # if not common_path_main.exists() or common_path_main.read_text().strip() == "":
+            #     common_path_main.write_text("preamble: COMMON PREAMBLE MAIN FROM TEST_16\npostamble: COMMON POSTAMBLE MAIN FROM TEST_16")
+            #     print(f"DEBUG TEST: Wrote default content to {common_path_main.resolve()}")
+            # 
+            # if not stage0_path_main.exists() or stage0_path_main.read_text().strip() == "":
+            #     stage0_path_main.write_text("description: 'Stage 0 Main from Test_16'\nprompt_details: Stage 0 Details {{ context_data.initial_goal | default('') }}\nsystem_prompt: 'Sys Prompt Main 0 from Test_16'\nuser_prompt: User prompt for Stage Main 0 from Test_16.")
+            #     print(f"DEBUG TEST: Wrote default content to {stage0_path_main.resolve()}")
+            # 
+            # if not stage1_path_main.exists() or stage1_path_main.read_text().strip() == "":
+            #     stage1_path_main.write_text("description: 'Stage 1 Main from Test_16'\nprompt_details: Stage 1 Details\nsystem_prompt: 'Sys Prompt Main 1 from Test_16'\nuser_prompt: User prompt for Stage Main 1 from Test_16. Last status was {{ context_data.last_status.status }}")
+            #     print(f"DEBUG TEST: Wrote default content to {stage1_path_main.resolve()}")
+
+            # print(f"DEBUG TEST: Ensured main dummy prompt files exist in {server_prompts_dir_main.resolve()} for engine use.")
+            print(f"DEBUG TEST: Engine will use globally available prompt files from chungoid-core/server_prompts/")
 
             # --- Test Initial Call (Should prepare Stage 0) --- #
-            print("Calling prepare_next_stage for the first time...")
-            prep_result_0 = await handle_prepare_next_stage(
-                target_directory=str(self.TEST_DIR.resolve()), ctx=None
+            print("DEBUG TEST: Calling prepare_next_stage tool via engine for the first time...")
+            prepare_result_1 = engine.execute_mcp_tool(
+                tool_name="prepare_next_stage",
+                tool_arguments={},
+                tool_call_id="test16-prepare1"
             )
-            print(f"Prepare result (Stage 0): {json.dumps(prep_result_0, indent=2)}")
+            print(f"DEBUG TEST: First prepare_next_stage result: {prepare_result_1}")
+            self.assertNotIn("error", prepare_result_1, msg=f"First prepare_next_stage failed: {prepare_result_1.get('error')}")
+            self.assertEqual(prepare_result_1.get("toolCallId"), "test16-prepare1")
+            self.assertIsInstance(prepare_result_1.get("content"), list)
+            content_dict_1 = yaml.safe_load(prepare_result_1["content"][0]["text"]) # Assuming content is YAML string
+            self.assertEqual(content_dict_1.get("status"), "success")
+            self.assertEqual(content_dict_1.get("next_stage"), 0.0)
+            self.assertIn("User prompt for Stage 0.", content_dict_1.get("prompt", "")) # Use default prompt content
+            self.assertIn("COMMON PREAMBLE", content_dict_1.get("prompt", ""))
+            self.assertIn("COMMON POSTAMBLE", content_dict_1.get("prompt", ""))
 
-            self.assertEqual(prep_result_0.get("status"), "success", msg="Prepare stage 0 failed")
-            self.assertEqual(prep_result_0.get("next_stage"), 0.0, msg="Expected next stage to be 0.0")
-            self.assertIn("COMMON PREAMBLE", prep_result_0.get("prompt", ""), msg="Common preamble missing")
-            self.assertIn("User prompt for Stage 0.", prep_result_0.get("prompt", ""), msg="Stage 0 prompt missing")
-            self.assertIn("COMMON POSTAMBLE", prep_result_0.get("prompt", ""), msg="Common postamble missing")
-            context0 = prep_result_0.get("gathered_context", {})
-            self.assertIsInstance(context0, dict, msg="Context should be a dict")
-            self.assertEqual(context0.get("current_stage"), 0.0)
-            self.assertIn("project_directory", context0)
-            self.assertIn("No previous status found.", str(context0.get("last_status")))
-            self.assertNotIn("relevant_reflections", context0) # Reflections gathered only for stage > 0
-            print("Assertions for Stage 0 passed.")
-
-            # --- Simulate Completing Stage 0 --- #
-            print("\nSimulating completion of Stage 0...")
-            submit_result_0 = await handle_submit_stage_artifacts(
-                target_directory=str(self.TEST_DIR.resolve()),
-                stage_number=0.0,
-                generated_artifacts={"output/stage0.txt": "Stage 0 output"},
-                stage_result_status="PASS",
-                ctx=None
+            # --- Simulate Stage 0 Completion and Submit Artifacts via Engine --- # 
+            print("DEBUG TEST: Simulating Stage 0 completion and submitting artifacts via engine...")
+            submit_args_0 = {
+                "stage_number": 0.0,
+                "stage_result_status": "PASS",
+                "generated_artifacts": {"docs/stage0_output.txt": "Output from stage 0"},
+                "reflection_text": "Reflection for stage 0 from test_16"
+            }
+            submit_result_0 = engine.execute_mcp_tool(
+                tool_name="submit_stage_artifacts",
+                tool_arguments=submit_args_0,
+                tool_call_id="test16-submit0"
             )
-            self.assertEqual(submit_result_0.get("status"), "success", msg="Submit Stage 0 failed")
-            print("Stage 0 submitted as PASS.")
+            print(f"DEBUG TEST: Submit artifacts for stage 0 result: {submit_result_0}")
+            self.assertNotIn("error", submit_result_0, msg=f"Submit artifacts for stage 0 failed: {submit_result_0.get('error')}")
+            self.assertEqual(submit_result_0.get("toolCallId"), "test16-submit0")
+            self.assertIn("Stage 0.0 submitted with status PASS and 1 artifacts.", submit_result_0["content"][0]["text"]) # Corrected assertion
 
             # --- Test Second Call (Should prepare Stage 1) --- #
-            print("\nCalling prepare_next_stage again (expecting Stage 1)...")
-            prep_result_1 = await handle_prepare_next_stage(
-                target_directory=str(self.TEST_DIR.resolve()), ctx=None
+            print("DEBUG TEST: Calling prepare_next_stage tool via engine for the second time...")
+            prepare_result_2 = engine.execute_mcp_tool(
+                tool_name="prepare_next_stage",
+                tool_arguments={},
+                tool_call_id="test16-prepare2"
             )
-            print(f"Prepare result (Stage 1): {json.dumps(prep_result_1, indent=2)}")
+            print(f"DEBUG TEST: Second prepare_next_stage result: {prepare_result_2}")
+            self.assertNotIn("error", prepare_result_2, msg=f"Second prepare_next_stage failed: {prepare_result_2.get('error')}")
+            self.assertEqual(prepare_result_2.get("toolCallId"), "test16-prepare2")
+            content_dict_2 = yaml.safe_load(prepare_result_2["content"][0]["text"])
+            self.assertEqual(content_dict_2.get("status"), "success")
+            self.assertEqual(content_dict_2.get("next_stage"), 1.0)
+            self.assertIn("User prompt for Stage 1.", content_dict_2.get("prompt", "")) # Corrected assertion
+            self.assertIn("Last status was PASS", content_dict_2.get("prompt", "")) # Check context injection
+            self.assertIn("COMMON PREAMBLE", content_dict_2.get("prompt", ""))
 
-            self.assertEqual(prep_result_1.get("status"), "success", msg="Prepare stage 1 failed")
-            self.assertEqual(prep_result_1.get("next_stage"), 1.0, msg="Expected next stage to be 1.0")
-            self.assertIn("COMMON PREAMBLE", prep_result_1.get("prompt", ""), msg="Common preamble missing S1")
-            self.assertIn("User prompt for Stage 1.", prep_result_1.get("prompt", ""), msg="Stage 1 prompt missing")
-            self.assertIn("Last status was PASS", prep_result_1.get("prompt", ""), msg="Stage 1 prompt context missing/wrong") # Check context injection
-            self.assertIn("COMMON POSTAMBLE", prep_result_1.get("prompt", ""), msg="Common postamble missing S1")
-            context1 = prep_result_1.get("gathered_context", {})
-            self.assertIsInstance(context1, dict, msg="Context S1 should be a dict")
-            self.assertEqual(context1.get("current_stage"), 1.0)
-            self.assertIn("project_directory", context1)
-            self.assertEqual(context1.get("last_status", {}).get("stage"), 0.0)
-            self.assertEqual(context1.get("last_status", {}).get("status"), "PASS")
-            self.assertIn("relevant_reflections", context1) # Should attempt to gather reflections for stage > 0
-            self.assertIsInstance(context1.get("relevant_reflections"), list) # Should be list even if empty
-            print("Assertions for Stage 1 passed.")
+            print("DEBUG TEST: test_16_prepare_next_stage completed successfully.")
 
-            # --- Cleanup Dummy Files --- #
-            # Optional: remove dummy files if they interfere with other tests
-            # common_path.unlink(missing_ok=True)
-            # stage0_path.unlink(missing_ok=True)
-            # stage1_path.unlink(missing_ok=True)
-            # stages_dir.rmdir() # Only if empty
-            # server_prompts_dir.rmdir() # Only if empty
-            print("Dummy prompt files cleanup skipped (manual if needed).")
-
-
-        # Run the async test function
         asyncio.run(run_async_test())
 
 

@@ -138,12 +138,7 @@ class SyncOrchestrator:
             return True # No condition means proceed
 
         self.logger.debug(f"Parsing condition: {condition_str}")
-        # Example: "outputs.stage_a.result == 'go_left'"
-        # This needs to be evaluated in the context of `context`
         try:
-            # Simplified evaluation logic, vulnerable to injection if condition_str is untrusted.
-            # In a real scenario, use a safer evaluation method like ast.literal_eval or a sandbox.
-            
             parts = []
             comparator = None
             # Order matters for multi-character operators
@@ -165,10 +160,9 @@ class SyncOrchestrator:
             elif '<' in condition_str:
                 parts = condition_str.split('<', 1)
                 comparator = '<'
-            # Add more comparators as needed (e.g., in, not in)
             else:
                 self.logger.error(f"Unsupported condition format or unknown operator: {condition_str}")
-                return False # Default to false on parse error
+                return False
 
             if len(parts) != 2:
                 self.logger.error(f"Invalid condition structure: {condition_str}")
@@ -177,12 +171,11 @@ class SyncOrchestrator:
             var_path_str = parts[0].strip()
             expected_value_str = parts[1].strip()
 
-            # Resolve var_path_str from context (e.g., outputs.stage_a.result)
             current_val = context
             for key in var_path_str.split('.'):
                 if isinstance(current_val, dict) and key in current_val:
                     current_val = current_val[key]
-                elif isinstance(current_val, list) and key.isdigit(): # Handle list indices
+                elif isinstance(current_val, list) and key.isdigit():
                     try:
                         current_val = current_val[int(key)]
                     except IndexError:
@@ -190,44 +183,45 @@ class SyncOrchestrator:
                         return False
                 else:
                     self.logger.warning(f"Condition variable path '{var_path_str}' (key: '{key}') not fully found in context.")
-                    return False # Path not found, condition is false
+                    return False
             
-            # Convert expected_value_str to the type of current_val for comparison
-            # This is a simplification; robust type conversion is needed.
-            try:
-                if isinstance(current_val, bool):
-                    expected_value = expected_value_str.lower() in ['true', '1', 'yes']
-                elif isinstance(current_val, (int, float)): # Keep numbers as numbers
-                    # Attempt to cast expected_value_str to float first, then int if it's whole
-                    try:
-                        expected_value = float(expected_value_str.strip("'\""))
-                        if expected_value.is_integer() and isinstance(current_val, int):
-                           expected_value = int(expected_value)
-                    except ValueError: # if float fails, try int directly
-                         expected_value = int(expected_value_str.strip("'\""))
-                else: # Assume string if not bool or number
-                    expected_value = expected_value_str.strip("'\"") # Remove quotes for string comparison
-            except ValueError as e:
-                self.logger.error(f"Type conversion error for expected value ('{expected_value_str}') in condition '{condition_str}' to match type of '{current_val}' ({type(current_val)}): {e}")
-                return False
+            numeric_comparators = ['>', '<', '>=', '<=']
+            is_numeric_comparison = comparator in numeric_comparators
 
-            self.logger.debug(f"Condition check: '{current_val}' ({type(current_val)}) {comparator} '{expected_value}' ({type(expected_value)})")
+            if is_numeric_comparison:
+                try:
+                    val1 = float(current_val) # Attempt to convert current_val to float
+                    val2 = float(expected_value_str.strip("'\"")) # Attempt to convert expected_value_str to float
+                    
+                    self.logger.debug(f"Numeric condition check: {val1} {comparator} {val2}")
+                    if comparator == '>': return val1 > val2
+                    if comparator == '<': return val1 < val2
+                    if comparator == '>=': return val1 >= val2
+                    if comparator == '<=': return val1 <= val2
+                except ValueError:
+                    self.logger.warning(f"Type mismatch for numeric comparison: '{current_val}' vs '{expected_value_str}'. Condition evaluates to False.")
+                    return False # If conversion to float fails for numeric comparison
+            else: # Handling '==' and '!='
+                try:
+                    coerced_expected_value = expected_value_str.strip("'\"") # Default to string
+                    if isinstance(current_val, bool):
+                        coerced_expected_value = expected_value_str.lower() in ['true', '1', 'yes']
+                    elif isinstance(current_val, int):
+                        coerced_expected_value = int(expected_value_str.strip("'\""))
+                    elif isinstance(current_val, float):
+                        coerced_expected_value = float(expected_value_str.strip("'\""))
+                    # If current_val is a string, coerced_expected_value remains a string as per default
+
+                    self.logger.debug(f"Equality condition check: '{current_val}' ({type(current_val)}) {comparator} '{coerced_expected_value}' ({type(coerced_expected_value)})")
+                    if comparator == '==':
+                        return current_val == coerced_expected_value
+                    elif comparator == '!=':
+                        return current_val != coerced_expected_value
+                except ValueError as e:
+                    self.logger.error(f"Type conversion error for expected value in '=='/'=' condition '{condition_str}': {e}. Treating as unequal.")
+                    return True if comparator == '!=' else False # Default to not equal on conversion error for ==/!=
             
-            # Perform comparison based on comparator
-            if comparator == '==':
-                return current_val == expected_value
-            elif comparator == '!=':
-                return current_val != expected_value
-            elif comparator == '>':
-                return current_val > expected_value
-            elif comparator == '<':
-                return current_val < expected_value
-            elif comparator == '>=':
-                return current_val >= expected_value
-            elif comparator == '<=':
-                return current_val <= expected_value
-            
-            return False # Should not reach here if comparator is supported and handled
+            return False # Fallback, should ideally be covered by above
 
         except Exception as e:
             self.logger.exception(f"Error evaluating condition '{condition_str}': {e}")
@@ -325,6 +319,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         
         self._agent_provider = agent_provider
         self._state_manager = state_manager
+        self.context_history: Dict[str, Dict[str, Any]] = {} # Initialize context_history
 
     def _parse_condition(self, condition_str: str, context: Dict[str, Any]) -> bool:
         if not condition_str:
@@ -334,14 +329,27 @@ class AsyncOrchestrator(BaseOrchestrator):
         try:
             parts = []
             comparator = None
-            if '==' in condition_str:
+            # Order matters for multi-character operators
+            if '>=' in condition_str:
+                parts = condition_str.split('>=', 1)
+                comparator = '>='
+            elif '<=' in condition_str:
+                parts = condition_str.split('<=', 1)
+                comparator = '<='
+            elif '==' in condition_str: # Should be before single char '=' if that were supported
                 parts = condition_str.split('==', 1)
                 comparator = '=='
             elif '!=' in condition_str:
                 parts = condition_str.split('!=', 1)
                 comparator = '!='
+            elif '>' in condition_str:
+                parts = condition_str.split('>', 1)
+                comparator = '>'
+            elif '<' in condition_str:
+                parts = condition_str.split('<', 1)
+                comparator = '<'
             else:
-                self.logger.error(f"Unsupported condition format: {condition_str}")
+                self.logger.error(f"Unsupported condition format or unknown operator: {condition_str}")
                 return False
 
             if len(parts) != 2:
@@ -355,30 +363,53 @@ class AsyncOrchestrator(BaseOrchestrator):
             for key in var_path_str.split('.'):
                 if isinstance(current_val, dict) and key in current_val:
                     current_val = current_val[key]
+                elif isinstance(current_val, list) and key.isdigit():
+                    try:
+                        current_val = current_val[int(key)]
+                    except IndexError:
+                        self.logger.warning(f"Index out of bounds for '{key}' in path '{var_path_str}'.")
+                        return False
                 else:
-                    self.logger.warning(f"Condition variable path '{var_path_str}' not fully found in context.")
-                    return False 
+                    self.logger.warning(f"Condition variable path '{var_path_str}' (key: '{key}') not fully found in context.")
+                    return False
             
-            try:
-                if isinstance(current_val, bool):
-                    expected_value = expected_value_str.lower() in ['true', '1']
-                elif isinstance(current_val, int):
-                    expected_value = int(expected_value_str.strip("'\""))
-                elif isinstance(current_val, float):
-                    expected_value = float(expected_value_str.strip("'\""))
-                else: 
-                    expected_value = expected_value_str.strip("'\"") 
-            except ValueError as e:
-                self.logger.error(f"Type conversion error for expected value in condition '{condition_str}': {e}")
-                return False
+            numeric_comparators = ['>', '<', '>=', '<=']
+            is_numeric_comparison = comparator in numeric_comparators
 
-            self.logger.debug(f"Condition check: '{current_val}' {comparator} '{expected_value}'")
-            if comparator == '==':
-                return current_val == expected_value
-            elif comparator == '!=':
-                return current_val != expected_value
+            if is_numeric_comparison:
+                try:
+                    val1 = float(current_val) # Attempt to convert current_val to float
+                    val2 = float(expected_value_str.strip("'\"")) # Attempt to convert expected_value_str to float
+                    
+                    self.logger.debug(f"Numeric condition check: {val1} {comparator} {val2}")
+                    if comparator == '>': return val1 > val2
+                    if comparator == '<': return val1 < val2
+                    if comparator == '>=': return val1 >= val2
+                    if comparator == '<=': return val1 <= val2
+                except ValueError:
+                    self.logger.warning(f"Type mismatch for numeric comparison: '{current_val}' vs '{expected_value_str}'. Condition evaluates to False.")
+                    return False # If conversion to float fails for numeric comparison
+            else: # Handling '==' and '!='
+                try:
+                    coerced_expected_value = expected_value_str.strip("'\"") # Default to string
+                    if isinstance(current_val, bool):
+                        coerced_expected_value = expected_value_str.lower() in ['true', '1', 'yes']
+                    elif isinstance(current_val, int):
+                        coerced_expected_value = int(expected_value_str.strip("'\""))
+                    elif isinstance(current_val, float):
+                        coerced_expected_value = float(expected_value_str.strip("'\""))
+                    # If current_val is a string, coerced_expected_value remains a string as per default
+
+                    self.logger.debug(f"Equality condition check: '{current_val}' ({type(current_val)}) {comparator} '{coerced_expected_value}' ({type(coerced_expected_value)})")
+                    if comparator == '==':
+                        return current_val == coerced_expected_value
+                    elif comparator == '!=':
+                        return current_val != coerced_expected_value
+                except ValueError as e:
+                    self.logger.error(f"Type conversion error for expected value in '=='/'=' condition '{condition_str}': {e}. Treating as unequal.")
+                    return True if comparator == '!=' else False # Default to not equal on conversion error for ==/!=
             
-            return False
+            return False # Fallback, should ideally be covered by above
 
         except Exception as e:
             self.logger.exception(f"Error evaluating condition '{condition_str}': {e}")
@@ -390,12 +421,19 @@ class AsyncOrchestrator(BaseOrchestrator):
         current_stage_name = start_stage_name
         if 'outputs' not in context:
             context['outputs'] = {}
+        if 'visited' not in context: # Initialize visited list in context
+            context['visited'] = []
+        
         max_hops = len(self.pipeline_def.stages) + 5 
         hops = 0
 
         while current_stage_name and hops < max_hops:
             hops += 1
             
+            # Record visited stage
+            if current_stage_name not in context['visited']:
+                context['visited'].append(current_stage_name)
+
             stage: Optional[MasterStageSpec] = self.pipeline_def.stages.get(current_stage_name)
             if not stage:
                 self.logger.error(f"MASTER Stage '{current_stage_name}' not found in plan. Aborting loop.")
@@ -412,7 +450,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     reason=f"Master Stage '{current_stage_name}' not found in plan",
                     error_details=error_info
                 )
-                return context
+                return context # Return context which now includes 'visited'
 
             current_stage_idx = stage.number if stage.number is not None else -1.0
             if current_stage_idx == -1.0:
@@ -428,6 +466,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                 )
                 break # Exit loop
             
+            # Before determining next_stage_name, update context_history
+            self.context_history[current_stage_name] = copy.deepcopy(context) # Includes outputs and visited so far
+
             # 1. Execute Agent for the current stage
             self.logger.info(f"Processing Agent for MASTER Stage: {current_stage_name} (Agent ID: {stage.agent_id})")
             try:
@@ -447,10 +488,10 @@ class AsyncOrchestrator(BaseOrchestrator):
                 actual_agent_executor: Any
                 if inspect.iscoroutine(agent_ref_from_provider):
                     self.logger.debug(f"Agent provider .get() returned a coroutine for '{stage.agent_id}'. Awaiting it to get actual executor.")
-                    actual_agent_executor = await agent_ref_from_provider
+                    actual_agent_executor = await agent_ref_from_provider # Correctly await to get the executor
                 else:
                     self.logger.debug(f"Agent provider .get() returned a direct reference for '{stage.agent_id}'. Using it as actual executor.")
-                    actual_agent_executor = agent_ref_from_provider
+                    actual_agent_executor = agent_ref_from_provider # Assign direct reference
                 
                 self.logger.debug(f"Resolved actual_agent_executor for '{stage.agent_id}': type {type(actual_agent_executor)}")
 
@@ -557,28 +598,28 @@ class AsyncOrchestrator(BaseOrchestrator):
                 )
                 break # Exit loop
 
-            # 2. Determine Next Stage (after agent execution)
-            next_stage_name_after_agent: Optional[str] = None
+            # 2. Determine Next Stage
+            next_stage_name = None
             if stage.condition:
                 self.logger.info(f"Evaluating Condition for MASTER Stage: '{current_stage_name}' (Definition: {stage.condition}) after agent execution.")
                 self.logger.debug(f"Context for condition evaluation for stage '{current_stage_name}': {context}")
                 condition_met = self._parse_condition(stage.condition, context) 
-                next_stage_name_after_agent = stage.next_stage_true if condition_met else stage.next_stage_false
-                self.logger.info(f"Condition result: {condition_met}, next MASTER stage after agent: {next_stage_name_after_agent}")
+                next_stage_name = stage.next_stage_true if condition_met else stage.next_stage_false
+                self.logger.info(f"Condition result: {condition_met}, next MASTER stage after agent: {next_stage_name}")
             else:
-                next_stage_name_after_agent = stage.next_stage
-                self.logger.debug(f"No condition for MASTER stage '{current_stage_name}'. Direct next stage: {next_stage_name_after_agent}")
+                next_stage_name = stage.next_stage
+                self.logger.debug(f"No condition for MASTER stage '{current_stage_name}'. Direct next stage: {next_stage_name}")
 
-            current_stage_name = next_stage_name_after_agent # Update current_stage_name for the next iteration
-
+            current_stage_name = next_stage_name
+            
             if not current_stage_name:
                  self.logger.info(f"MASTER Stage '{stage.agent_id}' completed (or condition led to null). No next stage defined. Orchestration complete.")
                  break # Exit loop
             else:
                  self.logger.debug(f"Proceeding to next MASTER stage: '{current_stage_name}'")
 
-        self.logger.info("MASTER execution loop finished.")
-        return context
+        self.logger.info(f"MASTER execution loop finished. Final context keys: {list(context.keys())}, Visited: {context.get('visited')}")
+        return context # Context now implicitly includes 'visited'
 
     async def run(self, plan: MasterExecutionPlan, context: Dict[str, Any]) -> Dict[str, Any]:
         """Starts a fresh execution of the Master Flow plan."""

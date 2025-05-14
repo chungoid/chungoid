@@ -159,10 +159,10 @@ class TestAsyncOrchestrator:
         final_context = await orchestrator.run(plan, initial_context.copy())
 
         agent_x_mock.assert_awaited_once_with(
-           {"global_val": "hello", "outputs": {}, "param1": "literal", "param2": "hello"}
+            {"global_val": "hello", "outputs": {}, "visited": ["stage_x"], "param1": "literal", "param2": "hello"}
         )
         agent_y_mock.assert_awaited_once_with(
-            {"global_val": "hello", "outputs": {"stage_x": {"data": "output_from_x"}}, "input_from_x": "output_from_x"}
+            {"global_val": "hello", "outputs": {"stage_x": {"data": "output_from_x"}}, "visited": ["stage_x", "stage_y"], "input_from_x": "output_from_x"}
         )
         assert final_context['outputs']['stage_x'] == {"data": "output_from_x"}
         assert final_context['outputs']['stage_y'] == {"final_result": "output_from_y"}
@@ -321,7 +321,7 @@ class TestAsyncOrchestrator:
         assert saved_paused_details.flow_id == basic_plan.id # Verify flow_id is saved
         assert saved_paused_details.paused_at_stage_id == "stage0"
         assert saved_paused_details.reason == "Paused due to agent error in master stage"
-        assert saved_paused_details.context_snapshot == {"input": "value", "outputs": {}} # Initial context + empty outputs
+        assert saved_paused_details.context_snapshot == {"input": "value", "outputs": {}, "visited": ["stage0"]} # Initial context + empty outputs
         assert isinstance(saved_paused_details.error_details, AgentErrorDetails)
         assert saved_paused_details.error_details.error_type == "ValueError"
         assert saved_paused_details.error_details.message == "Agent A failed spectacularly!"

@@ -55,6 +55,12 @@ class PromptManager:
             PromptLoadError: If directories/files don't exist or cannot be loaded.
         """
         self.logger = logging.getLogger(__name__)
+
+        # <<< DEBUG PRINTS START >>>
+        # print(f"DEBUG PM __init__: Received server_stages_dir: {server_stages_dir}") # REMOVE
+        # print(f"DEBUG PM __init__: Received common_template_path: {common_template_path}") # REMOVE
+        # <<< DEBUG PRINTS END >>>
+
         if not server_stages_dir:
             raise ValueError("Server stage template directory must be provided.")
         if not common_template_path:
@@ -62,15 +68,24 @@ class PromptManager:
 
         # Resolve paths during initialization to ensure they are absolute and correct
         self.stages_dir = Path(server_stages_dir).resolve()
-        if not self.stages_dir.is_dir():
+        self.common_template_path = Path(common_template_path).resolve()
+
+        # <<< DEBUG PRINTS START >>>
+        # print(f"DEBUG PM __init__: Resolved self.stages_dir: {self.stages_dir}") # REMOVE
+        # print(f"DEBUG PM __init__: Resolved self.common_template_path: {self.common_template_path}") # REMOVE
+        # stages_dir_exists = self.stages_dir.exists() # REMOVE
+        # stages_dir_is_dir = self.stages_dir.is_dir() # REMOVE
+        # common_file_exists = self.common_template_path.exists() # REMOVE
+        # common_file_is_file = self.common_template_path.is_file() # REMOVE
+        # print(f"DEBUG PM __init__: self.stages_dir exists: {stages_dir_exists}") # REMOVE
+        # print(f"DEBUG PM __init__: self.stages_dir is_dir: {stages_dir_is_dir}") # REMOVE
+        # print(f"DEBUG PM __init__: self.common_template_path exists: {common_file_exists}") # REMOVE
+        # print(f"DEBUG PM __init__: self.common_template_path is_file: {common_file_is_file}") # REMOVE
+        # <<< DEBUG PRINTS END >>>
+
+        if not self.stages_dir.is_dir(): # Check after print
             raise PromptLoadError(
                 f"Resolved server stage template directory not found: {self.stages_dir}"
-            )
-
-        self.common_template_path = Path(common_template_path).resolve()
-        if not self.common_template_path.is_file():
-            raise PromptLoadError(
-                f"Resolved common template file not found: {self.common_template_path}"
             )
 
         self.common_template_env = self._create_jinja_environment()
@@ -139,11 +154,19 @@ class PromptManager:
         return None
 
     def _load_stage_definitions(self):
-        """Loads stage definitions by scanning the stages directory for stage*.yaml files."""
+        """Loads all stage definition YAML files from the stages directory."""
         self.logger.info("Loading stage definitions from %s", self.stages_dir)
         self.stage_definitions = {}
+        errors = []
         loaded_count = 0
-        errors = [] # Collect errors
+
+        # <<< DEBUG PRINT START >>>
+        # try: # REMOVE
+        #     glob_files = list(self.stages_dir.glob("stage*.yaml")) # REMOVE
+        #     print(f"DEBUG PM _load_stage_definitions: Files found by glob('stage*.yaml'): {glob_files}") # REMOVE
+        # except Exception as e: # REMOVE
+        #     print(f"DEBUG PM _load_stage_definitions: Error during glob: {e}") # REMOVE
+        # <<< DEBUG PRINT END >>>
 
         for file_path in self.stages_dir.glob("stage*.yaml"):
             stage_number = self._extract_stage_number(file_path.name)

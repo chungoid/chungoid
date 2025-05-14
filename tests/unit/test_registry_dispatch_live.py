@@ -2,6 +2,7 @@ import socket
 from pathlib import Path
 import yaml
 import pytest
+from unittest.mock import patch, AsyncMock, MagicMock
 
 from chungoid.flow_executor import FlowExecutor
 from chungoid.utils.agent_registry import AgentRegistry, AgentCard
@@ -18,9 +19,9 @@ def _port_open(host: str, port: int) -> bool:
             return False
 
 
-# Skip entire module if MCP server not running (local dev use)
-if not _port_open("localhost", 9000):
-    pytest.skip("MCP server not running on localhost:9000", allow_module_level=True)
+# # Skip entire module if MCP server not running (local dev use)
+# if not _port_open("localhost", 9000):
+#     pytest.skip("MCP server not running on localhost:9000", allow_module_level=True)
 
 
 def test_flow_executor_live_dispatch(tmp_path):
@@ -37,19 +38,24 @@ def test_flow_executor_live_dispatch(tmp_path):
 
     provider = RegistryAgentProvider(registry)
 
-    # simple flow
-    flow_path = tmp_path / "flow.yaml"
-    yaml.safe_dump(
-        {
-            "name": "live_flow",
-            "start_stage": "s1",
-            "stages": {
-                "s1": {"agent_id": "reflection_loader", "next": None}
+    # Mock the agent provider's get method for 'reflection_loader'
+    mock_agent = MagicMock(return_value={"status": "success from mock"})
+    with patch.object(provider, 'get', return_value=mock_agent) as mock_get_agent:
+        # simple flow
+        flow_path = tmp_path / "flow.yaml"
+        yaml.safe_dump(
+            {
+                "name": "live_flow",
+                "start_stage": "s1",
+                "stages": {
+                    "s1": {"agent_id": "reflection_loader", "next": None}
+                },
             },
-        },
-        flow_path.open("w"),
-    )
+            flow_path.open("w"),
+        )
 
-    executor = FlowExecutor(provider)
-    result = executor.run(flow_path)
-    assert result == ["s1"] 
+        executor = FlowExecutor(provider)
+        result = executor.run(flow_path)
+        assert result == ["s1"]
+        mock_get_agent.assert_called_once_with("reflection_loader")
+        mock_agent.assert_called_once() 

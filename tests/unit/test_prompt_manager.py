@@ -101,7 +101,7 @@ def test_init_missing_common_file(pm_base_setup):
     # Ensure common_file does NOT exist
     (stages_dir / "stage0.yaml").write_text(STAGE0_YAML_CONTENT, encoding="utf-8")
 
-    with pytest.raises(PromptLoadError, match="Resolved common template file not found: .*"):
+    with pytest.raises(PromptLoadError, match=r"Could not load common template: YAML file not found: .*"):
         PromptManager(server_stages_dir=str(stages_dir), common_template_path=str(common_file))
 
 def test_init_invalid_yaml_syntax(pm_base_setup):
