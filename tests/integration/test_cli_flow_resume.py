@@ -7,7 +7,7 @@ from typing import Generator, Any
 import shutil
 
 from click.testing import CliRunner
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 # Assuming the main CLI entry point is 'cli' in 'chungoid.cli'
 from chungoid.cli import cli 
@@ -189,11 +189,18 @@ def test_resume_retry(setup_paused_project):
     original_cwd = Path.cwd()
     os.chdir(project_dir)
 
+    # Define environment variables for the CLI subprocess
+    cli_env = {
+        "FLOW_REGISTRY_MODE": "memory",
+        **os.environ, # Inherit other environment variables
+    }
+
     try:
         result = runner.invoke(
             cli,
             ['flow', 'resume', run_id, '--action', 'retry'],
-            catch_exceptions=False # See full traceback on error
+            catch_exceptions=False, # See full traceback on error
+            env=cli_env # Pass the specific environment
         )
     finally:
         # Restore original CWD

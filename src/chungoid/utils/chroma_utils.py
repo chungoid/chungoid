@@ -154,6 +154,26 @@ def _factory_get_client(
         if not project_dir: 
             raise ValueError("Project directory must be provided for persistent mode in _factory_get_client.")
         
+        # SIMPLIFICATION: Use vanilla Settings() and let Chroma handle defaults / modern env var loading.
+        # Remove all logic that populates settings_params from os.environ or get_config()
+        # _env = os.environ
+        # env_api_impl = _env.get("CHROMA_API_IMPL")
+        # env_db_impl = _env.get("CHROMA_DB_IMPL")
+        # env_is_persistent = _env.get("CHROMA_IS_PERSISTENT")
+        # env_allow_reset = _env.get("CHROMA_ALLOW_RESET")
+
+        # config_settings = get_config().get("chromadb", {})
+        # final_api_impl = env_api_impl if env_api_impl is not None else config_settings.get("chroma_api_impl")
+        # final_db_impl = env_db_impl if env_db_impl is not None else config_settings.get("chroma_db_impl")
+        # ... and so on for other params ...
+        # settings_params = {}
+        # if final_api_impl is not None: settings_params['chroma_api_impl'] = final_api_impl
+        # ... and so on ...
+        # client_settings = Settings(**settings_params)
+
+        client_settings = Settings() # Use vanilla settings
+        logger.debug(f"Chroma Client Settings for PersistentClient (vanilla): {client_settings}")
+
         db_path = project_dir.resolve() / ".chungoid" / "chroma_db"
         logger.debug(f"PersistentClient db_path: '{db_path}'")
         os.makedirs(str(db_path), exist_ok=True)

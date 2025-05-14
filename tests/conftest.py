@@ -2,17 +2,51 @@ import pytest
 from unittest.mock import MagicMock
 import chromadb
 import os # Add os import
+import logging
 
 # Autouse fixture that patches utils.chroma_utils.get_chroma_client so
 # no test ever tries to connect to a real Chroma server.
 
 def pytest_configure(config):
-    """Force flow registry to use memory mode during tests."""
+    """Force flow registry to use memory mode during tests.""" # Simplified docstring
     os.environ["FLOW_REGISTRY_MODE"] = "memory"
-    # Also ensure CHROMA_API_IMPL is not set to something problematic, or set it to a safe default for tests
-    # Forcing memory mode for FlowRegistry should be sufficient for these errors.
+    
+    # Attempt to configure Chroma settings for local/testing mode
+    # REMOVED ALL CHROMA ENV VAR SETTINGS AND DEFAULT_SETTINGS MODIFICATIONS
+    # try:
+    #     from chromadb.config import Settings, DEFAULT_SETTINGS
+    #     # Environment variables first
+    #     os.environ["CHROMA_API_IMPL"] = "chromadb.api.segment.SegmentAPI"
+    #     os.environ["CHROMA_DB_IMPL"] = "duckdb+parquet"
+    #     os.environ["CHROMA_IS_PERSISTENT"] = "TRUE" # Note: Chroma's Settings uses a bool, not str
+    #     os.environ["CHROMA_ALLOW_RESET"] = "true"  # Note: Chroma's Settings uses a bool, not str
 
-# @pytest.fixture(autouse=True) # <<< COMMENTED OUT AUTOUSE
+    #     # Attempt to directly modify a global settings object or influence future instances
+    #     # This is highly speculative.
+    #     if hasattr(chromadb, 'settings') and isinstance(chromadb.settings, Settings): # Old way, might not exist
+    #         logger.debug("Attempting to patch chromadb.settings (old global)")
+    #         chromadb.settings.chroma_api_impl = "chromadb.api.segment.SegmentAPI"
+    #         chromadb.settings.chroma_db_impl = "duckdb+parquet"
+    #         chromadb.settings.is_persistent = True
+    #         chromadb.settings.allow_reset = True
+        
+    #     # Try to modify the DEFAULT_SETTINGS object which is more likely to be used by new Settings() instances
+    #     logger.debug(f"Original DEFAULT_SETTINGS.is_persistent: {getattr(DEFAULT_SETTINGS, 'is_persistent', 'N/A')}")
+    #     logger.debug(f"Original DEFAULT_SETTINGS.chroma_api_impl: {getattr(DEFAULT_SETTINGS, 'chroma_api_impl', 'N/A')}")
+        
+    #     DEFAULT_SETTINGS.is_persistent = True
+    #     DEFAULT_SETTINGS.chroma_api_impl = "chromadb.api.segment.SegmentAPI"
+    #     DEFAULT_SETTINGS.chroma_db_impl = "duckdb+parquet"
+    #     DEFAULT_SETTINGS.allow_reset = True
+    #     logger.debug(f"Patched DEFAULT_SETTINGS.is_persistent to: {DEFAULT_SETTINGS.is_persistent}")
+    #     logger.debug(f"Patched DEFAULT_SETTINGS.chroma_api_impl to: {DEFAULT_SETTINGS.chroma_api_impl}")
+
+    # except ImportError:
+    #     print("CONTEST.PY: Could not import chromadb.config.Settings to adjust Chroma settings.")
+    #     pass
+
+
+# @pytest.fixture(autouse=True) # <<< COMMENT OUT AUTOUSE AGAIN
 def fake_chroma_client(monkeypatch):
     from chungoid.utils import chroma_utils as cu
 
