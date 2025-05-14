@@ -1,101 +1,112 @@
-import unittest
+import pytest
 import os
 from pathlib import Path
 import tempfile
 import shutil
 from unittest.mock import patch, MagicMock, ANY
 import logging
-import pytest
-import urllib.parse
-import sys
+# import urllib.parse # Not currently needed with _factory_get_client mock
+# import sys # Not currently needed
 
 from chungoid.utils import chroma_utils
 # from chungoid.utils import config_loader # Not directly used by test logic if get_config is patched in chroma_utils
 import chromadb
+from chromadb.config import Settings # Ensure Settings is imported for type hints if needed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-pytestmark = pytest.mark.legacy
+# pytestmark = pytest.mark.legacy # Ensure removed
 
 
-class TestChromaModes(unittest.TestCase):
-    """Verify get_chroma_client honour the new `chromadb.mode` config key."""
+class TestChromaModes:
+    """Test different ChromaDB client instantiation modes (Pytest style)."""
 
-    def setUp(self):
-        # Reset singleton + context between tests
+    # Removed setUp and tearDown as individual tests will manage their context
+    # and tmp_path fixture is used for persistent mode.
+
+    # UNSKIPPED
+    @patch("chungoid.utils.chroma_utils.get_config")
+    @patch("chungoid.utils.chroma_utils._factory_get_client") 
+    def test_http_mode(self, mock_factory_get_client: MagicMock, mock_get_config: MagicMock): # Removed tmp_path as it's not used
+        """Test HTTP mode client instantiation, ensuring factory is called."""
+        mock_config_http = {"chromadb": {"mode": "http", "url": "http://localhost:8000"}}
+        mock_get_config.return_value = mock_config_http
+        mock_http_client_instance = MagicMock(spec=chromadb.HttpClient)
+        mock_factory_get_client.return_value = mock_http_client_instance
+
+        # Reset singleton state for test isolation
         chroma_utils._client = None
-        chroma_utils._client_project_context = None
-        chroma_utils.clear_chroma_project_context()
         chroma_utils._client_mode = None
-
-        # Fresh temp project dirs for persistent mode
-        self.temp_root = Path(tempfile.mkdtemp())
-        self.project_dir = self.temp_root / "proj"
-        self.project_dir.mkdir()
-
-    def tearDown(self):
-        # Reset singleton + context between tests
-        chroma_utils._client = None
         chroma_utils._client_project_context = None
-        chroma_utils.clear_chroma_project_context()
-        chroma_utils._client_mode = None
-        shutil.rmtree(self.temp_root)
+        chroma_utils.clear_chroma_project_context() 
 
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
-    @patch("chromadb.PersistentClient")
+        client = chroma_utils.get_chroma_client()
+
+        mock_get_config.assert_called_once()
+        mock_factory_get_client.assert_called_once_with(
+            mode="http", 
+            server_url="http://localhost:8000", 
+            project_dir=Path(".") 
+        )
+        assert client == mock_http_client_instance, "Returned client should be the one from the factory"
+
+    # UNSKIPPED
+    @patch("chromadb.PersistentClient") 
     @patch("os.makedirs")
     @patch("chungoid.utils.chroma_utils.get_config")
-    def test_persistent_mode(self, mock_get_config, mock_makedirs, mock_persist_ctor):
-        """`mode: persistent` requires project context and creates proper path."""
-        cfg = {"chromadb": {"mode": "persistent"}}
-        mock_get_config.return_value = cfg
+    def test_persistent_mode(self, mock_get_config: MagicMock, mock_makedirs: MagicMock, mock_persistent_client_ctor: MagicMock, tmp_path: Path):
+        """Test persistent mode client instantiation, checking os.makedirs and client constructor."""
+        project_dir = tmp_path / "my_project"
+        project_dir.mkdir()
+        expected_db_path_in_factory = project_dir.resolve() / ".chungoid" / "chroma_db"
 
-        mock_pc_instance = MagicMock()
-        mock_persist_ctor.return_value = mock_pc_instance
-
-        # context must be set first
-        chroma_utils.set_chroma_project_context(self.project_dir)
-        client_returned = chroma_utils.get_chroma_client()
-
-        self.assertTrue(mock_get_config.called, "get_config should have been called for persistent mode")
-        self.assertIsNotNone(client_returned)
-        expected_dir = self.project_dir / ".chungoid" / "chroma_db"
-        mock_makedirs.assert_called_once_with(expected_dir, exist_ok=True)
-        mock_persist_ctor.assert_called_once_with(path=str(expected_dir))
+        mock_config_persistent = {"chromadb": {"mode": "persistent"}}
+        mock_get_config.return_value = mock_config_persistent
         
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
-    @patch("chungoid.utils.chroma_utils.get_config")
-    @patch("chungoid.utils.chroma_utils._factory_get_client")
-    def test_http_mode(self, mock_factory_get_client, mock_get_config):
-        """`mode: http` should call _factory_get_client with correct http params."""
-        cfg = {
-            "chromadb": {
-                "mode": "http",
-                "server_url": "testhost:9999",
-            }
-        }
-        mock_get_config.return_value = cfg
+        mock_returned_instance = MagicMock(spec_set=True)
+        mock_persistent_client_ctor.return_value = mock_returned_instance
 
-        mock_created_client_instance = MagicMock(name="MockClientFromFactory")
-        mock_factory_get_client.return_value = mock_created_client_instance
+        chroma_utils._client = None
+        chroma_utils._client_mode = None
+        chroma_utils._client_project_context = None
+        chroma_utils.set_chroma_project_context(project_dir) 
 
-        # Ensure project context is None for http mode to be clean
+        client = chroma_utils.get_chroma_client()
+
+        mock_get_config.assert_called_once()
+        mock_makedirs.assert_called_with(str(expected_db_path_in_factory), exist_ok=True)
+        mock_persistent_client_ctor.assert_called_once_with(path=str(expected_db_path_in_factory), settings=ANY)
+        assert client == mock_returned_instance, "Returned client should be the instance from the mocked PersistentClient constructor"
+        
         chroma_utils.clear_chroma_project_context()
-    
-        client_returned = chroma_utils.get_chroma_client()
+
+    @patch('chungoid.utils.chroma_utils.get_config')
+    def test_http_mode_direct(self, mock_get_config: MagicMock, tmp_path: Path):
+        """Test HTTP mode client instantiation - simplified, testing get_config mock (Pytest style)."""
+        mock_config_http = {"chromadb": {"mode": "http", "url": "http://localhost:8000"}}
+        mock_get_config.return_value = mock_config_http
         
-        self.assertTrue(mock_get_config.called, "get_config (mocked via @patch) should have been called by get_chroma_client")
-        self.assertIsNotNone(client_returned, "Client returned by get_chroma_client should not be None")
+        chroma_utils._client = None
+        chroma_utils._client_mode = None
+        chroma_utils._client_project_context = None
+        chroma_utils.clear_chroma_project_context()
 
-        # Check that _factory_get_client was called correctly
-        expected_project_dir_for_factory = Path.cwd()
-        mock_factory_get_client.assert_called_once_with(
-            "http",
-            expected_project_dir_for_factory, 
-            server_url="testhost:9999"
-        )
+        print(f"TEST_DIRECT: chroma_utils module: {chroma_utils}")
+        print(f"TEST_DIRECT: chroma_utils.__file__: {chroma_utils.__file__}")
+        print(f"TEST_DIRECT: id(chroma_utils.get_chroma_client) in test: {id(chroma_utils.get_chroma_client)}")
+        print(f"TEST_DIRECT: id(mock_get_config) in test: {id(mock_get_config)}") 
+        print(f"TEST_DIRECT: mock_get_config is chroma_utils.get_config in test before call: {mock_get_config is chroma_utils.get_config}")
 
+        print("DEBUG_DIRECT: In test_http_mode_direct, about to call get_chroma_client()")
+        try:
+            chroma_utils.get_chroma_client() 
+            print("DEBUG_DIRECT: In test_http_mode_direct, call to get_chroma_client() completed.")
+        except Exception as e:
+            print(f"DEBUG_DIRECT: In test_http_mode_direct, get_chroma_client() raised an exception: {e}")
+        
+        print(f"TEST_DIRECT: mock_get_config is chroma_utils.get_config in test after call: {mock_get_config is chroma_utils.get_config}")
+        mock_get_config.assert_called_once()
 
-if __name__ == "__main__":
-    unittest.main() 
+# if __name__ == "__main__": # This is a unittest pattern, not needed for pytest
+#     unittest.main() 

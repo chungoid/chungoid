@@ -1,13 +1,10 @@
 """Utilities for interacting with ChromaDB for context storage."""
 
-print("!!!!!! CHROMA_UTILS.PY TOP LEVEL PRINT !!!!!!!!!!") # ADDED THIS
-# raise Exception("CHROMA_UTILS.PY WAS IMPORTED") # Optional: for more aggressive check
-
 import logging
 from typing import List, Dict, Any, Optional
-# import asyncio # No longer needed for this module directly
 import chromadb
-from .config_loader import get_config  # <<< Import config loader
+from chromadb.config import Settings # Ensure Settings is imported
+from .config_loader import get_config
 from pathlib import Path
 import os
 import subprocess
@@ -39,12 +36,9 @@ def clear_chroma_project_context():
     _current_project_directory = None
 # --- End Project Context Management ---
 
-# Define Custom Exception for Chroma Operations
 class ChromaOperationError(Exception):
     """Custom exception for errors during ChromaDB operations."""
     pass
-
-# Configuration Defaults (Read from environment or fallback) - Handled by get_config now
 
 # Singleton ChromaDB client instance
 _client: Optional[chromadb.ClientAPI] = None
@@ -52,115 +46,130 @@ _client_project_context: Optional[Path] = None  # Store context used for init
 _client_mode: Optional[str] = None  # Track mode used during init
 
 # --- Public ChromaDB Client Accessor ---
-
-# !!!!!!!!!! DEBUG PRINT !!!!!!!!!!!
-_GET_CHROMA_CLIENT_CALL_COUNT = 0
-
-def get_chroma_client() -> Optional[chromadb.ClientAPI]:
+def get_chroma_client() -> chromadb.ClientAPI:
     """
-    Provides a singleton ChromaDB client instance based on configuration.
-    Reads configuration using utils.config_loader.
-    Uses the project context set by `set_chroma_project_context` for persistent clients.
-
-    Returns:
-        An initialized ChromaDB client (HttpClient or PersistentClient) or None if config fails.
+    Creates and returns a ChromaDB client based on the application config.
+    Uses a singleton pattern to reuse the client once initialized for a given context.
+    Handles different modes (in-memory, http, persistent) and project context.
     """
-    # Debug prints for module/function identity
-    print(f"CHROMA_UTILS: id(get_config) inside get_chroma_client: {id(get_config)}")
-    print(f"CHROMA_UTILS: get_config IS {get_config}")
-    print(f"CHROMA_UTILS: type(get_config) inside get_chroma_client: {type(get_config)}")
+    global _client, _client_project_context, _client_mode, _current_project_directory
 
-    global _client, _client_project_context, _current_project_directory, _client_mode
-    # global _GET_CHROMA_CLIENT_CALL_COUNT
-    # _GET_CHROMA_CLIENT_CALL_COUNT += 1
-    # print(f"!!!! ENTERING get_chroma_client (call #{_GET_CHROMA_CLIENT_CALL_COUNT}) !!!!")
+    # Core configuration loading directly using the imported get_config
+    app_config = get_config() 
+    chroma_config = app_config.get("chromadb", {})
+    mode = chroma_config.get("mode", "in-memory") # Default to in-memory
 
-    cfg_chroma = get_config().get("chromadb", {})
-    desired_mode = cfg_chroma.get("mode", "auto")
-    if desired_mode == "auto":
-        desired_mode = "http" if os.getenv("CHROMA_API_IMPL", "").lower() == "http" else "persistent"
+    # Determine the effective project directory for persistent mode
+    # This is crucial for the singleton logic: if project context changes, client needs re-init
+    effective_project_dir = _current_project_directory # Can be None
 
-    # Re-init reasons: project context changed, or mode changed via env/config between calls
-    if _client is not None:
-        # For persistent mode, if the _current_project_directory (global context) has changed,
-        # it must re-initialize, even if _client_project_context (context at client init time) matched before.
-        # For http mode, _current_project_directory is irrelevant for re-init based on context.
-        context_changed = (
-            desired_mode == "persistent" and _client_project_context != _current_project_directory
-        )
-        mode_changed = desired_mode != _client_mode
+    # Singleton Re-initialization Logic:
+    # Re-initialize if:
+    # 1. Client doesn't exist OR
+    # 2. Mode has changed OR
+    # 3. For persistent mode, if the effective_project_dir has changed from what was used for init.
+    if (
+        _client is None or 
+        _client_mode != mode or 
+        (mode == "persistent" and _client_project_context != effective_project_dir)
+    ):
+        logger.info(f"Chroma client needs initialization/re-initialization. Current mode: '{mode}'.")
+        if mode == "in-memory":
+            logger.debug("Initializing in-memory ChromaDB client.")
+            _client = chromadb.Client(Settings(is_persistent=False)) # Explicitly non-persistent
+        elif mode == "http":
+            server_url = chroma_config.get("url")
+            if not server_url:
+                logger.error("ChromaDB mode is 'http' but no URL is configured.")
+                raise ChromaOperationError("ChromaDB HTTP URL not configured.")
+            logger.debug(f"Initializing HTTP ChromaDB client for URL: {server_url}")
+            _client = _factory_get_client(mode="http", server_url=server_url, project_dir=Path(".")) # project_dir is not strictly used for http
+        elif mode == "persistent":
+            if not effective_project_dir:
+                logger.error("ChromaDB mode is 'persistent' but no project directory context is set.")
+                raise ChromaOperationError("ChromaDB project directory context not set for persistent mode.")
+            logger.debug(f"Initializing persistent ChromaDB client for project: {effective_project_dir}")
+            # _factory_get_client handles path construction using effective_project_dir
+            _client = _factory_get_client(mode="persistent", project_dir=effective_project_dir)
+        else:
+            logger.error(f"Unsupported ChromaDB mode: '{mode}'")
+            raise ChromaOperationError(f"Unsupported ChromaDB mode: '{mode}'")
         
-        if context_changed or mode_changed:
-            logger.info(
-                "Re-initialising Chroma client due to context/mode change: context %s→%s, mode %s→%s",
-                _client_project_context,
-                _current_project_directory,
-                _client_mode,
-                desired_mode,
-            )
-            _client = None # Force re-initialization
-        # else: client already exists and matches current criteria, no re-init needed.
-
-    if _client is None:
-        try:
-            server_url = cfg_chroma.get("server_url", "")
-
-            if desired_mode == "persistent" and _current_project_directory is None:
-                logger.error("Persistent mode requested but project context not set via set_chroma_project_context().")
-                return None # Cannot proceed with persistent if context is explicitly needed but not set
-
-            # Fallback to current working directory if persistent mode is chosen and no specific project context was set.
-            # This allows using persistent mode without explicit set_chroma_project_context for simple cases.
-            project_dir_for_factory = _current_project_directory or Path.cwd() 
-
-            try:
-                _client = _factory_get_client(desired_mode, project_dir_for_factory, server_url=server_url or None)
-                _client_project_context = _current_project_directory # Store context used for this _client instance
-                _client_mode = desired_mode # Store mode used for this _client instance
-                logger.info(f"ChromaDB client initialised in {desired_mode} mode.")
-
-            except RuntimeError as rt_err:
-                # This specific RuntimeError from ChromaDB happens when it's a http-only client
-                # and persistent mode is attempted.
-                if (
-                    desired_mode == "persistent"
-                    and "http-only client mode" in str(rt_err).lower()
-                ):
-                    # Fallback to HTTP if persistent fails due to http-only build
-                    fallback_url = server_url or cfg_chroma.get("server_url") or "http://localhost:8000"
-                    logger.warning(
-                        "Chroma library is compiled http-only – falling back to HttpClient (%s).", fallback_url
-                    )
-                    try:
-                        _client = _factory_get_client("http", project_dir_for_factory, server_url=fallback_url)
-                        _client_project_context = _current_project_directory # Still store the context (even if None)
-                        _client_mode = "http" # Mode is now http
-                        logger.info("ChromaDB HttpClient initialised as fallback.")
-                    except Exception as http_err: # Catch potential errors from http fallback
-                        logger.error(
-                            "Fallback HttpClient initialisation failed: %s", http_err, exc_info=True
-                        )
-                        _client = None # Ensure client is None if fallback also fails
-                else:
-                    raise # Re-raise other RuntimeErrors
-        except Exception as e:
-            logger.error(f"Failed to initialise Chroma client: {e}", exc_info=True)
-            _client = None
-
-    if _client:
-        logger.debug("Returning ChromaDB client instance.")
+        _client_mode = mode
+        _client_project_context = effective_project_dir if mode == "persistent" else None # Store context for persistent
+        logger.info(f"ChromaDB client initialized in '{mode}' mode.")
     else:
-        logger.warning("Returning None for ChromaDB client.")
+        logger.debug("Reusing existing ChromaDB client.")
 
+    if not _client: # Should be caught by earlier logic, but as a safeguard
+        raise ChromaOperationError("ChromaDB client could not be initialized.")
     return _client
 
+# --- Internal Factory --- 
+def _factory_get_client(
+    mode: str,
+    project_dir: Path, # Used for persistent mode base path
+    server_url: Optional[str] = None,
+) -> chromadb.ClientAPI:
+    """Internal factory to create and return a ChromaDB client based on mode."""
+    # Standard chromadb.config.Settings is fine for HttpClient and PersistentClient
+    # as they configure themselves further based on parameters.
+    # Specific settings like auth can be layered here if complex config is needed.
+    client_settings = Settings() 
+
+    if mode == "http":
+        logger.debug(f"Factory: Attempting to create HttpClient. Server URL: '{server_url}'")
+        if not server_url:
+            raise ValueError("server_url must be provided for http mode in _factory_get_client")
+        
+        parsed_url = urlparse(server_url)
+        host = parsed_url.hostname
+        port = parsed_url.port
+        ssl_enabled = parsed_url.scheme == "https"
+
+        if not host or not port:
+            raise ValueError(
+                f"Invalid server_url for http mode: '{server_url}'. Could not parse host/port."
+            )
+        
+        headers: Dict[str, str] = {}
+        # Example for auth if needed via app_config:
+        # app_config = get_config()
+        # auth_config = app_config.get("chromadb", {}).get("auth", {})
+        # if auth_config.get("provider") == "token":
+        #    client_settings.chroma_client_auth_provider = "chromadb.auth.token.TokenAuthClientProvider"
+        #    client_settings.chroma_client_auth_credentials = auth_config.get("credentials")
+        #    headers["Authorization"] = f"Bearer {auth_config.get('credentials')}" # Or however client expects it
+
+        logger.debug(f"HttpClient params: host='{host}', port={port}, ssl={ssl_enabled}, headers={headers}, settings={client_settings}")
+        return chromadb.HttpClient(
+            host=host,
+            port=port,
+            ssl=ssl_enabled,
+            settings=client_settings,
+            headers=headers,
+        )
+    elif mode == "persistent":
+        logger.debug(f"Factory: Attempting to create PersistentClient. Project dir: '{project_dir}'")
+        if not project_dir: 
+            raise ValueError("Project directory must be provided for persistent mode in _factory_get_client.")
+        
+        db_path = project_dir.resolve() / ".chungoid" / "chroma_db"
+        logger.debug(f"PersistentClient db_path: '{db_path}'")
+        os.makedirs(str(db_path), exist_ok=True)
+        # For PersistentClient, is_persistent=True is implicit or handled by the client itself.
+        # We can pass our client_settings which might include other global defaults if necessary.
+        # client_settings.is_persistent = True # Can be set if desired for clarity, but PersistentClient implies it.
+        return chromadb.PersistentClient(path=str(db_path), settings=client_settings)
+    else:
+        # This case should ideally be caught by get_chroma_client before calling factory
+        raise ValueError(f"Unsupported ChromaDB mode in _factory_get_client: '{mode}'")
 
 # --- Core Operations (modified to handle potential None client and be synchronous) ---
 
-
 def get_or_create_collection(collection_name: str) -> Optional[chromadb.Collection]:
     """Helper to get or create a collection, returning the collection object or None."""
-    client = get_chroma_client() # Removed await
+    client = get_chroma_client()
     if not client:
         logger.error(
             f"Cannot get/create collection '{collection_name}': ChromaDB client not available."
@@ -174,7 +183,6 @@ def get_or_create_collection(collection_name: str) -> Optional[chromadb.Collecti
         logger.exception(f"Error getting/creating collection '{collection_name}': {e}")
         return None
 
-
 def add_documents(
     collection_name: str,
     documents: List[str],
@@ -182,11 +190,10 @@ def add_documents(
     ids: Optional[List[str]] = None,
 ) -> bool:
     """Adds multiple documents to a specified Chroma collection."""
-    collection = get_or_create_collection(collection_name) # Removed await
+    collection = get_or_create_collection(collection_name)
     if not collection:
         return False
     try:
-        # Direct call (underlying add is sync)
         collection.add(documents=documents, metadatas=metadatas, ids=ids)
         logger.info(f"Added/updated {len(documents)} documents in collection '{collection_name}'.")
         return True
@@ -194,18 +201,16 @@ def add_documents(
         logger.exception(f"Error adding documents to collection '{collection_name}': {e}")
         return False
 
-
 def get_documents(
     collection_name: str,
     doc_ids: List[str],
     include: Optional[List[str]] = ["metadatas", "documents"],
 ) -> Optional[Dict[str, Any]]:
     """Retrieves documents from a collection by their IDs."""
-    collection = get_or_create_collection(collection_name) # Removed await
+    collection = get_or_create_collection(collection_name)
     if not collection:
         return None
     try:
-        # Direct call (underlying get is sync)
         results = collection.get(ids=doc_ids, include=include)
         logger.info(
             f"Retrieved {len(results.get('ids', []))} documents for {len(doc_ids)} requested IDs from '{collection_name}'."
@@ -215,7 +220,6 @@ def get_documents(
         logger.exception(f"Error getting documents by ID from '{collection_name}': {e}")
         return None
 
-
 def query_documents(
     collection_name: str,
     query_texts: Optional[List[str]] = None,
@@ -224,13 +228,12 @@ def query_documents(
     where_filter: Optional[Dict[str, Any]] = None,
     where_document_filter: Optional[Dict[str, Any]] = None,
     include: Optional[List[str]] = ["metadatas", "documents", "distances"],
-) -> Optional[List[Dict[str, Any]]]:  # Changed return format for consistency
+) -> Optional[List[Dict[str, Any]]]:
     """Queries a Chroma collection by text or embeddings."""
-    collection = get_or_create_collection(collection_name) # Removed await
+    collection = get_or_create_collection(collection_name)
     if not collection:
         return None
     try:
-        # Direct call (underlying query is sync)
         results = collection.query(
             query_texts=query_texts,
             query_embeddings=query_embeddings,
@@ -240,17 +243,15 @@ def query_documents(
             include=include,
         )
 
-        # Reformat results into a simpler list of dictionaries
         formatted_results = []
-        # Check if results are valid and contain IDs before processing
         if results and results.get("ids") and results["ids"][0]:
              num_results = len(results["ids"][0])
              ids = results["ids"][0]
              distances = results.get("distances", [[None] * num_results])[0]
              metadatas = results.get("metadatas", [[None] * num_results])[0]
              documents = results.get("documents", [[None] * num_results])[0]
-             embeddings = results.get("embeddings")
-             embeddings_list = embeddings[0] if embeddings else [None] * num_results
+             embeddings_value = results.get("embeddings") # Changed variable name to avoid conflict
+             embeddings_list = embeddings_value[0] if embeddings_value else [None] * num_results
 
              for i in range(num_results):
                 formatted_results.append(
@@ -259,7 +260,7 @@ def query_documents(
                          "distance": distances[i],
                          "metadata": metadatas[i],
                          "document": documents[i],
-                         "embedding": embeddings_list[i] if embeddings else None,
+                         "embedding": embeddings_list[i] if embeddings_value else None, # Use corrected variable
                      }
                  )
              logger.info(f"Query returned {len(formatted_results)} results from '{collection_name}'.")
@@ -272,20 +273,18 @@ def query_documents(
         logger.exception(f"Error querying documents from '{collection_name}': {e}")
         return None
 
-
 def get_document_by_id(
     collection_name: str, doc_id: str, include: Optional[List[str]] = ["metadatas", "documents"]
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a single document by its ID. Returns the document object or None."""
-    results = get_documents(collection_name, doc_ids=[doc_id], include=include) # Removed await
-    if results and results.get("ids") and results["ids"]:
-        # Reformat the result from collection.get format to a single dict
-        doc_index = 0 # Should only be one result
+    results = get_documents(collection_name, doc_ids=[doc_id], include=include)
+    if results and results.get("ids") and results["ids"] and results["ids"][0]: # check inner list too
+        doc_index = 0 
         single_result = {
-            "id": results["ids"][doc_index],
-            "metadata": results.get("metadatas", [None])[doc_index],
-            "document": results.get("documents", [None])[doc_index],
-            "embedding": results.get("embeddings", [None])[doc_index] if results.get("embeddings") else None
+            "id": results["ids"][0][doc_index],
+            "metadata": results.get("metadatas", [[None]])[0][doc_index],
+            "document": results.get("documents", [[None]])[0][doc_index],
+            "embedding": results.get("embeddings", [[None]])[0][doc_index] if results.get("embeddings") and results["embeddings"][0] else None
         }
         logger.debug(f"Retrieved document ID {doc_id} from '{collection_name}'.")
         return single_result
@@ -293,16 +292,14 @@ def get_document_by_id(
         logger.warning(f"Document ID {doc_id} not found in collection '{collection_name}'.")
         return None
 
-
 def add_or_update_document(
     collection_name: str, doc_id: str, document_content: str, metadata: Dict[str, Any]
 ) -> bool:
     """Adds or updates (upserts) a single document in a collection."""
-    collection = get_or_create_collection(collection_name) # Removed await
+    collection = get_or_create_collection(collection_name)
     if not collection:
         return False
     try:
-        # Use upsert for add-or-update behavior
         collection.upsert(
             ids=[doc_id], metadatas=[metadata], documents=[document_content]
         )
@@ -312,111 +309,26 @@ def add_or_update_document(
         logger.exception(f"Error upserting document ID {doc_id} in '{collection_name}': {e}")
         return False
 
-
-# --- Example Metadata Structure ---
-# {
-#   "source": "file_path_or_type", e.g., "chungoidmcp.py" or "planning_doc"
-#   "type": "code" | "state" | "history" | "reflection" | "planning_doc"
-#   "timestamp": "ISO-8601 string",
-#   "stage": 2.0, # Stage number when added/relevant
-#   # other relevant keys...
-# }
-
-# Add other utility functions as needed, e.g., delete_document, update_document, list_collections...
-
-def get_persistent_chroma_client(project_directory: Path) -> chromadb.ClientAPI:
+# --- Helper for Persistent Client (Example, may not be directly used by get_chroma_client if using factory)
+# This function demonstrates direct persistent client creation if _factory_get_client wasn't used for it.
+# It is kept for reference but the main get_chroma_client now uses _factory_get_client for persistent mode.
+def get_persistent_chroma_client_direct_example(project_directory: Path) -> chromadb.ClientAPI:
     """
-    Initializes and returns a persistent ChromaDB client scoped to the project directory.
-
-    Args:
-        project_directory: The root directory of the user's project.
-
-    Returns:
-        An initialized ChromaDB client API instance.
-
-    Raises:
-        OSError: If the persistence directory cannot be created due to permissions.
-        Exception: If the ChromaDB client fails to initialize for other reasons.
+    (Example/Reference) Initializes and returns a persistent ChromaDB client scoped to the project directory.
     """
     try:
         persist_path = project_directory.resolve() / ".chungoid" / "chroma_db"
         logger.info(f"Ensuring ChromaDB persistence directory exists: {persist_path}")
-        # exist_ok=True prevents errors if the directory already exists
         os.makedirs(persist_path, exist_ok=True)
-
         logger.info(f"Initializing PersistentClient at: {persist_path}")
-        # <<< Explicitly create Settings object >>>
-        # By creating a default settings object, we might override any
-        # problematic implicit settings the library might load.
-        # <<< MODIFICATION: Explicitly set is_persistent=True >>>
         explicit_settings = chromadb.Settings(is_persistent=True)
-        # We are intentionally *not* setting chroma_api_impl here,
-        # hoping the library defaults correctly for PersistentClient.
         logger.debug(f"Using explicit chromadb.Settings: {explicit_settings}")
-
-        # Pass the explicit settings object
         client = chromadb.PersistentClient(path=str(persist_path), settings=explicit_settings)
-        logger.info("PersistentClient initialized successfully.")
+        logger.info("PersistentClient initialized successfully via direct example.")
         return client
     except OSError as e:
         logger.error(f"Failed to create ChromaDB persistence directory {persist_path}: {e}", exc_info=True)
-        # Consider more specific error handling or user feedback depending on context
         raise
     except Exception as e:
-        # Catch potential chromadb initialization errors
         logger.error(f"Failed to initialize PersistentClient at {persist_path}: {e}", exc_info=True)
         raise
-
-# --- Dependency-injection hook -------------------------------------------------
-# Wrapping the factory import in a helper makes it trivial to monkey-patch in
-# tests without touching import machinery.  Production code path remains the
-# same because we call the wrapper.
-
-def _factory_get_client(
-    mode: str,
-    project_dir: Path, # project_dir here is a fallback/default, _current_project_directory takes precedence for persistent
-    server_url: Optional[str] = None,
-) -> chromadb.ClientAPI:
-    """Internal factory to create and return a ChromaDB client based on mode."""
-    settings = chromadb.config.Settings()
-
-    if mode == "http":
-        logger.debug(f"Attempting to create HttpClient. Server URL: '{server_url}'")
-        if not server_url:
-            raise ValueError("server_url must be provided for http mode")
-        parsed_url = urlparse(server_url)
-        host = parsed_url.hostname
-        port = parsed_url.port
-        ssl_enabled = parsed_url.scheme == "https"
-
-        if not host or not port:
-            raise ValueError(
-                f"Invalid server_url for http mode: '{server_url}'. Could not parse host/port."
-            )
-        
-        # Default headers can be added here if needed, e.g., for auth
-        headers: Dict[str, str] = {}
-        # settings.chroma_client_auth_provider = "chromadb.auth.token.TokenAuthClientProvider"
-        # settings.chroma_client_auth_credentials = "your_token_here" # Or from config
-
-        logger.debug(f"HttpClient params: host='{host}', port={port}, ssl={ssl_enabled}, headers={headers}")
-        return chromadb.HttpClient(
-            host=host,
-            port=port,
-            ssl=ssl_enabled,
-            settings=settings,
-            headers=headers,
-        )
-    elif mode == "persistent":
-        actual_project_dir = _current_project_directory or project_dir # Prioritize explicitly set context
-        logger.debug(f"Attempting to create PersistentClient. Project dir: '{actual_project_dir}'")
-        if not actual_project_dir:
-            # This case should ideally be caught by get_chroma_client before calling factory
-            raise ValueError("Project directory must be set for persistent mode.")
-        
-        db_path = actual_project_dir.resolve() / ".chungoid" / "chroma_db"
-        logger.debug(f"PersistentClient db_path: '{db_path}'")
-        os.makedirs(str(db_path), exist_ok=True)
-        return chromadb.PersistentClient(path=str(db_path), settings=settings)
-    else:
-        raise ValueError(f"Unsupported ChromaDB mode: '{mode}'")

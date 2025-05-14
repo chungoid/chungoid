@@ -6,7 +6,6 @@ import shutil
 from unittest.mock import patch, MagicMock, ANY
 import logging
 import pytest
-pytestmark = pytest.mark.legacy
 
 # Correct import path assuming tests are run from the project root or configured PYTHONPATH
 from chungoid.utils import chroma_utils
@@ -56,7 +55,6 @@ class TestChromaUtils(unittest.TestCase):
         chroma_utils.clear_chroma_project_context()
         self.assertIsNone(chroma_utils._current_project_directory)
 
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
     @patch('chungoid.utils.chroma_utils.get_config')
     @patch('chromadb.HttpClient')
     def test_get_chroma_client_http(self, mock_http_client_constructor, mock_get_config):
@@ -64,7 +62,7 @@ class TestChromaUtils(unittest.TestCase):
         logger.info("Running test_get_chroma_client_http")
         # Configure mocks
         mock_get_config.return_value = {
-            "chromadb": {"mode": "http", "server_url": "http://testhost:9999"} # Corrected config
+            "chromadb": {"mode": "http", "url": "http://testhost:9999"} # Corrected key from "server_url" to "url"
         }
         mock_http_client_instance = MagicMock(name="MockHttpClientInstance") # Give it a name for clarity
         mock_http_client_constructor.return_value = mock_http_client_instance
@@ -74,7 +72,12 @@ class TestChromaUtils(unittest.TestCase):
         # self.assertIs(client, mock_http_client_instance) # Original assertIs, keep commented
         self.assertIsNotNone(client, "Client should not be None on first call")
         # Check if constructor was called. ssl=False for http. settings might be default.
-        mock_http_client_constructor.assert_called_once_with(host="testhost", port=9999, settings=ANY, ssl=False) 
+        # The _factory_get_client is what calls chromadb.HttpClient, let's check that instead if direct patching of HttpClient fails
+        # For now, assuming HttpClient is directly called by get_chroma_client OR the factory's parameters are passed to it.
+        # The current structure of get_chroma_client calls _factory_get_client, which then calls HttpClient.
+        # So, if we are patching HttpClient directly, the call from _factory_get_client should match.
+        # _factory_get_client parameters: host, port, ssl, settings, headers
+        mock_http_client_constructor.assert_called_once_with(host="testhost", port=9999, ssl=False, settings=ANY, headers=ANY)
 
         self.assertIsNone(chroma_utils._client_project_context, "Project context should be None for http client")
 
@@ -87,7 +90,6 @@ class TestChromaUtils(unittest.TestCase):
 
         mock_http_client_constructor.assert_called_once() # Constructor still should only be called once
 
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
     @patch('chungoid.utils.chroma_utils.get_config')
     @patch('chromadb.PersistentClient')
     @patch('os.makedirs')
@@ -95,7 +97,7 @@ class TestChromaUtils(unittest.TestCase):
         """Test get_chroma_client returns PersistentClient when configured and context is set."""
         logger.info("Running test_get_chroma_client_persistent_success")
         # Configure mocks
-        mock_get_config.return_value = {"chromadb": {"mode": "persistent"}} # Corrected config
+        mock_get_config.return_value = {"chromadb": {"mode": "persistent"}}
         mock_persistent_client_instance = MagicMock(name="MockPersistentClientInstance")
         mock_persistent_client_constructor.return_value = mock_persistent_client_instance
 
@@ -105,9 +107,10 @@ class TestChromaUtils(unittest.TestCase):
         # self.assertIs(client, mock_persistent_client_instance) # Original assertIs, keep commented
         self.assertIsNotNone(client, "Client should not be None on first call")
         
-        expected_db_path = str(self.project_dir_1 / ".chungoid" / "chroma_db")
+        expected_db_path = str(self.project_dir_1.resolve() / ".chungoid" / "chroma_db")
         mock_makedirs.assert_called_once_with(expected_db_path, exist_ok=True)
-        mock_persistent_client_constructor.assert_called_once_with(path=expected_db_path)
+        # The _factory_get_client calls PersistentClient with path and settings
+        mock_persistent_client_constructor.assert_called_once_with(path=expected_db_path, settings=ANY)
         
         self.assertIsNotNone(chroma_utils._client_project_context, "Project context should be set")
         self.assertEqual(chroma_utils._client_project_context, self.project_dir_1.resolve())
@@ -121,7 +124,6 @@ class TestChromaUtils(unittest.TestCase):
         mock_persistent_client_constructor.assert_called_once() # Still only called once
         mock_makedirs.assert_called_once() # Still only called once
 
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
     @patch('chungoid.utils.chroma_utils.get_config')
     def test_get_chroma_client_persistent_no_context(self, mock_get_config):
         """Test get_chroma_client returns None and logs error if persistent but no context."""
@@ -132,12 +134,15 @@ class TestChromaUtils(unittest.TestCase):
         self.assertIsNone(chroma_utils._current_project_directory, "Context should be None initially")
 
         with self.assertLogs(chroma_utils.logger, level='ERROR') as log_cm:
-            client = chroma_utils.get_chroma_client()
-            self.assertIsNone(client, "Client should be None when persistent mode has no context")
-        
-        self.assertIn("Persistent mode requested but project context not set", log_cm.output[0])
+            # We expect get_chroma_client to raise ChromaOperationError here
+            with self.assertRaises(chroma_utils.ChromaOperationError) as ex_cm:
+                chroma_utils.get_chroma_client()
+            
+            self.assertIn("ChromaDB project directory context not set for persistent mode", str(ex_cm.exception))
 
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
+        # Check the log message that occurs *before* the exception is raised.
+        self.assertTrue(any("ChromaDB mode is 'persistent' but no project directory context is set." in output for output in log_cm.output))
+
     @patch('chungoid.utils.chroma_utils.get_config') # MODIFIED Outermost
     @patch('chromadb.PersistentClient')          # Middle
     @patch('os.makedirs')                        # Innermost
@@ -155,8 +160,8 @@ class TestChromaUtils(unittest.TestCase):
         # self.assertIs(client1, mock_persistent_instance_1) # Original assertIs
         self.assertIsNotNone(client1, "Client1 should not be None")
         
-        expected_db_path1 = str(self.project_dir_1 / ".chungoid" / "chroma_db")
-        mock_persistent_client.assert_any_call(path=expected_db_path1) # Check first call args
+        expected_db_path1 = str(self.project_dir_1.resolve() / ".chungoid" / "chroma_db")
+        mock_persistent_client.assert_any_call(path=expected_db_path1, settings=ANY) # Check first call args
         mock_makedirs.assert_any_call(expected_db_path1, exist_ok=True)
         self.assertEqual(mock_persistent_client.call_count, 1, "Constructor should be called once for client1")
         self.assertEqual(mock_makedirs.call_count, 1, "makedirs should be called once for client1")
@@ -167,13 +172,13 @@ class TestChromaUtils(unittest.TestCase):
         # self.assertIs(client2, mock_persistent_instance_2) # Original assertIs
         self.assertIsNotNone(client2, "Client2 should not be None")
         
-        expected_db_path2 = str(self.project_dir_2 / ".chungoid" / "chroma_db")
-        # mock_persistent_client.assert_called_with(path=expected_db_path2) # Checks only the last call
+        expected_db_path2 = str(self.project_dir_2.resolve() / ".chungoid" / "chroma_db")
+        # Check the latest call's path argument specifically, and ensure settings was also passed.
+        mock_persistent_client.assert_called_with(path=expected_db_path2, settings=ANY) 
         self.assertEqual(mock_persistent_client.call_count, 2, "Constructor should be called twice (total)")
         mock_makedirs.assert_any_call(expected_db_path2, exist_ok=True)
         self.assertEqual(mock_makedirs.call_count, 2, "makedirs should be called twice (total)")
 
-    @unittest.skip("Skipping due to stubborn patching/environment issues")
     @patch('chungoid.utils.chroma_utils.get_config')
     @patch('chungoid.utils.chroma_utils._factory_get_client') # Changed from get_persistent_chroma_client
     def test_get_chroma_client_persistent_uses_helper(self, mock_factory_get_client, mock_get_config):
@@ -189,9 +194,9 @@ class TestChromaUtils(unittest.TestCase):
         # self.assertIs(client, mock_factory_instance) # Original assertIs
         self.assertIsNotNone(client, "Client should not be None")
         mock_factory_get_client.assert_called_once_with(
-            "persistent", 
-            self.project_dir_1.resolve(), 
-            server_url=None
+            mode="persistent", 
+            project_dir=self.project_dir_1.resolve()
+            # server_url=None implicitly passed by not including it.
         )
 
 

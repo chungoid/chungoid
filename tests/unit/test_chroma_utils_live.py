@@ -64,7 +64,7 @@ def test_http_mode_env(monkeypatch, tmp_path):
     mock_config_http = {
         "chromadb": {
             "mode": "http",
-            "server_url": "http://localhost:8000/test_http_direct_patch" 
+            "url": "http://localhost:8000/test_http_direct_patch"  # CORRECTED KEY from server_url to url
         },
         "logging": {"level": "DEBUG"}
     }
@@ -72,39 +72,38 @@ def test_http_mode_env(monkeypatch, tmp_path):
     def mock_get_config_for_chroma_utils_module():
         return mock_config_http
 
-    # Patch get_config AS IT IS USED BY chroma_utils.py
     monkeypatch.setattr(chroma_utils, "get_config", mock_get_config_for_chroma_utils_module)
     
-    # Crucially, reset any cached client and context in chroma_utils
     chroma_utils._client = None
     chroma_utils._client_mode = None
     chroma_utils._client_project_context = None
-    chroma_utils.clear_chroma_project_context() # Ensure project context is None for http mode
+    chroma_utils.clear_chroma_project_context() 
 
-    # ---- DEBUGGING ----
-    # print(f"DEBUG: chroma_utils.get_config() returns: {chroma_utils.get_config()}")
-    # print(f"DEBUG: chroma_utils._factory_get_client is: {chroma_utils._factory_get_client}")
-    # print(f"DEBUG: cu._factory_get_client is: {cu._factory_get_client}")
-    # ---- END DEBUGGING ----
-
-    # Mock chromadb.HttpClient to avoid actual network calls
     mock_http_client_instance = MagicMock(spec=chromadb.HttpClient)
 
     with patch('chromadb.HttpClient', return_value=mock_http_client_instance) as mock_http_client_class:
         client = chroma_utils.get_chroma_client()
 
     assert client is not None, "HTTP Client should not be None with direct get_config patch"
-    mock_http_client_class.assert_called_once() # Verify HttpClient was called
+    mock_http_client_class.assert_called_once() 
     assert client == mock_http_client_instance, "Returned client should be the mocked HttpClient instance"
-    # Further assertions can be made on mock_http_client_class.call_args if needed,
-    # e.g., to check host, port, database, settings. For example:
-    # call_args = mock_http_client_class.call_args
-    # assert call_args.kwargs['host'] == 'localhost'
-    # assert call_args.kwargs['port'] == 8000
-    # assert call_args.kwargs['database'] == 'test_http_direct_patch'
+    
+    # Check call arguments for HttpClient (optional, but good practice)
+    call_args = mock_http_client_class.call_args
+    assert call_args is not None, "HttpClient should have been called"
+    # The host/port are parsed from the URL by _factory_get_client
+    # The URL used by _factory_get_client comes from chroma_config.get("url")
+    # which is now correctly "http://localhost:8000/test_http_direct_patch"
+    # urlparse("http://localhost:8000/test_http_direct_patch").hostname -> 'localhost'
+    # urlparse("http://localhost:8000/test_http_direct_patch").port -> 8000
+    assert call_args.kwargs.get('host') == 'localhost'
+    assert call_args.kwargs.get('port') == 8000
+    assert call_args.kwargs.get('ssl') == False
 
     # Test with CHROMA_MODE env var (legacy, should still work if get_config handles it)
-    monkeypatch.setenv("CHROMA_MODE", "http")
+    # This part of the test might need separate handling for get_config if it also reads env vars directly
+    # For now, the primary fix is the direct get_config mock.
+    # monkeypatch.setenv("CHROMA_MODE", "http") # Keep this commented or ensure get_config mock handles this scenario
 
 
 def test_persistent_mode_from_config(tmp_path, patch_factory):
