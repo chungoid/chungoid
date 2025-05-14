@@ -1,9 +1,16 @@
 import pytest
 from unittest.mock import MagicMock
 import chromadb
+import os # Add os import
 
 # Autouse fixture that patches utils.chroma_utils.get_chroma_client so
 # no test ever tries to connect to a real Chroma server.
+
+def pytest_configure(config):
+    """Force flow registry to use memory mode during tests."""
+    os.environ["FLOW_REGISTRY_MODE"] = "memory"
+    # Also ensure CHROMA_API_IMPL is not set to something problematic, or set it to a safe default for tests
+    # Forcing memory mode for FlowRegistry should be sufficient for these errors.
 
 # @pytest.fixture(autouse=True) # <<< COMMENTED OUT AUTOUSE
 def fake_chroma_client(monkeypatch):

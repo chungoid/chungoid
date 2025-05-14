@@ -16,13 +16,11 @@ from chungoid.engine import ChungoidEngine
 
 # Try importing other necessary components
 try:
-    from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
+    from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError, StageStatus
     from chungoid.utils import chroma_utils
 except ImportError as e:
     print(f"Failed to import necessary components: {e}")
     pass
-
-pytestmark = pytest.mark.legacy
 
 class TestIntegration(unittest.TestCase):
     TEST_DIR = Path("./test_project_integration")

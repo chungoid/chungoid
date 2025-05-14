@@ -7,7 +7,7 @@ import pytest
 
 from chungoid.utils.state_manager import StateManager, StatusFileError
 
-pytestmark = pytest.mark.legacy
+# Setup logging
 
 class TestStateManagerCore(unittest.TestCase):
     """Covers status read / write paths of StateManager without hitting real Chroma."""

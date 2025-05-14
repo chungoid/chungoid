@@ -10,6 +10,7 @@ import filelock
 import datetime
 import pytest
 import shutil
+from freezegun import freeze_time
 
 # Add project root to path to allow importing utils
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -26,12 +27,6 @@ STATUS_CONTENT_RUN0_DONE = '{"current_stage": 1.0, "runs": [{"run_id": "run_0", 
 STATUS_CONTENT_RUN0_FAIL = '{"current_stage": 0.0, "runs": [{"run_id": "run_0", "status_updates": [{"timestamp": "2023-01-01T10:00:00Z", "stage": 0.0, "status": "FAIL", "artifacts": []}]}]}'
 STATUS_CONTENT_INVALID_JSON = '{"runs": [}'
 
-# Mark the entire file as legacy until StateManager refactor is complete
-pytestmark = pytest.mark.legacy
-
-@pytest.mark.legacy
-@patch('pathlib.Path.exists') 
-@patch('pathlib.Path.open', new_callable=mock_open)
 class TestStateManager(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -743,6 +738,61 @@ class TestStateManagerGetRunId(unittest.TestCase):
         run_id = self.sm.get_or_create_current_run_id()
         self.assertIsNone(run_id)
         self.mock_logger.error.assert_any_call("Failed to get current run_id due to StatusFileError: Read failed")
+
+@freeze_time("2023-01-15 10:00:00")
+def test_update_status_existing_run(state_manager_fixture):
+    # ... actual test body for test_update_status_existing_run ...
+    # This will be filled in by the model based on its knowledge or may need a separate step.
+    # For now, just ensuring the structure is correct.
+    state_manager = state_manager_fixture
+    initial_data = {
+        "runs": [
+            {
+                "run_id": 0,
+                "start_timestamp": "2023-01-15T09:00:00+00:00",
+                "status_updates": [
+                    {
+                        "stage": 0.0,
+                        "status": "SUCCESS",
+                        "timestamp": "2023-01-15T09:00:00+00:00",
+                        "artifacts": ["initial.log"]
+                    }
+                ]
+            }
+        ]
+    }
+    state_manager.status_file_path.exists.return_value = True
+    state_manager.status_file_path.open.return_value.__enter__.return_value.read.return_value = json.dumps(initial_data)
+
+    success = state_manager.update_status(stage=1.0, status="SUCCESS", artifacts=["stage1.log"])
+    assert success is True
+
+    expected_timestamp = "2023-01-15T10:00:00+00:00" 
+    expected_updated_data = {
+        "runs": [
+            {
+                "run_id": 0,
+                "start_timestamp": "2023-01-15T09:00:00+00:00",
+                "status_updates": [
+                    {
+                        "stage": 0.0,
+                        "status": "SUCCESS",
+                        "timestamp": "2023-01-15T09:00:00+00:00",
+                        "artifacts": ["initial.log"]
+                    },
+                    {
+                        "stage": 1.0,
+                        "status": "SUCCESS",
+                        "timestamp": expected_timestamp,
+                        "artifacts": ["stage1.log"]
+                    }
+                ]
+            }
+        ]
+    }
+    args, _ = state_manager.status_file_path.open.return_value.__enter__.return_value.write.call_args
+    written_data = json.loads(args[0])
+    assert written_data == expected_updated_data
 
 if __name__ == "__main__":
     unittest.main()
