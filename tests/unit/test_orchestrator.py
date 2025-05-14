@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, call
-from typing import Dict, Any
+from unittest.mock import MagicMock, AsyncMock, patch, call, ANY
+from typing import Dict, Any, List, Union, Optional
 import traceback
 from datetime import datetime, timezone
 import copy
@@ -15,6 +15,7 @@ from chungoid.schemas.common_enums import StageStatus
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.schemas.flows import PausedRunDetails
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
+from chungoid.schemas.user_goal_schemas import UserGoalRequest # Delayed import
 
 
 # --- Fixtures ---
@@ -31,7 +32,7 @@ def mock_state_manager() -> MagicMock:
     manager = MagicMock(spec=StateManager)
     # Setup default async mocks for methods called by orchestrator
     manager.update_status = MagicMock(return_value=True)
-    manager.get_or_create_current_run_id = MagicMock(return_value=0) # Sync method
+    manager.get_or_create_current_run_id = MagicMock(return_value="0") # Return string "0"
     manager.save_paused_flow_state = MagicMock(return_value=True) # Sync method
     return manager
 
@@ -276,22 +277,27 @@ class TestAsyncOrchestrator:
         await orchestrator.run(plan, initial_context.copy())
 
         max_hops = len(plan.stages) + 5 # 7
-        # The agent provider should be called max_hops - 1 times before the loop breaks
-        assert mock_agent_provider.get.await_count == max_hops - 1
-        assert mock_state_manager.update_status.call_count == max_hops
+        # The agent provider should be called 2 times before the simple loop detection for stage_loop1 stops it.
+        assert mock_agent_provider.get.await_count == 2
 
-        # It will execute stage 1 (hop 1), stage 2 (hop 2), stage 1 (hop 3), stage 2 (hop 4), stage 1 (hop 5), stage 2 (hop 6)
-        # On hop 7, it will try to execute stage 1 again, hit max hops, and record failure for stage 1.
-        mock_state_manager.update_status.assert_has_calls([
-            call(stage=1.0, status='PASS', artifacts=[]), # Hop 1
-            call(stage=2.0, status='PASS', artifacts=[]), # Hop 2
-            call(stage=1.0, status='PASS', artifacts=[]), # Hop 3
-            call(stage=2.0, status='PASS', artifacts=[]), # Hop 4
-            call(stage=1.0, status='PASS', artifacts=[]), # Hop 5
-            call(stage=2.0, status='PASS', artifacts=[]), # Hop 6
-            call(stage=1.0, status='FAIL', artifacts=[], reason="Max hops reached"), # Hop 7 failure
-        ])
+        # Check that the error logged is for loop detection
+        # The failure occurs when trying to re-execute stage_loop1 (number 1.0)
+        
+        mock_state_manager.update_status.assert_any_call(
+            pipeline_run_id="0", 
+            stage_name="stage_loop1",
+            stage_number=1.0, 
+            status=StageStatus.FAILURE.value,
+            artifacts=[],
+            reason="Loop detected: Stage 'stage_loop1' visited again. Aborting flow.",
+            error_info=ANY # Use ANY for error_info for now
+        )
         mock_state_manager.save_paused_flow_state.assert_not_called()
+
+        # Print the call list for debugging
+        print("DEBUG: mock_state_manager.update_status.call_args_list:")
+        for c_args in mock_state_manager.update_status.call_args_list:
+            print(f"  {c_args}")
 
     # --- Tests for AW1.5 (Exception Handling) & AW1.12 (Pause Behavior) ---
 
@@ -645,3 +651,413 @@ class TestAsyncOrchestrator:
         assert "Failed to clear paused state" in result["error"]
         mock_state_manager.delete_paused_flow_state.assert_called_once_with(run_id)
         orchestrator_for_resume._execute_loop.assert_not_awaited() # Loop should not be reached if clear fails
+
+    # --- New Tests for MasterExecutionPlan Context Passing Enhancements (P2.3.2) ---
+
+    async def test_mep_original_request_in_context(self, orchestrator, mock_agent_provider, basic_plan):
+        """Test that MasterExecutionPlan.original_request is injected into the context."""
+        original_req_obj = UserGoalRequest(goal_id="goal123", goal_description="Test Goal")
+        mep = MasterExecutionPlan(
+            id="mep_orig_req_test",
+            name="Test Original Request",
+            start_stage="stage_A",
+            stages={
+                "stage_A": MasterStageSpec(
+                    agent_id="agent_check_orig_req", 
+                    inputs={"some_input": "context.original_request.goal_description"},
+                    next_stage=None, 
+                    number=0.0
+                )
+            },
+            original_request=original_req_obj
+        )
+        orchestrator.pipeline_def = mep # Set the MEP for the orchestrator
+
+        agent_mock = AsyncMock(return_value={"result": "ok"})
+        mock_agent_provider.get.return_value = agent_mock
+
+        initial_context = {"user_param": "initial_user_data"}
+        final_context = await orchestrator.run(mep, initial_context.copy())
+
+        agent_mock.assert_awaited_once()
+        # The agent_call_context includes resolved inputs overlaid on the base context for resolution.
+        # base_context_for_stage_resolution contains 'original_request'.
+        # stage_specific_resolved_inputs contains {"some_input": "Test Goal"}
+        # So, agent_call_context will have both.
+        
+        call_args_list = agent_mock.call_args_list
+        assert len(call_args_list) == 1
+        agent_call_context = call_args_list[0][0][0] # First arg of first call
+
+        assert agent_call_context.get("original_request") == original_req_obj
+        assert agent_call_context.get("some_input") == "Test Goal"
+        assert agent_call_context.get("user_param") == "initial_user_data"
+        assert final_context['outputs']['stage_A'] == {"result": "ok"}
+
+    async def test_mep_previous_stage_outputs_special_key(self, orchestrator, mock_agent_provider):
+        """Test the special 'previous_stage_outputs': '<stage_id>' mechanism."""
+        mep = MasterExecutionPlan(
+            id="mep_prev_outputs_special",
+            name="Test Previous Outputs Special",
+            start_stage="stage_P1",
+            stages={
+                "stage_P1": MasterStageSpec(
+                    agent_id="agent_p1", 
+                    inputs={"task": "generate data"}, 
+                    next_stage="stage_P2", 
+                    number=0.0
+                ),
+                "stage_P2": MasterStageSpec(
+                    agent_id="agent_p2", 
+                    inputs={
+                        "previous_stage_outputs": "stage_P1", # Special key
+                        "another_param": "context.resolved_previous_stage_output_data.key1" 
+                    },
+                    next_stage=None, 
+                    number=1.0
+                )
+            }
+        )
+        orchestrator.pipeline_def = mep
+
+        agent_p1_mock = AsyncMock(return_value={"key1": "value1", "key2": "value2"})
+        agent_p2_mock = AsyncMock(return_value={"processed": True})
+        mock_agent_provider.get.side_effect = [agent_p1_mock, agent_p2_mock]
+
+        await orchestrator.run(mep, {})
+
+        agent_p1_mock.assert_awaited_once_with( # Context for P1
+            {
+                'original_request': None, # default from orchestrator.run if plan has no original_request
+                'outputs': {},
+                'errors': {},
+                'status_updates': [],
+                'visited': ['stage_P1'],
+                'run_id': '0', # from mock_state_manager
+                'flow_id': 'mep_prev_outputs_special',
+                'task': 'generate data'
+            }
+        )
+        
+        # Check context for P2
+        call_args_list_p2 = agent_p2_mock.call_args_list
+        assert len(call_args_list_p2) == 1
+        agent_p2_call_context = call_args_list_p2[0][0][0]
+
+        assert agent_p2_call_context.get('resolved_previous_stage_output_data') == {"key1": "value1", "key2": "value2"}
+        assert agent_p2_call_context.get('another_param') == "value1"
+        # 'previous_stage_outputs' key itself should be removed from direct inputs if it was an ID.
+        assert "previous_stage_outputs" not in agent_p2_call_context 
+        # ... unless it was defined as a context path, which is tested elsewhere.
+
+    async def test_mep_context_path_outputs_resolution(self, orchestrator, mock_agent_provider):
+        """Test resolving general 'context.outputs.<stage>.<key>'."""
+        mep = MasterExecutionPlan(
+            id="mep_ctx_path_outputs",
+            name="Test Context Path Outputs",
+            start_stage="stage_C1",
+            stages={
+                "stage_C1": MasterStageSpec(agent_id="agent_c1", inputs={"data": "c1_data"}, next_stage="stage_C2", number=0.0),
+                "stage_C2": MasterStageSpec(
+                    agent_id="agent_c2", 
+                    inputs={"input_from_c1": "context.outputs.stage_C1.output_val"},
+                    next_stage=None, 
+                    number=1.0
+                )
+            }
+        )
+        orchestrator.pipeline_def = mep
+
+        agent_c1_mock = AsyncMock(return_value={"output_val": "data_from_c1"})
+        agent_c2_mock = AsyncMock(return_value={})
+        mock_agent_provider.get.side_effect = [agent_c1_mock, agent_c2_mock]
+
+        await orchestrator.run(mep, {})
+
+        # Check context for C2
+        call_args_list_c2 = agent_c2_mock.call_args_list
+        assert len(call_args_list_c2) == 1
+        agent_c2_call_context = call_args_list_c2[0][0][0]
+        assert agent_c2_call_context.get('input_from_c1') == "data_from_c1"
+
+    async def test_mep_mixed_literal_and_context_inputs(self, orchestrator, mock_agent_provider):
+        """Test a stage with mixed literal values and context path lookups in inputs."""
+        original_req = UserGoalRequest(goal_id="mixed_goal", goal_description="Mixed test")
+        mep = MasterExecutionPlan(
+            id="mep_mixed_inputs",
+            name="Test Mixed Inputs",
+            original_request=original_req,
+            start_stage="stage_M1",
+            stages={
+                "stage_M1": MasterStageSpec(agent_id="agent_m1", inputs={"val": 100}, next_stage="stage_M2", number=0.0),
+                "stage_M2": MasterStageSpec(
+                    agent_id="agent_m2", 
+                    inputs={
+                        "literal_str": "hello_world",
+                        "literal_int": 42,
+                        "from_original_req": "context.original_request.goal_id",
+                        "from_m1_output": "context.outputs.stage_M1.m1_result",
+                        "nested_m1_output": "context.outputs.stage_M1.deep.nested_val"
+                    },
+                    next_stage=None, 
+                    number=1.0
+                )
+            }
+        )
+        orchestrator.pipeline_def = mep
+
+        agent_m1_mock = AsyncMock(return_value={"m1_result": "m1_done", "deep": {"nested_val": "deep_value"}})
+        agent_m2_mock = AsyncMock(return_value={})
+        mock_agent_provider.get.side_effect = [agent_m1_mock, agent_m2_mock]
+
+        await orchestrator.run(mep, {"initial_ctx_val": "start"})
+
+        call_args_list_m2 = agent_m2_mock.call_args_list
+        assert len(call_args_list_m2) == 1
+        agent_m2_call_context = call_args_list_m2[0][0][0]
+
+        assert agent_m2_call_context.get('literal_str') == "hello_world"
+        assert agent_m2_call_context.get('literal_int') == 42
+        assert agent_m2_call_context.get('from_original_req') == "mixed_goal"
+        assert agent_m2_call_context.get('from_m1_output') == "m1_done"
+        assert agent_m2_call_context.get('nested_m1_output') == "deep_value"
+        assert agent_m2_call_context.get('initial_ctx_val') == "start" # from initial run context
+        assert agent_m2_call_context.get('original_request') == original_req # direct access to original_request object
+
+    async def test_mep_previous_stage_outputs_as_context_path(self, orchestrator, mock_agent_provider):
+        """Test 'previous_stage_outputs' used as a context path, not a direct ID."""
+        mep = MasterExecutionPlan(
+            id="mep_prev_out_path",
+            name="Test Prev Output as Path",
+            start_stage="stage_S1",
+            stages={
+                "stage_S1": MasterStageSpec(agent_id="agent_s1", inputs={"param": "stage_id_provider"}, next_stage="stage_S2", number=0.0),
+                "stage_S2": MasterStageSpec(
+                    agent_id="agent_s2", 
+                    inputs={
+                        "task_data": "use previous output data", 
+                        # This will be resolved as a path to the string 'actual_prev_stage_id'
+                        "previous_stage_outputs": "context.outputs.stage_S1.provided_stage_id" 
+                    },
+                    next_stage="stage_S3", 
+                    number=1.0
+                ),
+                "stage_S3": MasterStageSpec(
+                    agent_id="agent_s3",
+                    inputs={
+                        # This uses the SPECIAL mechanism because 'actual_prev_stage_id' is a direct string ID
+                        "previous_stage_outputs": "actual_prev_stage_id",
+                        "check_resolved": "context.resolved_previous_stage_output_data.s3_input_key"
+                    },
+                    next_stage=None,
+                    number=2.0
+                )
+            }
+        )
+        orchestrator.pipeline_def = mep
+
+        # Mock agent for stage_S1 that will output the ID of another stage
+        # (this other stage 'actual_prev_stage_id' is not in the MEP, but its output will be injected into context manually for testing)
+        agent_s1_mock = AsyncMock(return_value={"provided_stage_id": "actual_prev_stage_id"})
+        agent_s2_mock = AsyncMock(return_value={"s2_done": True})
+        agent_s3_mock = AsyncMock(return_value={"s3_done": True})
+        mock_agent_provider.get.side_effect = [agent_s1_mock, agent_s2_mock, agent_s3_mock]
+
+        initial_context_for_run = {
+            "outputs": {
+                "actual_prev_stage_id": {"s3_input_key": "data_for_s3"} # Pre-populate output for the dynamic ID
+            }
+        }
+
+        await orchestrator.run(mep, initial_context_for_run)
+
+        # Check context for S2
+        call_args_list_s2 = agent_s2_mock.call_args_list
+        assert len(call_args_list_s2) == 1
+        agent_s2_call_context = call_args_list_s2[0][0][0]
+        
+        # 'previous_stage_outputs' input should be resolved to the string "actual_prev_stage_id"
+        assert agent_s2_call_context.get('previous_stage_outputs') == "actual_prev_stage_id"
+        # The special 'resolved_previous_stage_output_data' should NOT be populated for S2
+        # because 'previous_stage_outputs' was a context path, not a direct ID string.
+        assert 'resolved_previous_stage_output_data' not in agent_s2_call_context
+
+        # Check context for S3
+        call_args_list_s3 = agent_s3_mock.call_args_list
+        assert len(call_args_list_s3) == 1
+        agent_s3_call_context = call_args_list_s3[0][0][0]
+
+        # For S3, 'previous_stage_outputs' was a direct ID, so special mechanism applies.
+        assert agent_s3_call_context.get('resolved_previous_stage_output_data') == {"s3_input_key": "data_for_s3"}
+        assert agent_s3_call_context.get('check_resolved') == "data_for_s3"
+        # The key 'previous_stage_outputs' itself (value: 'actual_prev_stage_id') should be removed from s3's direct inputs
+        assert "previous_stage_outputs" not in agent_s3_call_context
+
+    async def test_mep_context_path_resolution_failure_fallback(self, orchestrator, mock_agent_provider):
+        """Test that if a context path cannot be resolved, it falls back to the literal string path."""
+        mep = MasterExecutionPlan(
+            id="mep_path_fail",
+            name="Test Path Fail Fallback",
+            start_stage="stage_F1",
+            stages={
+                "stage_F1": MasterStageSpec(
+                    agent_id="agent_f1", 
+                    inputs={
+                        "non_existent_path": "context.outputs.no_such_stage.no_such_key",
+                        "partially_valid_path_to_non_attr": "context.outputs.stage_F1.some_list.0.non_existent_attr", # if stage_F1 outputs a list
+                        "path_to_primitive": "context.outputs.stage_F1.a_string.length" # access attr on primitive
+                    },
+                    next_stage=None, 
+                    number=0.0
+                )
+            }
+        )
+        orchestrator.pipeline_def = mep
+
+        agent_f1_mock = AsyncMock(return_value={"some_list": [{"item_key": "item_val"}], "a_string": "test_string"})
+        mock_agent_provider.get.return_value = agent_f1_mock
+
+        # Mock logger to check for warnings
+        with patch.object(orchestrator.logger, 'warning') as mock_log_warning:
+            await orchestrator.run(mep, {})
+
+            call_args_list_f1 = agent_f1_mock.call_args_list
+            assert len(call_args_list_f1) == 1
+            agent_f1_call_context = call_args_list_f1[0][0][0]
+
+            assert agent_f1_call_context.get('non_existent_path') == "context.outputs.no_such_stage.no_such_key"
+            assert agent_f1_call_context.get('partially_valid_path_to_non_attr') == "context.outputs.stage_F1.some_list.0.non_existent_attr"
+            assert agent_f1_call_context.get('path_to_primitive') == "context.outputs.stage_F1.a_string.length"
+            
+            # Verify warnings were logged for each failed resolution
+            # The number of warnings might vary depending on how deep the path resolution fails.
+            # For "context.outputs.no_such_stage.no_such_key", it fails at "no_such_stage".
+            # For "context.outputs.stage_F1.some_list.0.non_existent_attr", after resolving "some_list[0]", "non_existent_attr" fails.
+            # For "context.outputs.stage_F1.a_string.length", after resolving "a_string", "length" fails (if not a direct attr).
+            assert mock_log_warning.call_count >= 3 # Expect at least one warning per failed path
+            
+            # Example check for specific warning messages (optional, can be brittle)
+            # warning_messages = [c[0][0] for c in mock_log_warning.call_args_list]
+            # assert any("Could not resolve context path 'context.outputs.no_such_stage.no_such_key'" in msg for msg in warning_messages)
+            # assert any("Path part 'non_existent_attr' not found" in msg for msg in warning_messages)
+            # assert any("Path part 'length' not found" in msg for msg in warning_messages)
+
+    # --- New Tests for P2.3.2a: Orchestrator Artifact Path Handling ---
+
+    async def test_artifact_path_extraction_valid_paths(self, orchestrator, mock_agent_provider, mock_state_manager, basic_plan):
+        """Test artifact paths are correctly extracted and passed to state_manager."""
+        artifact_paths = ["path/to/artifact1.txt", "another/path/report.pdf"]
+        agent_a_mock = AsyncMock(return_value={
+            "output_a": "value_a",
+            "_mcp_generated_artifacts_relative_paths_": artifact_paths
+        })
+        agent_b_mock = AsyncMock(return_value={"output_b": "value_b"}) # No artifacts from b
+        mock_agent_provider.get.side_effect = [agent_a_mock, agent_b_mock]
+
+        orchestrator.pipeline_def = basic_plan # Ensure the correct plan is set
+        await orchestrator.run(basic_plan, {})
+
+        mock_state_manager.update_status.assert_any_call(
+            stage=0.0, status=StageStatus.SUCCESS.value, artifacts=artifact_paths
+        )
+        mock_state_manager.update_status.assert_any_call(
+            stage=1.0, status=StageStatus.SUCCESS.value, artifacts=[] # Agent B produces no artifacts
+        )
+        # Ensure SUCCESS is used instead of PASS
+        assert mock_state_manager.update_status.call_args_list[0][1]['status'] == StageStatus.SUCCESS.value
+        assert mock_state_manager.update_status.call_args_list[1][1]['status'] == StageStatus.SUCCESS.value
+
+
+    async def test_artifact_path_extraction_empty_list(self, orchestrator, mock_agent_provider, mock_state_manager, basic_plan):
+        """Test extraction when agent returns an empty list for artifacts."""
+        agent_a_mock = AsyncMock(return_value={
+            "output_a": "value_a",
+            "_mcp_generated_artifacts_relative_paths_": []
+        })
+        mock_agent_provider.get.return_value = agent_a_mock # Only one stage needed
+
+        plan_one_stage = MasterExecutionPlan(
+            id="one_stage_plan", start_stage="stage0", stages={
+                "stage0": MasterStageSpec(agent_id="agent_a", next_stage=None, number=0.0)
+            }
+        )
+        orchestrator.pipeline_def = plan_one_stage
+        await orchestrator.run(plan_one_stage, {})
+
+        mock_state_manager.update_status.assert_called_once_with(
+            stage=0.0, status=StageStatus.SUCCESS.value, artifacts=[]
+        )
+
+    async def test_artifact_path_extraction_key_not_a_list(self, orchestrator, mock_agent_provider, mock_state_manager, basic_plan):
+        """Test extraction when artifact key's value is not a list."""
+        agent_a_mock = AsyncMock(return_value={
+            "output_a": "value_a",
+            "_mcp_generated_artifacts_relative_paths_": "not_a_list_value" # Incorrect type
+        })
+        mock_agent_provider.get.return_value = agent_a_mock
+
+        plan_one_stage = MasterExecutionPlan(
+            id="one_stage_plan_alt", start_stage="stage0", stages={
+                "stage0": MasterStageSpec(agent_id="agent_a", next_stage=None, number=0.0)
+            }
+        )
+        orchestrator.pipeline_def = plan_one_stage
+        
+        with patch.object(orchestrator.logger, 'warning') as mock_log_warning:
+            await orchestrator.run(plan_one_stage, {})
+
+            mock_state_manager.update_status.assert_called_once_with(
+                stage=0.0, status=StageStatus.SUCCESS.value, artifacts=[] # Should default to empty list
+            )
+            mock_log_warning.assert_called_once()
+            assert "was not a list" in mock_log_warning.call_args[0][0]
+
+    async def test_artifact_path_extraction_list_with_non_strings(self, orchestrator, mock_agent_provider, mock_state_manager, basic_plan):
+        """Test extraction when artifact list contains non-string items."""
+        mixed_artifact_list = ["valid/path.txt", 123, {"obj": "path"}, None, "another/valid.md"]
+        expected_filtered_paths = ["valid/path.txt", "another/valid.md"]
+        agent_a_mock = AsyncMock(return_value={
+            "output_a": "value_a",
+            "_mcp_generated_artifacts_relative_paths_": mixed_artifact_list
+        })
+        mock_agent_provider.get.return_value = agent_a_mock
+        plan_one_stage = MasterExecutionPlan(
+            id="one_stage_plan_mixed", start_stage="stage0", stages={
+                "stage0": MasterStageSpec(agent_id="agent_a", next_stage=None, number=0.0)
+            }
+        )
+        orchestrator.pipeline_def = plan_one_stage
+
+        with patch.object(orchestrator.logger, 'warning') as mock_log_warning:
+            await orchestrator.run(plan_one_stage, {})
+
+            mock_state_manager.update_status.assert_called_once_with(
+                stage=0.0, status=StageStatus.SUCCESS.value, artifacts=expected_filtered_paths
+            )
+            # Expect 3 warnings: one for 123, one for {"obj": "path"}, one for None
+            assert mock_log_warning.call_count == 3 
+            # Check if one of the warnings contains relevant info (optional, can be brittle)
+            # warning_messages = [c[0][0] for c in mock_log_warning.call_args_list]
+            # assert any("provided a non-string path" in msg for msg in warning_messages)
+
+
+    async def test_artifact_path_extraction_key_missing(self, orchestrator, mock_agent_provider, mock_state_manager, basic_plan):
+        """Test extraction when artifact key is missing from agent output."""
+        agent_a_mock = AsyncMock(return_value={
+            "output_a": "value_a" # No artifact key
+        })
+        mock_agent_provider.get.return_value = agent_a_mock
+        plan_one_stage = MasterExecutionPlan(
+            id="one_stage_plan_no_key", start_stage="stage0", stages={
+                "stage0": MasterStageSpec(agent_id="agent_a", next_stage=None, number=0.0)
+            }
+        )
+        orchestrator.pipeline_def = plan_one_stage
+        
+        with patch.object(orchestrator.logger, 'warning') as mock_log_warning: # Ensure no warnings for this valid case
+            await orchestrator.run(plan_one_stage, {})
+
+            mock_state_manager.update_status.assert_called_once_with(
+                stage=0.0, status=StageStatus.SUCCESS.value, artifacts=[] # Default to empty list
+            )
+            mock_log_warning.assert_not_called()

@@ -4,7 +4,7 @@ import os
 import json
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, cast
 from pathlib import Path
 import chromadb
 from chromadb.utils import embedding_functions
@@ -19,6 +19,11 @@ from ..schemas.errors import AgentErrorDetails # Correct relative import
 from ..schemas.flows import PausedRunDetails # <<< Import PausedRunDetails
 import json # Add for JSONDecodeError
 from pydantic import ValidationError # Add for Pydantic validation error
+
+# from chungoid.schemas.common_enums import FileStatus, ProjectStatus # Removed unused
+from chungoid.schemas.master_flow import MasterExecutionPlan # Added import
+# from chungoid.schemas.file_schemas import FileProcessResult, StatusEntry # Removed unused
+# from .file_ops import find_project_root, load_json_from_file, write_json_to_file # Changed to relative import - NOW REMOVING AS UNUSED
 
 
 class StatusFileError(Exception):
@@ -181,46 +186,54 @@ class StateManager:
 
         # Validate status file on init, but don't attempt ChromaDB connection here
         try:
-            _ = self._read_status_file()  # Read to check format
-            self.logger.debug("Initial status file read successful.")
+            current_data = self._read_status_file()  # Read to check format
+            if "master_plans" not in current_data: # Ensure master_plans key exists
+                current_data["master_plans"] = []
+                self._write_status_file(current_data) # Write back if modified
+            self._status_data = current_data
+            self.logger.debug("Initial status file read successful and master_plans key ensured.")
         except StatusFileError as e:
             if "Invalid JSON" in str(e) or "Status file content is not a valid JSON object" in str(e):
                 self.logger.error(f"Critical error: Initial status file is corrupted and unrecoverable: {e}")
                 raise ChromaOperationError(f"Initial status file is corrupted: {e}") from e
             
             self.logger.warning(f"Initial status file validation failed: {e}. Assuming empty/will be created.")
-            self._status_data = {"runs": []} # Default/recovery
+            self._status_data = {"runs": [], "master_plans": []} # Default/recovery with master_plans
         
         self._pending_reflection_text = None # Explicitly initialize in __init__
 
     def _initialize_status_file_if_needed(self) -> None:
         try:
             self._status_data = self._read_status_file()
-            self.logger.debug("Initial status file read successful.")
+            if "master_plans" not in self._status_data: # Ensure master_plans key exists after read
+                self.logger.info("'master_plans' key not found in status file, initializing.")
+                self._status_data["master_plans"] = []
+                # No need to write here, will be written if modified by other operations or if truly new file
+            self.logger.debug("Initial status file read successful and master_plans key ensured during _initialize_status_file_if_needed.")
         except StatusFileError as e:
             if "Invalid JSON" in str(e) or "Status file content is not a valid JSON object" in str(e):
                 self.logger.error(f"Critical error: Initial status file is corrupted and unrecoverable: {e}")
                 raise ChromaOperationError(f"Initial status file is corrupted: {e}") from e
             
             self.logger.warning(f"Initial status file validation failed: {e}. Assuming empty/will be created.")
-            self._status_data = {"runs": []} # Default/recovery
+            self._status_data = {"runs": [], "master_plans": []} # Default/recovery with master_plans
         
-        self.logger.info(f"StateManager initialized for file: {self.status_file_path}")
+        # Removed redundant logger.info from original location
 
     def _get_lock(self) -> Union[filelock.FileLock, DummyFileLock]:
         """Returns the appropriate lock object based on configuration."""
         return self._lock
 
-    def _read_status_file(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Reads the status file content (expecting {'runs': [...]}).
+    def _read_status_file(self) -> Dict[str, Any]:
+        """Reads the status file content.
 
         Acquires a lock if locking is enabled.
 
         Returns:
-            A dictionary containing the 'runs' list. Returns {'runs': []} if file empty/missing.
+            A dictionary representing the status file. Defaults to {'runs': [], 'master_plans': []}.
 
         Raises:
-            StatusFileError: If the file is unreadable or contains invalid JSON not matching the expected structure.
+            StatusFileError: If the file is unreadable or contains invalid JSON.
         """
         lock = self._get_lock()
         try:
@@ -228,40 +241,40 @@ class StateManager:
                 self.logger.debug("Attempting to read status file: %s", self.status_file_path)
                 if not self.status_file_path.exists():
                     self.logger.warning(
-                        "Status file not found at %s, returning empty structure {'runs': []}.",
+                        "Status file not found at %s, returning default structure.",
                         self.status_file_path,
                     )
-                    return {"runs": []}  # Return default structure
+                    return {"runs": [], "master_plans": []}  # Return default structure
 
                 with self.status_file_path.open("r", encoding="utf-8") as f:
                     content = f.read().strip()
                     if not content:
                         self.logger.warning(
-                            "Status file is empty, returning empty structure {'runs': []}."
+                            "Status file is empty, returning default structure."
                         )
-                        return {"runs": []}  # Return default structure
+                        return {"runs": [], "master_plans": []}  # Return default structure
 
                     data = json.loads(content)
-                    # Validate new structure
-                    if (
-                        not isinstance(data, dict)
-                        or "runs" not in data
-                        or not isinstance(data["runs"], list)
-                    ):
-                        raise StatusFileError(
-                            f"Status file content is not a valid JSON object with a 'runs' list. Found: {type(data)}"
+                    # Basic validation: ensure it's a dict and has 'runs'
+                    if not isinstance(data, dict) or "runs" not in data or not isinstance(data["runs"], list):
+                        self.logger.error(
+                            "Status file content is not a valid JSON object with a 'runs' list: %s",
+                            str(data)[:200], # Log a snippet
                         )
-                    # Optional: Validate structure of each run/status entry here if needed
-                    self.logger.debug(
-                        "Successfully read and parsed status file with {'runs': ...} structure."
-                    )
+                        raise StatusFileError(
+                            "Status file content is not a valid JSON object with a 'runs' list."
+                        )
+                    # Ensure master_plans key exists, defaulting to empty list if not
+                    if "master_plans" not in data:
+                        data["master_plans"] = []
+                    elif not isinstance(data["master_plans"], list):
+                        self.logger.warning("'master_plans' in status file is not a list. Re-initializing as empty list.")
+                        data["master_plans"] = []
+                        
                     return data
-        except filelock.Timeout:
-            self.logger.error("Timeout occurred while waiting for status file lock.")
-            raise StatusFileError("Could not acquire lock to read status file.")
-        except json.JSONDecodeError as e:
-            self.logger.error("Failed to decode JSON from status file: %s", e)
-            raise StatusFileError(f"Invalid JSON in status file: {e}") from e
+        except json.JSONDecodeError as e_json:
+            self.logger.error("Failed to decode JSON from status file: %s", e_json)
+            raise StatusFileError(f"Invalid JSON in status file: {e_json}") from e_json
         except IOError as e:
             self.logger.error("Failed to read status file: %s", e)
             raise StatusFileError(f"Could not read status file: {e}") from e
@@ -270,16 +283,14 @@ class StateManager:
             self.logger.exception("Unexpected error reading status file: %s", e)
             raise StatusFileError(f"Unexpected error reading status file: {e}") from e
 
-    def _write_status_file(self, data: Dict[str, List[Dict[str, Any]]]):
-        """Writes the status data (expecting {'runs': [...]}) to the file.
+    def _write_status_file(self, data: Dict[str, Any]):
+        """Writes the given data to the status file.
 
-        Requires acquiring the file lock.
-
+        Acquires a lock if locking is enabled.
         Args:
-            data: The dictionary containing the 'runs' list to write.
-
+            data: The dictionary to write (expected to include 'runs' and 'master_plans').
         Raises:
-            StatusFileError: If the lock cannot be acquired or writing fails.
+            StatusFileError: If writing fails.
         """
         lock = self._get_lock()
         try:
@@ -1335,6 +1346,59 @@ async def get_chungoid_project_status(ide_services):
         except Exception as e:
             self.logger.exception(f"Unexpected error getting current run_id: {e}")
             return None # Indicate unexpected error
+
+    def save_master_execution_plan(self, plan: MasterExecutionPlan) -> bool:
+        """Saves a MasterExecutionPlan to the project_status.json file.
+
+        Args:
+            plan: The MasterExecutionPlan object to save.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        lock = self._get_lock()
+        try:
+            with lock:
+                self.logger.info(f"Attempting to save MasterExecutionPlan ID: {plan.id}")
+                current_status_data = self._read_status_file()
+                
+                # Ensure 'master_plans' key exists and is a list
+                if "master_plans" not in current_status_data or not isinstance(current_status_data.get("master_plans"), list):
+                    current_status_data["master_plans"] = []
+                
+                # Pydantic model_dump() converts to dict, including datetime to ISO strings etc.
+                current_status_data["master_plans"].append(plan.model_dump())
+                
+                self._write_status_file(current_status_data)
+                self.logger.info(f"Successfully saved MasterExecutionPlan ID: {plan.id}")
+                return True
+        except StatusFileError as e:
+            self.logger.error(f"Failed to save MasterExecutionPlan due to status file error: {e}", exc_info=True)
+            return False
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred while saving MasterExecutionPlan: {e}", exc_info=True)
+            return False
+
+    def get_all_master_execution_plans(self) -> List[MasterExecutionPlan]:
+        """Retrieves all saved MasterExecutionPlans from the status file.
+
+        Returns:
+            A list of MasterExecutionPlan objects.
+        """
+        try:
+            current_status_data = self._read_status_file()
+            plan_dicts = current_status_data.get("master_plans", [])
+            plans = [MasterExecutionPlan(**plan_data) for plan_data in plan_dicts]
+            return plans
+        except StatusFileError as e:
+            self.logger.error(f"Failed to retrieve master execution plans due to status file error: {e}", exc_info=True)
+            return []
+        except ValidationError as ve:
+            self.logger.error(f"Failed to parse stored master execution plans: {ve}", exc_info=True)
+            return [] # Return empty if validation fails for any plan
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred while retrieving master execution plans: {e}", exc_info=True)
+            return []
 
 
 # Example usage (for testing or demonstration)

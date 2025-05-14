@@ -4,17 +4,24 @@ import logging
 logger = logging.getLogger(__name__)
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable, Tuple, Union
 from datetime import datetime, timezone
 import inspect
 import json
 import uuid
 from pydantic import BaseModel, Field, ValidationError
+import asyncio # Added asyncio
+from pydantic.json import pydantic_encoder # <<< ADD IMPORT
 
 # Absolute imports – sys.path hacks removed
 from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
 from chungoid.utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
 from chungoid.utils.config_loader import get_config, ConfigError
+from chungoid.utils.llm_provider import LLMProvider # Added LLMProvider
+from chungoid.runtime.agents.master_planner_agent import MasterPlannerAgent # Added MasterPlannerAgent
+from chungoid.schemas.user_goal_schemas import UserGoalRequest # Added UserGoalRequest
+from chungoid.schemas.master_flow import MasterExecutionPlan # Added MasterExecutionPlan
+from chungoid.utils.agent_resolver import AgentProvider # Added AgentProvider (assuming engine will manage this)
 
 # <<< ADDED LOGGING FOR IMPORT PATH >>>
 try:
@@ -27,7 +34,7 @@ except Exception as inspect_err:
 class ChungoidEngine:
     """Manages the execution lifecycle of a Chungoid project."""
 
-    def __init__(self, project_directory: str):
+    def __init__(self, project_directory: str, llm_provider: LLMProvider, agent_provider: AgentProvider): # Added llm_provider and agent_provider
         """
         Initializes the engine for a specific project directory.
 
@@ -52,6 +59,9 @@ class ChungoidEngine:
             logger.exception("Failed to load configuration.")
             raise RuntimeError("Configuration error prevented engine initialization.") from e
 
+        self.llm_provider = llm_provider # Store LLMProvider
+        self.agent_provider = agent_provider # Store AgentProvider (assuming it's passed in)
+        
         # --- Initialize Core Components ---
         try:
             # CORRECTED: core_root should be project root, not src/chungoid
@@ -119,13 +129,17 @@ class ChungoidEngine:
         class MCPToolArgsExportCursorRule(BaseModel):
             pass # No args needed
 
+        class MCPToolArgsCreateMasterPlan(BaseModel): # New schema
+            user_goal: Dict[str, Any] = Field(description="A dictionary representing the UserGoalRequest schema.")
+
         # Define synchronous wrappers for StateManager/other methods called by tools
         # These handle calling the potentially async StateManager methods appropriately
         # Note: If StateManager methods become sync, these wrappers might simplify.
         def _initialize_project_sync_wrapper():
             # Assuming StateManager.initialize_project is synchronous
             self.state_manager.initialize_project()
-            return f"Project initialized at {str(self.state_manager.target_dir_path)}" # Return string content
+            self.state_manager.initialize_project_status(run_id=str(uuid.uuid4()))
+            return {"message": f"Project initialized at {self.project_dir}"}
 
         def _get_project_status_sync_wrapper():
             # Assuming StateManager.get_full_status is synchronous
@@ -143,83 +157,110 @@ class ChungoidEngine:
             status_str = kwargs.get("stage_result_status")
             artifacts_dict = kwargs.get("generated_artifacts", {})
             reflection = kwargs.get("reflection_text")
+            error_details_dict = kwargs.get("error_details")
 
             saved_artifact_paths = []
-            if isinstance(artifacts_dict, dict):
-                for rel_path, content_str in artifacts_dict.items():
-                    if not isinstance(content_str, str):
-                        logger.warning(f"Artifact content for {rel_path} is not a string, skipping.")
-                        continue
+            if artifacts_dict:
+                for rel_path, content in artifacts_dict.items():
                     try:
-                        artifact_abs_path = Path(self.project_dir).resolve() / rel_path
-                        artifact_abs_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(artifact_abs_path, "w", encoding="utf-8") as f:
-                            f.write(content_str)
-                        saved_artifact_paths.append(rel_path) # SM expects relative paths
-                        logger.info(f"Saved artifact content to: {artifact_abs_path}")
-                    except Exception as e_save:
-                        logger.error(f"Failed to save artifact {rel_path}: {e_save}", exc_info=True)
-                        raise IOError(f"Failed to save artifact {rel_path}") from e_save
-            else:
-                logger.warning(f"generated_artifacts was not a dictionary: {type(artifacts_dict)}. No files saved.")
+                        full_path = self.project_dir / rel_path
+                        full_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(full_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        saved_artifact_paths.append(rel_path)
+                        logger.info(f"Saved artifact: {full_path}")
+                    except IOError as e:
+                        logger.error(f"Failed to save artifact {rel_path}: {e}")
+                        # Decide if this is a critical failure for the tool
+                        # For now, log and continue, but status update might reflect partial success/failure
             
-            # Assuming StateManager.update_status is synchronous
+            # Update status
             success = self.state_manager.update_status(
-                stage=float(stage_number),
-                status=status_str.upper(),
+                stage=stage_number,
+                status=status_str,
                 artifacts=saved_artifact_paths,
-                reflection_text=reflection
+                reflection_text=reflection,
+                error_details=error_details_dict
             )
             if not success:
-                raise RuntimeError(f"Failed to update status for stage {stage_number}")
-            # Return simple success message
-            return f"Stage {stage_number} submitted with status {status_str} and {len(saved_artifact_paths)} artifacts."
+                 logger.error(f"Failed to update status for stage {stage_number} via state_manager.")
+                 raise RuntimeError(f"Failed to update status for stage {stage_number}") # Propagate as tool error
+
+            return {"message": f"Stage {stage_number} submitted with status {status_str} and {len(saved_artifact_paths)} artifacts."}
 
         def _get_file_sync_wrapper(relative_path: str):
-            file_path = Path(self.project_dir).resolve() / relative_path
-            if not file_path.is_file():
-                raise FileNotFoundError(f"File not found: {file_path}")
-            
-             # Security check: Ensure the resolved path is still within the project directory
-            if Path(self.project_dir).resolve() not in file_path.resolve().parents and \
-               file_path.resolve() != Path(self.project_dir).resolve():
-                raise PermissionError(
-                    f"Access denied: Path {relative_path} resolved to {file_path.resolve()} "
-                    f"which is outside the project directory {Path(self.project_dir).resolve()}"
-                )
-            
-            try:
-                content = file_path.read_text(encoding="utf-8")
-                # Return the formatted string directly
-                return f"Content of {str(file_path.resolve())}:\\n\\n{content}"
-            except Exception as e_read:
-                logger.error(f"Error reading file {file_path}: {e_read}", exc_info=True)
-                raise IOError(f"Could not read file: {file_path}") from e_read
+            full_path = (self.project_dir / relative_path).resolve()
+            if not full_path.is_file():
+                raise FileNotFoundError(f"File not found: {full_path}")
+            if not full_path.is_relative_to(self.project_dir): # Security check
+                raise ValueError(f"File path {full_path} is outside the project directory {self.project_dir}")
+            return f"Content of {full_path}:\n\n{full_path.read_text(encoding='utf-8')}"
 
         def _load_reflections_sync_wrapper(query_text: str, n_results: int):
             # Assuming StateManager.get_reflection_context_from_chroma is synchronous
             # (If it becomes async, need asyncio.run or similar here, carefully)
-            return self.state_manager.get_reflection_context_from_chroma(query=query_text, n_results=n_results)
+            try:
+                reflections = self.state_manager.get_reflection_context_from_chroma(query=query_text, n_results=n_results)
+                return reflections # Already a list of dicts (JSON serializable)
+            except ChromaOperationError as e:
+                logger.error(f"ChromaDB operation failed during load_reflections: {e}")
+                raise # Re-raise to be caught by execute_mcp_tool error handler
 
         def _set_pending_reflection_sync_wrapper(reflection_text: str):
-            self.state_manager.set_pending_reflection_text(reflection_text)
-            return "Pending reflection text has been set."
+            self.state_manager.set_pending_reflection(reflection_text)
+            return {"message": "Pending reflection stored."}
 
         def _load_pending_reflection_sync_wrapper():
-            pending_text = self.state_manager.get_pending_reflection_text()
-            return f"Pending reflection: {pending_text}" if pending_text is not None else "No pending reflection text is currently set."
+            text = self.state_manager.load_pending_reflection()
+            return {"reflection_text": text if text else ""}
 
         def _export_cursor_rule_sync_wrapper():
-            exported_path = self.state_manager.export_cursor_rule()
-            if not exported_path:
-                 raise RuntimeError("Failed to export cursor rule, path might be None.")
-            return f"Cursor rule exported to {str(exported_path)}"
+            return self.state_manager.export_cursor_rule()
+
+        def _create_master_plan_sync_wrapper(**kwargs): # New handler
+            try:
+                user_goal_dict = kwargs['user_goal']
+                user_goal_request_obj = UserGoalRequest(**user_goal_dict)
+                
+                planner = MasterPlannerAgent(
+                    agent_provider=self.agent_provider, 
+                    llm_provider=self.llm_provider
+                )
+                
+                # MasterPlannerAgent.execute is async, so we need to run it in an event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    plan = loop.run_until_complete(planner.execute(user_goal_request_obj))
+                finally:
+                    loop.close()
+
+                # Save the plan before returning its model dump
+                if not plan.id.startswith("error_plan_"): # Only save successful plans
+                    save_success = self.state_manager.save_master_execution_plan(plan)
+                    if not save_success:
+                        logger.error(f"Failed to save MasterExecutionPlan ID: {plan.id} to state file.")
+                        # Decide if this should alter the tool's success response or just log
+                
+                # The wrapper needs to return a dict, not the Pydantic model directly,
+                # because the main execute_mcp_tool tries to json.dumps it.
+                if isinstance(plan, MasterExecutionPlan):
+                    return plan.model_dump() # <<< REVERTED TO THIS
+                elif isinstance(plan, dict): # Error plan already a dict
+                    return plan
+            except ValidationError as ve:
+                logger.error(f"UserGoalRequest validation error for create_master_plan: {ve}")
+                raise # Re-raise to be caught by execute_mcp_tool error handler
+            except Exception as e:
+                logger.exception(f"Error executing MasterPlannerAgent for create_master_plan: {e}")
+                # Return a structured error that execute_mcp_tool will handle
+                raise RuntimeError(f"MasterPlannerAgent execution failed: {e}")
 
         # === TOOL REGISTRY ===
         # Moved registry initialization to __init__ and assigned to self.TOOL_REGISTRY
         self.TOOL_REGISTRY = {
             "initialize_project": {
-                "description": "Initializes the chungoid project structure (.chungoid dir, status file).",
+                "description": "Initializes a new Chungoid project structure and status file if they don't exist.",
                 "args_schema": MCPToolArgsInitializeProject,
                 "handler_sync": _initialize_project_sync_wrapper,
             },
@@ -229,12 +270,12 @@ class ChungoidEngine:
                 "handler_sync": None, # Handled directly in execute_mcp_tool due to re-init need
             },
              "get_project_status": {
-                "description": "Retrieves the current project status file content.",
+                "description": "Retrieves the current project status.",
                 "args_schema": MCPToolArgsGetProjectStatus,
                 "handler_sync": _get_project_status_sync_wrapper,
             },
             "prepare_next_stage": {
-                "description": "Determines the next stage, gathers context, and renders the prompt.",
+                "description": "Determines and prepares the prompt for the next stage of the project.",
                 "args_schema": MCPToolArgsPrepareNextStage,
                 "handler_sync": _prepare_next_stage_sync_wrapper,
             },
@@ -268,6 +309,11 @@ class ChungoidEngine:
                  "args_schema": MCPToolArgsExportCursorRule,
                  "handler_sync": _export_cursor_rule_sync_wrapper,
              },
+            "create_master_plan": { # New tool registration
+                "description": "Generates a multi-stage MasterExecutionPlan from a user goal.",
+                "args_schema": MCPToolArgsCreateMasterPlan,
+                "handler_sync": _create_master_plan_sync_wrapper,
+            },
         }
         # === End Tool Handling Components ===
 
@@ -425,14 +471,13 @@ class ChungoidEngine:
             # Format the successful result according to MCP spec (basic structure)
             # Specific tools might return different structures, handlers should ideally conform
             # For now, assuming handler returns data to be put in JSON text content.
-            if isinstance(result_data, dict) and "toolCallId" in result_data: # Allow handler to return full MCP structure
-                 return result_data
-            elif isinstance(result_data, str): # Simple string result
-                 text_content = result_data
-            else: # Assume JSON-serializable data otherwise
-                 text_content = json.dumps(result_data, indent=2)
+            if result_data is not None:
+                if isinstance(result_data, str): # If handler already returned a string
+                    text_content = result_data
+                else:
+                    text_content = json.dumps(result_data, indent=2, default=pydantic_encoder) # <<< NEW LINE
 
-            return {
+            response = {
                 "toolCallId": tool_call_id,
                 "content": [
                     {
@@ -441,32 +486,8 @@ class ChungoidEngine:
                     }
                 ]
             }
+            return response
             
-            # --- REMOVE OLD TOOL-SPECIFIC LOGIC BLOCKS --- 
-            # The logic below is now handled by the handler wrappers defined in TOOL_REGISTRY
-            # (e.g., _load_reflections_sync_wrapper, _submit_stage_artifacts_sync_wrapper)
-            
-            # Example (removed block for load_reflections):
-            # elif tool_name == "load_reflections": 
-            #     if "query_text" not in validated_args_dict: ...
-            #     query = validated_args_dict["query_text"] ...
-            #     result_data = tool_spec["handler_sync"](...) ...
-            #     return { ... }
-            
-            # Example (removed block for submit_stage_artifacts):
-            # elif tool_name == "submit_stage_artifacts":
-            #     stage_number = validated_args_dict.get("stage_number") ...
-            #     result_data = tool_spec["handler_sync"](...) ...
-            #     return { ... }
-
-            # Example (removed block for get_file):
-            # elif tool_name == "get_file":
-            #    relative_path = validated_args_dict.get("relative_path") ...
-            #    # Logic for reading file was here 
-            #    return { ... }
-            
-            # ... other removed elif blocks ...
-
         except (ValidationError) as e_val:
             logger.error(f"Tool argument validation failed for {tool_name} (ToolCallID: {tool_call_id}): {e_val}", exc_info=True)
             return {
@@ -675,7 +696,7 @@ if __name__ == "__main__":
 
     print(f"Running engine for project: {test_project_path}")
     try:
-        engine = ChungoidEngine(str(test_project_path))
+        engine = ChungoidEngine(str(test_project_path), None, None)
         stage_result = engine.run_next_stage()
 
         print("\n--- Engine Result ---")

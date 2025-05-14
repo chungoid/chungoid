@@ -12,7 +12,8 @@ Both implement the `AgentProvider` protocol expected by the refactored
 `FlowExecutor`.
 """
 
-from typing import Callable, Dict, Protocol, runtime_checkable, Optional
+from typing import Callable, Dict, Protocol, runtime_checkable, Optional, List, Any
+from .agent_registry import AgentCard
 
 StageDict = Dict[str, object]
 AgentCallable = Callable[[StageDict], Dict[str, object]]
@@ -54,9 +55,9 @@ class RegistryAgentProvider:
         registry: "AgentRegistry",
         fallback: Optional[Dict[str, AgentCallable]] = None,
     ) -> None:
-        from .agent_registry import AgentRegistry  # local import to avoid circular
+        from .agent_registry import AgentRegistry as ConcreteAgentRegistry
 
-        if not isinstance(registry, AgentRegistry):  # noqa: E501 – defensive
+        if not isinstance(registry, ConcreteAgentRegistry):  # noqa: E501 – defensive
             raise TypeError("registry must be an AgentRegistry instance")
         self._registry = registry
         self._fallback: Dict[str, AgentCallable] = fallback or {}
@@ -121,6 +122,21 @@ class RegistryAgentProvider:
 
         self._cache[identifier] = _stub
         return _stub
+
+    def search_agents(self, query_text: str, n_results: int = 3, where_filter: Optional[Dict[str, Any]] = None) -> List[AgentCard]:
+        """Performs semantic search for agents via the underlying AgentRegistry."""
+        if not hasattr(self._registry, 'search_agents'):
+            # Log an error or raise an exception if the registry doesn't support search
+            # For now, print and return empty list
+            # Consider adding logging if a logger is available on self
+            print("ERROR: AgentRegistry instance in RegistryAgentProvider does not have 'search_agents' method.")
+            return []
+        try:
+            return self._registry.search_agents(query_text, n_results=n_results, where_filter=where_filter)
+        except Exception as e:
+            # Log error appropriately
+            print(f"ERROR: Call to AgentRegistry.search_agents failed: {e}")
+            return []
 
 
 # Convenient alias used by FlowExecutor refactor

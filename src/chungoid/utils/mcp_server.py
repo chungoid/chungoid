@@ -31,8 +31,9 @@ from .core_snapshot_utils import _get_tool_specs  # internal helper
 from .flow_registry import FlowRegistry, FlowCard  # NEW
 from .flow_api import get_router as get_flow_router
 from chungoid.runtime.orchestrator import ExecutionPlan, AsyncOrchestrator
-from chungoid.utils.agent_resolver import AgentProvider
+from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider
 from chungoid.utils.state_manager import StateManager
+from chungoid.utils.llm_provider import MockLLMProvider
 
 # Reflection model & store (for /reflection endpoint)
 from typing import TYPE_CHECKING
@@ -67,7 +68,18 @@ def _git(*args: str) -> str:
 try:
     _engine_mod = importlib.import_module("chungoid.engine")
     _EngineCls = getattr(_engine_mod, "ChungoidEngine")  # type: ignore[attr-defined]
-    _engine = _EngineCls(project_directory=str(Path.cwd()))
+    
+    # Instantiate providers
+    _llm_provider_instance = MockLLMProvider() # For now, use Mock LLM
+    # Assuming RegistryAgentProvider can be initialized without complex args here
+    # If it needs more, this might need adjustment or a factory function.
+    _agent_provider_instance = RegistryAgentProvider() 
+
+    _engine = _EngineCls(
+        project_directory=str(Path.cwd()),
+        llm_provider=_llm_provider_instance, 
+        agent_provider=_agent_provider_instance
+    )
 except Exception as exc:  # pylint: disable=broad-except
     _engine = None  # type: ignore
     _ENGINE_IMPORT_ERR = exc

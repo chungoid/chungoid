@@ -23,8 +23,11 @@ class AgentCard(BaseModel):
     description: Optional[str] = None
     stage_focus: Optional[str] = None
     capabilities: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
     tool_names: List[str] = Field(default_factory=list)
-    mcp_tool_input_schemas: Optional[Dict[str, Any]] = Field(None, description="Summarized input schemas for exposed MCP tools.")
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the agent's direct input if it's a callable.")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the agent's direct output if it's a callable.")
+    mcp_tool_input_schemas: Optional[Dict[str, Any]] = Field(None, description="Summarized input schemas for MCP tools this agent EXPOSES.")
     metadata: dict = Field(default_factory=dict)
     created: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -36,29 +39,71 @@ class AgentRegistry:
         self._client: ClientAPI = get_client(chroma_mode, project_root)
         self._coll: Collection = self._client.get_or_create_collection(self.COLLECTION)
 
-        # CRUD -------------------------------------------------------------
+    def _create_searchable_document_for_agent_card(self, card: AgentCard) -> str:
+        """Constructs a single string from AgentCard fields for semantic search."""
+        doc_parts = []
+        if card.name:
+            doc_parts.append(f"Agent Name: {card.name}")
+        if card.description:
+            doc_parts.append(f"Description: {card.description}")
+        
+        if card.capabilities:
+            doc_parts.append(f"Capabilities: {', '.join(card.capabilities)}")
+        if card.tags:
+            doc_parts.append(f"Tags: {', '.join(card.tags)}")
+        if card.tool_names: # These are tools the agent *uses* or has affinity with
+            doc_parts.append(f"Relevant Tools: {', '.join(card.tool_names)}")
+
+        # Summarize direct input/output schemas of the agent itself
+        if card.input_schema:
+            input_summary = card.input_schema.get('title', card.input_schema.get('description', 'No summary'))
+            doc_parts.append(f"Agent Input: {input_summary}")
+        if card.output_schema:
+            output_summary = card.output_schema.get('title', card.output_schema.get('description', 'No summary'))
+            doc_parts.append(f"Agent Output: {output_summary}")
+
+        # Summarize schemas of MCP tools the agent *exposes* (if any)
+        if card.mcp_tool_input_schemas:
+            for tool_name, schema in card.mcp_tool_input_schemas.items():
+                if isinstance(schema, dict):
+                    schema_summary = schema.get('title', schema.get('description', 'No summary'))
+                    doc_parts.append(f"Exposed MCP Tool '{tool_name}' Input: {schema_summary}")
+        
+        return "\n".join(doc_parts)
+
+    # CRUD -------------------------------------------------------------
     def add(self, card: AgentCard, *, overwrite: bool = False):
         if self._exists(card.agent_id):
             if not overwrite:
                 raise ValueError(f"Agent {card.agent_id} already exists")
         
-        # Use the helper method to prepare metadata
         final_chroma_meta = self._agent_card_to_chroma_metadata(card)
+        searchable_doc = self._create_searchable_document_for_agent_card(card)
 
-        self._coll.add(ids=[card.agent_id], documents=[card.description or ""], metadatas=[final_chroma_meta])
+        self._coll.add(ids=[card.agent_id], documents=[searchable_doc], metadatas=[final_chroma_meta])
 
     def get(self, agent_id: str) -> Optional[AgentCard]:
         res = self._coll.get(ids=[agent_id])
         if not res["ids"]:
             return None
         
-        retrieved_meta_from_chroma = res["metadatas"][0].copy() 
+        retrieved_meta_from_chroma = res["metadatas"][0].copy()
+        # The document is now the full searchable_doc. The original description is part of it.
+        # For AgentCard reconstruction, we rely on metadata for most fields.
+        # If a direct 'description' field is needed on AgentCard separate from the searchable doc, 
+        # it should primarily come from metadata if stored there, or be reconstructed carefully.
+        # Currently, AgentCard.description is populated from metadata if _agent_card_to_chroma_metadata includes it.
+        # Let's ensure _agent_card_to_chroma_metadata stores the original description.
         
-        card_data = retrieved_meta_from_chroma.copy() 
-        card_data["description"] = res["documents"][0]
+        card_data = retrieved_meta_from_chroma.copy()
+        # card_data["description"] = res["documents"][0] # This would assign the WHOLE searchable doc to description.
+                                                       # The description should come from metadata.
 
         capabilities_str = card_data.pop("_capabilities_str", "")
         card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
+        
+        tags_str = card_data.pop("_tags_str", "") # Added for tags
+        card_data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
             
         tool_names_str = card_data.pop("_tool_names_str", "")
         card_data["tool_names"] = [name.strip() for name in tool_names_str.split(",") if name.strip()]
@@ -66,10 +111,19 @@ class AgentRegistry:
         metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}")
         card_data["metadata"] = json.loads(metadata_json_str)
         
-        # Deserialize the new mcp_tool_input_schemas field
-        # Default to "null" so json.loads results in None if key is missing
+        input_schema_json_str = card_data.pop("_input_schema_json", "null")
+        card_data["input_schema"] = json.loads(input_schema_json_str)
+
+        output_schema_json_str = card_data.pop("_output_schema_json", "null")
+        card_data["output_schema"] = json.loads(output_schema_json_str)
+        
         mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null") 
         card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
+
+        # If description is not directly in metadata (because it was part of the searchable doc),
+        # we might need to extract it or accept that AgentCard.description will be None
+        # if not reconstructed from the searchable doc (which is complex).
+        # For now, AgentCard construction will use whatever `description` is in `card_data` (from metadata).
 
         return AgentCard.model_validate(card_data)
 
@@ -79,16 +133,20 @@ class AgentRegistry:
         
         retrieved_ids = peek_results.get("ids", [])
         retrieved_metadatas = peek_results.get("metadatas", [])
-        retrieved_documents = peek_results.get("documents", [])
+        # Documents are now the full searchable docs, not just descriptions.
+        # retrieved_documents = peek_results.get("documents", []) 
 
         for i in range(len(retrieved_ids)):
             current_chroma_meta = retrieved_metadatas[i].copy()
             
             card_data = current_chroma_meta.copy()
-            card_data["description"] = retrieved_documents[i]
+            # card_data["description"] = retrieved_documents[i] # This would assign searchable_doc
 
             capabilities_str = card_data.pop("_capabilities_str", "")
             card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
+
+            tags_str = card_data.pop("_tags_str", "") # Added for tags
+            card_data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
 
             tool_names_str = card_data.pop("_tool_names_str", "")
             card_data["tool_names"] = [name.strip() for name in tool_names_str.split(",") if name.strip()]
@@ -96,12 +154,95 @@ class AgentRegistry:
             metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}")
             card_data["metadata"] = json.loads(metadata_json_str)
             
-            # Deserialize the new mcp_tool_input_schemas field
-            # Default to "null" so json.loads results in None if key is missing
+            input_schema_json_str = card_data.pop("_input_schema_json", "null")
+            card_data["input_schema"] = json.loads(input_schema_json_str)
+
+            output_schema_json_str = card_data.pop("_output_schema_json", "null")
+            card_data["output_schema"] = json.loads(output_schema_json_str)
+            
             mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null")
             card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
 
             cards.append(AgentCard.model_validate(card_data))
+        return cards
+
+    def search_agents(self, query_text: str, n_results: int = 3, where_filter: Optional[Dict[str, Any]] = None) -> List[AgentCard]:
+        """Performs semantic search for agents based on query_text."""
+        cards: List[AgentCard] = []
+        if not query_text:
+            return cards
+
+        try:
+            query_results = self._coll.query(
+                query_texts=[query_text.strip()], 
+                n_results=n_results, 
+                where=where_filter, 
+                include=["metadatas"] # Only metadatas needed for reconstruction
+            )
+        except Exception as e:
+            # Log error appropriately, e.g., self.logger.error(...) if logger is available
+            print(f"Error during ChromaDB query in search_agents: {e}") # Basic print for now
+            return cards
+
+        # query_results structure for a single query_text: {"ids": [[id1, id2]], "metadatas": [[meta1, meta2]], ...}
+        if query_results and query_results.get("ids") and query_results["ids"][0]:
+            retrieved_metadatas_list = query_results.get("metadatas", [[]])[0]
+            
+            for i in range(len(retrieved_metadatas_list)):
+                current_chroma_meta = retrieved_metadatas_list[i]
+                if not isinstance(current_chroma_meta, dict):
+                    # Log warning or skip if metadata is not as expected
+                    print(f"Warning: Expected dict for metadata, got {type(current_chroma_meta)}. Skipping.")
+                    continue
+                
+                card_data = current_chroma_meta.copy()
+
+                # Deserialize fields from metadata
+                capabilities_str = card_data.pop("_capabilities_str", "")
+                card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
+
+                tags_str = card_data.pop("_tags_str", "")
+                card_data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+
+                tool_names_str = card_data.pop("_tool_names_str", "")
+                card_data["tool_names"] = [name.strip() for name in tool_names_str.split(",") if name.strip()]
+
+                metadata_json_str = card_data.pop("_agent_card_metadata_json", "{}")
+                try:
+                    card_data["metadata"] = json.loads(metadata_json_str)
+                except json.JSONDecodeError:
+                    card_data["metadata"] = {} # Default on error
+                
+                input_schema_json_str = card_data.pop("_input_schema_json", "null")
+                try:
+                    card_data["input_schema"] = json.loads(input_schema_json_str)
+                except json.JSONDecodeError:
+                    card_data["input_schema"] = None # Default on error
+
+                output_schema_json_str = card_data.pop("_output_schema_json", "null")
+                try:
+                    card_data["output_schema"] = json.loads(output_schema_json_str)
+                except json.JSONDecodeError:
+                    card_data["output_schema"] = None # Default on error
+                
+                mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null")
+                try:
+                    card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
+                except json.JSONDecodeError:
+                    card_data["mcp_tool_input_schemas"] = None # Default on error
+                
+                # The 'description' field should already be in card_data directly from metadata
+                # Ensure 'agent_id' and 'name' are present as they are mandatory for AgentCard
+                if not card_data.get("agent_id") or not card_data.get("name"):
+                    # Log warning or skip
+                    print(f"Warning: Missing agent_id or name in metadata for card reconstruction. Skipping. Data: {card_data}")
+                    continue
+
+                try:
+                    cards.append(AgentCard.model_validate(card_data))
+                except Exception as model_val_err: # Catch Pydantic ValidationError or other issues
+                    # Log error with card_data for debugging
+                    print(f"Error validating AgentCard from metadata: {model_val_err}. Data: {card_data}")
         return cards
 
     # Helpers -----------------------------------------------------------
@@ -113,17 +254,18 @@ class AgentRegistry:
         metadata = {
             "agent_id": agent_card.agent_id,
             "name": agent_card.name,
+            "description": agent_card.description or "", # Ensure original description is in metadata
             "stage_focus": agent_card.stage_focus if agent_card.stage_focus is not None else "",
-            # Store datetime as ISO 8601 string (ChromaDB compatibility)
             "created": agent_card.created.isoformat(),
-            # Store lists as comma-separated strings (simple approach)
             "_capabilities_str": ",".join(agent_card.capabilities or []),
+            "_tags_str": ",".join(agent_card.tags or []), # Added for tags
             "_tool_names_str": ",".join(agent_card.tool_names or []),
-            # Store complex metadata dictionary as a JSON string
             "_agent_card_metadata_json": json.dumps(agent_card.metadata or {}),
-            # Store tool input schemas as JSON string, ONLY IF PRESENT
         }
-        # Only add schemas if they exist and are not None/empty
+        if agent_card.input_schema:
+            metadata["_input_schema_json"] = json.dumps(agent_card.input_schema)
+        if agent_card.output_schema:
+            metadata["_output_schema_json"] = json.dumps(agent_card.output_schema)
         if agent_card.mcp_tool_input_schemas:
             metadata["_mcp_tool_input_schemas_json"] = json.dumps(agent_card.mcp_tool_input_schemas)
         

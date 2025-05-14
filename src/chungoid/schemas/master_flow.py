@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 import yaml # For from_yaml method
 
+from .user_goal_schemas import UserGoalRequest # <<< ADD IMPORT
+
 # TODO: Potentially reference or reuse parts of StageSpec from orchestrator.py 
 # if there's significant overlap and it makes sense.
 
@@ -34,6 +36,7 @@ class MasterExecutionPlan(BaseModel):
     version: str = Field("1.0.0", description="Version of the Master Flow definition.")
     start_stage: str = Field(..., description="The first stage to execute in the Master Flow.")
     stages: Dict[str, MasterStageSpec] = Field(..., description="Dictionary of stage definitions for the Master Flow.")
+    original_request: Optional[UserGoalRequest] = Field(None, description="The original UserGoalRequest that initiated this plan.") # <<< ADD FIELD
 
     @classmethod
     def from_yaml(cls, yaml_text: str) -> MasterExecutionPlan:

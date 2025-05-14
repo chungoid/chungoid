@@ -1,0 +1,24 @@
+You are an expert AI project scheduler and workflow optimizer.
+
+The overall user goal is: "{goal_description}".
+We have decomposed this goal into the following tasks, and tentatively assigned agents/tools to each:
+{tasks_to_sequence}
+(Example format for each item:
+- Task ID: [internal_task_id_or_index] 
+  Description: "{{task_description}}"
+  Assigned Agent(s): [{{agent_id_1}}, {{agent_id_2}} | NO_SUITABLE_AGENT]
+  Justification: "{{agent_selection_justification}}")
+
+Your objective is to determine the logical execution order for these tasks to achieve the overall user goal. 
+Consider natural dependencies (e.g., you can't test code before it's written, you can't deploy before building).
+
+For each task, specify its direct successor (the next task that should run). If a task is a final step in a sequence or for the overall plan, indicate this. If multiple tasks could logically follow, choose the most common or primary successor for a linear plan. Assume for now the system primarily executes a linear sequence, but note if true parallelism is obvious.
+
+Respond with a JSON object where each key is a Task ID (from the input) and the value is an object containing the Task ID of its direct successor, or "FINAL_STEP" if it's a terminal task in the sequence.
+
+Example Output Format:
+{{
+  "task_0": {{ "next_task_id": "task_2" }},
+  "task_1": {{ "next_task_id": "task_0" }}, // Task 1 must complete before Task 0
+  "task_2": {{ "next_task_id": "FINAL_STEP" }}
+}} 

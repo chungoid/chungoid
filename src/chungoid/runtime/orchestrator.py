@@ -26,6 +26,10 @@ import traceback
 import copy
 import inspect
 from unittest.mock import AsyncMock
+import asyncio
+import uuid
+import collections
+# import dpath # For safe nested dictionary access by path string - REMOVED AS NOT USED
 
 __all__ = [
     "StageSpec",
@@ -304,7 +308,7 @@ class BaseOrchestrator:
 
 
 class AsyncOrchestrator(BaseOrchestrator):
-    """Orchestrates pipeline execution asynchronously, invoking agents."""
+    """Asynchronous orchestrator capable of running complex flows with conditions and context passing."""
 
     def __init__(
         self,
@@ -313,18 +317,18 @@ class AsyncOrchestrator(BaseOrchestrator):
         agent_provider: AgentProvider,
         state_manager: StateManager
     ):
-        self.pipeline_def = pipeline_def
-        self.config = config
-        self.logger = logging.getLogger(self.__class__.__name__)
-        
-        self._agent_provider = agent_provider
-        self._state_manager = state_manager
-        self.context_history: Dict[str, Dict[str, Any]] = {} # Initialize context_history
+        super().__init__(pipeline_def, config)
+        self.agent_provider = agent_provider
+        self.state_manager = state_manager
+        self.logger = logging.getLogger(__name__)
+        self.context_history: Dict[str, Any] = {}
+        self.visited_stages_in_current_run: List[str] = []
+        self.run_status_updates: List[Dict[str, Any]] = []
+        self.logger.debug(f"Orchestrator.run: Initialized self.run_status_updates: {type(self.run_status_updates)}")
 
     def _parse_condition(self, condition_str: str, context: Dict[str, Any]) -> bool:
         if not condition_str:
-            return True # No condition means proceed
-
+            return True
         self.logger.debug(f"Parsing condition: {condition_str}")
         try:
             parts = []
@@ -415,220 +419,369 @@ class AsyncOrchestrator(BaseOrchestrator):
             self.logger.exception(f"Error evaluating condition '{condition_str}': {e}")
             return False
 
-    async def _execute_loop(self, start_stage_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Core execution loop logic for Master Flows."""
-        self.logger.info(f"Starting MASTER execution loop from stage: {start_stage_name}")
-        current_stage_name = start_stage_name
-        if 'outputs' not in context:
-            context['outputs'] = {}
-        if 'visited' not in context: # Initialize visited list in context
-            context['visited'] = []
-        
-        max_hops = len(self.pipeline_def.stages) + 5 
-        hops = 0
+    def _resolve_input_values(self, inputs_spec: Dict[str, Any], context_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolves input values specified in inputs_spec against the context_data.
+        Supports literal values and path-based lookups (e.g., "context.some.value").
+        """
+        resolved_inputs = {}
+        if not isinstance(inputs_spec, dict):
+            self.logger.warning(f"_resolve_input_values expected inputs_spec to be a dict, got {type(inputs_spec)}. Returning empty resolved inputs.")
+            return {}
 
-        while current_stage_name and hops < max_hops:
-            hops += 1
-            
-            # Record visited stage
-            if current_stage_name not in context['visited']:
-                context['visited'].append(current_stage_name)
+        for input_name, context_path in inputs_spec.items():
+            resolved_value = context_path # Default to literal
 
-            stage: Optional[MasterStageSpec] = self.pipeline_def.stages.get(current_stage_name)
-            if not stage:
-                self.logger.error(f"MASTER Stage '{current_stage_name}' not found in plan. Aborting loop.")
-                error_info = AgentErrorDetails(
-                    error_type="OrchestratorError",
-                    message=f"Master Stage '{current_stage_name}' not found in plan",
-                    stage_id=current_stage_name 
+            # Ensure context_path is a string before attempting string operations or path resolution
+            if not isinstance(context_path, str):
+                self.logger.warning(
+                    f"Input '{input_name}' for stage has a non-string context_path value: {context_path} (type: {type(context_path)}). Using it as a literal."
                 )
-                current_run_id = self._state_manager.get_or_create_current_run_id()
-                self._state_manager.update_status(
-                    run_id=current_run_id,
-                    stage_id=current_stage_name, 
-                    status=StageStatus.FAILURE,
-                    reason=f"Master Stage '{current_stage_name}' not found in plan",
-                    error_details=error_info
-                )
-                return context # Return context which now includes 'visited'
+                resolved_inputs[input_name] = context_path
+                continue
 
-            current_stage_idx = stage.number if stage.number is not None else -1.0
-            if current_stage_idx == -1.0:
-                 self.logger.warning(f"MASTER Stage '{current_stage_name}' (Agent: {stage.agent_id}) does not have a numeric identifier. Using -1.0.")
+            # Now we are sure context_path is a string.
+            context_path_lower = context_path.lower()
+            is_special_previous_output = (input_name.lower() == "previous_stage_outputs" and \
+                                          not context_path_lower.startswith("context."))
 
-            if hops >= max_hops:
-                self.logger.warning(f"Max hops ({max_hops}) reached, breaking MASTER execution at stage '{current_stage_name}'.")
-                self._state_manager.update_status(
-                    stage=current_stage_idx, 
-                    status=StageStatus.FAILURE.value, 
-                    artifacts=[], 
-                    reason="Max hops reached"
-                )
-                break # Exit loop
-            
-            # Before determining next_stage_name, update context_history
-            self.context_history[current_stage_name] = copy.deepcopy(context) # Includes outputs and visited so far
-
-            # 1. Execute Agent for the current stage
-            self.logger.info(f"Processing Agent for MASTER Stage: {current_stage_name} (Agent ID: {stage.agent_id})")
-            try:
-                if not stage.agent_id:
-                     self.logger.error(f"MASTER Stage '{current_stage_name}' is missing agent_id. Aborting.")
-                     self._state_manager.update_status(
-                         stage=current_stage_idx, 
-                         status=StageStatus.FAILURE.value, 
-                         artifacts=[], 
-                         reason="Master Stage missing agent_id"
-                     )
-                     break # Exit loop
-
-                agent_ref_from_provider = self._agent_provider.get(stage.agent_id)
-                self.logger.debug(f"Agent reference from provider for '{stage.agent_id}': type {type(agent_ref_from_provider)}")
-
-                actual_agent_executor: Any
-                if inspect.iscoroutine(agent_ref_from_provider):
-                    self.logger.debug(f"Agent provider .get() returned a coroutine for '{stage.agent_id}'. Awaiting it to get actual executor.")
-                    actual_agent_executor = await agent_ref_from_provider # Correctly await to get the executor
+            if is_special_previous_output:
+                # This is the special directive to fetch previous outputs by ID
+                if context_path in context_data.get('outputs', {}):
+                    resolved_value = context_data['outputs'][context_path]
+                    self.logger.info(f"Made outputs of previous stage '{context_path}' available as 'resolved_previous_stage_output_data' for stage '{input_name}'.")
                 else:
-                    self.logger.debug(f"Agent provider .get() returned a direct reference for '{stage.agent_id}'. Using it as actual executor.")
-                    actual_agent_executor = agent_ref_from_provider # Assign direct reference
-                
-                self.logger.debug(f"Resolved actual_agent_executor for '{stage.agent_id}': type {type(actual_agent_executor)}")
-
-                if actual_agent_executor is None:
-                    self.logger.error(f"Agent '{stage.agent_id}' resolved to None after provider lookup. Aborting.")
-                    self._state_manager.update_status(
-                        stage=current_stage_idx,
-                        status=StageStatus.FAILURE.value,
-                        artifacts=[],
-                        reason=f"Agent '{stage.agent_id}' resolved to None"
-                    )
-                    break # Exit loop
-                
-                agent_input_context = copy.deepcopy(context)
-                if stage.inputs:
-                    self.logger.debug(f"Merging inputs from MasterStageSpec '{current_stage_name}': {stage.inputs.keys()}")
-                    resolved_master_inputs = {}
-                    for key, value in stage.inputs.items():
-                        if isinstance(value, str) and value.startswith("context."):
-                            path = value.split('.')[1:] 
-                            resolved_value = context 
-                            try:
-                                for p_item in path:
-                                    if isinstance(resolved_value, list) and p_item.isdigit():
-                                        resolved_value = resolved_value[int(p_item)]
-                                    elif isinstance(resolved_value, dict):
-                                        resolved_value = resolved_value[p_item]
-                                    else:
-                                        raise KeyError 
-                            except (KeyError, TypeError, IndexError, ValueError):
-                                self.logger.warning(f"Could not resolve MASTER input path '{value}' for stage '{current_stage_name}'. Using original string value.")
-                                resolved_value = value 
-                            resolved_master_inputs[key] = resolved_value
-                        else:
-                            resolved_master_inputs[key] = value 
-                    agent_input_context.update(resolved_master_inputs)
-
-                self.logger.debug(f"Executing Agent '{stage.agent_id}' (executor type: {type(actual_agent_executor)}) for MASTER Stage '{current_stage_name}' with input context keys: {list(agent_input_context.keys())}")
-                
-                if callable(actual_agent_executor):
-                    if inspect.iscoroutinefunction(actual_agent_executor) or isinstance(actual_agent_executor, AsyncMock):
-                        self.logger.debug(f"Calling async agent/mock '{stage.agent_id}' and awaiting its result.")
-                        output_coroutine = actual_agent_executor(agent_input_context)
-                        stage_output = await output_coroutine
-                    else: 
-                        self.logger.error(f"Synchronous agent '{stage.agent_id}' (type: {type(actual_agent_executor)}) encountered in async loop. This requires special handling (e.g., ThreadPoolExecutor) not yet implemented here.")
-                        raise TypeError(f"Synchronous agent '{stage.agent_id}' (type: {type(actual_agent_executor)}) cannot be directly awaited. Please make it async or use an appropriate executor.")
-                else:
-                    self.logger.error(f"Resolved agent '{stage.agent_id}' (executor type: {type(actual_agent_executor)}) is not callable.")
-                    raise TypeError(f"Agent '{stage.agent_id}' resolved to a non-callable type: {type(actual_agent_executor)}")
-                
-                context['outputs'][current_stage_name] = stage_output
-                self.logger.debug(f"Context after '{current_stage_name}' output update: {context}")
-                
-                self.logger.info(f"Agent '{stage.agent_id}' completed MASTER Stage '{current_stage_name}'.")
-                self._state_manager.update_status(
-                    stage=current_stage_idx, 
-                    status=StageStatus.SUCCESS.value, 
-                    artifacts=[]
-                )
-            
-            except Exception as e:
-                self.logger.exception(f"Agent '{stage.agent_id}' failed during execution of MASTER stage '{current_stage_name}'. Attempting to pause state.")
-                error_details = AgentErrorDetails(
-                    error_type=type(e).__name__,
-                    message=str(e),
-                    traceback=traceback.format_exc(),
-                    agent_id=stage.agent_id,
-                    stage_id=current_stage_name
-                )
-                run_id = self._state_manager.get_or_create_current_run_id()
-                if run_id is None:
-                    self.logger.error("Failed to get run_id from StateManager. Cannot save paused state.")
-                    self._state_manager.update_status(
-                        stage=current_stage_idx, 
-                        status=StageStatus.FAILURE.value, 
-                        artifacts=[], 
-                        reason=f"Agent '{stage.agent_id}' failed (could not get run_id): {type(e).__name__}", 
-                        error_details=error_details
-                    )
-                    break # Exit loop
+                    self.logger.warning(f"Outputs for previous stage ID '{context_path}' (specified in inputs for key '{input_name}') not found in context.outputs for stage '{input_name}'. 'resolved_previous_stage_output_data' will be None.")
+            else:
+                # Resolve the context path against the context_data
+                current_val = context_data
+                valid_path = True
                 try:
-                    paused_details = PausedRunDetails(
-                        run_id=str(run_id),
-                        flow_id=self.pipeline_def.id,
-                        paused_at_stage_id=current_stage_name,
-                        timestamp=datetime.now(timezone.utc),
-                        context_snapshot=context,
-                        error_details=error_details,
-                        reason="Paused due to agent error in master stage"
-                    )
-                    save_success = self._state_manager.save_paused_flow_state(paused_details)
-                    final_reason = f"PAUSED_ON_ERROR{ ' (Save Failed)' if not save_success else '' }: Agent '{stage.agent_id}' failed: {type(e).__name__}"
-                except Exception as pause_create_e:
-                    self.logger.exception(f"Failed to create/save PausedRunDetails: {pause_create_e}")
-                    final_reason = f"Agent '{stage.agent_id}' failed (pause state save failed): {type(e).__name__}"
-                
-                self._state_manager.update_status(
-                    stage=current_stage_idx, 
-                    status=StageStatus.FAILURE.value, 
-                    artifacts=[], 
-                    reason=final_reason, 
-                    error_details=error_details
-                )
-                break # Exit loop
-
-            # 2. Determine Next Stage
-            next_stage_name = None
-            if stage.condition:
-                self.logger.info(f"Evaluating Condition for MASTER Stage: '{current_stage_name}' (Definition: {stage.condition}) after agent execution.")
-                self.logger.debug(f"Context for condition evaluation for stage '{current_stage_name}': {context}")
-                condition_met = self._parse_condition(stage.condition, context) 
-                next_stage_name = stage.next_stage_true if condition_met else stage.next_stage_false
-                self.logger.info(f"Condition result: {condition_met}, next MASTER stage after agent: {next_stage_name}")
-            else:
-                next_stage_name = stage.next_stage
-                self.logger.debug(f"No condition for MASTER stage '{current_stage_name}'. Direct next stage: {next_stage_name}")
-
-            current_stage_name = next_stage_name
+                    for part in context_path.split('.'):
+                        if isinstance(current_val, dict):
+                            current_val = current_val[part]
+                        elif isinstance(current_val, list) and part.isdigit():
+                            current_val = current_val[int(part)]
+                        elif hasattr(current_val, part): # For object attribute access
+                            current_val = getattr(current_val, part)
+                        else:
+                            self.logger.warning(f"Path part '{part}' not found or invalid access in '{context_path}' for key '{input_name}'.")
+                            current_val = context_path # Fallback to literal string
+                            valid_path = False
+                            break
+                    resolved_value = current_val
+                except (KeyError, IndexError, AttributeError, TypeError) as e: # Added TypeError for non-subscriptable/non-getattrable
+                    self.logger.warning(f"Error resolving context path '{context_path}' for input key '{input_name}': {e}. Using literal value.")
+                    resolved_value = context_path # Fallback to literal string
             
-            if not current_stage_name:
-                 self.logger.info(f"MASTER Stage '{stage.agent_id}' completed (or condition led to null). No next stage defined. Orchestration complete.")
-                 break # Exit loop
-            else:
-                 self.logger.debug(f"Proceeding to next MASTER stage: '{current_stage_name}'")
+            resolved_inputs[input_name] = resolved_value
+        return resolved_inputs
 
-        self.logger.info(f"MASTER execution loop finished. Final context keys: {list(context.keys())}, Visited: {context.get('visited')}")
-        return context # Context now implicitly includes 'visited'
+    async def _execute_loop(self, start_stage_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        current_stage_name: Optional[str] = start_stage_name
+        visited_stages: List[str] = []  # For loop detection or logging
+        max_hops = len(self.pipeline_def.stages) + 10 # Safety break for complex loops
 
-    async def run(self, plan: MasterExecutionPlan, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Starts a fresh execution of the Master Flow plan."""
-        self.pipeline_def = plan 
-        flow_name = getattr(self.pipeline_def, 'name', 'No Name') # ADDED getattr for safety
-        self.logger.info(f"AsyncOrchestrator starting MASTER flow: {self.pipeline_def.id} ({flow_name or 'No Name'})")
         if 'outputs' not in context:
             context['outputs'] = {}
-        return await self._execute_loop(start_stage_name=self.pipeline_def.start_stage, context=context)
+        if 'errors' not in context:
+            context['errors'] = {}
+        if 'status_updates' not in context:
+            context['status_updates'] = []
+
+        run_id_for_status = context.get("run_id", str(uuid.uuid4())) # Get or generate run_id
+
+        while current_stage_name and current_stage_name != "FINAL_STEP" and len(visited_stages) < max_hops:
+            if current_stage_name in visited_stages:
+                self.logger.error(f"Loop detected: Stage '{current_stage_name}' visited again. Aborting flow.")
+                context['errors'][current_stage_name] = "Loop detected"
+                context['final_status'] = "ERROR_LOOP_DETECTED"
+                self._update_run_status_with_stage_result( # Restore original call
+                    stage_name=current_stage_name,
+                    stage_number=current_master_stage_spec.number,
+                    status=StageStatus.FAILURE,
+                    reason=f"Loop detected: Stage '{current_stage_name}' visited again. Aborting flow.",
+                    error_details={"short_error": "Loop detected", "details": f"Loop detected: Stage '{current_stage_name}' visited again. Aborting flow."}
+                )
+                break # Stop execution
+            visited_stages.append(current_stage_name)
+
+            current_master_stage_spec = self.pipeline_def.stages.get(current_stage_name)
+
+            if not current_master_stage_spec:
+                self.logger.error(f"Stage '{current_stage_name}' not found in MasterExecutionPlan. Aborting.")
+                context['errors'][current_stage_name] = "Stage not found in plan"
+                context['final_status'] = "ERROR_STAGE_NOT_FOUND"
+                break
+            
+            # Log current stage execution attempt
+            self.logger.info(f"Orchestrator: Attempting to execute stage: {current_stage_name} (Number: {current_master_stage_spec.number})")
+            self.logger.debug(f"Orchestrator._execute_loop: About to access self.run_status_updates. Type: {type(getattr(self, 'run_status_updates', None))}, Exists: {hasattr(self, 'run_status_updates')}")
+            # Record RUNNING status for this stage for this specific run
+            self.run_status_updates.append({
+                "stage_name": current_stage_name,
+                "stage_number": current_master_stage_spec.number,
+                "status": StageStatus.RUNNING.value,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+
+            self.logger.info(f"Executing stage: {current_stage_name} (Agent: {current_master_stage_spec.agent_id}) for run_id: {run_id_for_status}")
+            context['current_stage_name'] = current_stage_name # Make current stage name available in context
+
+            # --- Prepare Agent Inputs from MasterStageSpec --- 
+            # current_agent_inputs: Dict[str, Any] = {} # Old way
+            # if current_master_stage_spec.inputs: # Old way
+            # current_agent_inputs = current_master_stage_spec.inputs.copy() # Old way
+            
+            # Start with a fresh copy of the main orchestrator context for this stage
+            # This context already contains 'original_request' from the run() method.
+            base_context_for_stage_resolution = copy.deepcopy(context)
+
+            # Special handling for "previous_stage_outputs": "<stage_id>"
+            # This makes the *entire output object* of the previous stage available 
+            # under 'resolved_previous_stage_output_data' in the context used for path resolution.
+            resolved_prev_outputs_data = None
+            raw_inputs_spec = current_master_stage_spec.inputs if current_master_stage_spec.inputs else {}
+            
+            prev_stage_id_to_fetch_key = "previous_stage_outputs"
+            if prev_stage_id_to_fetch_key in raw_inputs_spec:
+                prev_stage_id_value = raw_inputs_spec[prev_stage_id_to_fetch_key]
+                if isinstance(prev_stage_id_value, str) and not prev_stage_id_value.startswith("context."):
+                    # This is the special directive to fetch previous outputs by ID
+                    if prev_stage_id_value in context.get('outputs', {}):
+                        resolved_prev_outputs_data = context['outputs'][prev_stage_id_value]
+                        self.logger.info(f"Made outputs of previous stage '{prev_stage_id_value}' available as 'resolved_previous_stage_output_data' for stage '{current_stage_name}'.")
+                    else:
+                        self.logger.warning(f"Outputs for previous stage ID '{prev_stage_id_value}' (specified in inputs for key '{prev_stage_id_to_fetch_key}') not found in context.outputs for stage '{current_stage_name}'. 'resolved_previous_stage_output_data' will be None.")
+                elif isinstance(prev_stage_id_value, str) and prev_stage_id_value.startswith("context."):
+                    # If it's a context path, _resolve_input_values will handle it.
+                    # No special injection into 'resolved_previous_stage_output_data'.
+                    pass
+                else:
+                    self.logger.warning(f"Value for '{prev_stage_id_to_fetch_key}' in stage '{current_stage_name}' inputs is not a string ID or context path: {prev_stage_id_value}. It will be treated as a literal if not a path by _resolve_input_values.")
+
+            if resolved_prev_outputs_data is not None:
+                base_context_for_stage_resolution['resolved_previous_stage_output_data'] = resolved_prev_outputs_data
+            
+            # Resolve all inputs specified in MasterStageSpec.inputs using path resolution
+            # against the base_context_for_stage_resolution (which now includes original_request and resolved_previous_stage_output_data)
+            stage_specific_resolved_inputs = self._resolve_input_values(
+                raw_inputs_spec, 
+                base_context_for_stage_resolution 
+            )
+            
+            # Prepare final context for the agent: 
+            # Start with a clean copy of the base context that was used for resolution 
+            # (so agent has access to original_request, resolved_previous_stage_output_data etc.)
+            # Then, update/overlay it with the specifically resolved inputs for the current stage.
+            agent_call_context = copy.deepcopy(base_context_for_stage_resolution) 
+            agent_call_context.update(stage_specific_resolved_inputs)
+            
+            # Clean up: remove the orchestrator's special 'previous_stage_outputs' key 
+            # from the agent's direct inputs if its value was a string ID (and not a context path),
+            # as its purpose was fulfilled by populating 'resolved_previous_stage_output_data'.
+            # If it was a "context.path", it would have been resolved by _resolve_input_values already.
+            if isinstance(raw_inputs_spec.get(prev_stage_id_to_fetch_key), str) and \
+               not raw_inputs_spec.get(prev_stage_id_to_fetch_key, "").startswith("context."):
+                agent_call_context.pop(prev_stage_id_to_fetch_key, None)
+            
+            # old: stage_context_for_agent = current_agent_inputs 
+            # old: agent_call_context = copy.deepcopy(stage_context_for_agent)
+
+            stage_status_to_report = StageStatus.RUNNING
+            agent_error_details: Optional[AgentErrorDetails] = None
+            agent_output_data = None # Standardized variable name
+
+            try:
+                agent_id = current_master_stage_spec.agent_id
+                agent_callable = await self.agent_provider.get(agent_id)
+
+                self.logger.debug(f"Orchestrator: Retrieved agent_callable: {agent_callable} (type: {type(agent_callable)}) for agent ID: {agent_id}")
+                # Intensive debugging for AsyncMock type check
+                # Try importing AsyncMock locally to see if it resolves type comparison issues
+                callable_type_name = type(agent_callable).__name__
+                # is_async_mock_by_name = callable_type_name == 'AsyncMock' # Old check
+                is_async_mock_by_instance_check = isinstance(agent_callable, AsyncMock)
+                self.logger.debug(f"Orchestrator: callable_type_name='{callable_type_name}', is_async_mock_by_instance_check={is_async_mock_by_instance_check} (using module-level AsyncMock)")
+
+                if is_async_mock_by_instance_check:
+                    self.logger.debug(f"Agent {agent_id} is AsyncMock (by module-level isinstance). Trying to call and await.")
+                    try:
+                        agent_output_data = await agent_callable(agent_call_context)
+                        self.logger.debug(f"AsyncMock {agent_id} call awaited successfully.")
+                    except Exception as am_exc:
+                        self.logger.error(f"Exception directly from awaiting AsyncMock {agent_id}: {am_exc}", exc_info=True)
+                        raise # Re-raise to be caught by the outer try-except
+                elif inspect.iscoroutinefunction(agent_callable): # Handles 'async def func' as a function object
+                    self.logger.debug(f"Agent {agent_id} is coroutine function. Calling and awaiting.")
+                    agent_output_data = await agent_callable(agent_call_context)
+                elif callable(agent_callable) and inspect.iscoroutinefunction(getattr(agent_callable, '__call__', None)): # Handles instance with 'async def __call__'
+                    self.logger.debug(f"Agent {agent_id} is callable with async __call__. Calling and awaiting.")
+                    agent_output_data = await agent_callable(agent_call_context)
+                # Removed the general awaitable/iscoroutine check that was here.
+                # If it's not an AsyncMock or a known async callable type, assume sync.
+                else:
+                    # For sync agents, run in a thread pool to avoid blocking orchestrator
+                    self.logger.debug(f"Agent {agent_id} appears to be synchronous. Running in thread. Type: {type(agent_callable)}")
+                    agent_output_data = await asyncio.to_thread(agent_callable, agent_call_context)
+    
+                context['outputs'][current_stage_name] = agent_output_data if agent_output_data is not None else {}
+                stage_status_to_report = StageStatus.SUCCESS # Use SUCCESS enum member
+                self.logger.info(f"Executing agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' (Number: {current_master_stage_spec.number}) with inputs: {agent_call_context}")
+                
+                # Extract artifact paths from agent output if provided using the conventional key
+                generated_artifact_paths = []
+                if isinstance(agent_output_data, dict):
+                    # Standardized key for artifact paths list
+                    generated_artifact_paths = agent_output_data.get("_mcp_generated_artifacts_relative_paths_", [])
+                    if not isinstance(generated_artifact_paths, list):
+                        self.logger.warning(
+                            f"Agent '{current_master_stage_spec.agent_id}' output key '_mcp_generated_artifacts_relative_paths_' for stage '{current_stage_name}' was not a list (got {type(generated_artifact_paths)}). Treating as no artifacts."
+                        )
+                        generated_artifact_paths = []
+                    else:
+                        # Ensure all paths in the list are strings
+                        valid_paths = []
+                        for p_idx, p_val in enumerate(generated_artifact_paths):
+                            if isinstance(p_val, str):
+                                valid_paths.append(p_val)
+                            else:
+                                self.logger.warning(
+                                    f"Agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' provided a non-string path in '_mcp_generated_artifacts_relative_paths_' at index {p_idx} (type: {type(p_val)}). Skipping this path."
+                                )
+                        generated_artifact_paths = valid_paths
+                
+                self.logger.info(f"Agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' (Number: {current_master_stage_spec.number}) completed. Reported {len(generated_artifact_paths)} artifacts.")
+                # Update status to SUCCESS (formerly PASS)
+                self.state_manager.update_status(
+                    pipeline_run_id=self.current_pipeline_run_id,
+                    stage_name=current_stage_name,
+                    stage_number=current_master_stage_spec.number,
+                    status=StageStatus.SUCCESS.value,
+                    reason="Stage completed successfully",
+                    error_info=None,
+                    artifacts=generated_artifact_paths # Pass extracted/validated paths
+                )
+                self.run_status_updates.append({
+                    "stage_id": current_stage_name,
+                    "stage_number": current_master_stage_spec.number,
+                    "status": StageStatus.SUCCESS.value, 
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "outputs_summary": str(agent_output_data)[:200], # Optional summary
+                    "num_artifacts_reported": len(generated_artifact_paths)
+                })
+
+            except KeyError as e:
+                self.logger.error(f"Agent '{agent_id}' not found for stage '{current_stage_name}': {e}", exc_info=True)
+                context['errors'][current_stage_name] = f"Agent '{agent_id}' not found: {e}"
+                stage_status_to_report = StageStatus.FAILURE
+                agent_error_details = AgentErrorDetails(error_type="AgentNotFound", message=str(e))
+            except Exception as e:
+                self.logger.error(f"Error executing agent for stage '{current_stage_name}': {e}", exc_info=True)
+                context['errors'][current_stage_name] = f"Agent execution error: {e}"
+                agent_output_data = {"error": str(e), "traceback": traceback.format_exc()}
+                context['outputs'][current_stage_name] = agent_output_data # Store error in output
+                stage_status_to_report = StageStatus.FAILURE
+                agent_error_details = AgentErrorDetails(error_type="AgentExecutionError", message=str(e), traceback=traceback.format_exc())
+            
+            # --- StateManager Update --- (Optional, if MasterExecutionPlan needs live status updates)
+            # if self.state_manager and hasattr(self.state_manager, 'update_master_plan_stage_status'):
+            #     await asyncio.to_thread( # Assuming update_master_plan_stage_status might be sync
+            #         self.state_manager.update_master_plan_stage_status, 
+            #         plan_id=self.pipeline_def.id, 
+            #         stage_id=current_stage_name, 
+            #         status=stage_status_to_report,
+            #         outputs=agent_output, # Could be large, consider summarizing
+            #         error_details=agent_error_details
+            #     )
+            context['status_updates'].append({
+                "stage_id": current_stage_name,
+                "status": stage_status_to_report.value,
+                "agent_id": current_master_stage_spec.agent_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "outputs_summary": str(agent_output_data)[:100] if agent_output_data else None, # Summary
+                "error": agent_error_details.model_dump() if agent_error_details else None
+            })
+
+            if stage_status_to_report == StageStatus.FAILURE:
+                self.logger.warning(f"Stage '{current_stage_name}' failed. Determining next step based on error handling strategy.")
+                # Default behavior: halt plan execution on first failure
+                self.logger.error(f"Stage '{current_stage_name}' failed. Halting MasterExecutionPlan execution.")
+                context['final_status'] = f"ERROR_STAGE_FAILED: {current_stage_name}"
+                break # Stop execution
+
+            # Determine next stage based on MasterStageSpec's simple next_stage link
+            next_stage_name_from_spec = current_master_stage_spec.next_stage
+            if not next_stage_name_from_spec or next_stage_name_from_spec == "FINAL_STEP":
+                self.logger.info(f"Reached end of plan or FINAL_STEP at stage '{current_stage_name}'.")
+                context['final_status'] = "COMPLETED"
+                current_stage_name = None # End loop
+            elif next_stage_name_from_spec not in self.pipeline_def.stages:
+                self.logger.error(f"Next stage '{next_stage_name_from_spec}' from stage '{current_stage_name}' not found in plan. Aborting.")
+                context['errors'][current_stage_name] = f"Next stage '{next_stage_name_from_spec}' invalid."
+                context['final_status'] = "ERROR_INVALID_NEXT_STAGE"
+                current_stage_name = None # End loop
+            else:
+                current_stage_name = next_stage_name_from_spec
+        
+        if not context.get('final_status'): # If loop exited due to max_hops
+            if len(visited_stages) >= max_hops:
+                self.logger.warning(f"MasterExecutionPlan execution stopped due to max hops reached ({max_hops}).")
+                context['final_status'] = "ERROR_MAX_HOPS_REACHED"
+            elif not current_stage_name: # Should be covered by FINAL_STEP or completion logic
+                 self.logger.info("MasterExecutionPlan completed normally (current_stage_name is None).")
+                 if "final_status" not in context: context['final_status'] = "COMPLETED_UNKNOWN_EXIT" # Should not happen
+
+        return context
+
+    async def run(self, pipeline_def: Union[PipelineDefinition, MasterExecutionPlan], initial_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Runs the given MasterExecutionPlan.
+        Args:
+            plan: The MasterExecutionPlan to execute.
+            context: Initial context for the execution.
+        Returns:
+            The final context after execution, including outputs and errors.
+        """
+        self.logger.info(f"AsyncOrchestrator starting execution of MasterExecutionPlan: {pipeline_def.id}")
+        if not pipeline_def.start_stage:
+            self.logger.error(f"MasterExecutionPlan {pipeline_def.id} has no start_stage defined. Cannot execute.")
+            return {"error": "No start_stage defined in plan", "outputs": {}, "final_status": "ERROR_NO_START_STAGE"}
+
+        if self.pipeline_def.id != pipeline_def.id:
+             self.logger.warning(f"Running a new plan {pipeline_def.id} on an orchestrator initialized with {self.pipeline_def.id}. Re-assigning internal plan.")
+             self.pipeline_def = pipeline_def
+
+        if "run_id" not in initial_context:
+            initial_context["run_id"] = f"mep_run_{pipeline_def.id}_{str(uuid.uuid4())[:8]}"
+
+        self.current_stage_outputs: Dict[str, Any] = {}
+        self.current_stage_errors: Dict[str, Any] = {}
+        self.visited_stages_in_current_run: List[str] = []
+        self.run_status_updates: List[Dict[str, Any]] = []
+        self.logger.debug(f"Orchestrator.run: Initialized self.run_status_updates. Type: {type(self.run_status_updates)}, Exists: {hasattr(self, 'run_status_updates')}")
+
+        initial_context.setdefault('outputs', {})
+        initial_context.setdefault('errors', {})
+        initial_context.setdefault('status_updates', [])
+        initial_context.setdefault('visited', [])
+
+        run_id_for_status = str(self.state_manager.get_or_create_current_run_id() or uuid.uuid4())
+        initial_context['run_id'] = run_id_for_status 
+        initial_context['flow_id'] = pipeline_def.id 
+        self.current_pipeline_run_id = run_id_for_status # Ensure this is set on the instance
+        
+        if hasattr(pipeline_def, 'original_request') and pipeline_def.original_request is not None:
+            initial_context['original_request'] = pipeline_def.original_request
+        else:
+            self.logger.warning(f"MasterExecutionPlan '{pipeline_def.id}' does not have an 'original_request' attribute or it's None. 'original_request' will be None in context.")
+            initial_context['original_request'] = None 
+            
+        # Determine start stage
+        start_stage_name = pipeline_def.start_stage
+
+        final_context = await self._execute_loop(start_stage_name, initial_context)
+        self.logger.info(f"AsyncOrchestrator finished execution of MasterExecutionPlan: {pipeline_def.id}. Final status: {final_context.get('final_status')}")
+        return final_context
 
     async def resume_flow(
         self,
@@ -640,7 +793,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         self.logger.info(f"Attempting to resume MASTER flow run_id: {run_id} with action: {action}")
 
         try:
-            paused_details = self._state_manager.load_paused_flow_state(run_id)
+            paused_details = self.state_manager.load_paused_flow_state(run_id)
             if not paused_details:
                 self.logger.error(f"No paused run found for run_id: {run_id}")
                 return {"error": f"No paused run found for run_id: {run_id}"}
@@ -702,7 +855,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             else:
                 self.logger.info(f"Skipped MASTER stage '{paused_details.paused_at_stage_id}' was the last stage or led to no next stage. Master Flow considered complete.")
                 try:
-                    delete_success = self._state_manager.delete_paused_flow_state(run_id)
+                    delete_success = self.state_manager.delete_paused_flow_state(run_id)
                     if not delete_success:
                         self.logger.warning(f"Failed to delete paused state file for run_id {run_id} after determining skip leads to completion.")
                 except Exception as del_err:
@@ -721,7 +874,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         elif action == "abort":
             self.logger.info(f"[Resume] Action: Abort MASTER flow for run_id={run_id}")
             try:
-                delete_success = self._state_manager.delete_paused_flow_state(run_id)
+                delete_success = self.state_manager.delete_paused_flow_state(run_id)
                 if not delete_success:
                      self.logger.warning(f"Failed to delete paused state file for run_id {run_id} during abort action.")
             except Exception as del_err:
@@ -736,7 +889,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         
         if start_stage_name:
             try:
-                clear_success = self._state_manager.delete_paused_flow_state(run_id)
+                clear_success = self.state_manager.delete_paused_flow_state(run_id)
                 if not clear_success:
                     self.logger.warning(f"Failed to clear paused state for run_id={run_id}. Proceeding with execution.")
             except Exception as e:
@@ -749,6 +902,50 @@ class AsyncOrchestrator(BaseOrchestrator):
         else:
             self.logger.error(f"Resume logic failed to determine a start stage for action '{action}' or did not handle flow completion correctly.")
             return {"error": "Internal error: Failed to determine resume start stage or handle flow completion."}
+
+    def _update_run_status_with_stage_result(
+        self,
+        stage_name: str,
+        stage_number: Optional[float],
+        status: StageStatus,
+        artifacts: Optional[List[str]] = None,
+        error_details: Optional[Dict[str, Any]] = None,
+        reason: Optional[str] = None
+    ):
+        """Helper to update both the in-memory run_status_updates and the StateManager."""
+        timestamp = datetime.now(timezone.utc).isoformat()
+        status_entry = {
+            "stage_name": stage_name,
+            "stage_number": stage_number,
+            "status": status.value,
+            "reason": reason,
+            "artifacts": artifacts or [],
+            "error_details": error_details,
+            "timestamp": timestamp
+        }
+        self.run_status_updates.append(status_entry)
+
+        # Persist to StateManager if available
+        if self.state_manager:
+            try:
+                # ADD DEBUG LOGGING BEFORE THIS CALL
+                self.logger.debug(
+                    f"[ORCH_DEBUG] Calling state_manager.update_status. Args: "
+                    f"pipeline_run_id={self.current_pipeline_run_id}, "
+                    f"stage_name='{stage_name}', stage_number={stage_number}, status='{status.value}', "
+                    f"reason='{reason}', error_info={error_details}, artifacts={artifacts or []}"
+                )
+                self.state_manager.update_status(
+                    pipeline_run_id=self.current_pipeline_run_id,
+                    stage_name=stage_name,
+                    stage_number=stage_number,
+                    status=status.value,
+                    reason=reason,
+                    error_info=error_details,
+                    artifacts=artifacts or []
+                )
+            except Exception as e:
+                self.logger.error(f"Error updating state manager: {e}")
 
 
 # ---------------------------------------------------------------------------

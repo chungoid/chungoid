@@ -8,4 +8,5 @@ class StageStatus(Enum):
 
     SUCCESS = "PASS"
     FAILURE = "FAIL"
+    RUNNING = "RUNNING" # Added for orchestrator to indicate active stage
     # Could add PENDING, SKIPPED, etc. in the future 

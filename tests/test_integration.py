@@ -10,15 +10,24 @@ import logging
 import json
 import yaml
 import pytest
+import uuid
+import copy
 
 # <<< MOVE CHUNGOIDENGINE IMPORT OUTSIDE TRY/EXCEPT >>>
 from chungoid.engine import ChungoidEngine
+from chungoid.utils.llm_provider import MockLLMProvider
+from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider, DictAgentProvider, AgentCallable
+from chungoid.runtime.agents.master_planner_agent import master_planner_agent_card, PROMPTS_DIR as MP_PROMPTS_DIR
+from chungoid.utils import config_loader
 
 # Try importing other necessary components
 try:
     from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
     from chungoid.schemas.common_enums import StageStatus
     from chungoid.utils import chroma_utils
+    from chungoid.schemas.user_goal_schemas import UserGoalRequest
+    from chungoid.schemas.master_flow import MasterExecutionPlan
+    from chungoid.utils.agent_registry import AgentCard, AGENT_REGISTRY
 except ImportError as e:
     print(f"Failed to import necessary components: {e}")
     pass
@@ -29,16 +38,87 @@ class TestIntegration(unittest.TestCase):
     STATUS_FILE = CHUNGOID_DIR / "project_status.json"
     logger = logging.getLogger(__name__)
 
+    @classmethod
+    def setUpClass(cls):
+        cls.test_project_name = "test_integration_project"
+        cls.base_project_dir = Path(__file__).parent / "test_projects"
+        cls.project_dir = cls.base_project_dir / cls.test_project_name
+        
+        # Initialize providers for use in tests
+        cls.llm_provider = MockLLMProvider() # Central LLM provider
+        
+        # Agent provider setup - using DictAgentProvider for controlled test environment
+        # cls.agent_registry_instance = DictAgentProvider({}) # Store cards here # <<< REMOVE
+        # cls.agent_registry_instance.agents[master_planner_agent_card.agent_id] = master_planner_agent_card # Register master planner # <<< REMOVE
+        # If MasterPlannerAgent needs to call other agents via its agent_provider, they also need to be registered here.
+        # For now, assuming its internal agent selection logic might be mocked or uses hardcoded fallbacks if necessary during planning.
+
+        # If the engine is created per-test, these will be passed. 
+        # If there's a cls.engine, it needs to be initialized with these.
+        # For this test, we'll instantiate engine directly in the test method.
+
+        if cls.project_dir.exists():
+            shutil.rmtree(cls.project_dir)
+        cls.project_dir.mkdir(parents=True)
+
+        # Override config to use local ChromaDB for this test class
+        # cls.original_config = get_config() # Not needed if we store/restore module var
+        cls.original_config_module_var = config_loader._config # Store current module-level config
+        
+        current_actual_config = config_loader.get_config() # Ensure it's loaded if it was None
+        test_config_override = copy.deepcopy(current_actual_config) 
+        # Modify test_config_override as needed for tests, e.g.:
+        # test_config_override["chromadb"]["mode"] = "persistent"
+        # test_config_override["chromadb"]["persist_path"] = str(cls.project_dir / ".test_integration_chroma_db")
+
+        config_loader._config = test_config_override # Directly set the override
+
+        # Ensure a unique path for ChromaDB for this test run if needed
+        # test_config_override.chromadb_path = str(cls.project_dir / ".test_chroma_db") 
+        # For integration, we often want it to behave as close to prod as possible,
+        # so using the default from config or StateManager's logic might be fine if isolated.
+        # Let's assume StateManager handles ChromaDB pathing correctly within project_dir.
+        # set_config_override(test_config_override) # Removed as set_config_override doesn't exist
+
+        # Initialize a basic ChungoidEngine for setup tasks if needed, or do it in tests
+        # cls.engine = ChungoidEngine(str(cls.project_dir), cls.llm_provider, cls.agent_registry_instance)
+        # cls.engine.execute_mcp_tool("initialize_project", {})
+
     def setUp(self):
-        if self.TEST_DIR.exists():
-            shutil.rmtree(self.TEST_DIR)
-        self.TEST_DIR.mkdir()
-        # Ensure parent of TEST_DIR is added to sys.path if needed for imports during engine init?
-        # Typically pytest handles this, but double-check if engine init fails.
+        """Ensure each test starts with a clean, initialized project state if needed."""
+        # Re-initialize engine for each test to ensure isolation of state and provider mocks
+        # This is more robust than a class-level engine if tests modify LLM/agent provider state.
+        self.current_llm_provider = MockLLMProvider() # Fresh for each test
+
+        self.current_agent_provider = DictAgentProvider({}) # Fresh DictAgentProvider
+        # self.current_agent_provider.agents[master_planner_agent_card.agent_id] = master_planner_agent_card # <<< REMOVE THIS LINE
+        
+        # Project directory for this specific test method
+        self.TEST_DIR = self.base_project_dir / self.test_project_name / self._testMethodName
+        
+        self.engine = ChungoidEngine(
+            str(self.project_dir), 
+            llm_provider=self.current_llm_provider, 
+            agent_provider=self.current_agent_provider
+        )
+        self.engine.execute_mcp_tool("initialize_project", {}) # Initialize project for each test
+        self.engine.state_manager._pending_reflection_text = None # Clear pending reflections
 
     def tearDown(self):
         if self.TEST_DIR.exists():
             shutil.rmtree(self.TEST_DIR)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Restore the original config_loader._config that was cached at the start of setUpClass
+        if hasattr(cls, 'original_config_module_var'):
+            config_loader._config = cls.original_config_module_var
+        
+        # Clean up project directory created by setUpClass
+        if hasattr(cls, 'project_dir') and cls.project_dir.exists():
+            shutil.rmtree(cls.project_dir)
+        
+        # If there are other class-level cleanups, add them here.
 
     def test_01_initialize_and_get_status(self):
         """Test initializing a project and then getting its status via engine."""
@@ -701,6 +781,160 @@ class TestIntegration(unittest.TestCase):
             print("DEBUG TEST: test_16_prepare_next_stage completed successfully.")
 
         asyncio.run(run_async_test())
+
+    def test_30_create_master_plan_tool(self):
+        """Test the create_master_plan tool via ChungoidEngine."""
+        user_goal_id = f"test_goal_{uuid.uuid4()}"
+        user_goal_request = UserGoalRequest(
+            goal_id=user_goal_id,
+            goal_description="Develop a weather app for Wonderland.",
+            target_platform="mobile",
+            key_constraints={"timeline": "short", "magic_level": "low"}
+        )
+
+        # --- Mock LLM Responses for MasterPlannerAgent steps ---
+        # 1. Decomposition Prompt & Response
+        # Construct path to prompts relative to this test file for robustness
+        current_test_file_path = Path(__file__).resolve()
+        # chungoid-core/tests/test_integration.py -> chungoid-core/tests/ -> chungoid-core/
+        project_root_from_test = current_test_file_path.parent.parent 
+        test_MP_PROMPTS_DIR = project_root_from_test / "server_prompts" / "master_planner"
+
+        decomposition_prompt_template = (test_MP_PROMPTS_DIR / "decomposition_prompt.txt").read_text()
+        expected_decomposition_prompt = decomposition_prompt_template.format(
+            goal_description=user_goal_request.goal_description,
+            target_platform=user_goal_request.target_platform,
+            key_constraints=str(user_goal_request.key_constraints)
+        ).strip()
+        mock_decomposed_tasks_str = "1. Design UI for Alice\\n2. Implement Cheshire Cat API integration\\n3. Test with Mad Hatter"
+        self.current_llm_provider.predefined_responses[expected_decomposition_prompt] = mock_decomposed_tasks_str
+
+        # 2. Agent Selection Prompts & Responses (for each decomposed task)
+        agent_selection_prompt_template = (test_MP_PROMPTS_DIR / "agent_selection_prompt.txt").read_text()
+        decomposed_tasks_list = ["Design UI for Alice", "Implement Cheshire Cat API integration", "Test with Mad Hatter"]
+        selected_agent_ids_for_tasks = ["ui_designer_wonderland", "api_cat_specialist", "mad_tester_general"]
+        
+        # This is the hardcoded agent details string from MasterPlannerAgent's fallback logic
+        candidate_details_fallback = """- Agent ID: generic_task_agent
+  Description: A generic agent capable of performing various tasks.
+  Capabilities: Can execute general instructions.
+  Expected Input Summary: text prompt
+  Expected Output Summary: text result
+- Agent ID: file_writer_agent
+  Description: Writes content to a file.
+  Capabilities: File I/O, content creation.
+  Expected Input Summary: file_path, content
+  Expected Output Summary: status_message"""
+
+        for i, task_desc in enumerate(decomposed_tasks_list):
+            expected_agent_selection_prompt = agent_selection_prompt_template.format(
+                original_user_goal_description=user_goal_request.goal_description,
+                current_decomposed_task_description=task_desc,
+                candidate_agents_details_formatted=candidate_details_fallback 
+            ).strip()
+            mock_selection_response = json.dumps({
+                "selected_agent_ids": [selected_agent_ids_for_tasks[i]],
+                "justification": f"Agent {selected_agent_ids_for_tasks[i]} selected for {task_desc} due to expertise."
+            })
+            self.current_llm_provider.predefined_responses[expected_agent_selection_prompt] = mock_selection_response
+
+        # 3. Sequencing Prompt & Response
+        sequencing_prompt_template = (test_MP_PROMPTS_DIR / "sequencing_prompt.txt").read_text()
+        # Construct tasks_for_prompt based on selected agents
+        # MasterPlannerAgent assigns temporary IDs like T0, T1, T2 before calling _sequence_tasks
+        tasks_for_sequencing_prompt_list = []
+        for i, task_desc in enumerate(decomposed_tasks_list):
+            tasks_for_sequencing_prompt_list.append(
+                f"T{i}: {task_desc} (Assigned Agent: {selected_agent_ids_for_tasks[i]})"
+            )
+        tasks_for_sequencing_prompt_str = "\\n".join(tasks_for_sequencing_prompt_list)
+
+        expected_sequencing_prompt = sequencing_prompt_template.format(
+            goal_description=user_goal_request.goal_description,
+            tasks_to_sequence=tasks_for_sequencing_prompt_str
+        ).strip()
+        # LLM returns them in order T0, T1, T2 for this test
+        mock_sequenced_ids_str = "T0,T1,T2"
+        self.current_llm_provider.predefined_responses[expected_sequencing_prompt] = mock_sequenced_ids_str
+
+        # --- Mock state_manager.save_master_execution_plan ---
+        with patch.object(self.engine.state_manager, 'save_master_execution_plan', return_value=True) as mock_save_plan:
+            # --- Execute Tool ---
+            # The tool returns the plan as a dict because it's JSON serialized for MCP
+            tool_output_dict = self.engine.execute_mcp_tool(
+                "create_master_plan", 
+                {"user_goal": user_goal_request.model_dump()}
+            )
+
+            # --- Assertions ---
+            self.assertIsInstance(tool_output_dict, dict)
+            # The tool output is the MCP response structure, content is under "content"[0]["text"] as JSON string or the direct dict
+            # Based on current engine.py, it returns plan.model_dump() directly if handler_sync doesn't wrap it.
+            # The _create_master_plan_sync_wrapper returns plan.model_dump(), so tool_output_dict IS the plan dict.
+
+            self.assertNotIn("error", tool_output_dict, f"Tool execution failed: {tool_output_dict.get('error')}")
+            
+            # Extract the actual plan JSON string from the MCP response structure
+            self.assertIn("content", tool_output_dict)
+            self.assertIsInstance(tool_output_dict["content"], list)
+            self.assertGreater(len(tool_output_dict["content"]), 0)
+            self.assertIn("text", tool_output_dict["content"][0])
+            plan_json_string = tool_output_dict["content"][0]["text"]
+            plan_dict_from_tool = json.loads(plan_json_string)
+
+            # Parse back to MasterExecutionPlan
+            try:
+                generated_plan = MasterExecutionPlan(**plan_dict_from_tool)
+            except Exception as e:
+                self.fail(f"Failed to parse tool output into MasterExecutionPlan: {e}\nOutput: {tool_output_dict}")
+
+            self.assertTrue(generated_plan.id.startswith(f"mep_{user_goal_id}"))
+            # MasterPlannerAgent._format_plan uses goal_description[:50]
+            expected_plan_name = f"Plan for: {user_goal_request.goal_description[:50]}..."
+            self.assertEqual(generated_plan.name, expected_plan_name)
+            self.assertEqual(generated_plan.original_request, user_goal_request)
+            self.assertEqual(len(generated_plan.stages), 3)
+            
+            # MasterPlannerAgent uses temp_task_id (T0, T1, T2) as stage_id in the plan
+            self.assertEqual(generated_plan.start_stage, "T0")
+
+            # Stage T0 (Design UI for Alice)
+            stage_t0 = generated_plan.stages.get("T0")
+            self.assertIsNotNone(stage_t0)
+            self.assertEqual(stage_t0.name, f"Stage 0: {decomposed_tasks_list[0][:100]}")
+            self.assertEqual(stage_t0.agent_id, selected_agent_ids_for_tasks[0])
+            self.assertEqual(stage_t0.number, 0.0)
+            self.assertEqual(stage_t0.next_stage, "T1")
+            self.assertIn("user_goal_description", stage_t0.inputs)
+            self.assertEqual(stage_t0.inputs["task_description"], decomposed_tasks_list[0])
+            self.assertNotIn("previous_stage_outputs", stage_t0.inputs)
+
+            # Stage T1 (Implement Cheshire Cat API integration)
+            stage_t1 = generated_plan.stages.get("T1")
+            self.assertIsNotNone(stage_t1)
+            self.assertEqual(stage_t1.name, f"Stage 1: {decomposed_tasks_list[1][:100]}")
+            self.assertEqual(stage_t1.agent_id, selected_agent_ids_for_tasks[1])
+            self.assertEqual(stage_t1.number, 1.0)
+            self.assertEqual(stage_t1.next_stage, "T2")
+            self.assertEqual(stage_t1.inputs["task_description"], decomposed_tasks_list[1])
+            self.assertEqual(stage_t1.inputs.get("previous_stage_outputs"), "T0")
+
+            # Stage T2 (Test with Mad Hatter)
+            stage_t2 = generated_plan.stages.get("T2")
+            self.assertIsNotNone(stage_t2)
+            self.assertEqual(stage_t2.name, f"Stage 2: {decomposed_tasks_list[2][:100]}")
+            self.assertEqual(stage_t2.agent_id, selected_agent_ids_for_tasks[2])
+            self.assertEqual(stage_t2.number, 2.0)
+            self.assertIsNone(stage_t2.next_stage) # next_stage is None for the final step
+            self.assertEqual(stage_t2.inputs.get("previous_stage_outputs"), "T1")
+
+            # Check if save was called with a MasterExecutionPlan object
+            mock_save_plan.assert_called_once()
+            args, _ = mock_save_plan.call_args
+            saved_plan_arg = args[0]
+            self.assertIsInstance(saved_plan_arg, MasterExecutionPlan)
+            self.assertEqual(saved_plan_arg.id, generated_plan.id) # Verify it's the same plan
+            self.assertEqual(saved_plan_arg.original_request.goal_id, user_goal_id)
 
 
 # This allows running the tests from the command line
