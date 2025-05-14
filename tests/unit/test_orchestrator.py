@@ -282,16 +282,29 @@ class TestAsyncOrchestrator:
 
         # Check that the error logged is for loop detection
         # The failure occurs when trying to re-execute stage_loop1 (number 1.0)
-        
-        mock_state_manager.update_status.assert_any_call(
-            pipeline_run_id="0", 
-            stage_name="stage_loop1",
-            stage_number=1.0, 
-            status=StageStatus.FAILURE.value,
-            artifacts=[],
-            reason="Loop detected: Stage 'stage_loop1' visited again. Aborting flow.",
-            error_info=ANY # Use ANY for error_info for now
-        )
+
+        # Assert that update_status was called 3 times (2 SUCCESS, 1 FAILURE)
+        assert mock_state_manager.update_status.call_count == 3
+
+        # Get the last call arguments
+        # call_args_list contains Call objects. call_args is a deprecated alias for call_args_list[0].
+        # Each element is a Call object which is like a tuple: first element is positional args (a tuple), second is keyword args (a dict).
+        # Since update_status is called with keyword arguments, we inspect the kwargs of the last call.
+        last_call_kwargs = mock_state_manager.update_status.call_args_list[-1].kwargs
+
+        expected_error_info_dict = {
+            "short_error": "Loop detected",
+            "details": "Loop detected: Stage 'stage_loop1' visited again. Aborting flow."
+        }
+
+        assert last_call_kwargs.get("pipeline_run_id") == "0"
+        assert last_call_kwargs.get("stage_name") == "stage_loop1"
+        assert last_call_kwargs.get("stage_number") == 1.0
+        assert last_call_kwargs.get("status") == StageStatus.FAILURE.value
+        assert last_call_kwargs.get("artifacts") == []
+        assert last_call_kwargs.get("reason") == "Loop detected: Stage 'stage_loop1' visited again. Aborting flow."
+        assert last_call_kwargs.get("error_info") == expected_error_info_dict
+
         mock_state_manager.save_paused_flow_state.assert_not_called()
 
         # Print the call list for debugging
