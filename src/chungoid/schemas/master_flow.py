@@ -20,6 +20,20 @@ class MasterStageSpec(BaseModel):
             "this must include 'stage_definition_path'."
         )
     )
+    success_criteria: Optional[List[str]] = Field(
+        default_factory=list, 
+        description=(
+            "List of conditions that must be true after successful agent execution for the stage to be fully successful. "
+            "E.g., [\"outputs.file_generated_path EXISTS\", \"outputs.analysis_metric > 0.9\"]"
+        )
+    )
+    clarification_checkpoint: Optional[Dict[str, Any]] = Field(
+        None, 
+        description=(
+            "If set, the orchestrator will pause after this stage (if successful and criteria pass) "
+            "for user clarification. The dictionary can contain details like 'prompt_to_user'."
+        )
+    )
     condition: Optional[str] = Field(None, description="Condition for branching in the Master Flow.")
     next_stage_true: Optional[str] = Field(None, description="Next Master Flow stage if condition is true.")
     next_stage_false: Optional[str] = Field(None, description="Next Master Flow stage if condition is false.")

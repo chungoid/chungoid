@@ -971,8 +971,16 @@ class TestAsyncOrchestrator:
         await orchestrator.run(basic_plan, {})
 
         mock_state_manager.update_status.assert_any_call(
-            stage=0.0, status=StageStatus.SUCCESS.value, artifacts=artifact_paths
+            pipeline_run_id=ANY,  # Allow any run ID
+            stage_name="stage0",    # As per basic_plan
+            stage_number=0.0,     # As per basic_plan
+            status=StageStatus.SUCCESS.value,
+            reason=ANY,           # Allow any success reason
+            error_info=None,      # Expect None for success
+            artifacts=artifact_paths
         )
+
+        # Check for the second stage's status update (agent_b, no artifacts)
         mock_state_manager.update_status.assert_any_call(
             stage=1.0, status=StageStatus.SUCCESS.value, artifacts=[] # Agent B produces no artifacts
         )
@@ -998,7 +1006,13 @@ class TestAsyncOrchestrator:
         await orchestrator.run(plan_one_stage, {})
 
         mock_state_manager.update_status.assert_called_once_with(
-            stage=0.0, status=StageStatus.SUCCESS.value, artifacts=[]
+            pipeline_run_id=ANY,
+            stage_name="stage0",
+            stage_number=0.0,
+            status=StageStatus.SUCCESS.value,
+            reason=ANY,
+            error_info=None,
+            artifacts=[]
         )
 
     async def test_artifact_path_extraction_key_not_a_list(self, orchestrator, mock_agent_provider, mock_state_manager, basic_plan):

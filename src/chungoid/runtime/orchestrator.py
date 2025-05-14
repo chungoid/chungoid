@@ -16,10 +16,13 @@ import yaml
 from pydantic import BaseModel, Field, ConfigDict
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider
 from chungoid.utils.state_manager import StateManager
-from chungoid.schemas.common_enums import StageStatus
+from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.schemas.flows import PausedRunDetails
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
+# Import for reviewer agent and its schemas
+from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent # Assuming AGENT_ID is on class
+from chungoid.schemas.agent_master_planner_reviewer import MasterPlannerReviewerInput, MasterPlannerReviewerOutput, ReviewerActionType
 
 import logging
 import traceback
@@ -326,6 +329,110 @@ class AsyncOrchestrator(BaseOrchestrator):
         self.run_status_updates: List[Dict[str, Any]] = []
         self.logger.debug(f"Orchestrator.run: Initialized self.run_status_updates: {type(self.run_status_updates)}")
 
+    def _evaluate_criterion(self, criterion: str, stage_outputs: Dict[str, Any]) -> bool:
+        """Evaluates a single success criterion string against stage_outputs."""
+        self.logger.debug(f"Evaluating criterion: '{criterion}' against outputs: {stage_outputs}")
+        
+        # EXISTS Check (e.g., "outputs.some_key EXISTS")
+        if criterion.upper().endswith(" EXISTS"):
+            path_to_check = criterion[:criterion.upper().rfind(" EXISTS")].strip()
+            current_val = stage_outputs
+            try:
+                for key_part in path_to_check.split('.'):
+                    if isinstance(current_val, dict):
+                        current_val = current_val[key_part]
+                    elif isinstance(current_val, list) and key_part.isdigit():
+                        current_val = current_val[int(key_part)]
+                    else:
+                        self.logger.debug(f"Criterion '{criterion}' FAILED: Path '{path_to_check}' not fully found (part: {key_part}).")
+                        return False # Path part not found
+                self.logger.debug(f"Criterion '{criterion}' PASSED (EXISTS check). Value at path: {current_val}")
+                return True # Path exists
+            except (KeyError, IndexError, TypeError):
+                self.logger.debug(f"Criterion '{criterion}' FAILED: Path '{path_to_check}' not found (exception).")
+                return False # Path does not exist
+
+        # Simple Comparison (e.g., "outputs.metric == true", "outputs.count > 0")
+        # Re-use parts of _parse_condition logic but scoped to stage_outputs
+        try:
+            parts = []
+            comparator = None
+            supported_comparators = {
+                '>=': lambda a, b: a >= b,
+                '<=': lambda a, b: a <= b,
+                '==': lambda a, b: a == b,
+                '!=': lambda a, b: a != b,
+                '>': lambda a, b: a > b,
+                '<': lambda a, b: a < b,
+            }
+            for op_str in supported_comparators.keys(): # Check longer ops first
+                if op_str in criterion:
+                    parts = criterion.split(op_str, 1)
+                    comparator = op_str
+                    break
+            
+            if not comparator or len(parts) != 2:
+                self.logger.warning(f"Unsupported criterion format or unknown operator: {criterion}. Evaluates to FALSE.")
+                return False
+
+            path_str = parts[0].strip()
+            expected_value_literal_str = parts[1].strip()
+
+            actual_val = stage_outputs
+            for key in path_str.split('.'):
+                if isinstance(actual_val, dict) and key in actual_val:
+                    actual_val = actual_val[key]
+                elif isinstance(actual_val, list) and key.isdigit():
+                    actual_val = actual_val[int(key)]
+                else:
+                    self.logger.debug(f"Criterion '{criterion}' FAILED: Path '{path_str}' not fully found in outputs.")
+                    return False
+            
+            # Attempt to coerce expected_value_literal_str to type of actual_val
+            coerced_expected_val: Any
+            if isinstance(actual_val, bool):
+                coerced_expected_val = expected_value_literal_str.lower() in ['true', '1', 'yes']
+            elif isinstance(actual_val, int):
+                coerced_expected_val = int(expected_value_literal_str.strip("'\""))
+            elif isinstance(actual_val, float):
+                coerced_expected_val = float(expected_value_literal_str.strip("'\""))
+            else: # Default to string comparison
+                coerced_expected_val = expected_value_literal_str.strip("'\"")
+
+            result = supported_comparators[comparator](actual_val, coerced_expected_val)
+            self.logger.debug(f"Criterion '{criterion}' evaluation: '{actual_val}' {comparator} '{coerced_expected_val}' -> {result}")
+            return result
+
+        except Exception as e:
+            self.logger.warning(f"Error evaluating criterion '{criterion}': {e}. Evaluates to FALSE.", exc_info=True)
+            return False
+
+    async def _check_success_criteria(
+        self, 
+        stage_name: str, 
+        stage_spec: MasterStageSpec, 
+        context: Dict[str, Any]
+    ) -> tuple[bool, List[str]]:
+        """Checks all success_criteria for a given stage. Returns (all_passed, list_of_failed_criteria)."""
+        if not stage_spec.success_criteria:
+            return True, [] # No criteria means success
+
+        all_passed = True
+        failed_criteria: List[str] = []
+        stage_outputs = context.get('outputs', {}).get(stage_name, {})
+
+        self.logger.info(f"Checking {len(stage_spec.success_criteria)} success criteria for stage '{stage_name}'.")
+        for criterion_str in stage_spec.success_criteria:
+            if not self._evaluate_criterion(criterion_str, stage_outputs):
+                all_passed = False
+                failed_criteria.append(criterion_str)
+        
+        if not all_passed:
+            self.logger.warning(f"Stage '{stage_name}' failed success criteria check. Failed criteria: {failed_criteria}")
+        else:
+            self.logger.info(f"All success criteria passed for stage '{stage_name}'.")
+        return all_passed, failed_criteria
+
     def _parse_condition(self, condition_str: str, context: Dict[str, Any]) -> bool:
         if not condition_str:
             return True
@@ -456,8 +563,14 @@ class AsyncOrchestrator(BaseOrchestrator):
                 # Resolve the context path against the context_data
                 current_val = context_data
                 valid_path = True
+                path_parts_to_resolve = context_path.split('.')
+                
+                # If path starts with "context.", actual resolution path is from the second part onwards
+                if path_parts_to_resolve and path_parts_to_resolve[0] == "context":
+                    path_parts_to_resolve = path_parts_to_resolve[1:]
+                
                 try:
-                    for part in context_path.split('.'):
+                    for part in path_parts_to_resolve:
                         if isinstance(current_val, dict):
                             current_val = current_val[part]
                         elif isinstance(current_val, list) and part.isdigit():
@@ -496,9 +609,14 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self.logger.error(f"Loop detected: Stage '{current_stage_name}' visited again. Aborting flow.")
                 context['errors'][current_stage_name] = "Loop detected"
                 context['final_status'] = "ERROR_LOOP_DETECTED"
-                self._update_run_status_with_stage_result( # Restore original call
+                
+                # Get the spec of the stage that is causing the loop detection to report its correct number
+                failing_stage_spec = self.pipeline_def.stages.get(current_stage_name)
+                correct_stage_number_for_failure = failing_stage_spec.number if failing_stage_spec else None
+
+                self._update_run_status_with_stage_result(
                     stage_name=current_stage_name,
-                    stage_number=current_master_stage_spec.number,
+                    stage_number=correct_stage_number_for_failure, # Use the correct stage number
                     status=StageStatus.FAILURE,
                     reason=f"Loop detected: Stage '{current_stage_name}' visited again. Aborting flow.",
                     error_details={"short_error": "Loop detected", "details": f"Loop detected: Stage '{current_stage_name}' visited again. Aborting flow."}
@@ -626,74 +744,169 @@ class AsyncOrchestrator(BaseOrchestrator):
                     agent_output_data = await asyncio.to_thread(agent_callable, agent_call_context)
     
                 context['outputs'][current_stage_name] = agent_output_data if agent_output_data is not None else {}
-                stage_status_to_report = StageStatus.SUCCESS # Use SUCCESS enum member
-                self.logger.info(f"Executing agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' (Number: {current_master_stage_spec.number}) with inputs: {agent_call_context}")
                 
-                # Extract artifact paths from agent output if provided using the conventional key
-                generated_artifact_paths = []
-                if isinstance(agent_output_data, dict):
-                    # Standardized key for artifact paths list
-                    generated_artifact_paths = agent_output_data.get("_mcp_generated_artifacts_relative_paths_", [])
-                    if not isinstance(generated_artifact_paths, list):
-                        self.logger.warning(
-                            f"Agent '{current_master_stage_spec.agent_id}' output key '_mcp_generated_artifacts_relative_paths_' for stage '{current_stage_name}' was not a list (got {type(generated_artifact_paths)}). Treating as no artifacts."
+                # --- Check for agent-reported failure via _mcp_status ---
+                if isinstance(agent_output_data, dict) and \
+                   agent_output_data.get("_mcp_status") == StageStatus.FAILURE.value:
+                    self.logger.warning(f"Agent '{agent_id}' for stage '{current_stage_name}' reported failure via _mcp_status.")
+                    stage_status_to_report = StageStatus.FAILURE
+                    mcp_error_details_data = agent_output_data.get("_mcp_error_details", {})
+                    if isinstance(mcp_error_details_data, dict):
+                        agent_error_details = AgentErrorDetails(
+                            error_type=mcp_error_details_data.get("error_type", "AgentReportedFailure"),
+                            message=mcp_error_details_data.get("message", "Agent reported failure."),
+                            traceback=mcp_error_details_data.get("traceback"),
+                            agent_id=agent_id, # Use the actual agent_id
+                            stage_id=current_stage_name
                         )
-                        generated_artifact_paths = []
-                    else:
-                        # Ensure all paths in the list are strings
-                        valid_paths = []
-                        for p_idx, p_val in enumerate(generated_artifact_paths):
-                            if isinstance(p_val, str):
-                                valid_paths.append(p_val)
-                            else:
-                                self.logger.warning(
-                                    f"Agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' provided a non-string path in '_mcp_generated_artifacts_relative_paths_' at index {p_idx} (type: {type(p_val)}). Skipping this path."
-                                )
-                        generated_artifact_paths = valid_paths
-                
-                self.logger.info(f"Agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' (Number: {current_master_stage_spec.number}) completed. Reported {len(generated_artifact_paths)} artifacts.")
-                # Update status to SUCCESS (formerly PASS)
-                self.state_manager.update_status(
-                    pipeline_run_id=self.current_pipeline_run_id,
-                    stage_name=current_stage_name,
-                    stage_number=current_master_stage_spec.number,
-                    status=StageStatus.SUCCESS.value,
-                    reason="Stage completed successfully",
-                    error_info=None,
-                    artifacts=generated_artifact_paths # Pass extracted/validated paths
-                )
-                self.run_status_updates.append({
-                    "stage_id": current_stage_name,
-                    "stage_number": current_master_stage_spec.number,
-                    "status": StageStatus.SUCCESS.value, 
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "outputs_summary": str(agent_output_data)[:200], # Optional summary
-                    "num_artifacts_reported": len(generated_artifact_paths)
-                })
+                    else: # Fallback if _mcp_error_details is not a dict
+                        agent_error_details = AgentErrorDetails(
+                            error_type="AgentReportedFailureMalformed",
+                            message="Agent reported failure with malformed _mcp_error_details.",
+                            agent_id=agent_id,
+                            stage_id=current_stage_name
+                        )
+                    # Store the full agent output (which includes the error report) in context
+                    context['errors'][current_stage_name] = agent_output_data 
+                # --- Check for agent-requested clarification via _mcp_status ---
+                elif isinstance(agent_output_data, dict) and \
+                     agent_output_data.get("_mcp_status") == "NEEDS_CLARIFICATION": # Custom status string
+                    self.logger.info(f"Agent '{agent_id}' for stage '{current_stage_name}' requested clarification.")
+                    # This isn't a failure, but it's not a standard success either. It's a pause point.
+                    # We will set a specific context flag and let the failure handling block save the state if autonomous.
+                    stage_status_to_report = StageStatus.RUNNING # Keep as RUNNING, but it will pause
+                    context['_agent_requested_clarification'] = True
+                    context['_clarification_details_from_agent'] = agent_output_data.get("_mcp_clarification_details", {})
+                    # No agent_error_details here as it's not an error
+                else:
+                    # If not an agent-reported failure or clarification request, assume success for now (exception handling is separate)
+                    stage_status_to_report = StageStatus.SUCCESS
+                    self.logger.info(f"Executing agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' (Number: {current_master_stage_spec.number}) with inputs: {agent_call_context}")
 
-            except KeyError as e:
+                # --- End of agent-reported failure check ---
+
+                if stage_status_to_report == StageStatus.SUCCESS: 
+                    # --- Check Success Criteria --- 
+                    criteria_passed, failed_criteria_list = await self._check_success_criteria(
+                        current_stage_name, current_master_stage_spec, context
+                    )
+                    if not criteria_passed:
+                        self.logger.warning(f"Stage '{current_stage_name}' completed by agent but FAILED success criteria.")
+                        stage_status_to_report = StageStatus.FAILURE
+                        # Populate agent_error_details for criteria failure
+                        agent_error_details = AgentErrorDetails(
+                            error_type="SuccessCriteriaFailed",
+                            message=f"Stage failed success criteria: {'; '.join(failed_criteria_list)}",
+                            agent_id=current_master_stage_spec.agent_id,
+                            stage_id=current_stage_name,
+                            details={"failed_criteria": failed_criteria_list, "stage_outputs": context.get('outputs',{}).get(current_stage_name,{})}
+                        )
+                        context['errors'][current_stage_name] = agent_error_details.model_dump()
+                    else:
+                        # Original success path if criteria passed
+                        generated_artifact_paths = []
+                        if isinstance(agent_output_data, dict):
+                            generated_artifact_paths = agent_output_data.get("_mcp_generated_artifacts_relative_paths_", [])
+                            if not isinstance(generated_artifact_paths, list):
+                                self.logger.warning(
+                                    f"Agent '{current_master_stage_spec.agent_id}' output key '_mcp_generated_artifacts_relative_paths_' for stage '{current_stage_name}' was not a list (got {type(generated_artifact_paths)}). Treating as no artifacts."
+                                )
+                                generated_artifact_paths = []
+                            else:
+                                valid_paths = []
+                                for p_idx, p_val in enumerate(generated_artifact_paths):
+                                    if isinstance(p_val, str):
+                                        valid_paths.append(p_val)
+                                    else:
+                                        self.logger.warning(
+                                            f"Agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' provided a non-string path in '_mcp_generated_artifacts_relative_paths_' at index {p_idx} (type: {type(p_val)}). Skipping this path."
+                                        )
+                                generated_artifact_paths = valid_paths
+                        
+                        self.logger.info(f"Agent '{current_master_stage_spec.agent_id}' for stage '{current_stage_name}' (Number: {current_master_stage_spec.number}) completed successfully. Reported {len(generated_artifact_paths)} artifacts.")
+                        self.state_manager.update_status(
+                            pipeline_run_id=self.current_pipeline_run_id,
+                            stage_name=current_stage_name,
+                            stage_number=current_master_stage_spec.number,
+                            status=StageStatus.SUCCESS.value,
+                            reason="Stage completed successfully",
+                            error_info=None,
+                            artifacts=generated_artifact_paths
+                        )
+                        self.run_status_updates.append({
+                            "stage_id": current_stage_name,
+                            "stage_number": current_master_stage_spec.number,
+                            "status": StageStatus.SUCCESS.value, 
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "outputs_summary": str(agent_output_data)[:200],
+                            "num_artifacts_reported": len(generated_artifact_paths)
+                        })
+
+                        # --- Check for DSL-defined Clarification Checkpoint ---
+                        if isinstance(self.pipeline_def, MasterExecutionPlan) and \
+                           current_master_stage_spec.clarification_checkpoint and \
+                           not context.get('_agent_requested_clarification'): # Don't pause if agent already requested it
+                            
+                            self.logger.info(f"Stage '{current_stage_name}' has a DSL-defined clarification checkpoint. Pausing autonomous flow.")
+                            if not context.get('_autonomous_flow_paused_state_saved'):
+                                try:
+                                    current_run_id = self.current_pipeline_run_id
+                                    checkpoint_details = current_master_stage_spec.clarification_checkpoint
+                                    
+                                    paused_details_args = {
+                                        "run_id": current_run_id,
+                                        "flow_id": self.pipeline_def.id,
+                                        "paused_at_stage_id": current_stage_name,
+                                        "status": FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_AT_DSL_CHECKPOINT,
+                                        "context_snapshot": copy.deepcopy(context),
+                                        "error_details": None, # Not an error
+                                        "clarification_request": checkpoint_details
+                                    }
+                                    self.state_manager.save_paused_flow_state(**paused_details_args)
+                                    self.logger.info(f"Autonomous flow run_id '{current_run_id}' paused for DSL-defined clarification at stage '{current_stage_name}'.")
+                                    context['_autonomous_flow_paused_state_saved'] = True
+                                    context['_autonomous_flow_paused_for_dsl_checkpoint'] = True 
+                                    # This will cause the loop to break due to _autonomous_flow_paused_state_saved being true
+                                except Exception as save_exc:
+                                    self.logger.exception(f"Critical error: Failed to save paused state for DSL clarification checkpoint: {save_exc}")
+                            # If successfully paused for DSL checkpoint, status is RUNNING but will break the loop
+                            # The generic `_autonomous_flow_paused_state_saved` check later will break.
+
+            except KeyError as e: # This handles agent_id not found by agent_provider
                 self.logger.error(f"Agent '{agent_id}' not found for stage '{current_stage_name}': {e}", exc_info=True)
                 context['errors'][current_stage_name] = f"Agent '{agent_id}' not found: {e}"
                 stage_status_to_report = StageStatus.FAILURE
-                agent_error_details = AgentErrorDetails(error_type="AgentNotFound", message=str(e))
+                agent_error_details = AgentErrorDetails(error_type="AgentNotFound", message=str(e), agent_id=agent_id, stage_id=current_stage_name)
             except Exception as e:
                 self.logger.error(f"Error executing agent for stage '{current_stage_name}': {e}", exc_info=True)
                 context['errors'][current_stage_name] = f"Agent execution error: {e}"
                 agent_output_data = {"error": str(e), "traceback": traceback.format_exc()}
                 context['outputs'][current_stage_name] = agent_output_data # Store error in output
                 stage_status_to_report = StageStatus.FAILURE
-                agent_error_details = AgentErrorDetails(error_type="AgentExecutionError", message=str(e), traceback=traceback.format_exc())
+                # Ensure agent_id is defined; it should be from current_master_stage_spec.agent_id if spec was found
+                agent_id_for_error = current_master_stage_spec.agent_id if current_master_stage_spec else "unknown_agent"
+                agent_error_details = AgentErrorDetails(error_type="AgentExecutionError", message=str(e), traceback=traceback.format_exc(), agent_id=agent_id_for_error, stage_id=current_stage_name)
+
+                # P2.4.1: If autonomous flow, save paused state with specific autonomous status
+                if isinstance(self.pipeline_def, MasterExecutionPlan):
+                    self.logger.info(f"Autonomous flow (MasterExecutionPlan) encountered an unhandled agent exception in stage '{current_stage_name}'. Saving paused state.")
+                    try:
+                        current_run_id = self.current_pipeline_run_id 
+                        paused_details_args = {
+                            "run_id": current_run_id,
+                            "flow_id": self.pipeline_def.id,
+                            "paused_at_stage_id": current_stage_name,
+                            "status": FlowPauseStatus.PAUSED_AUTONOMOUS_FAILURE_UNHANDLED_EXCEPTION,
+                            "context_snapshot": copy.deepcopy(context),
+                            "error_details": agent_error_details,
+                        }
+                        self.state_manager.save_paused_flow_state(**paused_details_args)
+                        self.logger.info(f"Autonomous flow run_id '{current_run_id}' paused due to unhandled agent exception in stage '{current_stage_name}'. Status: {FlowPauseStatus.PAUSED_AUTONOMOUS_FAILURE_UNHANDLED_EXCEPTION.value}")
+                        # Use a more specific flag to indicate this path saved the state
+                        context['_autonomous_flow_paused_state_saved_by_exception_handler'] = True 
+                    except Exception as save_exc:
+                        self.logger.exception(f"Critical error: Failed to save paused state for autonomous flow run_id '{current_run_id}' after agent error: {save_exc}")
             
-            # --- StateManager Update --- (Optional, if MasterExecutionPlan needs live status updates)
-            # if self.state_manager and hasattr(self.state_manager, 'update_master_plan_stage_status'):
-            #     await asyncio.to_thread( # Assuming update_master_plan_stage_status might be sync
-            #         self.state_manager.update_master_plan_stage_status, 
-            #         plan_id=self.pipeline_def.id, 
-            #         stage_id=current_stage_name, 
-            #         status=stage_status_to_report,
-            #         outputs=agent_output, # Could be large, consider summarizing
-            #         error_details=agent_error_details
-            #     )
             context['status_updates'].append({
                 "stage_id": current_stage_name,
                 "status": stage_status_to_report.value,
@@ -704,11 +917,156 @@ class AsyncOrchestrator(BaseOrchestrator):
             })
 
             if stage_status_to_report == StageStatus.FAILURE:
-                self.logger.warning(f"Stage '{current_stage_name}' failed. Determining next step based on error handling strategy.")
-                # Default behavior: halt plan execution on first failure
-                self.logger.error(f"Stage '{current_stage_name}' failed. Halting MasterExecutionPlan execution.")
-                context['final_status'] = f"ERROR_STAGE_FAILED: {current_stage_name}"
-                break # Stop execution
+                self.logger.warning(f"Stage '{current_stage_name}' failed. Determining next step.")
+
+                # Flag to see if reviewer was invoked and a suggestion was made
+                reviewer_suggestion_processed = False
+
+                # Check if it's an autonomous flow and if state hasn't been saved by unhandled exception handler
+                if isinstance(self.pipeline_def, MasterExecutionPlan) and \
+                   not context.get('_autonomous_flow_paused_state_saved_by_exception_handler'): 
+                    self.logger.info(f"Autonomous flow (MasterExecutionPlan) encountered an agent-reported failure or other non-exception failure in stage '{current_stage_name}'. Saving paused state before potential review.")
+                    
+                    if not agent_error_details: 
+                        # This block would be hit if success criteria failed, or potentially other future non-exception failures
+                        # that don't set agent_error_details directly before this point.
+                        agent_id_for_error_fallback = current_master_stage_spec.agent_id if current_master_stage_spec else "unknown_agent"
+                        # If agent_error_details is None here, it means it wasn't an agent-reported error and criteria didn't fail it YET
+                        # OR it *was* a criteria failure, and agent_error_details was set just above this `if stage_status_to_report == StageStatus.FAILURE:` block.
+                        # We need to ensure agent_error_details is correctly populated for PAUSED_AUTONOMOUS_FAILURE_AGENT_REPORTED / CRITERIA
+                        # This specific log and creation might be redundant if criteria failure already populated it.
+                        # Let's assume agent_error_details *is* populated if it's a criteria failure.
+                        # If it's another type of failure that lands here without agent_error_details, create a generic one.
+                        if not agent_error_details: # Double check if it's still None
+                            agent_error_details = AgentErrorDetails(
+                                error_type="GenericStageFailure", # This might be if success_criteria was false
+                                message=f"Stage '{current_stage_name}' failed. Reason not specified by agent or criteria check prior to this point.",
+                                agent_id=agent_id_for_error_fallback,
+                                stage_id=current_stage_name
+                            )
+                            self.logger.warning("agent_error_details was None when attempting to save non-exception failure state. Created a generic one.")
+
+                    try:
+                        current_run_id = self.current_pipeline_run_id
+                        # Determine correct pause status for failure
+                        failure_pause_status = FlowPauseStatus.PAUSED_AUTONOMOUS_FAILURE_AGENT_REPORTED
+                        if agent_error_details and agent_error_details.error_type == "SuccessCriteriaFailed":
+                            failure_pause_status = FlowPauseStatus.PAUSED_AUTONOMOUS_FAILURE_CRITERIA
+                        
+                        paused_details_args = {
+                            "run_id": current_run_id,
+                            "flow_id": self.pipeline_def.id,
+                            "paused_at_stage_id": current_stage_name,
+                            "status": failure_pause_status, 
+                            "context_snapshot": copy.deepcopy(context),
+                            "error_details": agent_error_details,
+                            # No clarification_request here for failures
+                        }
+                        self.state_manager.save_paused_flow_state(**paused_details_args)
+                        self.logger.info(f"Autonomous flow run_id '{current_run_id}' paused due to failure in stage '{current_stage_name}'. Status: {failure_pause_status.value}")
+                        context['_autonomous_flow_paused_state_saved'] = True 
+                    except Exception as save_exc:
+                        self.logger.exception(f"Critical error: Failed to save paused state for autonomous flow run_id '{current_run_id}' after non-exception error: {save_exc}")
+            
+            # --- Handle Agent-Requested Clarification Pause for Autonomous Flows ---
+            elif context.get('_agent_requested_clarification') and isinstance(self.pipeline_def, MasterExecutionPlan):
+                self.logger.info(f"Autonomous flow (MasterExecutionPlan) requires clarification at stage '{current_stage_name}' as requested by agent.")
+                if not context.get('_autonomous_flow_paused_state_saved'): # Ensure state isn't already saved by some preceding logic
+                    try:
+                        current_run_id = self.current_pipeline_run_id
+                        clarification_details = context.get('_clarification_details_from_agent', {})
+                        
+                        paused_details_args = {
+                            "run_id": current_run_id,
+                            "flow_id": self.pipeline_def.id,
+                            "paused_at_stage_id": current_stage_name,
+                            "status": FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_BY_AGENT,
+                            "context_snapshot": copy.deepcopy(context),
+                            "error_details": None, # Not an error
+                            "clarification_request": clarification_details
+                        }
+                        self.state_manager.save_paused_flow_state(**paused_details_args)
+                        self.logger.info(f"Autonomous flow run_id '{current_run_id}' paused for agent-requested clarification at stage '{current_stage_name}'.")
+                        context['_autonomous_flow_paused_state_saved'] = True # Use the general flag
+                        context['_autonomous_flow_paused_for_clarification'] = True # Specific flag if needed elsewhere
+                    except Exception as save_exc:
+                        self.logger.exception(f"Critical error: Failed to save paused state for autonomous flow clarification: {save_exc}")
+                
+                # If paused for clarification, we should break the loop. 
+                # The status_updates should reflect a PAUSED status ideally, not FAILURE.
+                # The current logic will fall through to the `if context.get('_autonomous_flow_paused_state_saved'):` block below which breaks.
+                # No need to set final_status to error here.
+                self.logger.info(f"Autonomous flow stage '{current_stage_name}' paused for clarification. Halting MasterExecutionPlan execution.")
+                # The `context.get('_autonomous_flow_paused_state_saved')` check later will break the loop.
+
+            # This is where an unhandled exception in an autonomous flow would have saved state
+            elif isinstance(self.pipeline_def, MasterExecutionPlan) and \
+                 context.get('_autonomous_flow_paused_state_saved_by_exception_handler'):
+                 self.logger.info(f"Autonomous flow was already paused by unhandled exception handler for stage '{current_stage_name}'. Proceeding to reviewer (if applicable for failure).)")
+                 context['_autonomous_flow_paused_state_saved'] = True 
+
+            # --- Invoke MasterPlannerReviewerAgent if autonomous flow is now paused ---
+            if isinstance(self.pipeline_def, MasterExecutionPlan) and context.get('_autonomous_flow_paused_state_saved'):
+                self.logger.info(f"Invoking MasterPlannerReviewerAgent for failed autonomous stage: {current_stage_name}")
+                try:
+                    reviewer_agent_callable = await self.agent_provider.get(MasterPlannerReviewerAgent.AGENT_ID)
+                    
+                    # Ensure agent_error_details is not None
+                    if not agent_error_details:
+                        # This should ideally not happen if a failure status is set
+                        agent_id_for_error_fallback = current_master_stage_spec.agent_id if current_master_stage_spec else "unknown_agent"
+                        agent_error_details = AgentErrorDetails(
+                            error_type="UnknownFailureForReviewer",
+                            message=f"Stage '{current_stage_name}' failed but no specific error details were available for reviewer.",
+                            agent_id=agent_id_for_error_fallback, # Use fallback
+                            stage_id=current_stage_name
+                        )
+                        self.logger.warning("MasterPlannerReviewer invocation: agent_error_details was None. Created a default.")
+                    
+                    reviewer_input = MasterPlannerReviewerInput(
+                        original_goal=str(self.pipeline_def.original_request.goal_description) if self.pipeline_def.original_request else "Unknown original goal",
+                        failed_master_plan_json=self.pipeline_def.model_dump_json(indent=2),
+                        failed_stage_id=current_stage_name,
+                        error_details=agent_error_details, # This should be populated from either exception or _mcp_status
+                        full_context_snapshot=copy.deepcopy(context)
+                    )
+                    
+                    reviewer_output: MasterPlannerReviewerOutput = await reviewer_agent_callable.async_invoke(reviewer_input)
+                    self.logger.info(f"MasterPlannerReviewerAgent suggested: {reviewer_output.suggested_action.value}")
+                    self.logger.debug(f"Reviewer justification: {reviewer_output.justification}")
+                    context['last_reviewer_suggestion'] = reviewer_output.model_dump()
+                    reviewer_suggestion_processed = True
+
+                    # For P2.4.3, we only log. Actual processing of suggestions (retry, modify plan) is P2.4.4+
+                    if reviewer_output.suggested_action == ReviewerActionType.ESCALATE_TO_USER:
+                        self.logger.info(f"Reviewer advised escalation for stage '{current_stage_name}'. Autonomous flow remains paused.")
+                    # Add other conditions here in the future for RETRY, MODIFY_PLAN etc.
+
+                except Exception as reviewer_exc:
+                    self.logger.exception(f"Error invoking or processing MasterPlannerReviewerAgent for stage '{current_stage_name}': {reviewer_exc}")
+                    # Even if reviewer fails, the flow is already paused. Log and proceed to break.
+                    context['errors']["MasterPlannerReviewerAgent_invocation"] = str(reviewer_exc)
+            
+            # --- End of Reviewer Invocation ---
+
+            # This existing block handles logging the final state / breaking the loop
+            if context.get('_autonomous_flow_paused_state_saved'):
+                self.logger.info(f"Autonomous flow stage '{current_stage_name}' failed and state was saved. Halting MasterExecutionPlan execution.")
+            else:
+                # Default behavior for non-autonomous flows or if state saving failed for autonomous
+                self.logger.error(f"Stage '{current_stage_name}' failed. Halting flow execution. Consider implementing PAUSE_FOR_INTERVENTION for this plan type if applicable.")
+            
+            context['final_status'] = f"ERROR_STAGE_FAILED: {current_stage_name}"
+            # Update the main run status in StateManager to FAILED if not already paused
+            if not context.get('_autonomous_flow_paused_state_saved'):
+                 self.state_manager.update_status(
+                    pipeline_run_id=self.current_pipeline_run_id,
+                    # stage_name and stage_number are for specific stage, here we update overall run
+                    status=StageStatus.FAILURE.value, # Or a more specific overall run failure status if available
+                    reason=f"Flow failed at stage {current_stage_name}",
+                    error_info=agent_error_details.model_dump() if agent_error_details else None
+                )
+            break # Stop execution
 
             # Determine next stage based on MasterStageSpec's simple next_stage link
             next_stage_name_from_spec = current_master_stage_spec.next_stage
@@ -787,10 +1145,12 @@ class AsyncOrchestrator(BaseOrchestrator):
         self,
         run_id: str,
         action: str,
-        action_data: Optional[Dict[str, Any]] = None
+        action_data: Optional[Dict[str, Any]] = None,
+        # clarification_response: Optional[Dict[str, Any]] = None # Decided to pass via action_data
     ) -> Dict[str, Any]:
         """Resumes a paused MASTER flow based on the specified action."""
         self.logger.info(f"Attempting to resume MASTER flow run_id: {run_id} with action: {action}")
+        action_data = action_data or {} # Ensure action_data is a dict
 
         try:
             paused_details = self.state_manager.load_paused_flow_state(run_id)
@@ -807,101 +1167,93 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self.logger.warning(f"Context snapshot in paused details is empty for run_id: {run_id}. Proceeding with empty context.")
                 context = {}
 
-        except Exception as e:
-            self.logger.exception(f"Error loading state for run_id {run_id}: {e}")
-            return {"error": f"Failed to load state for run_id: {run_id}, {e}"}
+            start_stage_name: Optional[str] = None
+            resume_context = context
+            # action_data = action_data or {} # Moved up
 
-        self.logger.debug(f"State loaded for run_id: {run_id}. Paused at MASTER stage: {paused_details.paused_at_stage_id}")
-        self.logger.debug(f"Resume action: {action}, Data: {action_data}")
+            # --- Handle Resumption based on Paused Status FIRST if it's a clarification pause ---
+            if paused_details.status in [
+                FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_BY_AGENT,
+                FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_AT_DSL_CHECKPOINT,
+                FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_BY_ORCHESTRATOR # Future use
+            ]:
+                self.logger.info(f"[Resume] Paused status is '{paused_details.status.value}'. Expecting 'provide_clarification' action or forced override.")
+                clarification_response_data = action_data.get('clarification_response')
 
-        start_stage_name: Optional[str] = None
-        resume_context = context
-        action_data = action_data or {}
+                if action == "provide_clarification":
+                    if clarification_response_data is not None and isinstance(clarification_response_data, dict):
+                        self.logger.info(f"[Resume] Processing 'provide_clarification' action with response: {clarification_response_data}")
+                        # Update context with clarification response
+                        # Place it where subsequent agent/logic can find it, e.g., under the paused stage's outputs.
+                        resume_context.setdefault('outputs', {}).setdefault(paused_details.paused_at_stage_id, {})['clarification_response'] = clarification_response_data
+                        self.logger.debug(f"Context updated with clarification_response at outputs.{paused_details.paused_at_stage_id}.clarification_response")
+                    else:
+                        self.logger.warning("'provide_clarification' action called, but 'clarification_response' missing or not a dict in action_data. Resuming without new clarification input.")
 
-        if action == "retry":
-            self.logger.info(f"[Resume] Action: Retry MASTER stage '{paused_details.paused_at_stage_id}'")
-            start_stage_name = paused_details.paused_at_stage_id
+                    if paused_details.status == FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_BY_AGENT:
+                        self.logger.info(f"[Resume] Resuming by re-executing stage '{paused_details.paused_at_stage_id}' that requested clarification.")
+                        start_stage_name = paused_details.paused_at_stage_id
+                    elif paused_details.status == FlowPauseStatus.PAUSED_CLARIFICATION_NEEDED_AT_DSL_CHECKPOINT:
+                        self.logger.info(f"[Resume] Resuming after DSL checkpoint at stage '{paused_details.paused_at_stage_id}'. Determining next stage.")
+                        paused_stage_spec_for_dsl_checkpoint: Optional[MasterStageSpec] = self.pipeline_def.stages.get(paused_details.paused_at_stage_id)
+                        if not paused_stage_spec_for_dsl_checkpoint:
+                            self.logger.error(f"Cannot determine next stage; DSL checkpoint stage '{paused_details.paused_at_stage_id}' not found in plan.")
+                            return {"error": f"Fatal: Paused stage '{paused_details.paused_at_stage_id}' for DSL checkpoint not found in Master Flow."}
+                        
+                        # Logic similar to skip_stage to find next stage after a completed one
+                        if paused_stage_spec_for_dsl_checkpoint.condition:
+                            condition_met = self._parse_condition(paused_stage_spec_for_dsl_checkpoint.condition, resume_context)
+                            start_stage_name = paused_stage_spec_for_dsl_checkpoint.next_stage_true if condition_met else paused_stage_spec_for_dsl_checkpoint.next_stage_false
+                        else:
+                            start_stage_name = paused_stage_spec_for_dsl_checkpoint.next_stage
+                        
+                        if start_stage_name:
+                            self.logger.info(f"Resuming from stage: '{start_stage_name}' after DSL checkpoint.")
+                        else:
+                            self.logger.info(f"DSL checkpoint stage '{paused_details.paused_at_stage_id}' was the last stage or led to no next stage. Master Flow considered complete.")
+                            # Clean up state and return context if flow is now complete
+                            try:
+                                delete_success = self.state_manager.delete_paused_flow_state(run_id)
+                                if not delete_success: self.logger.warning(f"Failed to delete paused state for {run_id} after DSL checkpoint completion.")
+                            except Exception as del_err: self.logger.error(f"Error deleting state for {run_id}: {del_err}")
+                            resume_context['final_status'] = "COMPLETED_AFTER_CLARIFICATION_CHECKPOINT"
+                            return resume_context # Early exit if flow complete
+                    else: # e.g. PAUSED_CLARIFICATION_NEEDED_BY_ORCHESTRATOR (if that becomes a thing)
+                        self.logger.warning(f"Resume logic for clarification status '{paused_details.status.value}' not fully defined yet. Defaulting to retrying stage '{paused_details.paused_at_stage_id}'.")
+                        start_stage_name = paused_details.paused_at_stage_id
+                
+                elif action in ["retry", "retry_with_inputs", "skip_stage", "force_branch", "abort"]:
+                     self.logger.info(f"[Resume] Flow was paused for clarification ('{paused_details.status.value}'), but received a standard error-handling action '{action}'. Proceeding with '{action}'.")
+                     # Fall through to existing error handling actions below
+                else:
+                    self.logger.error(f"Flow paused for clarification ('{paused_details.status.value}'), but received unsupported action: '{action}'. Required: 'provide_clarification' or a standard override action.")
+                    return {"error": f"Unsupported action '{action}' for clarification pause. Use 'provide_clarification' or a standard override."}
 
-        elif action == "retry_with_inputs":
-            self.logger.info(f"[Resume] Action: Retry MASTER stage '{paused_details.paused_at_stage_id}' with new inputs.")
-            start_stage_name = paused_details.paused_at_stage_id
-            new_inputs = action_data.get('inputs')
-            if isinstance(new_inputs, dict):
-                self.logger.debug(f"Applying new inputs to context: {new_inputs}")
-                resume_context = copy.deepcopy(context)
-                resume_context.update(new_inputs)
-            else:
-                self.logger.warning("Action 'retry_with_inputs' called without valid 'inputs' dictionary.")
-                return {"error": "Action 'retry_with_inputs' requires a dictionary under the 'inputs' key in action_data."}
-
-        elif action == "skip_stage":
-            self.logger.info(f"[Resume] Action: Skip MASTER stage '{paused_details.paused_at_stage_id}'")
-            paused_stage_spec: Optional[MasterStageSpec] = self.pipeline_def.stages.get(paused_details.paused_at_stage_id)
-            if not paused_stage_spec:
-                 self.logger.error(f"Cannot determine next stage to skip to; paused MASTER stage '{paused_details.paused_at_stage_id}' not found in plan.")
-                 return {"error": f"Fatal: Paused stage '{paused_details.paused_at_stage_id}' not found in Master Flow definition."}
-
-            next_stage_in_master_flow: Optional[str] = None
-            if paused_stage_spec.condition:
-                condition_met = self._parse_condition(paused_stage_spec.condition, resume_context)
-                next_stage_in_master_flow = paused_stage_spec.next_stage_true if condition_met else paused_stage_spec.next_stage_false
-            else:
-                next_stage_in_master_flow = paused_stage_spec.next_stage
+            # --- Standard Resume Actions (mostly for error pauses, or if clarification pause is overridden by one of these) ---
+            if start_stage_name is None: # Only enter if not already set by clarification logic above
+                if action == "retry":
+                    self.logger.info(f"[Resume] Action: Retry MASTER stage '{paused_details.paused_at_stage_id}'")
+                    start_stage_name = paused_details.paused_at_stage_id
             
-            start_stage_name = next_stage_in_master_flow
-
             if start_stage_name:
-                self.logger.info(f"Will attempt to resume MASTER execution from stage: '{start_stage_name}' after skipping.")
-            else:
-                self.logger.info(f"Skipped MASTER stage '{paused_details.paused_at_stage_id}' was the last stage or led to no next stage. Master Flow considered complete.")
                 try:
-                    delete_success = self.state_manager.delete_paused_flow_state(run_id)
-                    if not delete_success:
-                        self.logger.warning(f"Failed to delete paused state file for run_id {run_id} after determining skip leads to completion.")
-                except Exception as del_err:
-                    self.logger.error(f"Error deleting paused state file for run_id {run_id}: {del_err}")
-                return resume_context
+                    clear_success = self.state_manager.delete_paused_flow_state(run_id)
+                    if not clear_success:
+                        self.logger.warning(f"Failed to clear paused state for run_id={run_id}. Proceeding with execution.")
+                except Exception as e:
+                    self.logger.exception(f"Failed to clear paused state for run_id={run_id}. Aborting resume. Error: {e}")
+                    return {"error": f"Failed to clear paused state for run_id={run_id}. Resume aborted."}
 
-        elif action == "force_branch":
-            target_stage_id = action_data.get('target_stage_id')
-            self.logger.info(f"[Resume] Action: Force branch to MASTER stage '{target_stage_id}'")
-            if target_stage_id and isinstance(target_stage_id, str) and target_stage_id in self.pipeline_def.stages:
-                start_stage_name = target_stage_id
+                self.logger.info(f"Resuming MASTER execution loop for run_id '{run_id}' from stage '{start_stage_name}'")
+                final_context = await self._execute_loop(start_stage_name=start_stage_name, context=resume_context)
+                return final_context
             else:
-                self.logger.error(f"Invalid or missing target_stage_id ('{target_stage_id}') for force_branch action. Must be a valid MASTER stage ID.")
-                return {"error": f"Invalid target_stage_id for force_branch: '{target_stage_id}'. It must be a valid stage ID string present in the Master Flow."}
-        
-        elif action == "abort":
-            self.logger.info(f"[Resume] Action: Abort MASTER flow for run_id={run_id}")
-            try:
-                delete_success = self.state_manager.delete_paused_flow_state(run_id)
-                if not delete_success:
-                     self.logger.warning(f"Failed to delete paused state file for run_id {run_id} during abort action.")
-            except Exception as del_err:
-                self.logger.error(f"Error deleting paused state file for run_id {run_id} during abort: {del_err}")
-            resume_context["status"] = "ABORTED"
-            self.logger.info(f"Paused state cleared for run_id={run_id}. Master Flow aborted by user action.")
-            return resume_context
+                self.logger.error(f"Resume logic failed to determine a start stage for action '{action}' or did not handle flow completion correctly.")
+                return {"error": "Internal error: Failed to determine resume start stage or handle flow completion."}
 
-        else:
-            self.logger.error(f"Unsupported resume action: '{action}'")
-            return {"error": f"Unsupported resume action: {action}"}
-        
-        if start_stage_name:
-            try:
-                clear_success = self.state_manager.delete_paused_flow_state(run_id)
-                if not clear_success:
-                    self.logger.warning(f"Failed to clear paused state for run_id={run_id}. Proceeding with execution.")
-            except Exception as e:
-                self.logger.exception(f"Failed to clear paused state for run_id={run_id}. Aborting resume. Error: {e}")
-                return {"error": f"Failed to clear paused state for run_id={run_id}. Resume aborted."}
-
-            self.logger.info(f"Resuming MASTER execution loop for run_id '{run_id}' from stage '{start_stage_name}'")
-            final_context = await self._execute_loop(start_stage_name=start_stage_name, context=resume_context)
-            return final_context
-        else:
-            self.logger.error(f"Resume logic failed to determine a start stage for action '{action}' or did not handle flow completion correctly.")
-            return {"error": "Internal error: Failed to determine resume start stage or handle flow completion."}
+        except Exception as e:
+            self.logger.exception(f"Error resuming flow: {e}")
+            return {"error": f"Error resuming flow: {e}"}
 
     def _update_run_status_with_stage_result(
         self,

@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from .errors import AgentErrorDetails # Import for use in PausedRunDetails
+from chungoid.schemas.common_enums import FlowPauseStatus # Added import
 
 class StageInput(BaseModel):
     """Represents input mapping for a stage."""
@@ -44,9 +45,13 @@ class PausedRunDetails(BaseModel):
     flow_id: str = Field(..., description="Identifier of the FlowDefinition being executed.")
     paused_at_stage_id: str = Field(..., description="The ID of the stage where execution paused.")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When the pause occurred.")
+    status: FlowPauseStatus = Field(FlowPauseStatus.PAUSED_UNKNOWN, description="Structured status indicating why the flow is paused.")
     context_snapshot: Dict[str, Any] = Field(..., description="The full execution context at the time of pause.")
     error_details: Optional[AgentErrorDetails] = Field(None, description="Details of the error that caused the pause, if applicable.")
-    reason: str = Field("Unknown", description="Reason for the pause (e.g., 'Paused due to agent error', 'Manual pause').")
+    clarification_request: Optional[Dict[str, Any]] = Field(None, description="Details needed for user clarification if status indicates clarification is needed.")
+
+    class Config:
+        use_enum_values = True
 
 class StageRunRecord(BaseModel):
     """Record of a single stage execution within a run."""
