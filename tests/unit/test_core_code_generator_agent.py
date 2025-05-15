@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock
+from typing import Optional, Any
 
 from chungoid.runtime.agents.core_code_generator_agent import CodeGeneratorAgent, MockCodeLLMClient
 from chungoid.schemas.agent_code_generator import CodeGeneratorAgentInput, CodeGeneratorAgentOutput

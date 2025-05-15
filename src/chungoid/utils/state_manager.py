@@ -254,93 +254,70 @@ class StateManager:
                         )
                         return {"runs": [], "master_plans": []}  # Return default structure
 
-                    data = json.loads(content)
-                    # Basic validation: ensure it's a dict and has 'runs'
-                    if not isinstance(data, dict) or "runs" not in data or not isinstance(data["runs"], list):
-                        self.logger.error(
-                            "Status file content is not a valid JSON object with a 'runs' list: %s",
-                            str(data)[:200], # Log a snippet
-                        )
-                        raise StatusFileError(
-                            "Status file content is not a valid JSON object with a 'runs' list."
-                        )
-                    # Ensure master_plans key exists, defaulting to empty list if not
-                    if "master_plans" not in data:
-                        data["master_plans"] = []
-                    elif not isinstance(data["master_plans"], list):
-                        self.logger.warning("'master_plans' in status file is not a list. Re-initializing as empty list.")
-                        data["master_plans"] = []
-                        
-                    return data
-        except json.JSONDecodeError as e_json:
-            self.logger.error("Failed to decode JSON from status file: %s", e_json)
-            raise StatusFileError(f"Invalid JSON in status file: {e_json}") from e_json
-        except IOError as e:
-            self.logger.error("Failed to read status file: %s", e)
-            raise StatusFileError(f"Could not read status file: {e}") from e
-        except Exception as e:
-            # Catch any other unexpected errors during read
-            self.logger.exception("Unexpected error reading status file: %s", e)
+                    return json.loads(content)
+        except json.JSONDecodeError as e:
+            self.logger.error(
+                "Failed to decode JSON from status file %s: %s",
+                self.status_file_path,
+                e,
+            )
+            raise StatusFileError(f"Status file content is not a valid JSON object: {e}") from e
+        except OSError as e:
+            self.logger.error(
+                "OS error reading status file %s: %s", self.status_file_path, e
+            )
+            raise StatusFileError(f"Failed to read status file: {e}") from e
+        except Exception as e: # Catch any other unexpected errors during read
+            self.logger.error(
+                "Unexpected error reading status file %s: %s", self.status_file_path, e,
+                exc_info=True
+            )
             raise StatusFileError(f"Unexpected error reading status file: {e}") from e
 
     def _write_status_file(self, data: Dict[str, Any]):
-        """Writes the given data to the status file.
+        """Writes the data to the status file.
 
         Acquires a lock if locking is enabled.
+
         Args:
-            data: The dictionary to write (expected to include 'runs' and 'master_plans').
+            data: The dictionary to write to the file.
+
         Raises:
-            StatusFileError: If writing fails.
+            StatusFileError: If the file cannot be written.
         """
         lock = self._get_lock()
         try:
             with lock:
                 self.logger.debug("Attempting to write to status file: %s", self.status_file_path)
-                # Validate structure before writing
-                if (
-                    not isinstance(data, dict)
-                    or "runs" not in data
-                    or not isinstance(data["runs"], list)
-                ):
-                    err_msg = f"Invalid data structure provided to _write_status_file. Expected {{'runs': [...]}}, got: {type(data)}"
-                    self.logger.error(err_msg)
-                    raise StatusFileError(err_msg)
-
+                # Ensure .chungoid directory exists before writing
+                self.chungoid_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Custom JSON default handler for datetime objects
+                def datetime_handler(o):
+                    if isinstance(o, datetime):
+                        return o.isoformat()
+                    # Can add other types here if needed, e.g., date
+                    # raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+                    # Let the default error raise if not handled
+                
                 with self.status_file_path.open("w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)  # Use indent for readability
-                    f.flush()
-                    os.fsync(f.fileno())
-                self.logger.debug("Successfully wrote to status file (post-dump, pre-release).")
-            self.logger.debug("Lock released after write.")
-
-            try:
-                with self.status_file_path.open("r", encoding="utf-8") as f_verify:
-                    content_after_write = f_verify.read()
-                self.logger.debug(
-                    "Read file back immediately after write. Content: %s", content_after_write
-                )
-            except Exception as read_err:
-                self.logger.error("Error reading file back immediately after write: %s", read_err)
-
-        except filelock.Timeout:
-            self.logger.error("Timeout occurred while waiting for status file lock.")
-            raise StatusFileError("Could not acquire lock to write status file.")
-        except IOError as e:
-            self.logger.error("Failed to write to status file: %s", e)
-            raise StatusFileError(f"Could not write status file: {e}") from e
-        except Exception as e:
-            # Catch any other unexpected errors during write
-            self.logger.exception("Unexpected error writing status file: %s", e)
+                    json.dump(data, f, indent=2, default=datetime_handler)  # Use indent for readability and custom handler
+                self.logger.debug("Status file written successfully: %s", self.status_file_path)
+        except OSError as e:
+            self.logger.error("OS error writing status file %s: %s", self.status_file_path, e)
+            raise StatusFileError(f"Failed to write status file: {e}") from e
+        except Exception as e: # Catch any other unexpected errors during write
+            self.logger.error(
+                "Unexpected error writing status file %s: %s", self.status_file_path, e,
+                exc_info=True
+            )
             raise StatusFileError(f"Unexpected error writing status file: {e}") from e
 
     def get_last_status(self) -> Optional[Dict[str, Any]]:
-        """Gets the status entry for the highest stage in the *latest run*.
-
-        Finds the run with the highest `run_id` and returns the last status update
-        within that run's `status_updates` list.
+        """Retrieves the last recorded status for the current run.
 
         Returns:
-            The last status dictionary from the latest run, or None if no runs or statuses exist.
+            A dictionary of the last status entry, or None if no runs or stages.
         """
         try:
             status_data = self._read_status_file()  # Reads {'runs': [...]} structure
@@ -376,20 +353,18 @@ class StateManager:
             self.logger.exception("Unexpected error in get_last_status: %s", e)
             return None
 
-    def get_full_status(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Gets the entire status structure (including all runs).
-
-        Returns:
-            The full status dictionary { 'runs': [...] }.
-
-        Raises:
-            StatusFileError: If the status file cannot be read or parsed.
-        """
-        # This re-raises StatusFileError if reading fails
+    def get_full_status(self) -> Dict[str, Any]:
+        """Returns the entire status structure (runs and master plans), project directory, and counts."""
         self.logger.debug("get_full_status: Reading entire status structure.")
-        status_data = self._read_status_file()
-        self.logger.debug(f"get_full_status: Returning data: {status_data}")
-        return status_data
+        data = self._read_status_file()
+        # Add project_directory to the returned data
+        data["project_directory"] = str(self.target_dir_path)
+        # Add total_master_plans to the returned data
+        data["total_master_plans"] = len(data.get("master_plans", []))
+        # Add total_runs to the returned data (optional, but good for consistency if needed later)
+        data["total_runs"] = len(data.get("runs", []))
+        self.logger.debug("get_full_status: Returning data: %s", data)
+        return data
 
     def get_next_stage(self) -> Optional[Union[int, float]]:
         """Determines the next stage to be executed based on the *latest run*.

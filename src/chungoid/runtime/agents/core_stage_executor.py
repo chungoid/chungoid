@@ -1,4 +1,5 @@
-from typing import Any, Dict
+from __future__ import annotations
+from typing import Any, Dict, Optional, List
 import logging
 import yaml
 from pathlib import Path
@@ -22,6 +23,9 @@ except ImportError as e:
 # --- Agent Definition ---
 from pydantic import BaseModel, Field, ValidationError
 from ...utils.agent_registry import AgentCard 
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.agent_resolver import AgentProvider
+from unittest.mock import MagicMock
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,16 @@ core_stage_executor_card = AgentCard(
     mcp_tool_input_schemas=None
 )
 
+# Placeholder for actual provider retrieval logic
+# This is a temporary measure for unblocking tests and should be replaced
+# with proper dependency injection for LLMProvider and AgentProvider.
+def get_default_llm_provider_temp():
+    # In a real scenario, this might fetch a configured default provider
+    return MagicMock(spec=LLMProvider)
+
+def get_default_agent_provider_temp():
+    # In a real scenario, this might fetch a configured default provider
+    return MagicMock(spec=AgentProvider)
 
 # --- Agent Logic ---
 async def core_stage_executor_agent(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -125,7 +139,13 @@ async def core_stage_executor_agent(context: Dict[str, Any]) -> Dict[str, Any]:
     # The engine itself might *also* try to load standard stage files via its PromptManager,
     # but that's okay - we primarily use this engine instance to call execute_mcp_tool.
     try:
-        temp_engine = ChungoidEngine(project_directory=current_project_root)
+        temp_llm_provider = get_default_llm_provider_temp()
+        temp_agent_provider = get_default_agent_provider_temp()
+        temp_engine = ChungoidEngine(
+            project_directory=current_project_root,
+            llm_provider=temp_llm_provider,
+            agent_provider=temp_agent_provider
+        )
     except NameError: # If ChungoidEngine import failed
         logger.error("ChungoidEngine class not available. Cannot execute sub-stage.")
         return {"status":"error", "message": "Engine components not loaded."}

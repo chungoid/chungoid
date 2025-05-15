@@ -138,7 +138,6 @@ class ChungoidEngine:
         def _initialize_project_sync_wrapper():
             # Assuming StateManager.initialize_project is synchronous
             self.state_manager.initialize_project()
-            self.state_manager.initialize_project_status(run_id=str(uuid.uuid4()))
             return {"message": f"Project initialized at {self.project_dir}"}
 
         def _get_project_status_sync_wrapper():

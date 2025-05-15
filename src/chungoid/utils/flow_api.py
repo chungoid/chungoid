@@ -15,7 +15,7 @@ def get_state_manager() -> StateManager:
     return StateManager(project_root=Path.cwd())
 
 def get_metrics_store() -> MetricsStore:
-    return MetricsStore(target_directory=Path.cwd())
+    return MetricsStore(project_root=Path.cwd())
 
 def get_config() -> dict:
     return {"logging": {"level": os.getenv("LOG_LEVEL", "INFO")}}

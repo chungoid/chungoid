@@ -266,15 +266,17 @@ async def test_async_orchestrator_runs(
     mock_agent_provider.get = AsyncMock(side_effect=[greet_agent_mock, farewell_agent_mock])
     
     # Instantiate AsyncOrchestrator correctly
+    mock_metrics_store = AsyncMock()
     orch = AsyncOrchestrator(
-        pipeline_def=master_plan, 
         config=mock_config, 
         agent_provider=mock_agent_provider, 
-        state_manager=mock_state_manager
+        state_manager=mock_state_manager,
+        metrics_store=mock_metrics_store,
+        master_planner_reviewer_agent_id=None
     )
     
     initial_context = {"run_type": "async_test"}
-    final_context = await orch.run(master_plan, initial_context.copy()) # Pass plan and context
+    final_context = await orch.run(master_plan, initial_context.copy())
 
     # Assertions
     mock_agent_provider.get.assert_has_calls([
@@ -286,7 +288,6 @@ async def test_async_orchestrator_runs(
     assert final_context['outputs']['greet_master'] == {"greet_output": "ok"}
     assert final_context['outputs']['farewell_master'] == {"farewell_output": "ok"}
     assert final_context['run_type'] == "async_test"
-    # Use assert_has_calls for AsyncMock, it checks awaited calls
     mock_state_manager.update_status.assert_has_calls([
         call(stage=1.0, status='PASS', artifacts=[]),
         call(stage=2.0, status='PASS', artifacts=[]),

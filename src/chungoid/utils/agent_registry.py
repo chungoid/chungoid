@@ -103,21 +103,25 @@ class AgentRegistry:
         card_data = retrieved_meta_from_chroma.copy()
 
         # Deserialize category and visibility from string to enum
-        if "category" in card_data and card_data["category"]:
+        # Convert empty strings back to None before validation
+        if "category" in card_data and card_data["category"] == "":
+            card_data["category"] = None
+        elif "category" in card_data and card_data["category"] is not None: # Ensure it's not already None
             try:
                 card_data["category"] = AgentCategory(card_data["category"])
             except ValueError:
-                # Handle cases where the string from DB is not a valid enum member
-                # Log a warning, or set to None, or raise an error
-                # For now, let Pydantic validation handle it or set to None if desired
-                pass # Pydantic will raise validation error if it's not a valid enum member and not optional
-        
-        if "visibility" in card_data and card_data["visibility"]:
+                # Let Pydantic handle it if it's a non-empty, invalid string
+                pass
+
+        if "visibility" in card_data and card_data["visibility"] == "":
+            card_data["visibility"] = None
+        elif "visibility" in card_data and card_data["visibility"] is not None: # Ensure it's not already None
             try:
                 card_data["visibility"] = AgentVisibility(card_data["visibility"])
             except ValueError:
-                pass # Similar handling for visibility
-
+                # Let Pydantic handle it if it's a non-empty, invalid string
+                pass
+        
         capabilities_str = card_data.pop("_capabilities_str", "")
         card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
         
@@ -163,16 +167,23 @@ class AgentRegistry:
             # card_data["description"] = retrieved_documents[i] # This would assign searchable_doc
 
             # Deserialize category and visibility from string to enum
-            if "category" in card_data and card_data["category"]:
+            # Convert empty strings back to None before validation
+            if "category" in card_data and card_data["category"] == "":
+                card_data["category"] = None
+            elif "category" in card_data and card_data["category"] is not None: # Ensure it's not already None
                 try:
                     card_data["category"] = AgentCategory(card_data["category"])
                 except ValueError:
+                     # Let Pydantic handle it if it's a non-empty, invalid string
                     pass
             
-            if "visibility" in card_data and card_data["visibility"]:
+            if "visibility" in card_data and card_data["visibility"] == "":
+                card_data["visibility"] = None
+            elif "visibility" in card_data and card_data["visibility"] is not None: # Ensure it's not already None
                 try:
                     card_data["visibility"] = AgentVisibility(card_data["visibility"])
                 except ValueError:
+                    # Let Pydantic handle it if it's a non-empty, invalid string
                     pass
 
             capabilities_str = card_data.pop("_capabilities_str", "")
