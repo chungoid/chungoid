@@ -25,6 +25,8 @@ class ClarificationCheckpointSpec(BaseModel):
 class MasterStageSpec(BaseModel):
     """Specification of a single stage within a Master Execution Plan."""
     agent_id: str = Field(..., description="ID of the agent to invoke (e.g., 'CoreStageExecutorAgent')")
+    agent_category: Optional[str] = Field(None, description="Category of agent to invoke if agent_id is not specified.")
+    agent_selection_preferences: Optional[Dict[str, Any]] = Field(None, description="Preferences for selecting an agent from agent_category. Example: {'capability_profile_match': {'language': 'python'}, 'priority_gte': 5}")
     inputs: Optional[Dict[str, Any]] = Field(
         None, 
         description=(

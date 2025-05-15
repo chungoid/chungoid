@@ -23,7 +23,9 @@ class AgentCard(BaseModel):
     name: str
     version: Optional[str] = None
     description: Optional[str] = None
-    category: Optional[AgentCategory] = None
+    categories: Optional[List[str]] = Field(default_factory=list, description="Functional categories the agent belongs to (e.g., ['CodeGeneration', 'Python']).")
+    capability_profile: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Key-value pairs describing specific capabilities (e.g., {'language': 'python', 'version_semver': '3.9.1', 'framework': 'typer'}).")
+    priority: Optional[int] = Field(default=0, description="Default priority for selection within a category (higher wins).")
     visibility: Optional[AgentVisibility] = None
     stage_focus: Optional[str] = None
     capabilities: List[str] = Field(default_factory=list)
@@ -52,6 +54,14 @@ class AgentRegistry:
         if card.description:
             doc_parts.append(f"Description: {card.description}")
         
+        if card.categories:
+            doc_parts.append(f"Categories: {', '.join(card.categories)}")
+        if card.capability_profile:
+            profile_summary = json.dumps(card.capability_profile)
+            doc_parts.append(f"Capability Profile: {profile_summary}")
+        if card.priority is not None:
+            doc_parts.append(f"Priority: {card.priority}")
+
         if card.capabilities:
             doc_parts.append(f"Capabilities: {', '.join(card.capabilities)}")
         if card.tags:
@@ -104,15 +114,6 @@ class AgentRegistry:
 
         # Deserialize category and visibility from string to enum
         # Convert empty strings back to None before validation
-        if "category" in card_data and card_data["category"] == "":
-            card_data["category"] = None
-        elif "category" in card_data and card_data["category"] is not None: # Ensure it's not already None
-            try:
-                card_data["category"] = AgentCategory(card_data["category"])
-            except ValueError:
-                # Let Pydantic handle it if it's a non-empty, invalid string
-                pass
-
         if "visibility" in card_data and card_data["visibility"] == "":
             card_data["visibility"] = None
         elif "visibility" in card_data and card_data["visibility"] is not None: # Ensure it's not already None
@@ -122,6 +123,15 @@ class AgentRegistry:
                 # Let Pydantic handle it if it's a non-empty, invalid string
                 pass
         
+        categories_str = card_data.pop("_categories_str", "")
+        card_data["categories"] = [cat.strip() for cat in categories_str.split(",") if cat.strip()]
+
+        capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
+        card_data["capability_profile"] = json.loads(capability_profile_json_str)
+        
+        if "priority" not_in card_data or card_data["priority"] is None:
+            card_data["priority"] = 0
+
         capabilities_str = card_data.pop("_capabilities_str", "")
         card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
         
@@ -168,15 +178,6 @@ class AgentRegistry:
 
             # Deserialize category and visibility from string to enum
             # Convert empty strings back to None before validation
-            if "category" in card_data and card_data["category"] == "":
-                card_data["category"] = None
-            elif "category" in card_data and card_data["category"] is not None: # Ensure it's not already None
-                try:
-                    card_data["category"] = AgentCategory(card_data["category"])
-                except ValueError:
-                     # Let Pydantic handle it if it's a non-empty, invalid string
-                    pass
-            
             if "visibility" in card_data and card_data["visibility"] == "":
                 card_data["visibility"] = None
             elif "visibility" in card_data and card_data["visibility"] is not None: # Ensure it's not already None
@@ -185,6 +186,15 @@ class AgentRegistry:
                 except ValueError:
                     # Let Pydantic handle it if it's a non-empty, invalid string
                     pass
+
+            categories_str = card_data.pop("_categories_str", "")
+            card_data["categories"] = [cat.strip() for cat in categories_str.split(",") if cat.strip()]
+
+            capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
+            card_data["capability_profile"] = json.loads(capability_profile_json_str)
+            
+            if "priority" not_in card_data or card_data["priority"] is None:
+                card_data["priority"] = 0
 
             capabilities_str = card_data.pop("_capabilities_str", "")
             card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
@@ -243,6 +253,15 @@ class AgentRegistry:
                 card_data = current_chroma_meta.copy()
 
                 # Deserialize fields from metadata
+                categories_str = card_data.pop("_categories_str", "")
+                card_data["categories"] = [cat.strip() for cat in categories_str.split(",") if cat.strip()]
+
+                capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
+                card_data["capability_profile"] = json.loads(capability_profile_json_str)
+                
+                if "priority" not_in card_data or card_data["priority"] is None:
+                    card_data["priority"] = 0
+
                 capabilities_str = card_data.pop("_capabilities_str", "")
                 card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
 
@@ -296,35 +315,68 @@ class AgentRegistry:
         return bool(self._coll.get(ids=[agent_id])["ids"]) 
 
     def _agent_card_to_chroma_metadata(self, agent_card: AgentCard) -> Dict[str, Any]:
-        """Converts an AgentCard to a dictionary suitable for ChromaDB metadata.
-        Ensures complex types are serialized to strings where necessary.
-        ChromaDB metadata values must be str, int, float, or bool.
+        """Converts AgentCard to a flat dictionary suitable for ChromaDB metadata.
+        Complex types are serialized to strings. Optional simple types that are None
+        have their keys excluded.
         """
-        meta = {
+        meta: Dict[str, Any] = {
             "agent_id": agent_card.agent_id,
             "name": agent_card.name,
-            "version": agent_card.version if agent_card.version is not None else "",
-            "description": agent_card.description if agent_card.description is not None else "",
-            "category": agent_card.category.value if agent_card.category is not None else "",
-            "visibility": agent_card.visibility.value if agent_card.visibility is not None else "",
-            "stage_focus": agent_card.stage_focus if agent_card.stage_focus is not None else "",
-            "_capabilities_str": ",".join(agent_card.capabilities),
-            "_tags_str": ",".join(agent_card.tags), # Added for tags
-            "_tool_names_str": ",".join(agent_card.tool_names),
-            "_input_schema_json": json.dumps(agent_card.input_schema) if agent_card.input_schema is not None else "null",
-            "_output_schema_json": json.dumps(agent_card.output_schema) if agent_card.output_schema is not None else "null",
-            "_mcp_tool_input_schemas_json": json.dumps(agent_card.mcp_tool_input_schemas) if agent_card.mcp_tool_input_schemas is not None else "null",
-            "_agent_card_metadata_json": json.dumps(agent_card.metadata), # Store the agent's own metadata field
-            "created_iso": agent_card.created.isoformat() # Store datetime as ISO string
         }
-        # Add correlation_id if present
+        if agent_card.version is not None:
+            meta["version"] = agent_card.version
+        if agent_card.description is not None: # Store original description
+            meta["description"] = agent_card.description
+        
+        # New fields
+        if agent_card.categories: # Store if not empty
+            meta["_categories_str"] = ",".join(agent_card.categories)
+        else:
+            meta["_categories_str"] = "" # Store empty string if None or empty list
+
+        if agent_card.capability_profile: # Store if not empty
+            meta["_capability_profile_json"] = json.dumps(agent_card.capability_profile)
+        else:
+            meta["_capability_profile_json"] = "{}" # Store empty JSON object if None or empty dict
+        
+        # Priority is simple, store directly if not None. Pydantic default is 0.
+        if agent_card.priority is not None:
+             meta["priority"] = agent_card.priority
+
+        # Handle existing optional fields
+        if agent_card.visibility is not None:
+            meta["visibility"] = agent_card.visibility.value
+        else:
+            meta["visibility"] = "" # Store empty string if None
+
+        if agent_card.stage_focus is not None:
+            meta["stage_focus"] = agent_card.stage_focus
+        
+        # Handle existing list fields (store as comma-separated strings)
+        meta["_capabilities_str"] = ",".join(agent_card.capabilities) if agent_card.capabilities else ""
+        meta["_tags_str"] = ",".join(agent_card.tags) if agent_card.tags else ""
+        meta["_tool_names_str"] = ",".join(agent_card.tool_names) if agent_card.tool_names else ""
+
+        # Handle existing dict fields (store as JSON strings)
+        meta["_input_schema_json"] = json.dumps(agent_card.input_schema) if agent_card.input_schema is not None else "null"
+        meta["_output_schema_json"] = json.dumps(agent_card.output_schema) if agent_card.output_schema is not None else "null"
+        meta["_mcp_tool_input_schemas_json"] = json.dumps(agent_card.mcp_tool_input_schemas) if agent_card.mcp_tool_input_schemas is not None else "null"
+        
         if agent_card.correlation_id is not None:
             meta["correlation_id"] = agent_card.correlation_id
         
-        # Filter out any keys with None values if ChromaDB has issues, though empty strings are fine.
-        # For now, assume empty strings are acceptable.
+        # Store other metadata as JSON string
+        meta["_agent_card_metadata_json"] = json.dumps(agent_card.metadata) if agent_card.metadata else "{}"
+        
+        # created field is a datetime object, convert to ISO format string
+        meta["created"] = agent_card.created.isoformat()
+        
         return meta
 
     def delete(self, agent_id: str) -> bool:
         # Implement delete logic here
-        pass 
+        try:
+            self._coll.delete(ids=[agent_id])
+            return True
+        except Exception: # Broad exception, refine if ChromaDB has specific ones
+            return False 

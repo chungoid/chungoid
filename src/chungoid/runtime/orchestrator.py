@@ -36,6 +36,9 @@ import inspect
 import asyncio
 import uuid
 
+# New imports for category resolution errors
+from chungoid.utils.agent_resolver import NoAgentFoundForCategoryError, AmbiguousAgentCategoryError
+
 __all__ = [
     "StageSpec",
     "ExecutionPlan",
@@ -925,20 +928,159 @@ class AsyncOrchestrator(BaseOrchestrator):
                 return current_context
 
             self.logger.info(
-                f"Executing stage: '{current_stage_name}' (Number: {stage_spec.number}) for plan '{flow_id}', run '{run_id}'. Agent: '{stage_spec.agent_id}'"
+                f"[RunID: {self._current_run_id}] Executing master stage: '{current_stage_name}' (Number: {current_stage_spec.number}) using agent_id: '{current_stage_spec.agent_id if current_stage_spec.agent_id else 'N/A - Category based'}"
             )
+            # Emit metric for stage start
             self._emit_metric(
                 event_type=MetricEventType.STAGE_START,
-                flow_id=flow_id,
-                run_id=run_id,
-                stage_id=current_stage_name,
-                master_stage_id=current_stage_name,
-                agent_id=stage_spec.agent_id,
+                flow_id=self.current_plan.id,
+                run_id=self._current_run_id,
                 data={
-                    "stage_number": stage_spec.number,
-                    "inputs_spec": stage_spec.inputs,
+                    "stage_name": current_stage_name,
+                    "stage_number": current_stage_spec.number,
+                    "agent_id": current_stage_spec.agent_id, # Log original spec
+                    "agent_category": current_stage_spec.agent_category # Log original spec
                 },
             )
+
+            agent_callable = None
+            resolved_agent_id_for_stage = current_stage_spec.agent_id # Default to specified agent_id
+            stage_execution_error = None
+
+            try:
+                if current_stage_spec.agent_id:
+                    agent_callable = self.agent_provider.get(current_stage_spec.agent_id)
+                    # resolved_agent_id_for_stage is already set
+                elif current_stage_spec.agent_category:
+                    self.logger.info(f"[RunID: {self._current_run_id}] Resolving agent by category: {current_stage_spec.agent_category} with preferences: {current_stage_spec.agent_selection_preferences}")
+                    resolved_agent_id_for_stage, agent_callable = await self.agent_provider.resolve_agent_by_category(
+                        current_stage_spec.agent_category,
+                        current_stage_spec.agent_selection_preferences
+                    )
+                    self.logger.info(f"[RunID: {self._current_run_id}] Resolved category '{current_stage_spec.agent_category}' to agent_id: '{resolved_agent_id_for_stage}'")
+                else:
+                    self.logger.error(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' has neither agent_id nor agent_category specified.")
+                    stage_execution_error = AgentErrorDetails(
+                        error_code="INVALID_STAGE_DEFINITION",
+                        message=f"Stage '{current_stage_name}' must have agent_id or agent_category.",
+                        can_retry=False
+                    )
+            except (NoAgentFoundForCategoryError, AmbiguousAgentCategoryError) as cat_err:
+                self.logger.error(f"[RunID: {self._current_run_id}] Failed to resolve agent for category '{current_stage_spec.agent_category}': {cat_err}")
+                stage_execution_error = AgentErrorDetails(
+                    error_code="AGENT_CATEGORY_RESOLUTION_FAILED",
+                    message=str(cat_err),
+                    details={"category": current_stage_spec.agent_category, "preferences": current_stage_spec.agent_selection_preferences},
+                    can_retry=False # Typically, category resolution issues are not retriable without plan change
+                )
+            except KeyError as e: # From agent_provider.get if agent_id not found
+                self.logger.error(f"[RunID: {self._current_run_id}] Agent '{current_stage_spec.agent_id}' not found: {e}")
+                stage_execution_error = AgentErrorDetails(
+                    error_code="AGENT_NOT_FOUND",
+                    message=f"Agent ID '{current_stage_spec.agent_id}' not found in provider.",
+                    details={"agent_id": current_stage_spec.agent_id},
+                    can_retry=False
+                )
+            except Exception as e: # Catch any other unexpected error during agent resolution
+                self.logger.error(f"[RunID: {self._current_run_id}] Unexpected error resolving agent for stage '{current_stage_name}': {e}")
+                stage_execution_error = AgentErrorDetails(
+                    error_code="AGENT_RESOLUTION_UNEXPECTED_ERROR",
+                    message=f"An unexpected error occurred while resolving the agent: {traceback.format_exc()}",
+                    can_retry=False
+                )
+
+            # If agent_callable is still None due to an error caught above, or if stage_execution_error is set
+            if stage_execution_error or not agent_callable:
+                # ... (existing error handling logic for stage_execution_error, like invoking reviewer or pausing) ...
+                # This part will be complex and depends on the existing error handling flow for stage_execution_error
+                # For now, ensure status is FAIL and proceed to error handling section of the loop.
+                current_stage_result_status = StageStatus.FAIL
+                if not stage_execution_error: # Should not happen if agent_callable is None, but as a safeguard
+                    stage_execution_error = AgentErrorDetails(error_code="INTERNAL_ERROR", message="Agent callable not resolved but no specific error captured.")
+                
+                self._update_run_status_with_stage_result(
+                    stage_name=current_stage_name,
+                    stage_number=current_stage_spec.number,
+                    status=StageStatus.FAIL,
+                    error_details=stage_execution_error,
+                    reason=stage_execution_error.message
+                )
+                # Transition to error handling logic of the loop (e.g., reviewer agent invocation or pause)
+                # This will likely involve setting next_master_stage_key based on on_failure or pausing.
+                # The existing error handling path for `stage_execution_error` should be leveraged.
+                # For now, this simplified path assumes it will fall into the existing error handling logic correctly.
+                
+                # Update: Need to explicitly set path for error handling based on existing logic
+                effective_on_failure = current_stage_spec.on_failure
+                if not effective_on_failure: # Default behavior if on_failure is not specified
+                    self.logger.warning(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution) and no on_failure policy defined. Defaulting to PAUSE_FOR_INTERVENTION.")
+                    paused_state_details = self._create_paused_state_details(
+                        master_flow_id=self.current_plan.id,
+                        paused_stage_id=current_stage_name,
+                        execution_context=copy.deepcopy(context), # Save a copy
+                        error_details_model=stage_execution_error,
+                        status_reason=f"Agent resolution failed: {stage_execution_error.message}",
+                        clarification_request=None,
+                        pause_status=StageStatus.PAUSED_FOR_AGENT_FAILURE # Generic pause for agent issues
+                    )
+                    await self.state_manager.save_paused_flow_state(self._current_run_id, paused_state_details)
+                    self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=self.current_plan.id, run_id=self._current_run_id, data={"reason": "Agent resolution failure"})
+                    return context # End execution for this run, requires resume
+
+                if effective_on_failure.action == "FAIL_MASTER_FLOW":
+                    self.logger.error(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Master flow configured to FAIL_MASTER_FLOW. Message: {effective_on_failure.log_message}")
+                    current_master_stage_key = "_END_FAILURE_" # Signal loop to terminate
+                    # Final context will be returned by the loop
+                elif effective_on_failure.action == "GOTO_MASTER_STAGE":
+                    next_master_stage_key = effective_on_failure.target_master_stage_key
+                    self.logger.info(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Transitioning to on_failure stage: '{next_master_stage_key}'.")
+                    if next_master_stage_key not_in self.current_plan.stages and next_master_stage_key not_in ["_END_SUCCESS_", "_END_FAILURE_"]:
+                        self.logger.error(f"[RunID: {self._current_run_id}] on_failure target_master_stage_key '{next_master_stage_key}' not found in plan. Terminating.")
+                        current_master_stage_key = "_END_FAILURE_"
+                    else:
+                        current_master_stage_key = next_master_stage_key
+                elif effective_on_failure.action == "PAUSE_FOR_INTERVENTION":
+                    self.logger.info(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Pausing for human intervention as per on_failure policy.")
+                    paused_state_details = self._create_paused_state_details(
+                        master_flow_id=self.current_plan.id,
+                        paused_stage_id=current_stage_name,
+                        execution_context=copy.deepcopy(context),
+                        error_details_model=stage_execution_error,
+                        status_reason=f"Agent resolution failed (on_failure policy): {stage_execution_error.message}",
+                        clarification_request=None,
+                        pause_status=StageStatus.PAUSED_FOR_INTERVENTION
+                    )
+                    await self.state_manager.save_paused_flow_state(self._current_run_id, paused_state_details)
+                    self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=self.current_plan.id, run_id=self._current_run_id, data={"reason": "Agent resolution failure, on_failure policy"})
+                    return context # End execution
+                else: # Should not happen with validated MasterStageFailurePolicy
+                    self.logger.error(f"[RunID: {self._current_run_id}] Unknown on_failure action: {effective_on_failure.action}. Terminating.")
+                    current_master_stage_key = "_END_FAILURE_"
+                
+                # If we didn't return (pause) or set to _END_FAILURE_, we continue the loop to the next stage (error or normal)
+                if current_master_stage_key != "_END_FAILURE_" and current_master_stage_key not_in ["_END_SUCCESS_", "_END_FAILURE_"]:
+                    context["_last_master_stage_hop_info"] = {
+                        "from": current_stage_name,
+                        "to": current_master_stage_key,
+                        "reason": "Agent resolution failure, on_failure transition"
+                    }
+                    continue # To the next iteration of the while loop with the new current_master_stage_key
+                else: # Reached a terminal state due to error handling
+                    break # Exit the while loop, to be handled by outer return logic
+
+            # If we are here, agent_callable should be resolved.
+            # Original agent invocation logic follows...
+            # ... (rest of the agent invocation using agent_callable and resolved_agent_id_for_stage, 
+            #      success criteria checking, context updates, and transition to next stage or error handling for *agent execution* errors) ...
+            
+            # Placeholder for where the original agent execution call was:
+            # stage_output_payload_or_error = await self._execute_single_agent_stage(
+            #    agent_callable, 
+            #    resolved_agent_id_for_stage, # Use the resolved ID
+            #    current_stage_name, 
+            #    current_stage_spec, 
+            #    invokable_context
+            # )
 
             stage_start_time = datetime.now(timezone.utc)
             agent_invocation_succeeded = False
@@ -946,7 +1088,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             agent_error_details: Optional[AgentErrorDetails] = None
 
             try:
-                agent_id_to_invoke = stage_spec.agent_id
+                agent_id_to_invoke = resolved_agent_id_for_stage
                 agent_inputs_spec = stage_spec.inputs or {}
 
                 resolved_inputs = self._resolve_input_values(
