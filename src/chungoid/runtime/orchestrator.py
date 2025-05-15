@@ -16,7 +16,7 @@ import yaml
 from pydantic import BaseModel, Field, ConfigDict
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider
 from chungoid.utils.state_manager import StateManager
-from chungoid.schemas.common_enums import StageStatus
+from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
 
@@ -401,7 +401,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         None  # Stores the current run_id for the active flow
     )
     _last_successful_stage_output: Optional[Any] = (
-        None  # Added for 'previous_output' keyword
+        None  # Stores the output of the last successfully completed stage in the current run
     )
 
     def __init__(
@@ -826,6 +826,61 @@ class AsyncOrchestrator(BaseOrchestrator):
             resolved_inputs[input_name] = resolved_value
         return resolved_inputs
 
+    async def _invoke_reviewer_and_get_suggestion(
+        self,
+        run_id: str,
+        flow_id: str,
+        current_stage_name: str,
+        agent_error_details: Optional[AgentErrorDetails],
+        current_context: Dict[str, Any],
+        # current_plan: MasterExecutionPlan # available as self.current_plan
+    ) -> Optional[MasterPlannerReviewerOutput]:
+        """Invokes the MasterPlannerReviewerAgent and returns its suggestion."""
+        if not self.master_planner_reviewer_agent_id:
+            self.logger.warning(f"[RunID: {run_id}] MasterPlannerReviewerAgent ID not configured. Skipping review.")
+            return None
+
+        self.logger.info(f"[RunID: {run_id}] Stage '{current_stage_name}' failed. Invoking MasterPlannerReviewerAgent.")
+        try:
+            reviewer_agent_callable = self.agent_provider.get(self.master_planner_reviewer_agent_id)
+            
+            synthetic_paused_run_details = {
+                "run_id": run_id,
+                "flow_id": flow_id,
+                "paused_at_stage_id": current_stage_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "status": FlowPauseStatus.AGENT_ERROR.value,
+                "context_snapshot_ref": None, 
+                "error_details": agent_error_details.model_dump() if agent_error_details else None,
+                "clarification_request": None
+            }
+
+            reviewer_input = MasterPlannerReviewerInput(
+                current_master_plan=self.current_plan,
+                paused_run_details=synthetic_paused_run_details,
+                pause_status=FlowPauseStatus.AGENT_ERROR,
+                paused_stage_id=current_stage_name,
+                triggering_error_details=agent_error_details,
+                full_context_at_pause=copy.deepcopy(current_context)
+            )
+
+            self.logger.debug(f"[RunID: {run_id}] MasterPlannerReviewerAgent input: {reviewer_input.model_dump_json(indent=2)}")
+            
+            reviewer_output: MasterPlannerReviewerOutput # Type hint
+            if inspect.iscoroutinefunction(reviewer_agent_callable) or inspect.iscoroutinefunction(getattr(reviewer_agent_callable, '__call__', None)):
+                reviewer_output = await reviewer_agent_callable(reviewer_input, full_context=current_context)
+            elif callable(reviewer_agent_callable):
+                reviewer_output = await asyncio.to_thread(reviewer_agent_callable, reviewer_input, full_context=current_context)
+            else:
+                raise TypeError(f"Reviewer agent {self.master_planner_reviewer_agent_id} is not callable.")
+
+            self.logger.info(f"[RunID: {run_id}] MasterPlannerReviewerAgent suggested: {reviewer_output.suggestion_type.value}. Reasoning: {reviewer_output.reasoning}")
+            return reviewer_output
+
+        except Exception as reviewer_exc:
+            self.logger.error(f"[RunID: {run_id}] Error during MasterPlannerReviewerAgent invocation: {reviewer_exc}", exc_info=True)
+            return None
+
     async def _execute_master_flow_loop(
         self, start_stage_name: str, context: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -1034,7 +1089,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 elif effective_on_failure.action == "GOTO_MASTER_STAGE":
                     next_master_stage_key = effective_on_failure.target_master_stage_key
                     self.logger.info(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Transitioning to on_failure stage: '{next_master_stage_key}'.")
-                    if next_master_stage_key not_in self.current_plan.stages and next_master_stage_key not_in ["_END_SUCCESS_", "_END_FAILURE_"]:
+                    if next_master_stage_key not in self.current_plan.stages and next_master_stage_key not in ["_END_SUCCESS_", "_END_FAILURE_"]:
                         self.logger.error(f"[RunID: {self._current_run_id}] on_failure target_master_stage_key '{next_master_stage_key}' not found in plan. Terminating.")
                         current_master_stage_key = "_END_FAILURE_"
                     else:
@@ -1058,7 +1113,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     current_master_stage_key = "_END_FAILURE_"
                 
                 # If we didn't return (pause) or set to _END_FAILURE_, we continue the loop to the next stage (error or normal)
-                if current_master_stage_key != "_END_FAILURE_" and current_master_stage_key not_in ["_END_SUCCESS_", "_END_FAILURE_"]:
+                if current_master_stage_key != "_END_FAILURE_" and current_master_stage_key not in ["_END_SUCCESS_", "_END_FAILURE_"]:
                     context["_last_master_stage_hop_info"] = {
                         "from": current_stage_name,
                         "to": current_master_stage_key,
@@ -1248,7 +1303,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     flow_id=flow_id,
                     run_id=run_id,
                     stage_id=current_stage_name,
-                    master_stage_id=current_stage_name,
+                    master_stage_id=current_stage_name, # Use current_stage_name for master_stage_id
                     agent_id=stage_spec.agent_id,
                     data={
                         "status": StageStatus.FAILURE.value,
@@ -1260,154 +1315,309 @@ class AsyncOrchestrator(BaseOrchestrator):
                         ),
                     },
                 )
-            else:  # Agent invocation succeeded and no AgentErrorDetails returned by agent
-                stage_final_status = StageStatus.SUCCESS
-                stage_reason = f"Stage {stage_final_status.value}"
 
-                # Always store the raw stage output under context.outputs.<stage_name>
-                if (
-                    stage_result_payload is not None
-                ):  # Avoid storing None if agent returns None
-                    current_context.setdefault("outputs", {})[
-                        current_stage_name
-                    ] = stage_result_payload
+                # ---- BEGIN REVIEWER INVOCATION & HANDLING ----
+                reviewer_output: Optional[MasterPlannerReviewerOutput] = None
+                should_call_reviewer = True # Or determine based on stage_spec.on_failure policy
 
-                # Handle output context path (for alternative/additional placement)
-                if stage_spec.output_context_path:
-                    try:
-                        path_parts = stage_spec.output_context_path.split(".")
-                        target_obj = current_context
-                        for part in path_parts[:-1]:
-                            target_obj = target_obj.setdefault(part, {})
-                        target_obj[path_parts[-1]] = stage_result_payload
-                        self.logger.debug(
-                            f"Stored stage output at {stage_spec.output_context_path}"
-                        )
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to store stage output at '{stage_spec.output_context_path}' "
-                            f"for stage '{current_stage_name}': {e}",
-                            exc_info=True,
-                        )
+                if should_call_reviewer:
+                    reviewer_output = await self._invoke_reviewer_and_get_suggestion(
+                        run_id=run_id,
+                        flow_id=flow_id,
+                        current_stage_name=current_stage_name,
+                        agent_error_details=agent_error_details,
+                        current_context=current_context
+                    )
 
-                # Determine next stage
-                if stage_spec.condition:
-                    self.logger.debug(f"Evaluating condition for stage '{current_stage_name}': {stage_spec.condition}")
-                    if self._parse_condition(stage_spec.condition, current_context):
-                        next_stage_for_loop = stage_spec.next_stage_true
-                        self.logger.info(f"Condition TRUE for stage '{current_stage_name}', next stage: {next_stage_for_loop}")
-                    else:
-                        next_stage_for_loop = stage_spec.next_stage_false
-                        self.logger.info(f"Condition FALSE for stage '{current_stage_name}', next stage: {next_stage_for_loop}")
-                else:
-                    next_stage_for_loop = stage_spec.next_stage
-                    self.logger.info(f"No condition for stage '{current_stage_name}', direct next stage: {next_stage_for_loop}")
+                if reviewer_output:
+                    # Handle reviewer suggestions (Start with a few)
+                    if reviewer_output.suggestion_type == ReviewerActionType.RETRY_STAGE_AS_IS:
+                        self.logger.info(f"[RunID: {run_id}] Reviewer suggested RETRY_STAGE_AS_IS for stage '{current_stage_name}'. Retrying.")
+                        context["_last_master_stage_hop_info"] = {
+                            "from": current_stage_name, "to": current_stage_name, # Retry
+                            "reason": "Reviewer suggested RETRY_STAGE_AS_IS"
+                        }
+                        hops += 1 
+                        if "_flow_error" in current_context: del current_context["_flow_error"]
+                        if "_agent_error_details_for_stage_status" in current_context: del current_context["_agent_error_details_for_stage_status"]
+                        continue # Retry the current stage
 
-                self._emit_metric(
-                    event_type=MetricEventType.STAGE_END,
-                    flow_id=flow_id,
-                    run_id=run_id,
-                    stage_id=current_stage_name,
-                    master_stage_id=current_stage_name,
-                    agent_id=stage_spec.agent_id,
-                    data={
-                        "status": stage_final_status.value,
-                        "duration_seconds": stage_duration,
-                        "output_summary": (
-                            str(stage_result_payload)[:200]
-                            if stage_result_payload
-                            else None
-                        ),
-                    },
-                )
-
-            # Call to update state manager for the stage, after success/failure logic
-            self._update_run_status_with_stage_result(
-                stage_name=current_stage_name,
-                stage_number=stage_spec.number,
-                status=stage_final_status,
-                stage_output_payload=stage_result_payload,
-                error_details=agent_error_details,  # Pass the AgentErrorDetails object directly
-                reason=stage_reason,
-            )
-
-            if stage_final_status == StageStatus.FAILURE:
-                return current_context  # Abort loop on failure
-
-            if next_stage_for_loop == "FINAL_STEP":
-                self.logger.info(
-                    f"Reached FINAL_STEP from stage '{current_stage_name}'. Plan '{flow_id}', run '{run_id}' considered complete."
-                )
-                break  # Exit while loop
-
-            current_stage_name = next_stage_for_loop
-            # End of the while current_stage_name loop
-
-        if not current_context.get("_flow_error"):
-            if (
-                current_stage_name == "FINAL_STEP" or not current_stage_name
-            ):  # Normal completion
-                self.logger.info(
-                    f"Plan '{flow_id}', run '{run_id}' completed (reached FINAL_STEP or end of stages). Final context keys: {list(current_context.keys())}"
-                )
-            elif len(visited_stages) >= max_hops_for_flow:  # Max hops reached
-                current_context["_flow_error"] = {
-                    "message": "Max hops reached, execution aborted.",
-                    "stage": visited_stages[-1] if visited_stages else None,
-                }
-                self.logger.error(
-                    f"Max hops reached in plan '{flow_id}', run '{run_id}'."
-                )
-
-        current_context["visited_stages"] = visited_stages # ADDED THIS LINE
-        return current_context
-
-    def _update_run_status_with_stage_result(
-        self,
-        stage_name: str,
-        stage_number: Optional[float],
-        status: StageStatus,
-        stage_output_payload: Optional[
-            Any
-        ] = None,  # MODIFIED: from artifacts to stage_output_payload
-        error_details: Optional[
-            AgentErrorDetails
-        ] = None,  # MODIFIED: ensure this is AgentErrorDetails
-        reason: Optional[str] = None,
-    ):
-        """Internal helper to update StateManager with stage results."""
-        current_run_id = self._current_run_id  # MODIFIED
-        if not current_run_id:
-            # Log an error or warning, as this indicates a problem with run ID management
-            self.logger.error(
-                f"Cannot update status for stage '{stage_name}': _current_run_id is not set."
-            )
-            return
-
-        extracted_artifacts: Optional[List[str]] = None
-        # Use stage_output_payload here for extraction
-        if (
-            status == StageStatus.SUCCESS
-            and stage_output_payload
-            and isinstance(stage_output_payload, dict)
-        ):
-            raw_artifact_paths = stage_output_payload.get(self.ARTIFACT_OUTPUT_KEY)
-            if raw_artifact_paths is not None:
-                if isinstance(raw_artifact_paths, list):
-                    extracted_artifacts = []
-                    for idx, p_item in enumerate(raw_artifact_paths):
-                        if isinstance(p_item, str):
-                            extracted_artifacts.append(p_item)
+                    elif reviewer_output.suggestion_type == ReviewerActionType.RETRY_STAGE_WITH_MODIFIED_INPUT:
+                        self.logger.info(f"[RunID: {run_id}] Reviewer suggested RETRY_STAGE_WITH_MODIFIED_INPUT for stage '{current_stage_name}'.")
+                        
+                        can_retry_autonomously = False
+                        if reviewer_output.suggestion_details and \
+                           reviewer_output.suggestion_details.get("target_stage_id") == current_stage_name and \
+                           "new_inputs" in reviewer_output.suggestion_details and \
+                           isinstance(reviewer_output.suggestion_details["new_inputs"], dict):
+                            
+                            new_inputs_from_reviewer = reviewer_output.suggestion_details["new_inputs"]
+                            self.logger.info(f"[RunID: {run_id}] Attempting to apply new inputs for stage '{current_stage_name}': {new_inputs_from_reviewer}")
+                            
+                            if current_stage_name in self.current_plan.stages:
+                                self.current_plan.stages[current_stage_name].inputs = new_inputs_from_reviewer
+                                stage_spec.inputs = new_inputs_from_reviewer # Update current stage_spec view too
+                                
+                                self.logger.info(f"[RunID: {run_id}] Inputs for stage '{current_stage_name}' updated in plan for this run. Retrying stage.")
+                                context["_last_master_stage_hop_info"] = {
+                                    "from": current_stage_name, "to": current_stage_name, # Retry
+                                    "reason": "Reviewer suggested RETRY_STAGE_WITH_MODIFIED_INPUT (applied automatically)"
+                                }
+                                hops += 1
+                                if "_flow_error" in current_context: del current_context["_flow_error"]
+                                if "_agent_error_details_for_stage_status" in current_context: del current_context["_agent_error_details_for_stage_status"]
+                                can_retry_autonomously = True
+                                continue # Retry with new inputs
+                            else:
+                                self.logger.error(f"[RunID: {run_id}] Stage '{current_stage_name}' (target_stage_id from reviewer) not found in plan. Cannot apply new inputs. Escalating.")
                         else:
+                            self.logger.warning(f"[RunID: {run_id}] Reviewer suggested RETRY_STAGE_WITH_MODIFIED_INPUT but 'new_inputs' were missing, malformed, or for the wrong stage. Details: {reviewer_output.suggestion_details}. Escalating for user to provide inputs.")
+
+                        if not can_retry_autonomously:
+                            # Pause for user to provide inputs
+                            user_message = "Reviewer suggested retrying stage '{current_stage_name}' with modified inputs, but could not automatically determine them."
+                            reviewer_analysis = reviewer_output.suggestion_details.get("modification_needed", "No specific analysis provided by reviewer.")
+                            original_inputs = stage_spec.inputs if stage_spec else {}
+
+                            current_context["_flow_error"] = { 
+                                "message": user_message,
+                                "stage": current_stage_name,
+                                "reviewer_suggestion_type": reviewer_output.suggestion_type.value,
+                                "reviewer_reasoning": reviewer_output.reasoning,
+                                "reviewer_analysis": reviewer_analysis,
+                                "original_inputs": original_inputs,
+                                "original_agent_error": agent_error_details.model_dump() if agent_error_details else None
+                            }
+                            
+                            paused_state_details = self._create_paused_state_details(
+                                master_flow_id=flow_id,
+                                paused_stage_id=current_stage_name,
+                                execution_context=copy.deepcopy(current_context),
+                                error_details_model=agent_error_details, 
+                                status_reason=user_message,
+                                clarification_request={
+                                    "type": "INPUT_MODIFICATION_REQUIRED", 
+                                    "message": user_message,
+                                    "reviewer_analysis": reviewer_analysis,
+                                    "original_stage_inputs": original_inputs,
+                                    "reviewer_output": reviewer_output.model_dump(),
+                                    "action_required": f"Please provide the complete, corrected set of inputs for stage '{current_stage_name}' to retry.",
+                                    "resume_hint": f"Use 'chungoid flow resume {run_id} --action retry_with_inputs --action-data \'{{\"target_stage_id\": \"{current_stage_name}\", \"inputs\": {{...}}}}\'"                                    
+                                },
+                                pause_status=FlowPauseStatus.USER_INPUT_REQUIRED 
+                            )
+                            await self.state_manager.save_paused_flow_state(run_id, paused_state_details)
+                            self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=flow_id, run_id=run_id, 
+                                              data={"reason": "Awaiting user input for RETRY_STAGE_WITH_MODIFIED_INPUT", "stage_id": current_stage_name})
+                            current_context["_autonomous_flow_paused_state_saved"] = True
+                            return current_context # End execution for this run
+
+                    elif reviewer_output.suggestion_type == ReviewerActionType.MODIFY_MASTER_PLAN:
+                        self.logger.info(f"[RunID: {run_id}] Reviewer suggested MODIFY_MASTER_PLAN for stage '{current_stage_name}'. Escalating for user review.")
+                        # Simple Escalation: Pause the flow and provide reviewer's suggestion to the user.
+                        user_message = reviewer_output.suggestion_details.get("message_to_user", 
+                                                                              f"Reviewer suggested modifying the master plan due to issues at stage '{current_stage_name}'. Reasoning: {reviewer_output.reasoning}")
+                        if "suggested_plan_change" in reviewer_output.suggestion_details:
+                            user_message += f" Suggested change: {reviewer_output.suggestion_details['suggested_plan_change']}"
+
+                        current_context["_flow_error"] = { # Keep this for context, but primary info via PausedRunDetails
+                            "message": f"Flow paused for user review: Reviewer suggested MODIFY_MASTER_PLAN for stage '{current_stage_name}'.",
+                            "stage": current_stage_name,
+                            "reviewer_suggestion_type": reviewer_output.suggestion_type.value,
+                            "reviewer_reasoning": reviewer_output.reasoning,
+                            "reviewer_message_to_user": user_message,
+                            "original_agent_error": agent_error_details.model_dump() if agent_error_details else None
+                        }
+                        
+                        paused_state_details = self._create_paused_state_details(
+                            master_flow_id=flow_id,
+                            paused_stage_id=current_stage_name,
+                            execution_context=copy.deepcopy(current_context),
+                            error_details_model=agent_error_details, # Original agent error
+                            status_reason=f"Reviewer suggested MODIFY_MASTER_PLAN. {user_message}",
+                            clarification_request={"type": "PLAN_MODIFICATION_REVIEW", "message": user_message, "reviewer_output": reviewer_output.model_dump()},
+                            pause_status=FlowPauseStatus.REVIEWER_ACTION_REQUIRED 
+                        )
+                        await self.state_manager.save_paused_flow_state(run_id, paused_state_details)
+                        self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=flow_id, run_id=run_id, 
+                                          data={"reason": "Reviewer suggested MODIFY_MASTER_PLAN", "stage_id": current_stage_name})
+                        current_context["_autonomous_flow_paused_state_saved"] = True # Signal to outer loop
+                        return current_context # End execution for this run
+
+                    elif reviewer_output.suggestion_type == ReviewerActionType.ESCALATE_TO_USER:
+                        self.logger.info(f"[RunID: {run_id}] Reviewer suggested ESCALATE_TO_USER for stage '{current_stage_name}'. Pausing for user intervention.")
+                        user_message = reviewer_output.suggestion_details.get("message_to_user",
+                                                                              f"Reviewer escalated stage '{current_stage_name}' for user intervention. Reasoning: {reviewer_output.reasoning}")
+
+                        current_context["_flow_error"] = { # Keep this for context
+                            "message": f"Flow paused: Reviewer escalated stage '{current_stage_name}'.",
+                            "stage": current_stage_name,
+                            "reviewer_suggestion_type": reviewer_output.suggestion_type.value,
+                            "reviewer_reasoning": reviewer_output.reasoning,
+                            "reviewer_message_to_user": user_message,
+                            "original_agent_error": agent_error_details.model_dump() if agent_error_details else None
+                        }
+
+                        paused_state_details = self._create_paused_state_details(
+                            master_flow_id=flow_id,
+                            paused_stage_id=current_stage_name,
+                            execution_context=copy.deepcopy(current_context),
+                            error_details_model=agent_error_details,
+                            status_reason=f"Reviewer escalated for user intervention. {user_message}",
+                            clarification_request={"type": "USER_ESCALATION", "message": user_message, "reviewer_output": reviewer_output.model_dump()},
+                            pause_status=FlowPauseStatus.USER_INTERVENTION_REQUIRED
+                        )
+                        await self.state_manager.save_paused_flow_state(run_id, paused_state_details)
+                        self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=flow_id, run_id=run_id, 
+                                          data={"reason": "Reviewer suggested ESCALATE_TO_USER", "stage_id": current_stage_name})
+                        current_context["_autonomous_flow_paused_state_saved"] = True # Signal to outer loop
+                        return current_context # End execution
+
+                    elif reviewer_output.suggestion_type == ReviewerActionType.PROCEED_AS_IS:
+                        self.logger.info(f"[RunID: {run_id}] Reviewer suggested PROCEED_AS_IS for stage '{current_stage_name}'. Determining next stage.")
+                        stage_final_status = StageStatus.COMPLETED_WITH_WARNINGS
+                        stage_reason = f"Stage originally failed but reviewer suggested PROCEED_AS_IS. Failure: {agent_error_details.message if agent_error_details else 'Unknown'}"
+                        self._update_run_status_with_stage_result(
+                            stage_name=current_stage_name, stage_number=stage_spec.number,
+                            status=stage_final_status, stage_output_payload=stage_result_payload,
+                            error_details=agent_error_details, reason=stage_reason
+                        )
+                        
+                        next_stage_name_after_proceed: Optional[str] = None
+                        if stage_spec.condition:
+                            if self._parse_condition(stage_spec.condition, current_context):
+                                next_stage_name_after_proceed = stage_spec.next_stage_true
+                            else:
+                                next_stage_name_after_proceed = stage_spec.next_stage_false
+                        else:
+                            next_stage_name_after_proceed = stage_spec.next_stage
+
+                        if next_stage_name_after_proceed:
+                            current_master_stage_key = next_stage_name_after_proceed
+                            context["_last_master_stage_hop_info"] = {
+                                "from": current_stage_name, "to": current_master_stage_key,
+                                "reason": "Reviewer suggested PROCEED_AS_IS"
+                            }
+                            hops += 1
+                            if "_flow_error" in current_context: del current_context["_flow_error"]
+                            continue
+                        else:
+                            self.logger.info(f"[RunID: {run_id}] Reviewer suggested PROCEED_AS_IS, but no next stage for '{current_stage_name}'. Flow ends.")
                             self.logger.warning(
                                 f"Item at index {idx} in artifact paths list for stage '{stage_name}' "
                                 f"is not a string (type: {type(p_item).__name__}), skipping."
                             )
-                else:
-                    self.logger.warning(
-                        f"Artifact paths key '{self.ARTIFACT_OUTPUT_KEY}' in stage '{stage_name}' output "
-                        f"was not a list (type: {type(raw_artifact_paths).__name__}), ignoring artifacts for this stage."
+                    elif reviewer_output.suggestion_type == ReviewerActionType.NO_ACTION_SUGGESTED:
+                        self.logger.warning(f"[RunID: {run_id}] Reviewer provided NO_ACTION_SUGGESTED for stage '{current_stage_name}'. Escalating for user review.")
+                        user_message = (f"Reviewer was invoked for stage '{current_stage_name}' but provided no specific recovery action. "
+                                        f"Original error: {agent_error_details.message if agent_error_details else 'N/A'}. "
+                                        f"Reviewer reasoning: {reviewer_output.reasoning}")
+                        
+                        current_context["_flow_error"] = { # Keep this for context
+                            "message": f"Flow paused: Reviewer provided NO_ACTION_SUGGESTED for stage '{current_stage_name}'.",
+                            "stage": current_stage_name,
+                            "reviewer_suggestion_type": reviewer_output.suggestion_type.value,
+                            "reviewer_reasoning": reviewer_output.reasoning,
+                            "reviewer_message_to_user": user_message,
+                            "original_agent_error": agent_error_details.model_dump() if agent_error_details else None
+                        }
+
+                        paused_state_details = self._create_paused_state_details(
+                            master_flow_id=flow_id,
+                            paused_stage_id=current_stage_name,
+                            execution_context=copy.deepcopy(current_context),
+                            error_details_model=agent_error_details, 
+                            status_reason=f"Reviewer provided NO_ACTION_SUGGESTED. {user_message}",
+                            clarification_request={"type": "NO_REVIEWER_SUGGESTION", "message": user_message, "reviewer_output": reviewer_output.model_dump()},
+                            pause_status=FlowPauseStatus.REVIEWER_ACTION_REQUIRED 
+                        )
+                        await self.state_manager.save_paused_flow_state(run_id, paused_state_details)
+                        self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=flow_id, run_id=run_id, 
+                                          data={"reason": "Reviewer provided NO_ACTION_SUGGESTED", "stage_id": current_stage_name})
+                        current_context["_autonomous_flow_paused_state_saved"] = True # Signal to outer loop
+                        return current_context # End execution
+
+                    # Fallback if no specific reviewer suggestion was handled above and we didn't retry
+                    self.logger.warning(f"[RunID: {run_id}] Reviewer suggestion type '{reviewer_output.suggestion_type.value}' not fully handled or led to fallback. Defaulting to PAUSE_FOR_INTERVENTION for stage '{current_stage_name}'.")
+                    current_context["_flow_error"] = { # Keep this for context
+                        "message": f"Flow paused for intervention: Unhandled or fallback reviewer suggestion for stage '{current_stage_name}'.",
+                        "stage": current_stage_name,
+                        "reviewer_suggestion_type": reviewer_output.suggestion_type.value,
+                        "reviewer_reasoning": reviewer_output.reasoning,
+                        "original_agent_error": agent_error_details.model_dump() if agent_error_details else None
+                    }
+                    paused_state_details = self._create_paused_state_details(
+                        master_flow_id=flow_id,
+                        paused_stage_id=current_stage_name,
+                        execution_context=copy.deepcopy(current_context),
+                        error_details_model=agent_error_details,
+                        status_reason=f"Unhandled reviewer suggestion ({reviewer_output.suggestion_type.value}) or fallback. Reasoning: {reviewer_output.reasoning}",
+                        clarification_request={"type": "UNHANDLED_REVIEWER_SUGGESTION", "message": f"Reviewer suggested {reviewer_output.suggestion_type.value}, which led to a fallback pause.", "reviewer_output": reviewer_output.model_dump()},
+                        pause_status=FlowPauseStatus.PAUSED_FOR_INTERVENTION # Generic pause
                     )
+                    await self.state_manager.save_paused_flow_state(run_id, paused_state_details)
+                    self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=flow_id, run_id=run_id, data={"reason": "Unhandled reviewer suggestion", "stage_id": current_stage_name})
+                    current_context["_autonomous_flow_paused_state_saved"] = True # Signal to outer loop
+                    return current_context # End execution
+
+                else: # No reviewer_output (e.g., reviewer not configured or failed)
+                    # Original error handling: Use on_failure policy or default pause
+                    effective_on_failure = stage_spec.on_failure
+                    if not effective_on_failure: # Default behavior if on_failure is not specified
+                        self.logger.warning(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution) and no on_failure policy defined. Defaulting to PAUSE_FOR_INTERVENTION.")
+                        paused_state_details = self._create_paused_state_details(
+                            master_flow_id=self.current_plan.id,
+                            paused_stage_id=current_stage_name,
+                            execution_context=copy.deepcopy(context),
+                            error_details_model=stage_execution_error,
+                            status_reason=f"Agent resolution failed (on_failure policy): {stage_execution_error.message}",
+                            clarification_request=None,
+                            pause_status=StageStatus.PAUSED_FOR_INTERVENTION
+                        )
+                        await self.state_manager.save_paused_flow_state(self._current_run_id, paused_state_details)
+                        self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=self.current_plan.id, run_id=self._current_run_id, data={"reason": "Agent resolution failure, on_failure policy"})
+                        return context # End execution
+
+                    if effective_on_failure.action == "FAIL_MASTER_FLOW":
+                        self.logger.error(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Master flow configured to FAIL_MASTER_FLOW. Message: {effective_on_failure.log_message}")
+                        current_master_stage_key = "_END_FAILURE_" # Signal loop to terminate
+                        # Final context will be returned by the loop
+                    elif effective_on_failure.action == "GOTO_MASTER_STAGE":
+                        next_master_stage_key = effective_on_failure.target_master_stage_key
+                        self.logger.info(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Transitioning to on_failure stage: '{next_master_stage_key}'.")
+                        if next_master_stage_key not in self.current_plan.stages and next_master_stage_key not in ["_END_SUCCESS_", "_END_FAILURE_"]:
+                            self.logger.error(f"[RunID: {self._current_run_id}] on_failure target_master_stage_key '{next_master_stage_key}' not found in plan. Terminating.")
+                            current_master_stage_key = "_END_FAILURE_"
+                        else:
+                            current_master_stage_key = next_master_stage_key
+                    elif effective_on_failure.action == "PAUSE_FOR_INTERVENTION":
+                        self.logger.info(f"[RunID: {self._current_run_id}] Stage '{current_stage_name}' failed (agent resolution). Pausing for human intervention as per on_failure policy.")
+                        paused_state_details = self._create_paused_state_details(
+                            master_flow_id=self.current_plan.id,
+                            paused_stage_id=current_stage_name,
+                            execution_context=copy.deepcopy(context),
+                            error_details_model=stage_execution_error,
+                            status_reason=f"Agent resolution failed (on_failure policy): {stage_execution_error.message}",
+                            clarification_request=None,
+                            pause_status=StageStatus.PAUSED_FOR_INTERVENTION
+                        )
+                        await self.state_manager.save_paused_flow_state(self._current_run_id, paused_state_details)
+                        self._emit_metric(event_type=MetricEventType.FLOW_PAUSED, flow_id=self.current_plan.id, run_id=self._current_run_id, data={"reason": "Agent resolution failure, on_failure policy"})
+                        return context # End execution
+                    else: # Should not happen with validated MasterStageFailurePolicy
+                        self.logger.error(f"[RunID: {self._current_run_id}] Unknown on_failure action: {effective_on_failure.action}. Terminating.")
+                        current_master_stage_key = "_END_FAILURE_"
+                    
+                    # If we didn't return (pause) or set to _END_FAILURE_, we continue the loop to the next stage (error or normal)
+                    if current_master_stage_key != "_END_FAILURE_" and current_master_stage_key not in ["_END_SUCCESS_", "_END_FAILURE_"]:
+                        context["_last_master_stage_hop_info"] = {
+                            "from": current_stage_name,
+                            "to": current_master_stage_key,
+                            "reason": "Agent resolution failure, on_failure transition"
+                        }
+                        continue # To the next iteration of the while loop with the new current_master_stage_key
+                    else: # Reached a terminal state due to error handling
+                        break # Exit the while loop, to be handled by outer return logic
 
         final_reason = reason if reason else f"Stage {status.value}"
 

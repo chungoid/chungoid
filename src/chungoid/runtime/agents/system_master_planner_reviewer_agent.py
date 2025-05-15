@@ -63,32 +63,104 @@ class MasterPlannerReviewerAgent:
         if full_context:
             logger.debug(f"Reviewer Full Context Keys: {list(full_context.keys())}")
 
-        # --- Basic No-Op Logic (Phase 1 Implementation) ---
-        # In a real implementation, this agent would use LLMs or complex heuristics
-        # to analyze inputs.current_master_plan, inputs.paused_run_details, 
-        # inputs.triggering_error_details, and inputs.full_context_at_pause.
+        error_details = inputs.triggering_error_details
+        current_plan = inputs.current_master_plan
+        paused_stage_id = inputs.paused_stage_id
+        # context_at_pause = inputs.full_context_at_pause # Available if needed
 
-        # For now, it defaults to suggesting escalation or no action.
-        default_reasoning = ("Initial basic implementation of MasterPlannerReviewerAgent. "
-                             "No sophisticated analysis performed. Defaulting to escalation.")
+        suggestion_type = ReviewerActionType.ESCALATE_TO_USER # Default
+        suggestion_details = {
+            "message_to_user": f"Flow paused at stage '{paused_stage_id}' due to '{inputs.pause_status.value}'. No specific recovery suggestion identified.",
+            "original_error": error_details.model_dump() if error_details else None
+        }
+        reasoning = "Default response: Escalating to user as no specific recovery heuristic matched."
+        confidence = 0.2
+
+        if error_details:
+            error_msg = error_details.message.lower() if error_details.message else ""
+            error_type = error_details.error_type.lower() if error_details.error_type else ""
+
+            # Heuristic 1: Simple retry for "transient" sounding errors if retry count is low
+            # This needs access to retry counts for the stage, which isn't directly in MasterPlannerReviewerInput.
+            # For now, let's assume a simple case. The orchestrator might manage actual retry counts.
+            if "timeout" in error_msg or "transient" in error_msg or "network issue" in error_msg:
+                suggestion_type = ReviewerActionType.RETRY_STAGE_AS_IS
+                suggestion_details = {"target_stage_id": paused_stage_id}
+                reasoning = "Error message suggests a transient issue. Suggesting a simple retry."
+                confidence = 0.6
+                # In a more advanced version, we'd check stage retry counts from context_at_pause or plan status.
+
+            # Heuristic 2: Input validation error - suggest modifying input
+            # This is a common pattern.
+            elif "validationerror" in error_type or "invalid input" in error_msg or "parameter missing" in error_msg:
+                suggestion_type = ReviewerActionType.RETRY_STAGE_WITH_MODIFIED_INPUT
+                # For now, we can't concretely suggest *what* input to modify without more context
+                # or LLM capabilities. So, we highlight the need for input modification.
+                suggestion_details = {
+                    "target_stage_id": paused_stage_id,
+                    "modification_needed": "Review and correct inputs for the failed stage.",
+                    "original_error_summary": f"{error_type}: {error_msg[:100]}"
+                }
+                reasoning = "Error suggests an input validation issue. Stage may need corrected inputs to proceed."
+                confidence = 0.5
+                # Future: Could try to extract problematic fields if error message is structured.
+
+            # Heuristic 3: Agent not found or configuration error
+            elif "agentnotfound" in error_type or "config error" in error_msg:
+                suggestion_type = ReviewerActionType.MODIFY_MASTER_PLAN
+                suggestion_details = {
+                    "target_stage_id": paused_stage_id,
+                    "suggested_plan_change": f"Agent '{error_details.agent_id}' for stage '{paused_stage_id}' might be missing or misconfigured. Consider replacing the agent or correcting its configuration in the plan.",
+                    "original_error_summary": f"{error_type}: {error_msg[:100]}"
+                }
+                reasoning = "Error indicates a problem with agent resolution or configuration. Plan modification might be needed."
+                confidence = 0.45
+
+            # Heuristic 4: Unmet success criteria
+            elif inputs.pause_status == FlowPauseStatus.SUCCESS_CRITERIA_FAILED:
+                suggestion_type = ReviewerActionType.ESCALATE_TO_USER # Often needs human judgment
+                suggestion_details = {
+                     "message_to_user": f"Stage '{paused_stage_id}' completed but failed its success criteria. Please review the stage output and plan.",
+                     "original_error": error_details.model_dump() if error_details else {"summary": "Success criteria failed."}
+                }
+                reasoning = "Stage completed but did not meet defined success criteria. Human review is advised."
+                confidence = 0.7 # High confidence in escalating this
+
+            # Heuristic 5: Critical, unrecoverable errors (example)
+            elif "critical" in error_msg or "unrecoverable" in error_type:
+                suggestion_type = ReviewerActionType.ESCALATE_TO_USER # Defaulting to user for abort.
+                                                                    # Could also be NO_ACTION_SUGGESTED if we want orchestrator to abort directly.
+                suggestion_details = {
+                    "message_to_user": f"Critical unrecoverable error encountered at stage '{paused_stage_id}'. Recommend aborting flow. Error: {error_type} - {error_msg}",
+                    "recommend_abort": True,
+                    "original_error": error_details.model_dump() if error_details else None
+                }
+                reasoning = "Error appears critical and unrecoverable. Escalating to user with recommendation to abort."
+                confidence = 0.8
         
-        # Example: If it's a simple agent error, maybe suggest retry?
-        # if inputs.triggering_error_details and "AgentException" in inputs.triggering_error_details.error_type:
-        #     return MasterPlannerReviewerOutput(
-        #         suggestion_type=ReviewerActionType.RETRY_STAGE_AS_IS,
-        #         suggestion_details={"target_stage_id": inputs.paused_stage_id},
-        #         reasoning="Suggesting retry for a generic agent exception.",
-        #         confidence_score=0.3
-        #     )
+        elif inputs.pause_status == FlowPauseStatus.CLARIFICATION_NEEDED:
+            suggestion_type = ReviewerActionType.ESCALATE_TO_USER
+            suggestion_details = {
+                "message_to_user": f"Flow paused at stage '{paused_stage_id}' for user clarification. Please provide the requested input.",
+                 "clarification_request_details": inputs.paused_run_details.get("clarification_request") 
+            }
+            reasoning = "Flow is paused awaiting user clarification as per plan design."
+            confidence = 0.95
 
+
+        # TODO: Add more heuristics:
+        # - Check for stages that are marked as "optional" in the plan (if such a field exists).
+        #   If an optional stage fails, suggest ReviewerActionType.PROCEED_AS_IS.
+        # - Analyze current_master_plan structure for dependencies.
+        # - If an agent can provide structured output for "what went wrong", use that.
+        # - Consider using an LLM for more nuanced suggestions if configured.
+
+        logger.info(f"Reviewer suggesting: {suggestion_type.value}, Reasoning: {reasoning}")
         return MasterPlannerReviewerOutput(
-            suggestion_type=ReviewerActionType.ESCALATE_TO_USER, # Or NO_ACTION_SUGGESTED
-            suggestion_details={
-                "message_to_user": f"Flow paused at stage '{inputs.paused_stage_id}' due to '{inputs.pause_status.value}'. Please review.",
-                "original_error": inputs.triggering_error_details.model_dump() if inputs.triggering_error_details else None
-            },
-            reasoning=default_reasoning,
-            confidence_score=0.1 # Low confidence for default action
+            suggestion_type=suggestion_type,
+            suggestion_details=suggestion_details,
+            reasoning=reasoning,
+            confidence_score=confidence
         )
 
     # Sync invoke for simpler testing or if used in a sync context
