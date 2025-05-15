@@ -10,6 +10,18 @@ from .user_goal_schemas import UserGoalRequest # <<< ADD IMPORT
 # TODO: Potentially reference or reuse parts of StageSpec from orchestrator.py 
 # if there's significant overlap and it makes sense.
 
+class ClarificationCheckpointSpec(BaseModel):
+    """Specification for a user clarification checkpoint."""
+    prompt_message_for_user: str = Field(..., description="The message/question to present to the user for clarification.")
+    target_context_path: Optional[str] = Field(
+        None, 
+        description="Optional dot-notation path in the context where the user's input should be placed. E.g., 'stage_inputs.parameter_name'."
+    )
+    expected_input_schema: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional JSON schema defining the expected structure of the user's input JSON."
+    )
+
 class MasterStageSpec(BaseModel):
     """Specification of a single stage within a Master Execution Plan."""
     agent_id: str = Field(..., description="ID of the agent to invoke (e.g., 'CoreStageExecutorAgent')")
@@ -27,11 +39,11 @@ class MasterStageSpec(BaseModel):
             "E.g., [\"outputs.file_generated_path EXISTS\", \"outputs.analysis_metric > 0.9\"]"
         )
     )
-    clarification_checkpoint: Optional[Dict[str, Any]] = Field(
+    clarification_checkpoint: Optional[ClarificationCheckpointSpec] = Field(
         None, 
         description=(
             "If set, the orchestrator will pause after this stage (if successful and criteria pass) "
-            "for user clarification. The dictionary can contain details like 'prompt_to_user'."
+            "for user clarification."
         )
     )
     condition: Optional[str] = Field(None, description="Condition for branching in the Master Flow.")
@@ -41,6 +53,10 @@ class MasterStageSpec(BaseModel):
     number: Optional[float] = Field(None, description="Unique stage number for status tracking within the Master Flow.")
     # on_error: Optional[Any] = Field(None, description="Error handling strategy for this master stage.") # For future?
     name: Optional[str] = Field(None, description="Optional human-readable name for this master stage step.")
+    output_context_path: Optional[str] = Field(
+        None, 
+        description="Optional dot-notation path where the agent's entire output dictionary should be placed in the main flow context. E.g., 'stage_outputs.current_stage_name'. If None, output is merged at root (TBD)."
+    )
 
 class MasterExecutionPlan(BaseModel):
     """Validated, structured representation of a Master Flow YAML."""

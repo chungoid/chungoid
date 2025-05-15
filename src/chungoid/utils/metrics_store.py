@@ -14,6 +14,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
+import json
+import os
 
 from pydantic import BaseModel, Field
 
@@ -47,73 +49,225 @@ class MetricEvent(BaseModel):
 
 
 class MetricsStore:
-    """High-level API for persisting and querying `MetricEvent`s."""
+    """
+    Handles the storage and retrieval of MetricEvent objects to/from a JSONL file.
+    """
+    DEFAULT_METRICS_FILENAME = "metrics.jsonl"
 
-    COLLECTION_NAME = "a2a_metrics"
-
-    def __init__(
-        self,
-        *,
-        project_root: Optional[Path] = None,
-        chroma_client: Optional[ClientAPI] = None,
-        chroma_mode: str = "persistent",
-    ) -> None:
-        if chroma_client is None:
-            if project_root is None:
-                raise ValueError("Either project_root or chroma_client must be supplied")
-            chroma_client = get_client(chroma_mode, project_root)
-        self._client: ClientAPI = chroma_client
-        self._coll: Collection = self._client.get_or_create_collection(self.COLLECTION_NAME)
-
-    # ------------------------------------------------------------------
-    # Write helpers
-    # ------------------------------------------------------------------
-    def add(self, event: MetricEvent) -> None:
-        """Add one metric event (upsert by composite id)."""
-        event_id = f"{event.run_id}:{event.stage_id}:{int(event.timestamp.timestamp()*1000)}"
-        meta = event.dict()
-        # Store an empty document (no embedding); Chroma requires a doc string.
-        self._coll.add(documents=[""], ids=[event_id], metadatas=[meta])
-
-    def add_many(self, events: Sequence[MetricEvent]) -> None:
-        if not events:
-            return
-        ids = [f"{e.run_id}:{e.stage_id}:{int(e.timestamp.timestamp()*1000)}" for e in events]
-        metas = [e.dict() for e in events]
-        self._coll.add(documents=["" for _ in events], ids=ids, metadatas=metas)
-
-    # ------------------------------------------------------------------
-    # Query helpers (basic metadata filters only)
-    # ------------------------------------------------------------------
-    def query(
-        self,
-        *,
-        run_id: Optional[str] = None,
-        stage_id: Optional[str] = None,
-        status: Optional[str] = None,
-        since: Optional[datetime] = None,
-        limit: int = 100,
-    ) -> List[MetricEvent]:
-        """Return metric events filtered by simple metadata fields.
-
-        This is **not** full-text search – we rely only on stored metadata.
-        For large datasets callers should page via `since` + `limit`.
+    def __init__(self, project_root: Path):
         """
-        payload = self._coll.peek(limit)
-        results: List[MetricEvent] = []
-        for i, _ in enumerate(payload.get("ids", [])):
-            meta = payload["metadatas"][i]
-            if run_id and meta.get("run_id") != run_id:
-                continue
-            if stage_id and meta.get("stage_id") != stage_id:
-                continue
-            if status and meta.get("status") != status:
-                continue
-            if since:
-                ts: datetime = meta.get("timestamp")  # type: ignore[assignment]
-                if ts < since:
-                    continue
-            results.append(MetricEvent.parse_obj(meta))
-        # sort ascending by timestamp for convenience
-        results.sort(key=lambda e: e.timestamp)
-        return results 
+        Initializes the MetricsStore.
+
+        Args:
+            project_root: The root directory of the chungoid project.
+                          The .chungoid directory (and metrics file) will be relative to this.
+        """
+        self.project_root = project_root
+        self._metrics_dir = self.project_root / ".chungoid"
+        self._metrics_file_path = self._metrics_dir / self.DEFAULT_METRICS_FILENAME
+        self._ensure_metrics_dir_exists()
+
+    def _ensure_metrics_dir_exists(self):
+        """Ensures that the .chungoid directory for metrics exists."""
+        os.makedirs(self._metrics_dir, exist_ok=True)
+
+    def _get_metrics_file_path(self) -> Path:
+        """Returns the path to the metrics.jsonl file."""
+        return self._metrics_file_path
+
+    def add_event(self, event: MetricEvent):
+        """
+        Adds a MetricEvent to the metrics store (appends to the JSONL file).
+
+        Args:
+            event: The MetricEvent object to add.
+        """
+        self._ensure_metrics_dir_exists() # Ensure dir exists before writing
+        try:
+            # We need to customize the serialization for datetime
+            event_dict = event.model_dump(mode='json') # Pydantic v2
+            
+            with open(self._get_metrics_file_path(), 'a', encoding='utf-8') as f:
+                json.dump(event_dict, f)
+                f.write('\n')
+        except Exception as e:
+            # Basic error handling, consider more robust logging
+            print(f"Error writing metric event to {self._get_metrics_file_path()}: {e}")
+            # Potentially re-raise or handle more gracefully depending on requirements
+
+    def get_events(
+        self,
+        run_id: Optional[str] = None,
+        flow_id: Optional[str] = None,
+        stage_id: Optional[str] = None,
+        master_stage_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        event_types: Optional[List[MetricEventType]] = None,
+        limit: Optional[int] = None,
+        sort_desc: bool = True, # Default to most recent first
+    ) -> List[MetricEvent]:
+        """
+        Retrieves a list of MetricEvents from the store, with optional filtering and limiting.
+
+        Args:
+            run_id: Filter by run ID.
+            flow_id: Filter by flow ID.
+            stage_id: Filter by stage ID.
+            master_stage_id: Filter by master stage ID.
+            agent_id: Filter by agent ID.
+            event_types: Filter by a list of MetricEventTypes.
+            limit: Maximum number of events to return.
+            sort_desc: If True, sorts events by timestamp descending (most recent first).
+                       If False, sorts ascending (oldest first).
+
+        Returns:
+            A list of matching MetricEvent objects.
+        """
+        events: List[MetricEvent] = []
+        metrics_file = self._get_metrics_file_path()
+
+        if not metrics_file.exists():
+            return events
+
+        try:
+            with open(metrics_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            data = json.loads(line.strip())
+                            event = MetricEvent.model_validate(data) # Pydantic v2
+
+                            # Apply filters
+                            if run_id is not None and event.run_id != run_id:
+                                continue
+                            if flow_id is not None and event.flow_id != flow_id:
+                                continue
+                            if stage_id is not None and event.stage_id != stage_id:
+                                continue
+                            if master_stage_id is not None and event.master_stage_id != master_stage_id:
+                                continue
+                            if agent_id is not None and event.agent_id != agent_id:
+                                continue
+                            if event_types is not None and event.event_type not in event_types:
+                                continue
+                            
+                            events.append(event)
+                        except json.JSONDecodeError as jde:
+                            print(f"Skipping malformed line in metrics file {metrics_file}: {jde} - Line: {line.strip()}")
+                        except Exception as ve: # Catch Pydantic ValidationError and other model errors
+                            print(f"Skipping event due to validation error in metrics file {metrics_file}: {ve} - Data: {line.strip()}")
+        except Exception as e:
+            print(f"Error reading metrics file {metrics_file}: {e}")
+            return [] # Return empty list on general read error
+
+        # Sort events by timestamp
+        # The timestamp in MetricEvent is already a datetime object due to Pydantic model.
+        if sort_desc:
+            events.sort(key=lambda ev: ev.timestamp, reverse=True)
+        else:
+            events.sort(key=lambda ev: ev.timestamp, reverse=False)
+
+        if limit is not None and limit > 0:
+            return events[:limit]
+        
+        return events
+
+    def clear_all_events(self):
+        """
+        Deletes the metrics file, effectively clearing all stored events.
+        Use with caution.
+        """
+        metrics_file = self._get_metrics_file_path()
+        if metrics_file.exists():
+            try:
+                os.remove(metrics_file)
+                print(f"Metrics file {metrics_file} deleted.")
+            except OSError as e:
+                print(f"Error deleting metrics file {metrics_file}: {e}")
+
+# Example Usage (for testing or direct script use):
+if __name__ == "__main__":
+    # Assuming this script is run from a context where project_root can be determined
+    # For example, if your project root is the parent of 'src'
+    current_script_path = Path(__file__).resolve()
+    # Adjust this path according to your project structure
+    # This example assumes 'src/chungoid/utils/metrics_store.py'
+    # and project root is two levels up from 'utils'
+    example_project_root = current_script_path.parent.parent.parent.parent 
+    print(f"Using example project root: {example_project_root}")
+
+    if not (example_project_root / "pyproject.toml").exists():
+         # Fallback for when script is not in typical place, e.g. during isolated testing
+        example_project_root = Path(".") # Current directory
+        print(f"pyproject.toml not found at assumed root, falling back to CWD: {example_project_root.resolve()}")
+
+
+    store = MetricsStore(project_root=example_project_root)
+    
+    # Clear previous test events
+    store.clear_all_events()
+
+    # Create some dummy events
+    event1_data = {
+        "event_type": MetricEventType.FLOW_START,
+        "flow_id": "flow_abc",
+        "run_id": "run_123",
+        "data": {"flow_name": "Test Flow Alpha"}
+    }
+    # Pydantic v2 will handle timestamp default factory
+    event1 = MetricEvent(**event1_data) 
+    store.add_event(event1)
+
+    # Simulate a slight delay for timestamp ordering
+    import time
+    time.sleep(0.01)
+
+    event2_data = {
+        "event_type": MetricEventType.STAGE_START,
+        "flow_id": "flow_abc",
+        "run_id": "run_123",
+        "stage_id": "stage_1",
+        "data": {"stage_name": "Initialization"}
+    }
+    event2 = MetricEvent(**event2_data)
+    store.add_event(event2)
+
+    time.sleep(0.01)
+
+    event3_data = {
+        "event_type": MetricEventType.STAGE_END,
+        "flow_id": "flow_abc",
+        "run_id": "run_123",
+        "stage_id": "stage_1",
+        "data": {"status": "COMPLETED_SUCCESS", "duration_seconds": 1.5}
+    }
+    event3 = MetricEvent(**event3_data)
+    store.add_event(event3)
+
+    time.sleep(0.01)
+    
+    event4_data = {
+        "event_type": MetricEventType.FLOW_END,
+        "flow_id": "flow_abc",
+        "run_id": "run_123",
+        "data": {"final_status": "COMPLETED_SUCCESS", "total_duration_seconds": 2.0}
+    }
+    event4 = MetricEvent(**event4_data)
+    store.add_event(event4)
+
+    print(f"\nAll events for run_123 (most recent first):")
+    all_run_events = store.get_events(run_id="run_123")
+    for ev in all_run_events:
+        print(ev.model_dump_json(indent=2))
+
+    print(f"\nStage end events for run_123:")
+    stage_end_events = store.get_events(run_id="run_123", event_types=[MetricEventType.STAGE_END])
+    for ev in stage_end_events:
+        print(ev.model_dump_json(indent=2))
+
+    print(f"\nOldest 2 events for run_123:")
+    oldest_events = store.get_events(run_id="run_123", limit=2, sort_desc=False)
+    for ev in oldest_events:
+        print(ev.model_dump_json(indent=2))
+        
+    print(f"\nMetrics file location: {store._get_metrics_file_path()}") 

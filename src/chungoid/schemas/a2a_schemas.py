@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 from enum import Enum
 import datetime
+import uuid
 
 from .errors import AgentErrorDetails # Assuming AgentErrorDetails exists
 
@@ -134,4 +135,59 @@ INITIATE_TASK_SCHEMA = {
         },
         "required": ["correlation_id", "task_description"]
     }
-} 
+}
+
+class A2ATaskRequest(BaseModel):
+    """Schema for an agent to request a task from another agent or agent category."""
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this specific task request.")
+    requesting_agent_id: str = Field(..., description="ID of the agent making the request.")
+    target_agent_id: Optional[str] = Field(None, description="Specific ID of the target agent. Use if known.")
+    target_agent_category: Optional[str] = Field(None, description="Category of agent to perform the task. Used if target_agent_id is not set.")
+    # ^^^ TODO: Add validation: one of target_agent_id or target_agent_category must be set.
+    task_type: str = Field(..., description="A descriptor for the type of task, e.g., 'code_review', 'data_analysis', 'file_patch'.")
+    task_payload: Dict[str, Any] = Field(..., description="The actual input/data required for the target agent to perform the task.")
+    correlation_id: Optional[str] = Field(None, description="ID to correlate this task with a broader workflow or parent task.")
+    priority: int = Field(0, description="Priority of the task (higher values mean higher priority). Default is 0.")
+    # Optional: deadline, dependencies, etc.
+
+class A2ATaskStatusReport(BaseModel):
+    """Schema for an agent to report the status of an A2A task it is handling or has handled."""
+    task_id: str = Field(..., description="The unique ID of the task this status report pertains to.")
+    reporting_agent_id: str = Field(..., description="ID of the agent providing this status update (usually the one performing the task).")
+    status: str = Field(..., description="Current status of the task, e.g., 'ACCEPTED', 'REJECTED', 'IN_PROGRESS', 'COMPLETED_SUCCESS', 'COMPLETED_FAILURE', 'PENDING_CLARIFICATION'.")
+    # TODO: Standardize status values into an Enum (e.g., A2ATaskLifecycleStatus)
+    progress_percent: Optional[float] = Field(None, description="Estimated completion percentage (0.0 to 100.0).")
+    status_message: Optional[str] = Field(None, description="Human-readable message accompanying the status.")
+    result_payload: Optional[Dict[str, Any]] = Field(None, description="The output/results of the task, if status is COMPLETED_SUCCESS.")
+    error_details: Optional[Dict[str, Any]] = Field(None, description="Details of any error, if status is COMPLETED_FAILURE.")
+    clarification_needed_payload: Optional[Dict[str, Any]] = Field(None, description="Details if clarification is needed from the requesting agent.")
+    correlation_id: Optional[str] = Field(None, description="ID to correlate this task with a broader workflow.")
+
+# --- Schemas for MCP Tools facilitating A2A Tasking ---
+
+class PostA2ATaskMCPInput(BaseModel):
+    """Input schema for an MCP tool that posts/submits an A2A task request."""
+    request: A2ATaskRequest
+
+class PostA2ATaskMCPOutput(BaseModel):
+    """Output schema for an MCP tool after posting/submitting an A2A task request."""
+    task_id: str
+    submission_status: str # e.g., 'TASK_POSTED_OK', 'ROUTING_ERROR', 'INVALID_REQUEST'
+    message: Optional[str] = None
+
+class GetA2ATaskStatusMCPInput(BaseModel):
+    """Input schema for an MCP tool to query the status of an A2A task."""
+    task_id: str
+    requesting_agent_id: Optional[str] = Field(None, description="Optional: ID of the agent requesting the status, for auth/logging.")
+
+class GetA2ATaskStatusMCPOutput(BaseModel):
+    """Output schema for an MCP tool that returns the status of an A2A task."""
+    task_id: str
+    status_report: Optional[A2ATaskStatusReport] = None
+    query_status: str # e.g., 'FOUND', 'NOT_FOUND', 'ACCESS_DENIED'
+    error_message: Optional[str] = None # If task_id not found or other query error
+
+# Potential future MCP tool schemas:
+# - ClaimA2ATaskMCPInput / Output (for an agent to claim a task from a queue/broker)
+# - UpdateA2ATaskProgressMCPInput / Output (for an agent to provide intermediate progress)
+# - ProvideClarificationForA2ATaskMCPInput / Output (for requester to respond to clarification_needed) 

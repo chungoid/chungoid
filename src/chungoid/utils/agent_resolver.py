@@ -88,9 +88,16 @@ class RegistryAgentProvider:
 
         # If the identifier is directly mapped in the fallback, use that callable.
         if identifier in self._fallback:
-            callable_from_fallback = self._fallback[identifier]
-            self._cache[identifier] = callable_from_fallback # Cache it
-            return callable_from_fallback # Return the (potentially async) callable
+            potential_callable = self._fallback[identifier]
+            # If the fallback item is an object with an 'invoke_async' method, return that method.
+            if hasattr(potential_callable, 'invoke_async') and callable(getattr(potential_callable, 'invoke_async')):
+                actual_callable = getattr(potential_callable, 'invoke_async')
+                self._cache[identifier] = actual_callable # Cache the method
+                return actual_callable
+            else:
+                # Otherwise, assume the fallback item is already the callable we want (e.g., a direct function)
+                self._cache[identifier] = potential_callable # Cache it
+                return potential_callable
 
         # If not in fallback, check registry card
         card = self._registry.get(identifier)
@@ -102,18 +109,20 @@ class RegistryAgentProvider:
         if self._CoreMCPClient and card.tool_names:
             tool_name = card.tool_names[0]
 
-            async def _async_invoke(stage: StageDict) -> Dict[str, object]:  # noqa: D401
+            async def _async_invoke(stage: StageDict, full_context: Optional[Dict[str, Any]] = None) -> Dict[str, object]:  # Added full_context
+                # Assuming CoreMCPClient needs to be instantiated per call or managed appropriately
+                # The original code instantiated it with a hardcoded URL and key.
+                # This might need to come from config passed to RegistryAgentProvider.
+                # For now, replicating the original hardcoded values for simplicity of this diff.
                 async with self._CoreMCPClient("http://localhost:9000", api_key="dev-key") as mcp:
+                    # Pass inputs from stage, potentially merge with full_context if mcp.invoke_tool supports it
+                    # or if inputs are resolved against full_context before this call by orchestrator.
+                    # The original code passed stage.get("inputs", {}).
+                    # Let's stick to that for minimal change from original intent here.
                     return await mcp.invoke_tool(tool_name, **stage.get("inputs", {}))
 
-            # Synchronous wrapper so FlowExecutor remains sync
-            def _sync_callable(stage: StageDict):  # type: ignore[override]
-                import asyncio
-
-                return asyncio.run(_async_invoke(stage))
-
-            self._cache[identifier] = _sync_callable
-            return _sync_callable
+            self._cache[identifier] = _async_invoke # Cache the async callable directly
+            return _async_invoke # Return the async callable
 
         # Card exists, not in fallback, and no MCP tool/client.
         # Return the stub as the last resort.
