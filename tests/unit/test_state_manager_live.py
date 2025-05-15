@@ -32,7 +32,7 @@ def sm(tmp_path):
 
 
 def test_status_file_initialises_empty(sm: StateManager):
-    assert sm.get_full_status() == {"runs": []}
+    assert sm.get_full_status() == {"runs": [], "master_plans": []}
 
 
 def test_update_status_adds_entry(sm: StateManager):

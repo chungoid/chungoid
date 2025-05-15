@@ -145,6 +145,9 @@ class CodeGeneratorAgent:
             output_schema=CodeGeneratorAgentOutput.model_json_schema(),
         )
 
+# Alias the static method for module-level import
+get_agent_card_static = CodeGeneratorAgent.get_agent_card_static
+
 # Basic test stub
 async def main_test_code_gen():
     logging.basicConfig(level=logging.DEBUG)

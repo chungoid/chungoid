@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Union, Optional
+from typing import Any, Dict, Optional
 import uuid
 
-from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput
-from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec, ClarificationCheckpointSpec
+from chungoid.schemas.agent_master_planner import (
+    MasterPlannerInput,
+    MasterPlannerOutput,
+)
+from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
 from chungoid.schemas.user_goal_schemas import UserGoalRequest
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
+
 # Placeholder for LLM client - replace with actual implementation path
 # from chungoid.utils.llm_clients import get_llm_client, LLMInterface
 
@@ -18,56 +22,75 @@ logger = logging.getLogger(__name__)
 # --- Begin Embedded Prompt (to be externalized) ---
 # For P7.1.2, we embed a simplified version of the system prompt.
 # In a future step, this should be loaded from dev/prompts/master_planner_prompts.md
-DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = """You are the Master Planner Agent, an expert AI system responsible for decomposing complex user goals into a structured `MasterExecutionPlan` JSON object for the Chungoid Autonomous Build System.
+DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
+    "You are the Master Planner Agent, an expert AI system responsible for "
+    "decomposing complex user goals into a structured `MasterExecutionPlan` "
+    "JSON object for the Chungoid Autonomous Build System.\n\n"
+    "Strictly follow the `MasterExecutionPlan` and `MasterStageSpec` "
+    "Pydantic schemas.\n"
+    "The output MUST be a single JSON object.\n\n"
+    "Available Agents (use exact IDs):\n"
+    "- `CodeGeneratorAgent_v1`: Generates or modifies code.\n"
+    "- `TestGeneratorAgent_v1`: Generates unit tests.\n"
+    "- `FileOperationAgent_v1`: Performs file system operations.\n"
+    "- `HumanInputAgent_v1`: (Use Sparingly) Requests specific input "
+    "from a human.\n\n"
+    "Key Schema Fields:\n"
+    "`MasterExecutionPlan`: `id`, `name`, `description`, `global_config` "
+    "(Optional), `stages` (Dict[str, MasterStageSpec]), `initial_stage`.\n"
+    "`MasterStageSpec`: `number` (int), `name` (str, unique key in stages "
+    "dict), `description`, `agent_id`, `inputs` (Optional), "
+    "`output_context_path` (Optional), `success_criteria` "
+    "(Optional[List[str]]), `clarification_checkpoint` (Optional), "
+    "`next_stage` (str, or \"FINAL_STEP\")."
+    "\n\n"
+    "Ensure all stage names are unique and used consistently. "
+    "`initial_stage` must be a valid stage name. Every stage must have a "
+    "`next_stage`.\n"
+    "Example `success_criteria`: "
+    "`[\"'{context.outputs.some_stage.file_written}' == True\"]`\n"
+    "Example `inputs` using context: "
+    '`{"file_path": "{context.global_config.project_dir}/data.txt"}`'
+)
 
-Strictly follow the `MasterExecutionPlan` and `MasterStageSpec` Pydantic schemas.
-The output MUST be a single JSON object.
-
-Available Agents (use exact IDs):
-- `CodeGeneratorAgent_v1`: Generates or modifies code.
-- `TestGeneratorAgent_v1`: Generates unit tests.
-- `FileOperationAgent_v1`: Performs file system operations.
-- `HumanInputAgent_v1`: (Use Sparingly) Requests specific input from a human.
-
-Key Schema Fields:
-`MasterExecutionPlan`: `id`, `name`, `description`, `global_config` (Optional), `stages` (Dict[str, MasterStageSpec]), `initial_stage`.
-`MasterStageSpec`: `number` (int), `name` (str, unique key in stages dict), `description`, `agent_id`, `inputs` (Optional), `output_context_path` (Optional), `success_criteria` (Optional[List[str]]), `clarification_checkpoint` (Optional), `next_stage` (str, or "FINAL_STEP").
-
-Ensure all stage names are unique and used consistently. `initial_stage` must be a valid stage name. Every stage must have a `next_stage`.
-Example `success_criteria`: `["'{context.outputs.some_stage.file_written}' == True"]`
-Example `inputs` using context: `{"file_path": "{context.global_config.project_dir}/data.txt"}`
-"""
-
-DEFAULT_USER_PROMPT_TEMPLATE = """User Goal: "{user_goal_string}"
-
-Project Context (Optional):
-{project_context_summary_string}
-
-Current `MasterExecutionPlan` (if any, for modification requests):
-```json
-{existing_plan_json_if_any}
-```
-
-Based on the user goal (and existing plan if provided), generate the complete `MasterExecutionPlan` JSON object.
-"""
+DEFAULT_USER_PROMPT_TEMPLATE = (
+    'User Goal: "{user_goal_string}"\n'
+    'Target Platform: {target_platform_string}\n\n'
+    "Project Context (Optional):\n"
+    "{project_context_summary_string}\n\n"
+    "Current `MasterExecutionPlan` (if any, for modification requests):\n"
+    "```json\n"
+    "{existing_plan_json_if_any}\n"
+    "```\n\n"
+    "Based on the user goal (and existing plan if provided), "
+    "generate the complete `MasterExecutionPlan` JSON object."
+)
 # --- End Embedded Prompt ---
 
 
 # Placeholder LLM Interface (replace with actual client)
-class MockLLMClient: # implements LLMInterface
-    async def generate_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.1) -> Dict[str, Any]:
-        logger.warning("MockLLMClient.generate_json called. Returning a predefined example plan for ANY goal.")
+class MockLLMClient:  # implements LLMInterface
+    async def generate_json(
+        self, system_prompt: str, user_prompt: str, temperature: float = 0.1
+    ) -> Dict[str, Any]:
+        logger.warning(
+            "MockLLMClient.generate_json called. "
+            "Returning a predefined example plan for ANY goal."
+        )
         # This mock will return the 'show-config' plan structure for any input,
         # to allow testing the parsing logic.
         # In a real scenario, this would be the LLM's JSON output string, then parsed.
-        
+
         # Simulate LLM returning the JSON for the "show-config" plan from previous static version
         plan_id_mock = f"mock_llm_plan_{str(uuid.uuid4())[:4]}"
         mock_plan_dict = {
             "id": plan_id_mock,
-            "name": f"Mock LLM Plan for: User Goal", # Will be replaced by actual goal later
-            "description": "This is a mock plan generated by MockLLMClient for testing purposes.",
-            "start_stage": "define_show_config_spec_mock", # Using mock stage names
+            "name": "Mock LLM Plan for: User Goal",  # Will be replaced by actual goal later
+            "description": (
+                "This is a mock plan generated by MockLLMClient for "
+                "testing purposes."
+            ),
+            "start_stage": "define_show_config_spec_mock",  # Using mock stage names
             "stages": {
                 "define_show_config_spec_mock": {
                     "name": "Define 'show-config' CLI Command Specification (Mock)",
@@ -76,27 +99,42 @@ class MockLLMClient: # implements LLMInterface
                     "number": 1.0,
                     "inputs": {
                         "prompt_message_for_user": "MockLLM: Describe 'show-config'.",
-                        "target_context_path": "shared_data.show_config_specification_mock"
+                        "target_context_path": (
+                            "shared_data.show_config_specification_mock"
+                        ),
                     },
-                    "success_criteria": ["'{context.shared_data.show_config_specification_mock}' != None"], # Simplified
-                    "next_stage": "implement_show_config_logic_mock"
+                    "success_criteria": [
+                        "'{context.shared_data.show_config_specification_mock}' != None"
+                    ],  # Simplified
+                    "next_stage": "implement_show_config_logic_mock",
                 },
                 "implement_show_config_logic_mock": {
                     "name": "Implement 'show-config' CLI Logic (Mock)",
                     "agent_id": "MockCodeGeneratorAgent_v1",
-                    "output_context_path": "stage_outputs.implement_show_config_logic_mock",
+                    "output_context_path": (
+                        "stage_outputs.implement_show_config_logic_mock"
+                    ),
                     "number": 2.0,
                     "inputs": {
                         "target_file_path": "chungoid-core/src/chungoid/cli.py",
-                        "code_specification_prompt": "MockLLM: Implement based on {{ context.shared_data.show_config_specification_mock }}",
+                        "code_specification_prompt": (
+                            "MockLLM: Implement based on "
+                            "{{ context.shared_data.show_config_specification_mock }}"
+                        ),
                     },
-                    "success_criteria": ["'{context.outputs.implement_show_config_logic_mock.code_changes_applied}' == True"], # Simplified
-                    "next_stage": "FINAL_STEP" # Simplified for mock
-                }
-            }
+                    "success_criteria": [
+                        (
+                            "'{context.outputs.implement_show_config_logic_mock.code_changes_applied}' "
+                            "== True"
+                        )
+                    ],  # Simplified
+                    "next_stage": "FINAL_STEP",  # Simplified for mock
+                },
+            },
         }
         # Simulate delay
         import asyncio
+
         await asyncio.sleep(0.1)
         return mock_plan_dict
 
@@ -104,65 +142,100 @@ class MockLLMClient: # implements LLMInterface
 class MasterPlannerAgent:
     AGENT_ID = "SystemMasterPlannerAgent_v1"
     AGENT_NAME = "System Master Planner Agent"
-    VERSION = "0.2.0" # Updated version
-    DESCRIPTION = "Generates a MasterExecutionPlan based on a high-level user goal using an LLM." # Updated
+    VERSION = "0.2.0"  # Updated version
+    DESCRIPTION = (
+        "Generates a MasterExecutionPlan based on a high-level user goal using an "
+        "LLM."
+    )  # Updated
     CATEGORY = AgentCategory.SYSTEM_ORCHESTRATION
     VISIBILITY = AgentVisibility.PUBLIC
 
     def __init__(self):
         # In a real scenario, the LLM client would be injected or initialized here
-        # self.llm_client: LLMInterface = get_llm_client() 
-        self.llm_client = MockLLMClient() # Using placeholder for now
-        self.system_prompt = DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT # Loaded at init
+        # self.llm_client: LLMInterface = get_llm_client()
+        self.llm_client = MockLLMClient()  # Using placeholder for now
+        self.system_prompt = ( 
+            DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT
+        )  # Loaded at init
 
     async def invoke_async(
         self,
         inputs: MasterPlannerInput,
         full_context: Optional[Dict[str, Any]] = None,
     ) -> MasterPlannerOutput:
-        logger.info(f"MasterPlannerAgent (LLM-driven) invoked with goal: {inputs.user_goal}")
+        logger.info(
+            f"MasterPlannerAgent (LLM-driven) invoked with goal: "
+            f"{inputs.user_goal}"
+        )
 
         user_goal_str = inputs.user_goal
-        project_context_summary = "" # Placeholder, could be passed in MasterPlannerInput if needed
-        existing_plan_json = "{}" # Placeholder for modification workflows
+        project_context_summary = (
+            ""  # Placeholder, could be passed in MasterPlannerInput if needed
+        )
+        existing_plan_json = "{}"  # Placeholder for modification workflows
+        target_platform_str = "Not specified" # ADDED default for target_platform
 
-        if inputs.original_request and inputs.original_request.project_context:
-            project_context_summary = json.dumps(inputs.original_request.project_context, indent=2)
+        if inputs.original_request and inputs.original_request.key_constraints:
+            try:
+                project_context_summary = json.dumps(
+                    inputs.original_request.key_constraints, indent=2
+                )
+            except TypeError:
+                project_context_summary = str(inputs.original_request.key_constraints)
         
+        if inputs.original_request and inputs.original_request.target_platform: # ADDED target_platform handling
+            target_platform_str = inputs.original_request.target_platform
+
         # TODO: Add logic for handling existing_plan_json if modification is supported
 
         user_prompt = DEFAULT_USER_PROMPT_TEMPLATE.format(
             user_goal_string=user_goal_str,
+            target_platform_string=target_platform_str, # ADDED target_platform
             project_context_summary_string=project_context_summary,
-            existing_plan_json_if_any=existing_plan_json
+            existing_plan_json_if_any=existing_plan_json,
         )
 
-        logger.debug(f"MasterPlannerAgent System Prompt:\\n{self.system_prompt}")
-        logger.debug(f"MasterPlannerAgent User Prompt:\\n{user_prompt}")
+        logger.debug(
+            f"MasterPlannerAgent System Prompt:\n{self.system_prompt}"
+        )
+        logger.debug(
+            f"MasterPlannerAgent User Prompt:\n{user_prompt}"
+        )
 
         try:
             # This is where the actual LLM call would happen
             # llm_response_json_str = await self.llm_client.generate(
-            #     system_prompt=self.system_prompt, 
+            #     system_prompt=self.system_prompt,
             #     user_prompt=user_prompt
             # )
             # For now, using mock that returns a dict directly
             llm_generated_plan_dict = await self.llm_client.generate_json(
-                system_prompt=self.system_prompt,
-                user_prompt=user_prompt
+                system_prompt=self.system_prompt, user_prompt=user_prompt
             )
-            
+
             # Ensure 'original_request' from MasterPlannerInput is added to the plan
             # if the LLM didn't include it (which it likely won't if not explicitly prompted)
-            if 'original_request' not in llm_generated_plan_dict and inputs.original_request:
-                llm_generated_plan_dict['original_request'] = inputs.original_request.model_dump()
-            
-            # Update name and description if the mock LLM didn't use the actual goal
-            if "Mock LLM Plan for: User Goal" in llm_generated_plan_dict.get("name", ""):
-                 llm_generated_plan_dict["name"] = f"Plan for: {user_goal_str}"
-            if "This is a mock plan generated by MockLLMClient" in llm_generated_plan_dict.get("description", ""):
-                 llm_generated_plan_dict["description"] = f"Master plan autonomously generated for goal: {user_goal_str}"
+            if (
+                "original_request" not in llm_generated_plan_dict
+                and inputs.original_request
+            ):
+                llm_generated_plan_dict["original_request"] = (
+                    inputs.original_request.model_dump()
+                )
 
+            # Update name and description if the mock LLM didn't use the actual goal
+            if "Mock LLM Plan for: User Goal" in llm_generated_plan_dict.get(
+                "name", ""
+            ):
+                llm_generated_plan_dict["name"] = f"Plan for: {user_goal_str}"
+            if (
+                "This is a mock plan generated by MockLLMClient"
+                in llm_generated_plan_dict.get("description", "")
+            ):
+                llm_generated_plan_dict["description"] = (
+                    f"Master plan autonomously generated for goal: "
+                    f"{user_goal_str}"
+                )
 
             # Parse the LLM's response (which is already a dict from the mock)
             # If llm_client.generate_json returned a string, we'd do:
@@ -172,8 +245,8 @@ class MasterPlannerAgent:
 
             return MasterPlannerOutput(
                 master_plan_json=plan.model_dump_json(indent=2),
-                confidence_score=0.75, # Confidence from LLM (mocked)
-                planner_notes="Plan generated by LLM (mocked)."
+                confidence_score=0.75,  # Confidence from LLM (mocked)
+                planner_notes="Plan generated by LLM (mocked).",
             )
 
         except json.JSONDecodeError as e:
@@ -181,56 +254,76 @@ class MasterPlannerAgent:
             return MasterPlannerOutput(
                 master_plan_json="",
                 error_message=f"LLM output was not valid JSON: {e}",
-                planner_notes="LLM output parsing failed."
+                planner_notes="LLM output parsing failed.",
             )
-        except Exception as e: # Catch Pydantic validation errors and other issues
-            logger.error(f"Error processing LLM response or validating plan: {e}", exc_info=True)
+        except Exception as e:  # Catch Pydantic validation errors and other issues
+            logger.error(
+                f"Error processing LLM response or validating plan: {e}",
+                exc_info=True,
+            )
             return MasterPlannerOutput(
                 master_plan_json="",
                 error_message=f"Error generating or validating plan: {str(e)}",
-                planner_notes="Plan generation/validation failed."
+                planner_notes="Plan generation/validation failed.",
             )
+
 
 def get_agent_card_static() -> AgentCard:
     """Returns the static AgentCard for the MasterPlannerAgent."""
     return AgentCard(
         agent_id=MasterPlannerAgent.AGENT_ID,
         name=MasterPlannerAgent.AGENT_NAME,
-        version=MasterPlannerAgent.VERSION, # Ensure this matches class version
-        description=MasterPlannerAgent.DESCRIPTION, # Ensure this matches
+        version=MasterPlannerAgent.VERSION,  # Ensure this matches class version
+        description=MasterPlannerAgent.DESCRIPTION,  # Ensure this matches
         category=MasterPlannerAgent.CATEGORY,
         visibility=MasterPlannerAgent.VISIBILITY,
         input_schema=MasterPlannerInput.model_json_schema(),
         output_schema=MasterPlannerOutput.model_json_schema(),
     )
 
+
 async def main_test():
     logging.basicConfig(level=logging.INFO)
     logger.info("Running MasterPlannerAgent (LLM-driven) test...")
     planner = MasterPlannerAgent()
-    
+
     # Test 1: Simple goal
-    test_goal_1 = UserGoalRequest(goal="Implement a new feature foo_bar.", project_scope="chungoid-mcp")
-    test_input_1 = MasterPlannerInput(user_goal=test_goal_1.goal, original_request=test_goal_1)
-    logger.info(f"--- Test 1: Goal: {test_goal_1.goal} ---")
+    test_goal_1 = UserGoalRequest(
+        goal_description="Implement a new feature foo_bar.",
+        target_platform="chungoid-mcp"
+    )
+    test_input_1 = MasterPlannerInput(
+        user_goal=test_goal_1.goal_description,
+        original_request=test_goal_1
+    )
+    logger.info(f"--- Test 1: Goal: {test_goal_1.goal_description} ---")
     output_1 = await planner.invoke_async(test_input_1)
-    
+
     if output_1.error_message:
         print(f"Error: {output_1.error_message}")
     else:
         print("Generated Master Plan JSON (Test 1):")
         print(output_1.master_plan_json)
         try:
-            parsed_plan_1 = MasterExecutionPlan.model_validate_json(output_1.master_plan_json)
+            parsed_plan_1 = MasterExecutionPlan.model_validate_json(
+                output_1.master_plan_json
+            )
             print("\\nPlan 1 successfully parsed.")
             print(f"Plan ID: {parsed_plan_1.id}, Name: {parsed_plan_1.name}")
         except Exception as e:
             print(f"\\nError parsing generated plan 1: {e}")
 
     # Test 2: Another goal to ensure mock is not hardcoded to one specific input text
-    test_goal_2 = UserGoalRequest(goal="Refactor the authentication module.", project_scope="chungoid-mcp", project_context={"details": "auth module is in src/auth"})
-    test_input_2 = MasterPlannerInput(user_goal=test_goal_2.goal, original_request=test_goal_2)
-    logger.info(f"--- Test 2: Goal: {test_goal_2.goal} ---")
+    test_goal_2 = UserGoalRequest(
+        goal_description="Refactor the authentication module.",
+        target_platform="chungoid-mcp",
+        key_constraints={"details": "auth module is in src/auth"},
+    )
+    test_input_2 = MasterPlannerInput(
+        user_goal=test_goal_2.goal_description,
+        original_request=test_goal_2
+    )
+    logger.info(f"--- Test 2: Goal: {test_goal_2.goal_description} ---")
     output_2 = await planner.invoke_async(test_input_2)
 
     if output_2.error_message:
@@ -239,12 +332,20 @@ async def main_test():
         print("\\nGenerated Master Plan JSON (Test 2):")
         print(output_2.master_plan_json)
         try:
-            parsed_plan_2 = MasterExecutionPlan.model_validate_json(output_2.master_plan_json)
+            parsed_plan_2 = MasterExecutionPlan.model_validate_json(
+                output_2.master_plan_json
+            )
             print("\\nPlan 2 successfully parsed.")
             print(f"Plan ID: {parsed_plan_2.id}, Name: {parsed_plan_2.name}")
             if parsed_plan_2.original_request:
-                 print(f"Original request in plan 2: {parsed_plan_2.original_request.goal}")
-                 print(f"Project context in plan 2: {parsed_plan_2.original_request.project_context}")
+                print(
+                    f"Original request in plan 2: "
+                    f"{parsed_plan_2.original_request.goal_description}"
+                )
+                print(
+                    f"Key constraints in plan 2: "
+                    f"{parsed_plan_2.original_request.key_constraints}"
+                )
 
         except Exception as e:
             print(f"\\nError parsing generated plan 2: {e}")
@@ -252,4 +353,5 @@ async def main_test():
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main_test()) 
+
+    asyncio.run(main_test())

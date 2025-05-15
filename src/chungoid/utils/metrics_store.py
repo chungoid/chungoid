@@ -17,8 +17,6 @@ from typing import Any, List, Optional, Sequence
 import json
 import os
 
-from pydantic import BaseModel, Field
-
 try:
     import chromadb
     from chromadb.api import ClientAPI, Collection
@@ -27,25 +25,10 @@ except ImportError as exc:  # pragma: no cover
 
 from .chroma_client_factory import get_client
 
-__all__ = ["MetricEvent", "MetricsStore"]
+# Import the canonical MetricEvent and MetricEventType
+from chungoid.schemas.metrics import MetricEvent, MetricEventType
 
-
-class MetricEvent(BaseModel):
-    """Represents a single stage/run metric sample."""
-
-    run_id: str = Field(..., description="UUID for the overall flow run")
-    stage_id: str = Field(..., description="Identifier of the stage")
-    timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        description="UTC timestamp when the metric was recorded",
-    )
-    duration_ms: int = Field(..., description="Stage runtime in milliseconds")
-    status: str = Field(..., description="success | error | skipped")
-    error_message: Optional[str] = Field(None, description="Error summary if status == error")
-    tags: dict[str, Any] = Field(default_factory=dict, description="Arbitrary extra dimensions")
-
-    class Config:
-        extra = "allow"
+__all__ = ["MetricsStore"]
 
 
 class MetricsStore:

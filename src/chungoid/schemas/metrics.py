@@ -16,6 +16,7 @@ class MetricEventType(str, Enum):
     AGENT_INVOCATION_END = "AGENT_INVOCATION_END"
     AGENT_REPORTED_METRIC = "AGENT_REPORTED_METRIC" # For custom metrics like token usage, cost
     ORCHESTRATOR_INFO = "ORCHESTRATOR_INFO" # General info/logs from orchestrator not tied to specific stage cycle
+    FLOW_RESUME = "FLOW_RESUME" # ADDED for when a flow is resumed
     # Add more specific event types as needed
 
 

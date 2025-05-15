@@ -4,6 +4,7 @@ class AgentCategory(str, Enum):
     TESTING_MOCK = "TESTING_MOCK"
     SYSTEM_ORCHESTRATION = "SYSTEM_ORCHESTRATION"
     CODE_GENERATION = "CODE_GENERATION" # Placeholder
+    TEST_GENERATION = "TEST_GENERATION" # Added for test generator agents
     DATA_ANALYSIS = "DATA_ANALYSIS"   # Placeholder
     # Add more categories as needed
 

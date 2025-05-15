@@ -1193,113 +1193,6 @@ async def get_chungoid_project_status(ide_services):
             self.logger.error(f"Failed to export Cursor rule to {rule_file_path}: {e}", exc_info=True)
             return None
 
-    # <<< New method for saving paused flow state >>>
-    def save_paused_flow_state(self, paused_details: PausedRunDetails) -> bool:
-        """Saves the state of a paused run to a dedicated JSON file.
-
-        Args:
-            paused_details: The PausedRunDetails object containing state to save.
-
-        Returns:
-            True if saving was successful, False otherwise.
-        """
-        paused_runs_dir = self.status_file_path.parent / "paused_runs"
-        try:
-            paused_runs_dir.mkdir(parents=True, exist_ok=True)
-            file_path = paused_runs_dir / f"{paused_details.run_id}.json"
-            
-            self.logger.info(f"Saving paused flow state for run_id '{paused_details.run_id}' to {file_path}")
-            
-            with file_path.open("w", encoding="utf-8") as f:
-                f.write(paused_details.model_dump_json(indent=2))
-            
-            # Optional: fsync for durability, if supported and needed
-            # with file_path.open('r') as f_for_sync: # Re-open in read mode for fsync on some OS
-            #     if hasattr(os, 'fsync'):
-            #         os.fsync(f_for_sync.fileno())
-            
-            self.logger.info(f"Successfully saved paused state for run_id '{paused_details.run_id}'.")
-            return True
-        except IOError as e:
-            self.logger.error(f"IOError saving paused state for run '{paused_details.run_id}' to {file_path}: {e}")
-            return False
-        except Exception as e:
-            self.logger.exception(f"Unexpected error saving paused state for run '{paused_details.run_id}': {e}")
-            return False
-
-    # <<< New method for loading paused flow state >>>
-    def load_paused_flow_state(self, run_id: str) -> Optional[PausedRunDetails]:
-        """Loads the state of a paused run from its JSON file.
-
-        Args:
-            run_id: The unique ID of the paused run to load.
-
-        Returns:
-            A PausedRunDetails object if successful, None otherwise.
-        """
-        paused_runs_dir = self.status_file_path.parent / "paused_runs"
-        file_path = paused_runs_dir / f"{run_id}.json"
-
-        if not file_path.exists() or not file_path.is_file():
-            self.logger.info(f"Paused state file for run_id '{run_id}' not found at {file_path}.")
-            return None
-
-        try:
-            self.logger.info(f"Loading paused flow state for run_id '{run_id}' from {file_path}")
-            content = file_path.read_text(encoding="utf-8")
-            paused_details = PausedRunDetails.model_validate_json(content)
-            self.logger.info(f"Successfully loaded paused state for run_id '{run_id}'.")
-            return paused_details
-        except FileNotFoundError:
-            # Should be caught by the earlier check, but good for robustness
-            self.logger.info(f"Paused state file for run_id '{run_id}' not found (FileNotFoundError) at {file_path}.")
-            return None
-        except json.JSONDecodeError as e: # Pydantic v2 uses this under the hood for model_validate_json
-            self.logger.error(f"JSONDecodeError loading paused state for run '{run_id}' from {file_path}: {e}")
-            return None
-        except ValidationError as e: # Pydantic ValidationError
-            self.logger.error(f"Pydantic ValidationError loading paused state for run '{run_id}' from {file_path}: {e}")
-            return None
-        except IOError as e:
-            self.logger.error(f"IOError loading paused state for run '{run_id}' from {file_path}: {e}")
-            return None
-        except Exception as e:
-            self.logger.exception(f"Unexpected error loading paused state for run '{run_id}' from {file_path}: {e}")
-            return None
-
-    # <<< New method for deleting paused flow state >>>
-    def delete_paused_flow_state(self, run_id: str) -> bool:
-        """Deletes the saved state file for a given paused run.
-
-        Args:
-            run_id: The unique ID of the paused run whose state file should be deleted.
-
-        Returns:
-            True if the file was successfully deleted or did not exist, False if an error occurred during deletion.
-        """
-        paused_runs_dir = self.status_file_path.parent / "paused_runs"
-        file_path = paused_runs_dir / f"{run_id}.json"
-
-        try:
-            if file_path.exists() and file_path.is_file():
-                self.logger.info(f"Deleting paused flow state file for run_id '{run_id}' at {file_path}")
-                file_path.unlink() # Use unlink() to delete the file
-                self.logger.info(f"Successfully deleted paused state file for run_id '{run_id}'.")
-                return True
-            elif not file_path.exists():
-                self.logger.info(f"Paused state file for run_id '{run_id}' not found at {file_path}. No deletion needed.")
-                return True # Consider not found as success in terms of the state being gone
-            else:
-                # Path exists but is not a file (e.g., a directory)
-                self.logger.warning(f"Path for paused state run_id '{run_id}' exists but is not a file: {file_path}. Cannot delete.")
-                return False
-        except OSError as e:
-            self.logger.error(f"OSError deleting paused state file for run '{run_id}' at {file_path}: {e}")
-            return False
-        except Exception as e:
-            self.logger.exception(f"Unexpected error deleting paused state file for run '{run_id}' from {file_path}: {e}")
-            return False
-
     def get_or_create_current_run_id(self) -> Optional[int]:
         """Gets the run_id of the latest run, or determines the next one (0 if none exist).
 
@@ -1393,13 +1286,109 @@ async def get_chungoid_project_status(ide_services):
         except StatusFileError as e:
             self.logger.error(f"Failed to retrieve master execution plans due to status file error: {e}", exc_info=True)
             return []
-        except ValidationError as ve:
+        except ValidationError as ve: # Assuming ValidationError is Pydantic's
             self.logger.error(f"Failed to parse stored master execution plans: {ve}", exc_info=True)
-            return [] # Return empty if validation fails for any plan
+            return [] 
         except Exception as e:
             self.logger.error(f"An unexpected error occurred while retrieving master execution plans: {e}", exc_info=True)
             return []
 
+    def _get_paused_flow_file_path(self, run_id: str) -> Path:
+        """Constructs the Path object for a specific paused flow state file."""
+        paused_runs_dir = self.status_file_path.parent / "paused_runs"
+        paused_runs_dir.mkdir(parents=True, exist_ok=True)
+        return paused_runs_dir / f"paused_run_{run_id}.json" # Ensure 'paused_run_' prefix
+
+    def save_paused_flow_state(self, paused_details: PausedRunDetails) -> bool:
+        """Saves the state of a paused run to a dedicated JSON file.
+
+        Args:
+            paused_details: The PausedRunDetails object containing state to save.
+
+        Returns:
+            True if saving was successful, False otherwise.
+        """
+        paused_runs_dir = self.status_file_path.parent / "paused_runs"
+        try:
+            paused_runs_dir.mkdir(parents=True, exist_ok=True)
+            file_path = paused_runs_dir / f"paused_run_{paused_details.run_id}.json"
+            
+            self.logger.info(f"Saving paused flow state for run_id '{paused_details.run_id}' to {file_path}")
+            
+            with file_path.open("w", encoding="utf-8") as f:
+                f.write(paused_details.model_dump_json(indent=2))
+            
+            self.logger.info(f"Successfully saved paused state for run_id '{paused_details.run_id}'.")
+            return True
+        except IOError as e:
+            self.logger.error(f"IOError saving paused state for run '{paused_details.run_id}' to {file_path}: {e}")
+            return False
+        except Exception as e:
+            self.logger.exception(f"Unexpected error saving paused state for run '{paused_details.run_id}': {e}")
+            return False
+
+    def load_paused_flow_state(self, run_id: str) -> Optional[PausedRunDetails]:
+        """Loads the state of a paused flow run.
+        """
+        paused_file_path = self._get_paused_flow_file_path(run_id)
+        self.logger.info(f"Attempting to load paused flow state for run_id '{run_id}' from {paused_file_path}")
+
+        if not paused_file_path.exists() or not paused_file_path.is_file():
+            self.logger.warning(f"Paused flow state file not found for run_id '{run_id}' at {paused_file_path}")
+            return None
+        try:
+            content = paused_file_path.read_text(encoding="utf-8")
+            # The crucial change from P10.7 was here:
+            details = PausedRunDetails.model_validate_json(content) 
+
+            self.logger.info(f"Successfully loaded paused flow state for run_id '{run_id}'")
+            return details
+        except json.JSONDecodeError as e:
+            self.logger.error(f"JSONDecodeError loading paused state for run '{run_id}' from {paused_file_path}: {e}")
+            return None
+        except ValidationError as e: # pydantic.ValidationError
+            self.logger.error(f"Pydantic ValidationError loading paused state for run '{run_id}' from {paused_file_path}: {e}")
+            return None
+        except IOError as e:
+            self.logger.error(f"IOError loading paused state for run '{run_id}' from {paused_file_path}: {e}")
+            return None
+        except Exception as e:
+            self.logger.exception(f"Unexpected error loading paused state for run '{run_id}' from {paused_file_path}: {e}")
+            return None
+
+    def delete_paused_flow_state(self, run_id: str) -> bool:
+        """Deletes the saved state file for a given paused run.
+
+        Args:
+            run_id: The unique ID of the paused run whose state file should be deleted.
+
+        Returns:
+            True if the file was deleted or did not exist, False on error.
+        """
+        paused_file_path = self._get_paused_flow_file_path(run_id)
+        self.logger.debug(
+            f"Attempting to delete paused flow state file for run_id '{run_id}' at {paused_file_path}"
+        )
+
+        try:
+            if paused_file_path.exists() and paused_file_path.is_file():
+                self.logger.info(f"Deleting paused flow state file for run_id '{run_id}' at {paused_file_path}")
+                paused_file_path.unlink() # Use unlink() to delete the file
+                self.logger.info(f"Successfully deleted paused state file for run_id '{run_id}'.")
+                return True
+            elif not paused_file_path.exists():
+                self.logger.info(f"Paused state file for run_id '{run_id}' not found at {paused_file_path}. No deletion needed.")
+                return True # Consider not found as success in terms of the state being gone
+            else:
+                # Path exists but is not a file (e.g., a directory)
+                self.logger.warning(f"Path for paused state run_id '{run_id}' exists but is not a file: {paused_file_path}. Cannot delete.")
+                return False
+        except OSError as e:
+            self.logger.error(f"OSError deleting paused state file for run '{run_id}' at {paused_file_path}: {e}")
+            return False
+        except Exception as e:
+            self.logger.exception(f"Unexpected error deleting paused state file for run '{run_id}' from {paused_file_path}: {e}")
+            return False
 
 # Example usage (for testing or demonstration)
 if __name__ == "__main__":

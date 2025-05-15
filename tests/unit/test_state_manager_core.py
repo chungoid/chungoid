@@ -36,7 +36,7 @@ class TestStateManagerCore(unittest.TestCase):
             use_locking=False,
         )
         # initial status should be empty runs
-        self.assertEqual(sm.get_full_status(), {"runs": []})
+        self.assertEqual(sm.get_full_status(), {"runs": [], "master_plans": []})
 
         # perform update
         ok = sm.update_status(stage=0, status="DONE", artifacts=["a.txt"])

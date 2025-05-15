@@ -104,5 +104,3 @@ async def test_test_generator_agent_llm_call_exception():
     assert output.status == "FAILURE_LLM_GENERATION"
     assert "LLM interaction failed: LLM service down" in output.error_message
     assert output.generated_test_code_string is None
-
-</rewritten_file> 

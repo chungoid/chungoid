@@ -155,6 +155,9 @@ class TestGeneratorAgent:
             output_schema=TestGeneratorAgentOutput.model_json_schema(),
         )
 
+# Alias the static method for module-level import
+get_agent_card_static = TestGeneratorAgent.get_agent_card_static
+
 # Basic test stub
 async def main_test_test_gen():
     logging.basicConfig(level=logging.DEBUG)

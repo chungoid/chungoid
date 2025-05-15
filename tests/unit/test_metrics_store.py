@@ -3,7 +3,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pytest
 
@@ -41,6 +41,16 @@ def create_dummy_event(
     timestamp: Optional[datetime] = None
 ) -> MetricEvent:
     """Helper to create a MetricEvent with some defaults."""
+    # Default data dictionary
+    default_event_data = {
+        "duration_seconds": 0, # Default duration
+        "status": "SUCCESS"    # Default status, can be overwritten by specific tests
+    }
+    
+    # If caller provides data, merge it with defaults, caller's data takes precedence
+    if data is not None:
+        default_event_data.update(data)
+
     return MetricEvent(
         event_type=event_type,
         flow_id=flow_id,
@@ -48,7 +58,7 @@ def create_dummy_event(
         stage_id=stage_id,
         master_stage_id=master_stage_id,
         agent_id=agent_id,
-        data=data if data is not None else {},
+        data=default_event_data, # Pass the combined data
         timestamp=timestamp if timestamp is not None else datetime.now(timezone.utc)
     )
 
@@ -115,16 +125,12 @@ def test_get_events_filtering(metrics_store: MetricsStore):
 
     # Filter by flow_id
     f1_events = metrics_store.get_events(flow_id="f1")
-    assert len(f1_events) == 3 # ev1, ev2, ev3, ev5 (mistake here, should be ev1,ev2,ev3,ev5)
-                                # Correcting: f1_events should be ev1, ev2, ev3, ev5 -> wait, ev3 is r2. so ev1, ev2, ev5_r1f1s1_agent. That's 3.
-                                # And also ev3_r2f1s1 is flow_id f1. So 4 events. ev1, ev2, ev3, ev5.
-    # Let's re-evaluate: Events with flow_id='f1': ev1_r1f1s1, ev2_r1f1s2, ev3_r2f1s1, ev5_r1f1s1_agent.
     assert len(f1_events) == 4
     assert {e.event_id for e in f1_events} == {ev1_r1f1s1.event_id, ev2_r1f1s2.event_id, ev3_r2f1s1.event_id, ev5_r1f1s1_agent.event_id}
 
     # Filter by stage_id (across different runs/flows)
     s1_events = metrics_store.get_events(stage_id="s1")
-    assert len(s1_events) == 3 # ev1, ev3, ev4, ev5
+    assert len(s1_events) == 4 # ev1, ev3, ev4, ev5
     assert {e.event_id for e in s1_events} == {ev1_r1f1s1.event_id, ev3_r2f1s1.event_id, ev4_r1f2s1.event_id, ev5_r1f1s1_agent.event_id}
 
     # Filter by event_type
