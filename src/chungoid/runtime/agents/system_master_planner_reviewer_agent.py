@@ -14,6 +14,7 @@ from chungoid.schemas.agent_master_planner_reviewer import (
     ReviewerActionType
 )
 from chungoid.utils.agent_registry import AgentCard
+from chungoid.schemas.common_enums import FlowPauseStatus
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class MasterPlannerReviewerAgent:
                 confidence = 0.45
 
             # Heuristic 4: Unmet success criteria
-            elif inputs.pause_status == FlowPauseStatus.SUCCESS_CRITERIA_FAILED:
+            elif inputs.pause_status == FlowPauseStatus.PAUSED_AUTONOMOUS_FAILURE_CRITERIA:
                 suggestion_type = ReviewerActionType.ESCALATE_TO_USER # Often needs human judgment
                 suggestion_details = {
                      "message_to_user": f"Stage '{paused_stage_id}' completed but failed its success criteria. Please review the stage output and plan.",
@@ -138,7 +139,7 @@ class MasterPlannerReviewerAgent:
                 reasoning = "Error appears critical and unrecoverable. Escalating to user with recommendation to abort."
                 confidence = 0.8
         
-        elif inputs.pause_status == FlowPauseStatus.CLARIFICATION_NEEDED:
+        elif inputs.pause_status == FlowPauseStatus.USER_CLARIFICATION_REQUIRED:
             suggestion_type = ReviewerActionType.ESCALATE_TO_USER
             suggestion_details = {
                 "message_to_user": f"Flow paused at stage '{paused_stage_id}' for user clarification. Please provide the requested input.",

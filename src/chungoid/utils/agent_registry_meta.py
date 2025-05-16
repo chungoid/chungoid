@@ -6,6 +6,7 @@ class AgentCategory(str, Enum):
     CODE_GENERATION = "CODE_GENERATION" # Placeholder
     TEST_GENERATION = "TEST_GENERATION" # Added for test generator agents
     DATA_ANALYSIS = "DATA_ANALYSIS"   # Placeholder
+    CODE_EDITING = "CODE_EDITING"     # ADDED
     # Add more categories as needed
 
 class AgentVisibility(str, Enum):

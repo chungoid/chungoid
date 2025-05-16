@@ -29,24 +29,32 @@ class MockSystemRequirementsGatheringAgent:
 
     async def invoke_async(
         self, 
-        inputs: MockSystemRequirementsGatheringAgentInput, 
+        inputs: Dict[str, Any], 
         full_context: Optional[Dict[str, Any]] = None
     ) -> MockSystemRequirementsGatheringAgentOutput:
+        try:
+            parsed_inputs = MockSystemRequirementsGatheringAgentInput(**inputs)
+        except Exception as e:
+            logger.error(f"Failed to parse inputs for MockSystemRequirementsGatheringAgent: {e}")
+            # For a mock agent, re-raising or returning a simple error output might be enough.
+            # Consider raising a more specific AgentErrorDetails if this were a production agent.
+            raise AgentErrorDetails(error_type="InputValidationError", message=f"Input parsing failed for MockSystemRequirementsGatheringAgent: {e}", stage_id=self.AGENT_ID, agent_id=self.AGENT_ID) from e
+
         logger.info(
-            f"MockSystemRequirementsGatheringAgent invoked with goal: {inputs.goal_description}"
+            f"MockSystemRequirementsGatheringAgent invoked with goal: {parsed_inputs.goal_description}"
         )
         
         command_name_suggestion = "show-config"
-        if "show-config" not in inputs.goal_description:
+        if "show-config" not in parsed_inputs.goal_description:
             command_name_suggestion = "unknown_command"
         
-        if "display" in inputs.goal_description.lower() and "config" in inputs.goal_description.lower():
+        if "display" in parsed_inputs.goal_description.lower() and "config" in parsed_inputs.goal_description.lower():
             command_name_suggestion = "show-config"
 
         spec_doc = {
             "command_name_suggestion": command_name_suggestion,
-            "purpose": f"To address the goal: {inputs.goal_description}",
-            "full_goal_statement": inputs.goal_description,
+            "purpose": f"To address the goal: {parsed_inputs.goal_description}",
+            "full_goal_statement": parsed_inputs.goal_description,
             "target_cli_group": "utils",
             "key_information_to_display": [
                 "project_root",

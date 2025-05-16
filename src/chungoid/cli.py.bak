@@ -1098,32 +1098,6 @@ def metrics_report(
 # Entrypoint for `python -m chungoid.cli` (optional)
 # ---------------------------------------------------------------------------
 
-@click.command("show-config")
-@click.pass_context
-def show_config(ctx):
-    '''Displays the current Chungoid project configuration.'''
-    try:
-        config = get_config()
-        if not config:
-            click.secho("Error: Project configuration could not be loaded.", fg="red")
-            click.secho("Please ensure you are in a Chungoid project directory or provide one with --project-dir.", fg="red")
-            ctx.exit(1)
-        # Updated title to include config_file_loaded, matching test assertion
-        config_file_location = config.get('config_file_loaded', 'N/A')
-        click.secho(f"Current Project Configuration (from {config_file_location}):", fg="cyan", bold=True)
-        click.echo(f"  project_root: {config['project_root']}")
-        click.echo(f"  dot_chungoid_path: {config['dot_chungoid_path']}")
-        click.echo(f"  state_manager_db_path: {config['state_manager_db_path']}")
-        click.echo(f"  master_flows_dir: {config['master_flows_dir']}")
-        click.echo(f"  host_system_info: {config['host_system_info']}")
-        click.echo(f"  log_level: {config['log_level']}")
-        # The problematic example block is now fully removed.
-    except Exception as e:
-        click.secho(f"An unexpected error occurred while retrieving configuration: {e}", fg="red")
-        # Removed: logger.error(f"Error in show_config command: {e}", exc_info=True)
-        ctx.exit(1)
-        
-utils.add_command(show_config)
 if __name__ == "__main__":  # pragma: no cover
     cli()
 

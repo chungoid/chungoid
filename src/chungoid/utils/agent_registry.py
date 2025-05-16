@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel, Field
 import json
+import logging
 
 from .chroma_client_factory import get_client
 from .agent_registry_meta import AgentCategory, AgentVisibility
@@ -92,8 +93,27 @@ class AgentRegistry:
             if not overwrite:
                 raise ValueError(f"Agent {card.agent_id} already exists")
         
+        logger = logging.getLogger(__name__)
+
+        # Attempt to re-validate/finalize card if it's CoreTestGeneratorAgent_v1
+        # This was a workaround for a Pydantic issue where model_dump() was losing fields.
+        # Keeping this specific workaround for now as it proved necessary.
+        if card.agent_id == "CoreTestGeneratorAgent_v1":
+            try:
+                card_dict = card.model_dump() 
+                card = AgentCard.model_validate(card_dict)
+            except Exception as e_reval:
+                logger.warning(f"AGENT_REGISTRY_ADD: Warning during CoreTestGeneratorAgent_v1 re-validation: {e_reval}")
+
+        # Standard INFO log for specific agent if needed (example)
+        if card.agent_id == "CoreCodeGeneratorAgent_v1":
+            logger.info(f"AgentRegistry.add: Received card CoreCodeGeneratorAgent_v1. Categories: {card.categories}, Profile: {card.capability_profile}")
+
         final_chroma_meta = self._agent_card_to_chroma_metadata(card)
         searchable_doc = self._create_searchable_document_for_agent_card(card)
+
+        if card.agent_id == "CoreCodeGeneratorAgent_v1": # Example of a standard INFO log
+            logger.info(f"AgentRegistry.add: Storing Chroma metadata for CoreCodeGeneratorAgent_v1: categories_str='{final_chroma_meta.get('categories_str')}', capability_profile_json='{final_chroma_meta.get('capability_profile_json')}'")
 
         self._coll.add(ids=[card.agent_id], documents=[searchable_doc], metadatas=[final_chroma_meta])
 
@@ -123,10 +143,10 @@ class AgentRegistry:
                 # Let Pydantic handle it if it's a non-empty, invalid string
                 pass
         
-        categories_str = card_data.pop("_categories_str", "")
+        categories_str = card_data.pop("categories_str", "")
         card_data["categories"] = [cat.strip() for cat in categories_str.split(",") if cat.strip()]
 
-        capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
+        capability_profile_json_str = card_data.pop("capability_profile_json", "{}")
         card_data["capability_profile"] = json.loads(capability_profile_json_str)
         
         # Ensure 'priority' is present and a valid number, defaulting to 0 if missing or None.
@@ -166,44 +186,44 @@ class AgentRegistry:
         peek_results = self._coll.peek(limit=limit)
         cards: List[AgentCard] = []
         
-        retrieved_ids = peek_results.get("ids", [])
-        retrieved_metadatas = peek_results.get("metadatas", [])
-        # Documents are now the full searchable docs, not just descriptions.
-        # retrieved_documents = peek_results.get("documents", []) 
+        logger = logging.getLogger(__name__) 
 
-        for i in range(len(retrieved_ids)):
-            current_chroma_meta = retrieved_metadatas[i].copy()
-            
+        retrieved_ids_list = peek_results.get("ids", [])
+        retrieved_metadatas_list = peek_results.get("metadatas", [])
+
+        for i in range(len(retrieved_ids_list)):
+            current_chroma_meta = retrieved_metadatas_list[i].copy()
+            current_agent_id_from_peek = retrieved_ids_list[i]
+
+            # Example of a standard conditional INFO log during list, if necessary for a specific agent.
+            # if current_agent_id_from_peek == "SomeOtherAgent_v1":
+            #    logger.info(f"Processing {current_agent_id_from_peek} in list, raw meta: {current_chroma_meta}")
+
             card_data = current_chroma_meta.copy()
-            # card_data["description"] = retrieved_documents[i] # This would assign searchable_doc
 
-            # Deserialize category and visibility from string to enum
-            # Convert empty strings back to None before validation
             if "visibility" in card_data and card_data["visibility"] == "":
                 card_data["visibility"] = None
-            elif "visibility" in card_data and card_data["visibility"] is not None: # Ensure it's not already None
+            elif "visibility" in card_data and card_data["visibility"] is not None: 
                 try:
                     card_data["visibility"] = AgentVisibility(card_data["visibility"])
                 except ValueError:
-                    # Let Pydantic handle it if it's a non-empty, invalid string
                     pass
 
-            categories_str = card_data.pop("_categories_str", "")
+            categories_str = card_data.pop("categories_str", "") 
             card_data["categories"] = [cat.strip() for cat in categories_str.split(",") if cat.strip()]
-
-            capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
+            
+            capability_profile_json_str = card_data.pop("capability_profile_json", "{}")
             card_data["capability_profile"] = json.loads(capability_profile_json_str)
             
-            # Ensure 'priority' is present and a valid number, defaulting to 0 if missing or None.
             if "priority" not in card_data or card_data["priority"] is None:
                 card_data["priority"] = 0
 
             capabilities_str = card_data.pop("_capabilities_str", "")
             card_data["capabilities"] = [cap.strip() for cap in capabilities_str.split(",") if cap.strip()]
 
-            tags_str = card_data.pop("_tags_str", "") # Added for tags
+            tags_str = card_data.pop("_tags_str", "") 
             card_data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
-
+            
             tool_names_str = card_data.pop("_tool_names_str", "")
             card_data["tool_names"] = [name.strip() for name in tool_names_str.split(",") if name.strip()]
 
@@ -219,8 +239,10 @@ class AgentRegistry:
             mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null")
             card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
             
-            # correlation_id will be directly in card_data if it was stored.
-            cards.append(AgentCard.model_validate(card_data))
+            validated_card = AgentCard.model_validate(card_data)
+            
+            # Append a deep copy to isolate the object from potential external modifications
+            cards.append(validated_card.model_copy(deep=True))
         return cards
 
     def search_agents(self, query_text: str, n_results: int = 3, where_filter: Optional[Dict[str, Any]] = None) -> List[AgentCard]:
@@ -255,10 +277,10 @@ class AgentRegistry:
                 card_data = current_chroma_meta.copy()
 
                 # Deserialize fields from metadata
-                categories_str = card_data.pop("_categories_str", "")
+                categories_str = card_data.pop("categories_str", "")
                 card_data["categories"] = [cat.strip() for cat in categories_str.split(",") if cat.strip()]
 
-                capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
+                capability_profile_json_str = card_data.pop("capability_profile_json", "{}")
                 card_data["capability_profile"] = json.loads(capability_profile_json_str)
                 
                 # Ensure 'priority' is present and a valid number, defaulting to 0 if missing or None.
@@ -322,29 +344,31 @@ class AgentRegistry:
         Complex types are serialized to strings. Optional simple types that are None
         have their keys excluded.
         """
+        # Logger for this method if specific logging is ever needed here.
+        # logger = logging.getLogger(__name__) 
+
         meta: Dict[str, Any] = {
             "agent_id": agent_card.agent_id,
             "name": agent_card.name,
         }
         if agent_card.version is not None:
             meta["version"] = agent_card.version
-        if agent_card.description is not None: # Store original description
+        if agent_card.description is not None:
             meta["description"] = agent_card.description
         
-        # New fields
-        if agent_card.categories: # Store if not empty
-            meta["_categories_str"] = ",".join(agent_card.categories)
+        # Restore original logic for categories and capability_profile
+        if agent_card.categories: 
+            meta["categories_str"] = ",".join(agent_card.categories)
         else:
-            meta["_categories_str"] = "" # Store empty string if None or empty list
+            meta["categories_str"] = ""
 
-        if agent_card.capability_profile: # Store if not empty
-            meta["_capability_profile_json"] = json.dumps(agent_card.capability_profile)
+        if agent_card.capability_profile: 
+            meta["capability_profile_json"] = json.dumps(agent_card.capability_profile)
         else:
-            meta["_capability_profile_json"] = "{}" # Store empty JSON object if None or empty dict
+            meta["capability_profile_json"] = "{}"
         
-        # Priority is simple, store directly if not None. Pydantic default is 0.
         if agent_card.priority is not None:
-             meta["priority"] = agent_card.priority
+            meta["priority"] = agent_card.priority
 
         # Handle existing optional fields
         if agent_card.visibility is not None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator # IMPORT model_validator
 import yaml # For from_yaml method
 
 from .user_goal_schemas import UserGoalRequest # <<< ADD IMPORT
@@ -46,7 +46,7 @@ class ClarificationCheckpointSpec(BaseModel):
 
 class MasterStageSpec(BaseModel):
     """Specification of a single stage within a Master Execution Plan."""
-    agent_id: str = Field(..., description="ID of the agent to invoke (e.g., 'CoreStageExecutorAgent')")
+    agent_id: Optional[str] = Field(None, description="ID of the agent to invoke (e.g., 'CoreStageExecutorAgent')")
     agent_category: Optional[str] = Field(None, description="Category of agent to invoke if agent_id is not specified.")
     agent_selection_preferences: Optional[Dict[str, Any]] = Field(None, description="Preferences for selecting an agent from agent_category. Example: {'capability_profile_match': {'language': 'python'}, 'priority_gte': 5}")
     inputs: Optional[Dict[str, Any]] = Field(
@@ -85,6 +85,14 @@ class MasterStageSpec(BaseModel):
         None, 
         description="Optional dot-notation path where the agent's entire output dictionary should be placed in the main flow context. E.g., 'stage_outputs.current_stage_name'. If None, output is merged at root (TBD)."
     )
+
+    @model_validator(mode='after')
+    def check_agent_id_or_category_provided(cls, data: Any) -> Any:
+        if isinstance(data, MasterStageSpec): # Ensure it's already a model instance for attribute access
+            if not data.agent_id and not data.agent_category:
+                raise ValueError("Either 'agent_id' or 'agent_category' must be provided for a stage.")
+            # Orchestrator prioritizes agent_id if both are present, so no specific validation needed for that case here.
+        return data
 
 class MasterExecutionPlan(BaseModel):
     """Validated, structured representation of a Master Flow YAML."""

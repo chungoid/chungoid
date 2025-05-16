@@ -15,6 +15,7 @@ Both implement the `AgentProvider` protocol expected by the refactored
 from typing import Callable, Dict, Protocol, runtime_checkable, Optional, List, Any, Tuple
 from semver import VersionInfo
 from .agent_registry import AgentCard
+import logging
 
 StageDict = Dict[str, object]
 AgentCallable = Callable[[StageDict], Dict[str, object]]
@@ -189,46 +190,94 @@ class RegistryAgentProvider:
             NoAgentFoundForCategoryError: If no suitable agent is found.
             AmbiguousAgentCategoryError: If multiple agents are equally suitable and a unique choice cannot be made.
         """
+        logger = logging.getLogger(__name__)
+        logger.info(f"Attempting to resolve agent for category: '{category}' with preferences: {preferences}")
+
         if preferences is None:
             preferences = {}
 
-        all_cards = self._registry.list(limit=1000) # Assuming a reasonable upper limit
-        
-        # 1. Filter by category
-        candidate_cards = [card for card in all_cards if card.categories and category in card.categories]
+        all_cards: List[AgentCard] = self._registry.list() 
+        logger.info(f"Found {len(all_cards)} cards in registry. Checking for category '{category}'.")
 
-        if not candidate_cards:
+        candidate_cards_after_category_filter: List[AgentCard] = []
+        for card in all_cards:
+            is_match = False 
+            if card.categories: 
+                if category in card.categories:
+                    is_match = True
+            
+            if is_match:
+                candidate_cards_after_category_filter.append(card)
+
+        if not candidate_cards_after_category_filter:
+            logger.warning(f"No candidate cards after category filter for '{category}'. all_cards count: {len(all_cards)}") 
             raise NoAgentFoundForCategoryError(f"No agents found in category '{category}'.")
 
         # 2. Apply capability_profile_match
         profile_match_prefs = preferences.get("capability_profile_match", {})
         if profile_match_prefs:
             filtered_by_profile: List[AgentCard] = []
-            for card in candidate_cards:
+            for card in candidate_cards_after_category_filter:
                 match = True
-                for key, expected_value in profile_match_prefs.items():
-                    if card.capability_profile.get(key) != expected_value:
-                        match = False
-                        break
+                if not card.capability_profile: # Agent has no capability profile, so cannot match if prefs exist
+                    match = False
+                else:
+                    for pref_key, pref_expected_value in profile_match_prefs.items():
+                        agent_capability_value = None
+                        # Map preference keys to actual capability_profile keys
+                        if pref_key == "language":
+                            agent_capability_value = card.capability_profile.get("language_support")
+                        elif pref_key == "framework":
+                            agent_capability_value = card.capability_profile.get("target_frameworks")
+                        # Add other specific mappings here if needed
+                        # else: # Fallback to direct key match if no specific mapping
+                        #     agent_capability_value = card.capability_profile.get(pref_key)
+
+                        # If after mapping (or direct access if no mapping applied), the key isn't in agent's profile
+                        if agent_capability_value is None and not (pref_key == "language" or pref_key == "framework"):
+                             # If it wasn't a mapped key, try direct access as a fallback
+                             agent_capability_value = card.capability_profile.get(pref_key)
+                        
+                        if agent_capability_value is None: # Capability not present in agent card after mapping or direct lookup
+                            match = False
+                            break
+                        
+                        # Refined comparison logic
+                        if isinstance(pref_expected_value, list): # Preference is a list (e.g., for edit_action_support)
+                            if not isinstance(agent_capability_value, list):
+                                match = False # Agent's capability must also be a list to compare all items
+                                break
+                            # Check if all items in pref_expected_value are in agent_capability_value
+                            if not all(item in agent_capability_value for item in pref_expected_value):
+                                match = False
+                                break
+                        elif isinstance(agent_capability_value, list): # Agent capability is a list, preference is single value
+                            if pref_expected_value not in agent_capability_value:
+                                match = False
+                                break
+                        # Direct comparison if both are single values (or other non-list types)
+                        elif agent_capability_value != pref_expected_value:
+                            match = False
+                            break
                 if match:
                     filtered_by_profile.append(card)
-            candidate_cards = filtered_by_profile
+            candidate_cards_after_category_filter = filtered_by_profile
         
-        if not candidate_cards:
+        if not candidate_cards_after_category_filter:
             raise NoAgentFoundForCategoryError(f"No agents in category '{category}' match capability profile: {profile_match_prefs}")
 
         # 3. Apply priority_gte
         priority_gte = preferences.get("priority_gte")
         if priority_gte is not None:
-            candidate_cards = [card for card in candidate_cards if card.priority is not None and card.priority >= priority_gte]
+            candidate_cards_after_category_filter = [card for card in candidate_cards_after_category_filter if card.priority is not None and card.priority >= priority_gte]
 
-        if not candidate_cards:
+        if not candidate_cards_after_category_filter:
             raise NoAgentFoundForCategoryError(f"No agents in category '{category}' (after profile match) meet priority_gte: {priority_gte}")
 
         # 4. Handle version_preference (e.g., "latest_semver")
         # This is a simplified version preference handling. More robust parsing might be needed.
         version_preference = preferences.get("version_preference")
-        if version_preference == "latest_semver" and candidate_cards:
+        if version_preference == "latest_semver" and candidate_cards_after_category_filter:
             # Assumes version is stored in capability_profile["version_semver"] or card.version
             # and is a valid semver string.
             def get_semver(card: AgentCard) -> Optional[VersionInfo]:
@@ -240,11 +289,11 @@ class RegistryAgentProvider:
                         return None
                 return None
 
-            candidate_cards.sort(key=lambda c: (c.priority or 0, get_semver(c) or VersionInfo(0)), reverse=True)
+            candidate_cards_after_category_filter.sort(key=lambda c: (c.priority or 0, get_semver(c) or VersionInfo(0)), reverse=True)
             
-            if candidate_cards: # If any candidates remain after sorting
+            if candidate_cards_after_category_filter: # If any candidates remain after sorting
                  # Check for ties in priority and version if that constitutes ambiguity
-                best_card = candidate_cards[0]
+                best_card = candidate_cards_after_category_filter[0]
                 best_priority = best_card.priority or 0
                 best_version = get_semver(best_card)
                 
@@ -253,23 +302,23 @@ class RegistryAgentProvider:
                 # A more strict ambiguity check might be needed based on requirements.
                 pass # First one is taken by default after sort
 
-        elif candidate_cards: # Default sort by priority if no specific version preference
-            candidate_cards.sort(key=lambda c: c.priority or 0, reverse=True)
+        elif candidate_cards_after_category_filter: # Default sort by priority if no specific version preference
+            candidate_cards_after_category_filter.sort(key=lambda c: c.priority or 0, reverse=True)
 
-        if not candidate_cards:
+        if not candidate_cards_after_category_filter:
             raise NoAgentFoundForCategoryError(f"No agents remaining after all preference filters for category '{category}'.")
 
         # 5. Check for ambiguity (Simplified: if more than one at the highest priority after all filters)
         # A more robust ambiguity check might be needed if multiple agents have identical top scores
         # across all preference dimensions (priority, version if specified, etc.)
-        selected_card = candidate_cards[0]
+        selected_card = candidate_cards_after_category_filter[0]
         
         # Example of a stricter ambiguity check: if multiple cards have the same highest priority
         # and other differentiating preferences are not enough.
-        if len(candidate_cards) > 1:
+        if len(candidate_cards_after_category_filter) > 1:
             top_priority = selected_card.priority or 0
             # Count how many have the exact same top priority
-            count_at_top_priority = sum(1 for card in candidate_cards if (card.priority or 0) == top_priority)
+            count_at_top_priority = sum(1 for card in candidate_cards_after_category_filter if (card.priority or 0) == top_priority)
             if count_at_top_priority > 1 and version_preference != "latest_semver": # If not using version to break ties
                  # If version_preference was 'latest_semver', the sort should have picked one.
                  # Otherwise, if multiple have same top priority, it might be ambiguous.
@@ -277,7 +326,7 @@ class RegistryAgentProvider:
                  pass # For now, allow first after sort. Ambiguity logic can be enhanced.
                 # raise AmbiguousAgentCategoryError(
                 #    f"Multiple agents found with highest priority {top_priority} for category '{category}' and preferences. "
-                #    f"Candidates: {[c.agent_id for c in candidate_cards if (c.priority or 0) == top_priority]}"
+                #    f"Candidates: {[c.agent_id for c in candidate_cards_after_category_filter if (c.priority or 0) == top_priority]}"
                 # )
 
         # 6. Return resolved agent_id and callable
