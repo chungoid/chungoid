@@ -139,7 +139,7 @@ import asyncio
 import json as py_json # Alias to avoid conflict with click option
 from chungoid.runtime.orchestrator import AsyncOrchestrator #, ExecutionPlan no longer primary
 from chungoid.schemas.master_flow import MasterExecutionPlan # <<< Import MasterExecutionPlan
-from chungoid.utils.agent_resolver import RegistryAgentProvider # Example provider
+from chungoid.utils.agent_resolver import RegistryAgentProvider, AgentCallable # MODIFIED: Added AgentCallable
 # from chungoid.utils.flow_registry import FlowRegistry # No longer used directly for master plans
 from chungoid.utils.master_flow_registry import MasterFlowRegistry
 from chungoid.utils.agent_registry import AgentRegistry # Import AgentRegistry
@@ -148,6 +148,7 @@ from chungoid.schemas.flows import PausedRunDetails # Ensure this is imported
 from chungoid.utils.config_loader import get_config # For default config
 # <<< Import patch and AsyncMock >>>
 from unittest.mock import patch, AsyncMock 
+# import chungoid.server_prompts as server_prompts_pkg # REMOVED IMPORT
 
 # New imports for metrics CLI
 from chungoid.utils.metrics_store import MetricsStore
@@ -184,6 +185,14 @@ from chungoid.runtime.agents import system_test_runner_agent # ADDED
 # Ensure AgentID type is available if used for keys, though strings are fine for dict keys.
 from chungoid.models import AgentID
 # from chungoid.runtime.agents.base import AgentBase # For type hinting if needed # REMOVED
+
+# --- ADDED IMPORTS FOR MOCK SETUP AGENT ---
+from chungoid.agents.testing_mock_agents import (
+    MockSetupAgentV1,
+    MockFailPointAgentV1,
+    # Assuming a get_mock_setup_agent_v1_card exists or we use AGENT_ID directly
+)
+# --- END ADDED IMPORTS ---
 
 logger = logging.getLogger(__name__)
 
@@ -360,17 +369,25 @@ def status(ctx: click.Context, project_dir: Path, as_json: bool) -> None:  # noq
 @cli.group()
 @click.pass_context
 def flow(ctx: click.Context) -> None:  # noqa: D401
-    """Manage and run MasterExecutionPlans (autonomous flows)."""
-    # Get project_dir from context if available, or default to current dir
-    # This is tricky because 'flow' itself doesn't take project_dir, subcommands do.
-    # For now, assume subcommands will handle project_dir resolution.
-    # If metrics_store needs to be initialized at group level, this needs thought.
-    # Let's initialize it within each command for now.
+    """Commands for managing and executing Master Flows."""
     pass
 
 
 @flow.command(name="run")
-@click.argument("master_flow_id", type=str, required=False, default=None)
+@click.option(
+    "--master-flow-id",
+    "master_flow_id_opt",
+    type=str, 
+    default=None, 
+    help="ID of the master flow to run. Loaded from <project_dir>/.chungoid/master_flows/<id>.yaml or from persisted state."
+)
+@click.option(
+    "--flow-yaml",
+    "flow_yaml_opt",
+    type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
+    default=None,
+    help="Path to a specific master flow YAML file to run. Overrides master_flow_id if both are given for loading, but master_flow_id is used as plan ID."
+)
 @click.option(
     "--goal", 
     type=str, 
@@ -382,7 +399,7 @@ def flow(ctx: click.Context) -> None:  # noqa: D401
     "project_dir_opt",
     type=click.Path(file_okay=False, dir_okay=True, exists=True, path_type=Path),
     default=".",
-    help="Project directory containing the 'master_flows' subdirectory (default: current directory)."
+    help="Project directory containing the '.chungoid' subdirectory (default: current directory)."
 )
 @click.option(
     "--initial-context",
@@ -390,223 +407,196 @@ def flow(ctx: click.Context) -> None:  # noqa: D401
     default=None,
     help="JSON string containing initial context variables to pass to the flow."
 )
+@click.option(
+    "--run-id",
+    "run_id_override_opt",
+    type=str,
+    default=None,
+    help="Specify a custom run ID for this execution."
+)
+@click.option(
+    "--tags",
+    type=str,
+    default=None,
+    help=(
+        "Comma-separated tags for this run (e.g., 'test,nightly'). "
+        "These are stored in project_status.json and can be used for filtering later."
+    )
+)
 @click.pass_context
-def flow_run(ctx: click.Context, master_flow_id: Optional[str], goal: Optional[str], project_dir_opt: Path, initial_context: Optional[str]) -> None:
-    """Run a Master Flow definition or generate one from a GOAL."""
-    logger = logging.getLogger("chungoid.cli.flow.run")
-    project_root = project_dir_opt.expanduser().resolve()
+def flow_run(ctx: click.Context, 
+             master_flow_id_opt: Optional[str], 
+             flow_yaml_opt: Optional[Path], 
+             goal: Optional[str], 
+             project_dir_opt: Path, 
+             initial_context: Optional[str],
+             run_id_override_opt: Optional[str],
+             tags: Optional[str]
+             ) -> None:
+    logger = logging.getLogger("chungoid.cli.flow_run")
+    logger.info(f"'chungoid flow run' invoked. Master Flow ID: {master_flow_id_opt}, YAML: {flow_yaml_opt}, Goal: {goal}, Project Dir: {project_dir_opt}")
+
+    if not master_flow_id_opt and not flow_yaml_opt and not goal:
+        logger.error("Either --master-flow-id, --flow-yaml, or --goal must be provided.")
+        click.echo("Error: Either --master-flow-id, --flow-yaml, or --goal must be provided.", err=True)
+        raise click.exceptions.Exit(1)
     
-    # --- Validate mutually exclusive options ---
-    if master_flow_id and goal:
-        click.echo("Error: MASTER_FLOW_ID argument and --goal option are mutually exclusive.", err=True)
-        sys.exit(1)
-    if not master_flow_id and not goal:
-        click.echo("Error: Either MASTER_FLOW_ID argument or --goal option must be provided.", err=True)
-        sys.exit(1)
+    if goal and (master_flow_id_opt or flow_yaml_opt):
+        logger.error("--goal option is mutually exclusive with --master-flow-id and --flow-yaml.")
+        click.echo("Error: --goal is mutually exclusive with --master-flow-id and --flow-yaml.", err=True)
+        raise click.exceptions.Exit(1)
 
-    logger.info(f"Initiating flow run in project {project_root}")
-    if master_flow_id:
-        logger.info(f"Using pre-defined master_flow_id='{master_flow_id}'")
-    if goal:
-        logger.info(f"Using goal to generate plan: '{goal}'")
+    # Use resolved project path for consistency
+    project_path = project_dir_opt.resolve()
+    # Ensure .chungoid directory exists for StateManager and others
+    chungoid_dir = project_path / PROJECT_CHUNGOID_DIR
+    if not chungoid_dir.is_dir():
+        logger.error(f"Project .chungoid directory not found at {chungoid_dir}. Please initialize the project or specify the correct directory.")
+        click.echo(f"Error: Project .chungoid directory not found at {chungoid_dir}.", err=True)
+        raise click.exceptions.Exit(1)
 
-    # --- Parse Initial Context --- 
-    start_context: Dict[str, Any] = {'outputs': {}} # Ensure outputs dict exists
+    config_file_path = chungoid_dir / "project_config.yaml"
+    if not config_file_path.exists():
+        logger.warning(f"Project config file not found at {config_file_path}. Using default configuration.")
+        project_config = get_config() # Gets default config
+    else:
+        project_config = get_config(str(config_file_path))
+    
+    # Ensure project_root_dir is set in the config, as orchestrator might need it
+    project_config["project_root_dir"] = str(project_path)
+
+    parsed_initial_context = {}
     if initial_context:
         try:
             parsed_initial_context = py_json.loads(initial_context)
-            if not isinstance(parsed_initial_context, dict):
-                raise ValueError("Initial context must be a JSON object (dictionary).")
-            start_context.update(parsed_initial_context)
-            logger.debug(f"Using initial context: {start_context}")
-        except (py_json.JSONDecodeError, ValueError) as e:
-            click.echo(f"Error: Invalid JSON string provided for --initial-context: {e}", err=True)
-            sys.exit(1)
+            logger.info(f"Parsed initial context: {parsed_initial_context}")
+        except py_json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in --initial-context: {e}")
+            click.echo(f"Error: Invalid JSON in --initial-context: {e}", err=True)
+            raise click.exceptions.Exit(1)
 
-    # --- Async runner --- 
-    async def do_run():
-        # --- Find server_stages_dir (for StateManager) ---
-        try:
-            import chungoid.server_prompts as server_prompts_pkg
-            # The following line `from chungoid.config import ProjectConfig` MUST BE DELETED from this try block if present
-            server_stages_dir = Path(server_prompts_pkg.__path__[0]) / "stages"
-        except (ImportError, AttributeError, IndexError):
-            # Fallback if pkg resources not found easily (e.g. not installed editable)
-            logger.warning("Could not easily find server_prompts package path, falling back to relative path from cli.py")
-            core_root_for_stages = Path(__file__).resolve().parent.parent.parent # Assumes src/chungoid/cli.py -> chungoid-core/
-            server_stages_dir = core_root_for_stages / "server_prompts" / "stages"
+    # Add tags to initial_context if provided
+    if tags:
+        parsed_initial_context["_run_tags"] = [tag.strip() for tag in tags.split(',')]
+        logger.info(f"Added tags to context: {parsed_initial_context['_run_tags']}")
 
-        if not server_stages_dir.exists() or not server_stages_dir.is_dir():
-            logger.error(f"Server stages directory not found at: {server_stages_dir}")
-            click.echo(f"Error: Server stages directory not found. Searched at {server_stages_dir}", err=True)
-            sys.exit(1)
-        logger.debug(f"Using server_stages_dir: {server_stages_dir}")
-        # --- End Find server_stages_dir ---
+    # Setup components needed for orchestration
+    # TODO: Refactor agent registration to be more centralized and less CLI-dependent for common agents
+    
+    # Ensure project_root_dir from config is a Path object for AgentRegistry
+    registry_project_root = Path(project_config["project_root_dir"])
+    # Get chroma_mode from project_config, default to "persistent" if not present or None
+    registry_chroma_mode = project_config.get("chroma_db_mode") or "persistent" 
 
-        project_path = project_dir_opt.expanduser().resolve()
-        logger.info(f"Running master_flow '{master_flow_id}' for project: {project_path}")
+    agent_registry = AgentRegistry(
+        project_root=registry_project_root, 
+        chroma_mode=registry_chroma_mode
+    )
+    
+    # Register some basic system agents if not already (idempotent)
+    agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True) # Master Planner Reviewer
+    agent_registry.add(get_master_planner_agent_card(), overwrite=True) # Master Planner Agent
+    # agent_registry.add(core_stage_executor_card(), overwrite=True) # Core Stage Executor - if needed
+    
+    # Setup for mock agents (example)
+    agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
+    agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
+    agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
+    agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
+    agent_registry.add(get_code_generator_agent_card(), overwrite=True) # Core Code Generator
+    agent_registry.add(get_test_generator_agent_card(), overwrite=True) # Core Test Generator
+    agent_registry.add(get_code_integration_agent_card(), overwrite=True)
+    agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
+    # agent_registry.add(system_test_runner_agent.get_agent_card_static(), overwrite=True) # system_test_runner_agent - REMOVED, will be in fallback
 
-        # Initialize StateManager
-        state_manager = StateManager(
-            target_directory=str(project_path),
-            server_stages_dir=str(server_stages_dir) 
-        )
+    # --- Prepare fallback agents for RegistryAgentProvider ---
+    # Based on the pattern in flow_resume, but adapted for flow_run
+    fallback_agents_map: Dict[AgentID, AgentCallable] = { # Assuming AgentCallable is defined or imported
+        # It's safer to instantiate agents here if they need config or LLM providers
+        # For system agents that are classes:
+        get_master_planner_agent_card().agent_id: MasterPlannerAgent(llm_provider=MockLLMProvider()), # Example, adjust if LLM needed
+        get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(config=project_config), # Pass config
+        # For mock agents that are classes:
+        get_mock_human_input_agent_card().agent_id: MockHumanInputAgent(),
+        get_mock_code_generator_agent_card().agent_id: MockCodeGeneratorAgent(),
+        get_mock_test_generation_agent_v1_card().agent_id: MockTestGenerationAgentV1(),
+        get_mock_system_requirements_gathering_agent_card().agent_id: MockSystemRequirementsGatheringAgent(),
+        MockSetupAgentV1.AGENT_ID: MockSetupAgentV1(config=project_config), # ADDED MockSetupAgentV1
+        MockFailPointAgentV1.AGENT_ID: MockFailPointAgentV1(config=project_config), # ADDED MockFailPointAgentV1
+        # For core functional agents that are classes:
+        get_code_generator_agent_card().agent_id: CodeGeneratorAgent(),
+        get_test_generator_agent_card().agent_id: TestGeneratorAgent(),
+        get_code_integration_agent_card().agent_id: CoreCodeIntegrationAgentV1(config=project_config),
+        # For module-based agents like system_test_runner_agent:
+        system_test_runner_agent.AGENT_ID: system_test_runner_agent.invoke_async,
+    }
+    # Ensure CoreStageExecutorAgent is available if needed, e.g. via fallback or direct registration
+    # For now, assuming it's not critical for this specific flow or is handled by registry if card exists.
+    # fallback_agents_map[core_stage_executor_card().agent_id] = core_stage_executor_agent # If it's a direct function
 
-        # Initialize AgentRegistry and Provider
-        agent_registry = AgentRegistry(project_root=project_path) 
-        agent_registry.add(core_stage_executor_card, overwrite=True)
-        agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
-        agent_registry.add(get_master_planner_agent_card(), overwrite=True) # Ensure planner is registered
-        # Register Mock Agents for P2.6 MVP
-        agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
-        # Register Core Agents
-        # Explicitly delete CoreCodeGeneratorAgent_v1 before adding to ensure clean state
-        try:
-            agent_registry.delete("CoreCodeGeneratorAgent_v1")
-            logger.info("Successfully deleted existing CoreCodeGeneratorAgent_v1 before re-adding.")
-        except Exception as e:
-            logger.warning(f"Could not delete CoreCodeGeneratorAgent_v1 (may not exist, which is fine): {e}")
-        agent_registry.add(get_code_generator_agent_card(), overwrite=True) 
-        
-        # Explicitly delete CoreTestGeneratorAgent_v1 before adding to ensure clean state (optional, but good practice if we suspect issues)
-        # try:
-        #     agent_registry.delete("CoreTestGeneratorAgent_v1")
-        #     logger.info("Successfully deleted existing CoreTestGeneratorAgent_v1 before re-adding.")
-        # except Exception as e:
-        #     logger.warning(f"Could not delete CoreTestGeneratorAgent_v1 (may not exist, which is fine): {e}")
-        agent_registry.add(get_test_generator_agent_card(), overwrite=True)
-
-        # Explicitly delete CoreCodeIntegrationAgentV1 before adding
-        try:
-            agent_registry.delete(CoreCodeIntegrationAgentV1.AGENT_ID)
-            logger.info(f"Successfully deleted existing {CoreCodeIntegrationAgentV1.AGENT_ID} before re-adding.")
-        except Exception as e:
-            logger.warning(f"Could not delete {CoreCodeIntegrationAgentV1.AGENT_ID} (may not exist, which is fine): {e}")
-        agent_registry.add(get_code_integration_agent_card(), overwrite=True)
-
-        logger.info(f"Registered system agents: {core_stage_executor_card.agent_id}, {get_master_planner_reviewer_agent_card().agent_id}, {get_master_planner_agent_card().agent_id}")
-        logger.info(f"Registered mock agents: {get_mock_human_input_agent_card().agent_id}, {get_mock_code_generator_agent_card().agent_id}, {get_mock_test_generator_agent_card().agent_id}, {get_mock_system_requirements_gathering_agent_card().agent_id}")
-        logger.info(f"Registered core functional agents: {get_code_generator_agent_card().agent_id}, {get_test_generator_agent_card().agent_id}, {get_code_integration_agent_card().agent_id}")
-
-        # --- Prepare fallback agents for RegistryAgentProvider ---
-        # The RegistryAgentProvider will first check its fallback map before querying the AgentRegistry (Chroma).
-        # For agents that are defined and instantiated directly in the CLI (like these mock agents),
-        # providing them in the fallback ensures they are found without needing to be fully persisted
-        # and re-queried from Chroma, and also allows them to be potentially async callables directly.
-        
-        # Instantiate LLMProvider (using Mock for now in CLI)
-        llm_provider = MockLLMProvider()
-
-        # Fallback for agents not found in the registry via category, used for --goal runs
-        # or if an agent_id is specified that isn't in the primary registry (e.g. mocks)
-        fallback_agents_map: Dict[AgentID, AgentBase] = {
-            get_master_planner_agent_card().agent_id: MasterPlannerAgent(llm_provider=MockLLMProvider()), # type: ignore
-            get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(), # REMOVED llm_provider
-            get_mock_human_input_agent_card().agent_id: MockHumanInputAgent(),
-            get_mock_code_generator_agent_card().agent_id: MockCodeGeneratorAgent(),
-            get_mock_test_generation_agent_v1_card().agent_id: MockTestGenerationAgentV1(), # OUR NEW MOCK AGENT
-            get_mock_system_requirements_gathering_agent_card().agent_id: MockSystemRequirementsGatheringAgent(),
-            get_code_generator_agent_card().agent_id: CodeGeneratorAgent(),
-            get_test_generator_agent_card().agent_id: TestGeneratorAgent(),
-            get_code_integration_agent_card().agent_id: CoreCodeIntegrationAgentV1(),
-            # Add the new system_test_runner_agent to the map
-            system_test_runner_agent.AGENT_ID: system_test_runner_agent.invoke_async, # ADDED
-        }
-        # Ensure MasterPlannerReviewerAgent is definitely in the resume map if not covered by general population
-        if MasterPlannerReviewerAgent.AGENT_ID not in fallback_agents_map:
-            fallback_agents_map[MasterPlannerReviewerAgent.AGENT_ID] = MasterPlannerReviewerAgent(config=get_config()) # Ensures config is passed if created here
-        # Add other system agents to fallback if they have direct callables and are not purely tool-based for MCP.
-
-        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents_map)
-        
-        # Initialize MetricsStore
-        metrics_store = MetricsStore(project_root=project_path)
-
-        # Initialize orchestrator
-        orchestrator = AsyncOrchestrator(
-            config=get_config(), 
-            agent_provider=agent_provider,
-            state_manager=state_manager,
-            metrics_store=metrics_store 
-        )
-
-        # Initialize MasterFlowRegistry
-        potential_master_flows_dir1 = project_path / PROJECT_CHUNGOID_DIR / DEFAULT_MASTER_FLOWS_DIR
-        potential_master_flows_dir2 = project_path / DEFAULT_MASTER_FLOWS_DIR
-        if potential_master_flows_dir1.is_dir():
-            actual_master_flows_dir = potential_master_flows_dir1
-        elif potential_master_flows_dir2.is_dir():
-            actual_master_flows_dir = potential_master_flows_dir2
-        else:
-            # Default to creating/using the one under .chungoid, even if it doesn't exist yet.
-            # The MasterFlowRegistry itself handles non-existent dirs gracefully by logging errors.
-            actual_master_flows_dir = potential_master_flows_dir1 
-            # Ensure the parent .chungoid exists if we default to this path for saving later
-            (project_path / PROJECT_CHUNGOID_DIR).mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Using master_flows_dir for resume: {actual_master_flows_dir}")
-        master_flow_registry = MasterFlowRegistry(master_flows_dir=actual_master_flows_dir)
-        # Load from pre-defined if master_flow_id is given
-        master_flow_def = master_flow_registry.get(master_flow_id) # type: ignore # CORRECTED
-        if not master_flow_def:
-            logger.error(f"Master Flow with ID '{master_flow_id}' not found in registry at {actual_master_flows_dir}.")
-            click.echo(f"Error: Master Flow ID '{master_flow_id}' not found.", err=True)
-            sys.exit(1)
-        plan_to_run = master_flow_def
-        logger.info(f"Running Master Flow '{plan_to_run.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
-        click.echo(f"Running Master Flow '{plan_to_run.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
-
-        # Initialize MetricsStore
-        metrics_store = MetricsStore(project_root=project_path)
-
-        # Initialize AsyncOrchestrator
-        orchestrator = AsyncOrchestrator(
-            config=get_config(), 
-            agent_provider=agent_provider,
-            state_manager=state_manager,
-            metrics_store=metrics_store 
-        )
-
-        # --- Run the Flow --- 
-        click.echo(f"Running Master Flow '{plan_to_run.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
-        
-        try:
-            final_context = await orchestrator.run(
-                plan=plan_to_run,
-                context=start_context
-            )
-        except Exception as e:
-            logger.exception(f"An unexpected error occurred during orchestrator.run: {e}")
-            click.echo(f"Error during flow execution: {e}", err=True)
-            sys.exit(1)
-
-        # Detailed logging of the received context
-        logger.critical(f"CLI: Received final_context keys: {list(final_context.keys())}")
-        logger.critical(f"CLI: _flow_error content: {final_context.get('_flow_error')}")
-        logger.critical(f"CLI: _autonomous_flow_paused_state_saved content: {final_context.get('_autonomous_flow_paused_state_saved')}")
-
-        if final_context.get("_flow_error"):
-            error_details = final_context["_flow_error"]
-            click.echo(f"Flow execution finished with error: {error_details}", err=True)
-            sys.exit(1)
-        elif isinstance(final_context, dict) and final_context.get("status") == "ABORTED":
-            click.echo(f"Flow execution PAUSED. Run ID: {state_manager.get_or_create_current_run_id()}. Use 'chungoid flow resume {state_manager.get_or_create_current_run_id()} ...' to continue.")
-        else:
-            click.echo(f"Flow execution finished successfully for run_id '{state_manager.get_or_create_current_run_id()}'.")
-            # Optionally print final context summary
-            # click.echo("Final context keys:")
-            # click.echo(list(final_context.keys()))
-
-    # Run the async part
+    agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents_map)
+    
+    # Determine server_stages_dir
     try:
-        asyncio.run(do_run())
-    except Exception as e:
-        logger.error(f"High-level error during flow run execution: {e}")
-        click.echo(f"An unexpected error occurred: {e}", err=True)
-        sys.exit(1)
+        # Use relative path logic from cli.py location
+        cli_file_path = Path(__file__).resolve() # e.g., /path/to/chungoid-core/src/chungoid/cli.py
+        # Expected: chungoid-core/server_prompts/stages
+        server_stages_dir_path = cli_file_path.parent.parent.parent / "server_prompts" / "stages"
+        if not server_stages_dir_path.is_dir():
+            logger.error(f"Determined server_stages_dir does not exist or is not a directory: {server_stages_dir_path}")
+            # Fallback to a default relative to project_dir if primary derivation fails
+            # This is a last resort and might not be correct if project_dir is not the repo root.
+            server_stages_dir_path = project_path / "server_prompts" / "stages" 
+            logger.warning(f"Attempting fallback server_stages_dir relative to project_dir: {server_stages_dir_path}")
+            if not server_stages_dir_path.is_dir():
+                 logger.error(f"Fallback server_stages_dir also not found: {server_stages_dir_path}. StateManager might fail if stages are needed from default location.")
+                 # Allow it to proceed; StateManager will log warnings if path is invalid and needed.
+                 # Set to a string value that StateManager might interpret or error on,
+                 # or rely on a default within StateManager if it has one for such cases.
+                 # For now, pass what we have, or a known conventional path if all else fails.
+                 server_stages_dir_path = project_config.get("server_stages_dir_fallback", "./server_prompts/stages") # Use a config fallback
+
+    except Exception as e: # Catch any unexpected error during path derivation
+        logger.error(f"Unexpected error determining server_stages_dir: {e}. Using default fallback.")
+        server_stages_dir_path = project_config.get("server_stages_dir_fallback", "./server_prompts/stages") # Ensure it's a string
+
+    logger.info(f"Using server_stages_dir: {server_stages_dir_path}")
+
+    state_manager = StateManager(
+        target_directory=project_config["project_root_dir"], 
+        server_stages_dir=str(server_stages_dir_path) # Ensure string
+    )
+    metrics_store = MetricsStore(project_root=Path(project_config["project_root_dir"])) # CORRECTED
+    
+    orchestrator = AsyncOrchestrator(
+        config=project_config,
+        agent_provider=agent_provider,
+        state_manager=state_manager,
+        metrics_store=metrics_store
+        # master_planner_reviewer_agent_id is defaulted in orchestrator __init__
+    )
+
+    async def do_run():
+        final_context = await orchestrator.run(
+            flow_yaml_path=str(flow_yaml_opt) if flow_yaml_opt else None,
+            master_plan_id=master_flow_id_opt,
+            initial_context=parsed_initial_context,
+            run_id_override=run_id_override_opt
+        )
+
+        if "_flow_error" in final_context:
+            error_details = final_context["_flow_error"]
+            logger.error(f"Flow execution finished with error: {error_details}")
+            click.echo(f"Error during flow execution: {error_details}", err=True)
+        else:
+            logger.info("Flow execution completed.")
+            # logger.debug(f"Final context: {final_context}") # Can be very verbose
+            # Optionally print final context summary or specific outputs
+            click.echo("Flow run finished.")
+            if final_context.get("outputs"):
+                 click.echo(f"Final outputs summary: { {k: str(v)[:100] + '...' if len(str(v)) > 100 else v for k,v in final_context['outputs'].items()} }")
+
+    asyncio.run(do_run())
 
 
 @flow.command(name="resume")
@@ -657,94 +647,59 @@ def flow_resume(ctx: click.Context, run_id: str, action: str, inputs: Optional[s
     async def do_resume():
         # --- Find server_stages_dir (for StateManager) ---
         try:
-            import chungoid.server_prompts as server_prompts_pkg
-            server_stages_dir = Path(server_prompts_pkg.__path__[0]) / "stages"
-        except (ImportError, AttributeError, IndexError):
-            # Fallback if pkg resources not found easily (e.g. not installed editable)
-            logger.warning("Could not easily find server_prompts package path, falling back to relative path from cli.py for resume")
-            core_root_for_stages = Path(__file__).resolve().parent.parent.parent # Assumes src/chungoid/cli.py -> chungoid-core/
-            server_stages_dir = core_root_for_stages / "server_prompts" / "stages"
+            # Use relative path logic from cli.py location
+            cli_file_path = Path(__file__).resolve() # e.g., /path/to/chungoid-core/src/chungoid/cli.py
+            # Expected: chungoid-core/server_prompts/stages
+            server_stages_dir_path = cli_file_path.parent.parent.parent / "server_prompts" / "stages"
+            if not server_stages_dir_path.is_dir():
+                logger.error(f"Determined server_stages_dir does not exist or is not a directory: {server_stages_dir_path}")
+                # Fallback to a default relative to project_dir if primary derivation fails
+                # This is a last resort and might not be correct if project_dir is not the repo root.
+                project_path_for_fallback = Path(ctx.params.get('project_dir', '.')).resolve() # Get project_dir from context for resume
+                server_stages_dir_path = project_path_for_fallback / "server_prompts" / "stages"
+                logger.warning(f"Attempting fallback server_stages_dir relative to project_dir: {server_stages_dir_path}")
+                if not server_stages_dir_path.is_dir():
+                     logger.error(f"Fallback server_stages_dir also not found: {server_stages_dir_path}. StateManager might fail if stages are needed from default location.")
+                     # Allow it to proceed; StateManager will log warnings if path is invalid and needed.
+                     # Set to a string value that StateManager might interpret or error on,
+                     # or rely on a default within StateManager if it has one for such cases.
+                     # For now, pass what we have, or a known conventional path if all else fails.
+                     default_config_for_resume = get_config() # Get default config to find fallback
+                     server_stages_dir_path = default_config_for_resume.get("server_stages_dir_fallback", "./server_prompts/stages") # Use a config fallback
+
+        except Exception as e: # Catch any unexpected error during path derivation
+            logger.error(f"Unexpected error determining server_stages_dir (in resume): {e}. Using default fallback.")
+            default_config_for_resume = get_config()
+            server_stages_dir_path = default_config_for_resume.get("server_stages_dir_fallback", "./server_prompts/stages") # Ensure it's a string
+
+        logger.info(f"Using server_stages_dir (in resume): {server_stages_dir_path}")
+
+        # project_path is already defined above as Path.cwd() for resume context
+        # state_manager = StateManager(
+        #     target_directory=str(project_path),
+        #     server_stages_dir=str(server_stages_dir_path)
+        # ) # This was re-declared, using the one below from original logic for now
+
+        # Initialize MetricsStore (needed by orchestrator)
+        # Ensure project_config is loaded or use a default for metrics store path derivation
+        # Assuming project_path is the correct root for metrics for resume
+        metrics_store = MetricsStore(project_root=project_path) # project_path is Path.cwd() in resume
         
-        if not server_stages_dir.exists() or not server_stages_dir.is_dir():
-            logger.error(f"Server stages directory not found at: {server_stages_dir} (during resume)")
-            click.echo(f"Error: Server stages directory not found for resume. Searched at {server_stages_dir}", err=True)
-            sys.exit(1)
-        logger.debug(f"Using server_stages_dir for resume: {server_stages_dir}")
-        # --- End Find server_stages_dir ---
-
-        project_path = Path.cwd() # Assuming resume is run from project root for now
-        logger.info(f"Resuming flow for run_id '{run_id}' in project: {project_path} with action '{action}'")
-
-        state_manager = StateManager(
-            target_directory=str(project_path),
-            server_stages_dir=str(server_stages_dir)
-        )
-        
-        # Initialize AgentRegistry and Provider (needed by orchestrator)
-        agent_registry = AgentRegistry(project_root=project_path)
-        # Register known system agents
-        agent_registry.add(core_stage_executor_card, overwrite=True)
-        agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True) # Master Planner Reviewer
-        agent_registry.add(get_master_planner_agent_card(), overwrite=True) # Master Planner Agent
-        # Register Mock Agents for P2.6 MVP
-        agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
-        # Register Core Agents for resume
-        try:
-            agent_registry.delete("CoreCodeGeneratorAgent_v1")
-            logger.info("Successfully deleted existing CoreCodeGeneratorAgent_v1 before re-adding (in resume).")
-        except Exception as e:
-            logger.warning(f"Could not delete CoreCodeGeneratorAgent_v1 (in resume, may not exist, which is fine): {e}")
-        agent_registry.add(get_code_generator_agent_card(), overwrite=True)
-        
-        # try:
-        #     agent_registry.delete("CoreTestGeneratorAgent_v1")
-        #     logger.info("Successfully deleted existing CoreTestGeneratorAgent_v1 before re-adding (in resume).")
-        # except Exception as e:
-        #     logger.warning(f"Could not delete CoreTestGeneratorAgent_v1 (in resume, may not exist, which is fine): {e}")
-        agent_registry.add(get_test_generator_agent_card(), overwrite=True)
-
-        # Explicitly delete CoreCodeIntegrationAgentV1 before adding (in resume)
-        try:
-            agent_registry.delete(CoreCodeIntegrationAgentV1.AGENT_ID)
-            logger.info(f"Successfully deleted existing {CoreCodeIntegrationAgentV1.AGENT_ID} before re-adding (in resume).")
-        except Exception as e:
-            logger.warning(f"Could not delete {CoreCodeIntegrationAgentV1.AGENT_ID} (in resume, may not exist, which is fine): {e}")
-        agent_registry.add(get_code_integration_agent_card(), overwrite=True)
-
-        logger.info(f"Registered system agents for resume: {core_stage_executor_card.agent_id}, {get_master_planner_reviewer_agent_card().agent_id}, {get_master_planner_agent_card().agent_id}")
-        logger.info(f"Registered mock agents for resume: {get_mock_human_input_agent_card().agent_id}, {get_mock_code_generator_agent_card().agent_id}, {get_mock_test_generator_agent_card().agent_id}, {get_mock_system_requirements_gathering_agent_card().agent_id}")
-        logger.info(f"Registered core functional agents for resume: {get_code_generator_agent_card().agent_id}, {get_test_generator_agent_card().agent_id}, {get_code_integration_agent_card().agent_id}")
-
-        # --- Prepare fallback agents for RegistryAgentProvider (mirroring flow_run) ---
-        fallback_agents_map_resume: Dict[AgentID, AgentBase] = {
-            get_master_planner_agent_card().agent_id: MasterPlannerAgent(llm_provider=MockLLMProvider()), # type: ignore
-            get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(), # REMOVED llm_provider
-            get_mock_human_input_agent_card().agent_id: MockHumanInputAgent(),
-            get_mock_code_generator_agent_card().agent_id: MockCodeGeneratorAgent(),
-            get_mock_test_generation_agent_v1_card().agent_id: MockTestGenerationAgentV1(), # OUR NEW MOCK AGENT
-            get_mock_system_requirements_gathering_agent_card().agent_id: MockSystemRequirementsGatheringAgent(),
-            get_code_generator_agent_card().agent_id: CodeGeneratorAgent(),
-            get_test_generator_agent_card().agent_id: TestGeneratorAgent(),
-            get_code_integration_agent_card().agent_id: CoreCodeIntegrationAgentV1(), # Add to fallback map for resume
-        }
-        # Ensure MasterPlannerReviewerAgent is definitely in the resume map if not covered by general population
-        if MasterPlannerReviewerAgent.AGENT_ID not in fallback_agents_map_resume:
-            fallback_agents_map_resume[MasterPlannerReviewerAgent.AGENT_ID] = MasterPlannerReviewerAgent(config=get_config()) # Ensures config is passed if created here
-        # Add other system agents to fallback if they have direct callables and are not purely tool-based for MCP.
-
-        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents_map_resume)
-        
-        # Initialize MetricsStore
-        metrics_store = MetricsStore(project_root=project_path)
-
         # Initialize orchestrator
+        # Load project_config for the orchestrator, or use a default if not found.
+        # This is critical as orchestrator.config is used widely.
+        # If resuming, the original project_config might not be easily available via ctx.obj
+        # or might not be the one associated with the paused run. StateManager might hold it.
+        # For now, using a fresh get_config() which might default or load from project_path/.chungoid/
+        # This needs to be robust for resume.
+        resumed_project_config = get_config(str(project_path / PROJECT_CHUNGOID_DIR / "project_config.yaml"))
+        if "project_root_dir" not in resumed_project_config:
+            resumed_project_config["project_root_dir"] = str(project_path) # Ensure it's set
+
         orchestrator = AsyncOrchestrator(
-            config=get_config(), 
+            config=resumed_project_config, 
             agent_provider=agent_provider,
-            state_manager=state_manager,
+            state_manager=state_manager, # StateManager now uses server_stages_dir_path correctly
             metrics_store=metrics_store 
         )
 

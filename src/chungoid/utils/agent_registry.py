@@ -119,8 +119,24 @@ class AgentRegistry:
 
     def get(self, agent_id: str) -> Optional[AgentCard]:
         res = self._coll.get(ids=[agent_id])
+        
         if not res["ids"]:
-            return None
+            # AGENT NOT FOUND - TRY REFRESHING COLLECTION AND RETRYING ONCE
+            logger.warning(f"AgentRegistry.get: Agent ID '{agent_id}' not found on first try. Attempting collection refresh.")
+            try:
+                self._coll = self._client.get_or_create_collection(self.COLLECTION) # Re-fetch collection
+                res = self._coll.get(ids=[agent_id]) # Retry the get
+                if not res["ids"]:
+                    logger.warning(f"AgentRegistry.get: Agent ID '{agent_id}' still not found after collection refresh.")
+                    return None # Still not found
+                else:
+                    logger.info(f"AgentRegistry.get: Agent ID '{agent_id}' found after collection refresh.")
+            except Exception as e:
+                logger.error(f"AgentRegistry.get: Error during collection refresh attempt for '{agent_id}': {e}")
+                return None # Error during refresh, treat as not found
+
+        if not res["ids"]:
+            return None # Should be redundant if above logic is correct, but as a safeguard
         
         retrieved_meta_from_chroma = res["metadatas"][0].copy()
         # The document is now the full searchable_doc. The original description is part of it.

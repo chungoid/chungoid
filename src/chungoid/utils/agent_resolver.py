@@ -17,6 +17,9 @@ from semver import VersionInfo
 from .agent_registry import AgentCard
 import logging
 
+# Define logger at the module level
+logger = logging.getLogger(__name__)
+
 StageDict = Dict[str, object]
 AgentCallable = Callable[[StageDict], Dict[str, object]]
 
@@ -117,18 +120,40 @@ class RegistryAgentProvider:
 
         # If the identifier is directly mapped in the fallback, use that callable.
         if identifier in self._fallback:
-            potential_callable = self._fallback[identifier]
-            # If the fallback item is an object with an 'invoke_async' method, return that method.
-            if hasattr(potential_callable, 'invoke_async') and callable(getattr(potential_callable, 'invoke_async')):
-                actual_callable = getattr(potential_callable, 'invoke_async')
+            potential_item = self._fallback[identifier]
+            
+            # Check if the fallback item is a class that needs instantiation
+            # and has an invoke_async method.
+            if isinstance(potential_item, type) and hasattr(potential_item, 'invoke_async') and callable(getattr(potential_item, 'invoke_async')):
+                try:
+                    logger.debug(f"Fallback item '{identifier}' is a class. Attempting instantiation.")
+                    agent_instance = potential_item() # Instantiate the agent
+                    actual_callable = getattr(agent_instance, 'invoke_async') # Get the bound method
+                    self._cache[identifier] = actual_callable # Cache the bound method
+                    return actual_callable
+                except Exception as e:
+                    logger.error(f"Failed to instantiate agent class '{identifier}' from fallback: {e}", exc_info=True)
+                    # Proceed to registry lookup or stub if instantiation fails
+            
+            # If it's not a class needing instantiation, check if it's an object instance
+            # with an 'invoke_async' method.
+            elif hasattr(potential_item, 'invoke_async') and callable(getattr(potential_item, 'invoke_async')) and not isinstance(potential_item, type):
+                logger.debug(f"Fallback item '{identifier}' is an instance with invoke_async.")
+                actual_callable = getattr(potential_item, 'invoke_async')
                 self._cache[identifier] = actual_callable # Cache the method
                 return actual_callable
+            
+            # Otherwise, assume the fallback item is already the callable we want (e.g., a direct function).
+            # This path should be taken if potential_item is a pre-bound method or a simple function.
+            elif callable(potential_item):
+                logger.debug(f"Fallback item '{identifier}' is directly callable.")
+                self._cache[identifier] = potential_item # Cache it
+                return potential_item
             else:
-                # Otherwise, assume the fallback item is already the callable we want (e.g., a direct function)
-                self._cache[identifier] = potential_callable # Cache it
-                return potential_callable
+                logger.warning(f"Fallback item '{identifier}' is not a recognized callable type. Type: {type(potential_item)}. Will proceed to registry/stub.")
 
-        # If not in fallback, check registry card
+
+        # If not in fallback or fallback processing failed/skipped, check registry card
         card = self._registry.get(identifier)
         if card is None:
             # Not in fallback and no card found in registry.
@@ -153,9 +178,31 @@ class RegistryAgentProvider:
             self._cache[identifier] = _async_invoke # Cache the async callable directly
             return _async_invoke # Return the async callable
 
-        # Card exists, not in fallback, and no MCP tool/client.
+        # NEW: If not an MCP tool, check if it's a known local Python mock agent
+        try:
+            # Lazy import to avoid circular dependencies and keep it contained
+            from chungoid.agents.testing_mock_agents import ALL_MOCK_TESTING_AGENTS
+            known_mock_classes = {agent_cls.AGENT_ID: agent_cls for agent_cls in ALL_MOCK_TESTING_AGENTS}
+
+            if identifier in known_mock_classes:
+                agent_cls = known_mock_classes[identifier]
+                logger.debug(f"Agent ID '{identifier}' matches a known local mock agent class. Instantiating.")
+                agent_instance = agent_cls() # Instantiate the agent class
+                actual_callable = getattr(agent_instance, 'invoke_async') # Get the bound invoke_async method
+                self._cache[identifier] = actual_callable
+                return actual_callable
+            else:
+                logger.debug(f"Agent ID '{identifier}' found in registry but not an MCP tool and not in known_mock_classes.")
+        except ImportError:
+            logger.warning("Could not import ALL_MOCK_TESTING_AGENTS. Local mock agent resolution will be skipped.")
+        except Exception as e:
+            logger.error(f"Error during local mock agent resolution for '{identifier}': {e}", exc_info=True)
+            # Fall through to stub if dynamic instantiation fails
+
+        # Card exists, not in fallback, not an MCP tool, and not resolved as a known local mock.
         # Return the stub as the last resort.
-        def _stub(stage: StageDict) -> Dict[str, object]:  # type: ignore[override]
+        logger.warning(f"Agent '{identifier}' resolved via card but no MCP tool and not a recognized local Python agent. Returning synchronous stub.")
+        def _stub(stage: StageDict, full_context: Optional[Dict[str, Any]] = None) -> Dict[str, object]:  # type: ignore[override]
             return {"agent_id": identifier, "stage_inputs": stage.get("inputs", {}), "message": "Agent is a stub (card found, no tool/fallback)."}
 
         self._cache[identifier] = _stub
@@ -190,7 +237,6 @@ class RegistryAgentProvider:
             NoAgentFoundForCategoryError: If no suitable agent is found.
             AmbiguousAgentCategoryError: If multiple agents are equally suitable and a unique choice cannot be made.
         """
-        logger = logging.getLogger(__name__)
         logger.info(f"Attempting to resolve agent for category: '{category}' with preferences: {preferences}")
 
         if preferences is None:

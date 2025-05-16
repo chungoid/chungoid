@@ -18,6 +18,8 @@ class MetricEventType(str, Enum):
     ORCHESTRATOR_INFO = "ORCHESTRATOR_INFO" # General info/logs from orchestrator not tied to specific stage cycle
     FLOW_RESUME = "FLOW_RESUME" # ADDED for when a flow is resumed
     FLOW_PAUSED = "FLOW_PAUSED" # ADDED for when a flow is paused
+    PLAN_MODIFIED = "PLAN_MODIFIED" # ADDED for when the execution plan is changed by the reviewer
+    FLOW_ERROR = "FLOW_ERROR" # ADDED for critical flow errors like MaxHops
     # Add more specific event types as needed
 
 

@@ -9,7 +9,8 @@ class StageStatus(Enum):
     SUCCESS = "PASS"
     FAILURE = "FAIL"
     RUNNING = "RUNNING" # Added for orchestrator to indicate active stage
-    # Could add PENDING, SKIPPED, etc. in the future 
+    PENDING = "PENDING" # Added for initializing stage status
+    # Could add SKIPPED, etc. in the future 
 
 
 class FlowPauseStatus(Enum):
@@ -33,5 +34,16 @@ class FlowPauseStatus(Enum):
     PAUSED_FOR_MASTER_CHECKPOINT_BEFORE = "PAUSED_FOR_MASTER_CHECKPOINT_BEFORE" # Master flow specific checkpoint
     PAUSED_FOR_AGENT_FAILURE_IN_MASTER = "PAUSED_FOR_AGENT_FAILURE_IN_MASTER" # Agent failure within a master flow stage
 
+    # User Escalation (aligning with test_orchestrator_reviewer_integration.py)
+    USER_INTERVENTION_REQUIRED = "USER_INTERVENTION_REQUIRED" # Explicitly for ESCALATE_TO_USER action
+
     # Fallback/Unknown
     PAUSED_UNKNOWN = "PAUSED_UNKNOWN" 
+
+class OnFailureAction(str, Enum):
+    """Defines actions to take when a master stage encounters an error."""
+    FAIL_MASTER_FLOW = "FAIL_MASTER_FLOW"
+    GOTO_MASTER_STAGE = "GOTO_MASTER_STAGE"
+    PAUSE_FOR_INTERVENTION = "PAUSE_FOR_INTERVENTION"
+    INVOKE_REVIEWER = "INVOKE_REVIEWER"  # This is used by orchestrator as default
+    RETRY_STAGE = "RETRY_STAGE"          # This is also used by orchestrator 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, model_validator # IMPORT model_validator
 import yaml # For from_yaml method
 
 from .user_goal_schemas import UserGoalRequest # <<< ADD IMPORT
+from .common_enums import OnFailureAction # <<< ADD IMPORT FOR OnFailureAction
 
 # TODO: Potentially reference or reuse parts of StageSpec from orchestrator.py 
 # if there's significant overlap and it makes sense.
@@ -17,12 +18,7 @@ class MasterStageFailurePolicyAction(BaseModel):
 
 class MasterStageFailurePolicy(BaseModel):
     """Defines the policy for handling failures within a master stage."""
-    action: Literal[
-        "FAIL_MASTER_FLOW", 
-        "GOTO_MASTER_STAGE", 
-        "PAUSE_FOR_INTERVENTION"
-        # "CALL_REVIEWER_AGENT" # Could be an option if reviewer is configurable per stage
-    ] = Field(..., description="Action to take on stage failure.")
+    action: OnFailureAction = Field(..., description="Action to take on stage failure.")
     target_master_stage_key: Optional[str] = Field(
         None, 
         description="The key of the master stage to transition to if action is GOTO_MASTER_STAGE."
@@ -46,6 +42,9 @@ class ClarificationCheckpointSpec(BaseModel):
 
 class MasterStageSpec(BaseModel):
     """Specification of a single stage within a Master Execution Plan."""
+    id: str # Unique identifier for the stage within the plan
+    name: str
+    description: Optional[str] = None
     agent_id: Optional[str] = Field(None, description="ID of the agent to invoke (e.g., 'CoreStageExecutorAgent')")
     agent_category: Optional[str] = Field(None, description="Category of agent to invoke if agent_id is not specified.")
     agent_selection_preferences: Optional[Dict[str, Any]] = Field(None, description="Preferences for selecting an agent from agent_category. Example: {'capability_profile_match': {'language': 'python'}, 'priority_gte': 5}")
@@ -74,13 +73,16 @@ class MasterStageSpec(BaseModel):
         None, 
         description="Optional policy to define behavior if this master stage fails (e.g., agent resolution error, or agent execution error not handled by reviewer)."
     )
+    on_success: Optional[MasterStageFailurePolicy] = Field(
+        None,
+        description="Optional policy to define behavior after this master stage succeeds (e.g., invoke reviewer for post-success check)."
+    )
     condition: Optional[str] = Field(None, description="Condition for branching in the Master Flow.")
     next_stage_true: Optional[str] = Field(None, description="Next Master Flow stage if condition is true.")
     next_stage_false: Optional[str] = Field(None, description="Next Master Flow stage if condition is false.")
     next_stage: Optional[str] = Field(None, description="Next Master Flow stage (if no condition).")
     number: Optional[float] = Field(None, description="Unique stage number for status tracking within the Master Flow.")
     # on_error: Optional[Any] = Field(None, description="Error handling strategy for this master stage.") # For future?
-    name: Optional[str] = Field(None, description="Optional human-readable name for this master stage step.")
     output_context_path: Optional[str] = Field(
         None, 
         description="Optional dot-notation path where the agent's entire output dictionary should be placed in the main flow context. E.g., 'stage_outputs.current_stage_name'. If None, output is merged at root (TBD)."
@@ -111,14 +113,18 @@ class MasterExecutionPlan(BaseModel):
         if not isinstance(data, dict):
             raise ValueError("Master Flow YAML must map keys → values")
 
-        # Basic structural validation (can be enhanced with jsonschema later if needed)
         if "id" not in data or "start_stage" not in data or "stages" not in data:
             raise ValueError(
                 "Master Flow YAML missing required 'id', 'start_stage', or 'stages' key"
             )
         
-        # TODO: Add more robust validation if a JSON schema for Master Flows is created.
-        # For now, rely on Pydantic's validation during model instantiation.
+        # Inject the dictionary key as the 'id' field for each stage spec
+        stages_dict = data.get("stages", {})
+        if isinstance(stages_dict, dict):
+            for stage_key, stage_spec_dict in stages_dict.items():
+                if isinstance(stage_spec_dict, dict):
+                    stage_spec_dict["id"] = stage_key # Set/overwrite 'id' with the key
+            data["stages"] = stages_dict # Ensure data reflects these changes
         
         return cls(**data)
 
