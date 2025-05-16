@@ -44,6 +44,7 @@ from chungoid.schemas.metrics import MetricEvent # For type hint
 from chungoid.utils.agent_registry import AgentRegistry # Corrected: AGENT_REGISTRY is not exported or used
 from chungoid.utils.state_manager import StateManager
 from chungoid.utils.metrics_store import MetricsStore # for metrics CLI
+from chungoid.utils.llm_provider import MockLLMProvider # <<< ADD THIS IMPORT
 
 # Other existing imports ...
 
@@ -57,6 +58,7 @@ from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card
 from chungoid.runtime.agents.mock_human_input_agent import get_agent_card_static as get_mock_human_input_agent_card
 from chungoid.runtime.agents.mock_code_generator_agent import get_agent_card_static as get_mock_code_generator_agent_card
 from chungoid.runtime.agents.mock_test_generator_agent import get_agent_card_static as get_mock_test_generator_agent_card
+from chungoid.runtime.agents.mock_system_requirements_gathering_agent import get_agent_card_static as get_mock_system_requirements_gathering_agent_card
 
 from chungoid.runtime.agents.system_master_planner_agent import get_agent_card_static as get_master_planner_agent_card
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_agent_card_static as get_master_planner_reviewer_agent_card
@@ -66,6 +68,7 @@ from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_age
 from chungoid.runtime.agents.mock_human_input_agent import MockHumanInputAgent
 from chungoid.runtime.agents.mock_code_generator_agent import MockCodeGeneratorAgent
 from chungoid.runtime.agents.mock_test_generator_agent import MockTestGeneratorAgent
+from chungoid.runtime.agents.mock_system_requirements_gathering_agent import MockSystemRequirementsGatheringAgent
 
 from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
@@ -157,6 +160,7 @@ from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAge
 from chungoid.runtime.agents.mock_human_input_agent import get_agent_card_static as get_mock_human_input_agent_card
 from chungoid.runtime.agents.mock_code_generator_agent import get_agent_card_static as get_mock_code_generator_agent_card
 from chungoid.runtime.agents.mock_test_generator_agent import get_agent_card_static as get_mock_test_generator_agent_card
+from chungoid.runtime.agents.mock_system_requirements_gathering_agent import get_agent_card_static as get_mock_system_requirements_gathering_agent_card
 
 # New imports for MasterPlannerInput
 from chungoid.schemas.agent_master_planner import MasterPlannerInput # <<< ADD THIS IMPORT
@@ -433,36 +437,53 @@ def flow_run(ctx: click.Context, master_flow_id: Optional[str], goal: Optional[s
         agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
         agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
         agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
+        # Register Core Agents
+        agent_registry.add(get_code_generator_agent_card(), overwrite=True)
+        agent_registry.add(get_test_generator_agent_card(), overwrite=True)
 
         logger.info(f"Registered system agents: {core_stage_executor_card.agent_id}, {get_master_planner_reviewer_agent_card().agent_id}, {get_master_planner_agent_card().agent_id}")
-        logger.info(f"Registered mock agents: {get_mock_human_input_agent_card().agent_id}, {get_mock_code_generator_agent_card().agent_id}, {get_mock_test_generator_agent_card().agent_id}")
+        logger.info(f"Registered mock agents: {get_mock_human_input_agent_card().agent_id}, {get_mock_code_generator_agent_card().agent_id}, {get_mock_test_generator_agent_card().agent_id}, {get_mock_system_requirements_gathering_agent_card().agent_id}")
+        logger.info(f"Registered core functional agents: {get_code_generator_agent_card().agent_id}, {get_test_generator_agent_card().agent_id}")
 
         # --- Prepare fallback agents for RegistryAgentProvider ---
         # The RegistryAgentProvider will first check its fallback map before querying the AgentRegistry (Chroma).
         # For agents that are defined and instantiated directly in the CLI (like these mock agents),
         # providing them in the fallback ensures they are found without needing to be fully persisted
         # and re-queried from Chroma, and also allows them to be potentially async callables directly.
-        fallback_agents_map: Dict[str, AgentCallable] = {
-            # System Agents (can be class instances or direct async callables)
-            get_master_planner_agent_card().agent_id: MasterPlannerAgent(),
-            get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(),
-            core_stage_executor_card.agent_id: core_stage_executor_agent, # This is a function
-            # Add Core Agents
-            get_code_generator_agent_card().agent_id: CodeGeneratorAgent(),
-            get_test_generator_agent_card().agent_id: TestGeneratorAgent(),
-            # Add Mock Agents for fallback
+        
+        # Instantiate LLMProvider (using Mock for now in CLI)
+        llm_provider = MockLLMProvider()
+
+        # Fallback for agents not found in the registry via category, used for --goal runs
+        # or if an agent_id is specified that isn't in the primary registry (e.g. mocks)
+        fallback_agents_map: Dict[AgentID, AgentBase] = {
+            get_master_planner_agent_card().agent_id: MasterPlannerAgent(llm_provider=MockLLMProvider()), # type: ignore
+            get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(), # REMOVED llm_provider
             get_mock_human_input_agent_card().agent_id: MockHumanInputAgent(),
             get_mock_code_generator_agent_card().agent_id: MockCodeGeneratorAgent(),
+            get_mock_test_generator_agent_card().agent_id: MockTestGeneratorAgent(),
+            get_mock_system_requirements_gathering_agent_card().agent_id: MockSystemRequirementsGatheringAgent(),
+            get_code_generator_agent_card().agent_id: CodeGeneratorAgent(),
+            get_test_generator_agent_card().agent_id: TestGeneratorAgent(),
         }
-        # Also add system agents that have direct invoke methods and are not purely tool-based
-        # For MasterPlannerReviewerAgent, we are using its AGENT_ID which is static
+        # Ensure MasterPlannerReviewerAgent is definitely in the resume map if not covered by general population
         if MasterPlannerReviewerAgent.AGENT_ID not in fallback_agents_map:
-             # Assuming MasterPlannerReviewerAgent has a default constructor or needs config
-            fallback_agents_map[MasterPlannerReviewerAgent.AGENT_ID] = MasterPlannerReviewerAgent(config=get_config())
+            fallback_agents_map[MasterPlannerReviewerAgent.AGENT_ID] = MasterPlannerReviewerAgent(config=get_config()) # Ensures config is passed if created here
+        # Add other system agents to fallback if they have direct callables and are not purely tool-based for MCP.
 
-        # The agent_registry.add() calls above ensure the *cards* are in Chroma.
-        # The fallback_agents_map provides direct *callables* for these specific agents.
         agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents_map)
+        
+        # Initialize MetricsStore
+        metrics_store = MetricsStore(project_root=project_path)
+
+        # Initialize orchestrator
+        orchestrator = AsyncOrchestrator(
+            config=get_config(), 
+            agent_provider=agent_provider,
+            state_manager=state_manager,
+            metrics_store=metrics_store 
+        )
 
         # Initialize MasterFlowRegistry
         potential_master_flows_dir1 = project_path / PROJECT_CHUNGOID_DIR / DEFAULT_MASTER_FLOWS_DIR
@@ -480,71 +501,15 @@ def flow_run(ctx: click.Context, master_flow_id: Optional[str], goal: Optional[s
         
         logger.info(f"Using master_flows_dir for resume: {actual_master_flows_dir}")
         master_flow_registry = MasterFlowRegistry(master_flows_dir=actual_master_flows_dir)
-        master_plan_def: Optional[MasterExecutionPlan] = None
-
-        if goal:
-            # --- Generate Plan from Goal ---
-            click.echo(f"Generating execution plan for goal: '{goal}'...")
-            planner_agent = MasterPlannerAgent() # Direct instantiation for now
-            # Construct UserGoalRequest if possible (e.g. from initial_context or a new CLI option)
-            # For now, original_request in MasterPlannerInput will be basic.
-            user_goal_request_obj = UserGoalRequest(goal_description=goal, target_platform=str(project_path.name)) # Corrected: use goal_description, and project_scope seems more like target_platform here
-            planner_input = MasterPlannerInput(user_goal=goal, original_request=user_goal_request_obj)
-            
-            try:
-                planner_output = await planner_agent.invoke_async(planner_input)
-            except Exception as e_planner:
-                logger.exception(f"MasterPlannerAgent invocation failed: {e_planner}")
-                click.echo(f"Error: Failed to generate plan from MasterPlannerAgent: {e_planner}", err=True)
-                sys.exit(1)
-
-            if planner_output.error_message or not planner_output.master_plan_json:
-                err_msg = planner_output.error_message or "Planner returned empty plan."
-                logger.error(f"MasterPlannerAgent failed to generate plan: {err_msg}")
-                click.echo(f"Error: MasterPlannerAgent failed: {err_msg}", err=True)
-                sys.exit(1)
-            
-            try:
-                master_plan_def = MasterExecutionPlan.model_validate_json(planner_output.master_plan_json)
-                logger.info(f"Successfully generated plan ID '{master_plan_def.id}' from goal.")
-                
-                # Save the dynamically generated plan as a YAML file
-                file_name = f"mf_{master_plan_def.id}.yaml"
-                file_path = actual_master_flows_dir / file_name
-                actual_master_flows_dir.mkdir(parents=True, exist_ok=True) # Ensure dir exists
-                
-                try:
-                    yaml_output = master_plan_def.to_yaml()
-                    with open(file_path, "w") as f:
-                        f.write(yaml_output)
-                    logger.info(f"Saved dynamically generated Master Flow to: {file_path}")
-                    click.echo(f"Generated and saved new Master Flow: {file_path.name} (ID: {master_plan_def.id}).")
-                    # master_flow_registry.save_master_flow(master_plan_def) # Removed non-existent method call
-                    # Optionally, rescan if needed for other operations, but orchestrator gets plan directly.
-                    # master_flow_registry.rescan()
-                except Exception as e_save_yaml:
-                    logger.exception(f"Failed to save generated plan YAML to {file_path}: {e_save_yaml}")
-                    click.echo(f"Error: Could not save generated plan to file: {e_save_yaml}", err=True)
-                    sys.exit(1)
-
-            except Exception as e_parse_save: # This was originally for parsing or registry.save
-                logger.exception(f"Failed to parse generated plan JSON: {e_parse_save}")
-                click.echo(f"Error: Could not parse plan from MasterPlannerAgent: {e_parse_save}", err=True)
-                sys.exit(1)
-
-        elif master_flow_id: # master_flow_id must be non-None here due to initial check
-            master_plan_def = master_flow_registry.get_master_flow(master_flow_id)
-            if not master_plan_def:
-                logger.error(f"Master flow '{master_flow_id}' not found in registry at {project_path / '.chungoid' / 'master_flows'}")
-                click.echo(f"Error: Master flow '{master_flow_id}' not found.", err=True)
-                sys.exit(1)
-        
-        # At this point, master_plan_def should be set if no exit occurred
-        if not master_plan_def:
-            # This case should ideally be prevented by earlier checks
-            logger.error("Critical error: Master plan definition was not loaded or generated.")
-            click.echo("Error: Master plan could not be determined.", err=True)
+        # Load from pre-defined if master_flow_id is given
+        master_flow_def = master_flow_registry.get(master_flow_id) # type: ignore # CORRECTED
+        if not master_flow_def:
+            logger.error(f"Master Flow with ID '{master_flow_id}' not found in registry at {actual_master_flows_dir}.")
+            click.echo(f"Error: Master Flow ID '{master_flow_id}' not found.", err=True)
             sys.exit(1)
+        plan_to_run = master_flow_def
+        logger.info(f"Running Master Flow '{plan_to_run.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
+        click.echo(f"Running Master Flow '{plan_to_run.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
 
         # Initialize MetricsStore
         metrics_store = MetricsStore(project_root=project_path)
@@ -558,11 +523,11 @@ def flow_run(ctx: click.Context, master_flow_id: Optional[str], goal: Optional[s
         )
 
         # --- Run the Flow --- 
-        click.echo(f"Running Master Flow '{master_plan_def.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
+        click.echo(f"Running Master Flow '{plan_to_run.id}' (Run ID: {state_manager.get_or_create_current_run_id()})...")
         
         try:
-            final_context_or_error = await orchestrator.run(
-                plan=master_plan_def,
+            final_context = await orchestrator.run(
+                plan=plan_to_run,
                 context=start_context
             )
         except Exception as e:
@@ -570,25 +535,22 @@ def flow_run(ctx: click.Context, master_flow_id: Optional[str], goal: Optional[s
             click.echo(f"Error during flow execution: {e}", err=True)
             sys.exit(1)
 
-        # --- Handle Result --- 
-        if isinstance(final_context_or_error, dict) and final_context_or_error.get("error"):
-            # This case might not happen if orchestrator.run raises exceptions or pauses
-            click.echo(f"Flow execution finished with error: {final_context_or_error['error']}", err=True)
+        # Detailed logging of the received context
+        logger.critical(f"CLI: Received final_context keys: {list(final_context.keys())}")
+        logger.critical(f"CLI: _flow_error content: {final_context.get('_flow_error')}")
+        logger.critical(f"CLI: _autonomous_flow_paused_state_saved content: {final_context.get('_autonomous_flow_paused_state_saved')}")
+
+        if final_context.get("_flow_error"):
+            error_details = final_context["_flow_error"]
+            click.echo(f"Flow execution finished with error: {error_details}", err=True)
             sys.exit(1)
-        elif isinstance(final_context_or_error, dict): 
-            # Check if it paused - relies on pause logic adding info to context or state manager status
-            # We need a reliable way to check if the run ended in a paused state.
-            # Let's check the StateManager for a paused file for this run_id.
-            if state_manager.load_paused_flow_state(str(state_manager.get_or_create_current_run_id())):
-                 click.echo(f"Flow execution PAUSED. Run ID: {state_manager.get_or_create_current_run_id()}. Use 'chungoid flow resume {state_manager.get_or_create_current_run_id()} ...' to continue.")
-            else:
-                click.echo(f"Flow execution finished successfully for run_id '{state_manager.get_or_create_current_run_id()}'.")
-                # Optionally print final context summary
-                # click.echo("Final context keys:")
-                # click.echo(list(final_context_or_error.keys()))
+        elif isinstance(final_context, dict) and final_context.get("status") == "ABORTED":
+            click.echo(f"Flow execution PAUSED. Run ID: {state_manager.get_or_create_current_run_id()}. Use 'chungoid flow resume {state_manager.get_or_create_current_run_id()} ...' to continue.")
         else:
-            click.echo(f"Flow execution finished with unexpected result type: {type(final_context_or_error)}", err=True)
-            sys.exit(1)
+            click.echo(f"Flow execution finished successfully for run_id '{state_manager.get_or_create_current_run_id()}'.")
+            # Optionally print final context summary
+            # click.echo("Final context keys:")
+            # click.echo(list(final_context.keys()))
 
     # Run the async part
     try:
@@ -680,29 +642,26 @@ def flow_resume(ctx: click.Context, run_id: str, action: str, inputs: Optional[s
         agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
         agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
         agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
 
         logger.info(f"Registered system agents for resume: {core_stage_executor_card.agent_id}, {get_master_planner_reviewer_agent_card().agent_id}, {get_master_planner_agent_card().agent_id}")
-        logger.info(f"Registered mock agents for resume: {get_mock_human_input_agent_card().agent_id}, {get_mock_code_generator_agent_card().agent_id}, {get_mock_test_generator_agent_card().agent_id}")
+        logger.info(f"Registered mock agents for resume: {get_mock_human_input_agent_card().agent_id}, {get_mock_code_generator_agent_card().agent_id}, {get_mock_test_generator_agent_card().agent_id}, {get_mock_system_requirements_gathering_agent_card().agent_id}")
 
         # --- Prepare fallback agents for RegistryAgentProvider (mirroring flow_run) ---
-        fallback_agents_map_for_resume: Dict[str, AgentCallable] = {
-            get_master_planner_agent_card().agent_id: MasterPlannerAgent(),
-            get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(),
-            core_stage_executor_card.agent_id: core_stage_executor_agent,
-            # Add Core Agents
-            get_code_generator_agent_card().agent_id: CodeGeneratorAgent(),
-            get_test_generator_agent_card().agent_id: TestGeneratorAgent(),
-            # Add Mock Agents for fallback
+        fallback_agents_map_resume: Dict[AgentID, AgentBase] = {
+            get_master_planner_agent_card().agent_id: MasterPlannerAgent(llm_provider=MockLLMProvider()), # type: ignore
+            get_master_planner_reviewer_agent_card().agent_id: MasterPlannerReviewerAgent(), # REMOVED llm_provider
             get_mock_human_input_agent_card().agent_id: MockHumanInputAgent(),
             get_mock_code_generator_agent_card().agent_id: MockCodeGeneratorAgent(),
-            get_mock_test_generator_agent_card().agent_id: MockTestGeneratorAgent()
+            get_mock_test_generator_agent_card().agent_id: MockTestGeneratorAgent(),
+            get_mock_system_requirements_gathering_agent_card().agent_id: MockSystemRequirementsGatheringAgent(),
         }
         # Ensure MasterPlannerReviewerAgent is definitely in the resume map if not covered by general population
-        if MasterPlannerReviewerAgent.AGENT_ID not in fallback_agents_map_for_resume:
-            fallback_agents_map_for_resume[MasterPlannerReviewerAgent.AGENT_ID] = MasterPlannerReviewerAgent(config=get_config())
+        if MasterPlannerReviewerAgent.AGENT_ID not in fallback_agents_map_resume:
+            fallback_agents_map_resume[MasterPlannerReviewerAgent.AGENT_ID] = MasterPlannerReviewerAgent(config=get_config()) # Ensures config is passed if created here
         # Add other system agents to fallback if they have direct callables and are not purely tool-based for MCP.
 
-        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents_map_for_resume)
+        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=fallback_agents_map_resume)
         
         # Initialize MetricsStore
         metrics_store = MetricsStore(project_root=project_path)

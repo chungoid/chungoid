@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
 import yaml # For from_yaml method
@@ -9,6 +9,28 @@ from .user_goal_schemas import UserGoalRequest # <<< ADD IMPORT
 
 # TODO: Potentially reference or reuse parts of StageSpec from orchestrator.py 
 # if there's significant overlap and it makes sense.
+
+class MasterStageFailurePolicyAction(BaseModel):
+    # Using a class for future extensibility if needed, though Literal directly in MasterStageFailurePolicy is fine too.
+    # For now, kept simple as a type alias essentially via Literal in MasterStageFailurePolicy.
+    pass # No fields needed if actions are just strings
+
+class MasterStageFailurePolicy(BaseModel):
+    """Defines the policy for handling failures within a master stage."""
+    action: Literal[
+        "FAIL_MASTER_FLOW", 
+        "GOTO_MASTER_STAGE", 
+        "PAUSE_FOR_INTERVENTION"
+        # "CALL_REVIEWER_AGENT" # Could be an option if reviewer is configurable per stage
+    ] = Field(..., description="Action to take on stage failure.")
+    target_master_stage_key: Optional[str] = Field(
+        None, 
+        description="The key of the master stage to transition to if action is GOTO_MASTER_STAGE."
+    )
+    log_message: Optional[str] = Field(
+        None, 
+        description="Optional custom message to log when this failure policy is enacted."
+    )
 
 class ClarificationCheckpointSpec(BaseModel):
     """Specification for a user clarification checkpoint."""
@@ -47,6 +69,10 @@ class MasterStageSpec(BaseModel):
             "If set, the orchestrator will pause after this stage (if successful and criteria pass) "
             "for user clarification."
         )
+    )
+    on_failure: Optional[MasterStageFailurePolicy] = Field(
+        None, 
+        description="Optional policy to define behavior if this master stage fails (e.g., agent resolution error, or agent execution error not handled by reviewer)."
     )
     condition: Optional[str] = Field(None, description="Condition for branching in the Master Flow.")
     next_stage_true: Optional[str] = Field(None, description="Next Master Flow stage if condition is true.")

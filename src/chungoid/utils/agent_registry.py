@@ -129,7 +129,8 @@ class AgentRegistry:
         capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
         card_data["capability_profile"] = json.loads(capability_profile_json_str)
         
-        if "priority" not_in card_data or card_data["priority"] is None:
+        # Ensure 'priority' is present and a valid number, defaulting to 0 if missing or None.
+        if "priority" not in card_data or card_data["priority"] is None:
             card_data["priority"] = 0
 
         capabilities_str = card_data.pop("_capabilities_str", "")
@@ -193,7 +194,8 @@ class AgentRegistry:
             capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
             card_data["capability_profile"] = json.loads(capability_profile_json_str)
             
-            if "priority" not_in card_data or card_data["priority"] is None:
+            # Ensure 'priority' is present and a valid number, defaulting to 0 if missing or None.
+            if "priority" not in card_data or card_data["priority"] is None:
                 card_data["priority"] = 0
 
             capabilities_str = card_data.pop("_capabilities_str", "")
@@ -259,7 +261,8 @@ class AgentRegistry:
                 capability_profile_json_str = card_data.pop("_capability_profile_json", "{}")
                 card_data["capability_profile"] = json.loads(capability_profile_json_str)
                 
-                if "priority" not_in card_data or card_data["priority"] is None:
+                # Ensure 'priority' is present and a valid number, defaulting to 0 if missing or None.
+                if "priority" not in card_data or card_data["priority"] is None:
                     card_data["priority"] = 0
 
                 capabilities_str = card_data.pop("_capabilities_str", "")
