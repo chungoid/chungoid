@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HumanApprovalRequest",
+  "description": "Schema for requesting human approval for an artifact or action.",
+  "type": "object",
+  "properties": {
+    "approval_request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique ID for this approval request."
+    },
+    "item_to_approve_type": {
+      "type": "string",
+      "description": "Type of the item needing approval (e.g., 'LOPRD', 'CodeComponent', 'DeploymentAction')."
+    },
+    "item_reference_id": {
+      "type": "string",
+      "description": "ID or reference to the specific item needing approval (e.g., document ID, commit hash)."
+    },
+    "prompt_message": {
+      "type": "string",
+      "description": "Message to display to the human operator, explaining what needs approval."
+    },
+    "context_data": {
+      "type": "object",
+      "description": "Optional arbitrary JSON data to provide context for the approval decision."
+    }
+  },
+  "required": ["approval_request_id", "item_to_approve_type", "prompt_message"]
+} 

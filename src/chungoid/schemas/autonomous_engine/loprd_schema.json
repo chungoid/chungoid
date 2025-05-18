@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LLM-Optimized Product Requirements Document (LOPRD)",
+  "description": "A comprehensive, structured document detailing project requirements, optimized for LLM consumption and generation.",
+  "type": "object",
+  "properties": {
+    "loprd_metadata": {
+      "description": "Metadata about the LOPRD itself.",
+      "type": "object",
+      "properties": {
+        "document_id": {"type": "string", "format": "uuid", "description": "Unique identifier for this LOPRD document."},
+        "project_name": {"type": "string", "description": "Name of the project."},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "Semantic version of this LOPRD (e.g., 1.0.0)."},
+        "created_at": {"type": "string", "format": "date-time", "description": "Timestamp of creation."},
+        "last_updated_at": {"type": "string", "format": "date-time", "description": "Timestamp of last update."},
+        "authors": {"type": "array", "items": {"type": "string"}, "description": "Agent(s) or person(s) who authored/updated this document."},
+        "source_goal_id": {"type": "string", "description": "ID of the refined_user_goal.md this LOPRD is based on."}
+      },
+      "required": ["document_id", "project_name", "version", "created_at", "last_updated_at", "authors", "source_goal_id"]
+    },
+    "project_overview": {
+      "description": "High-level overview of the project.",
+      "type": "object",
+      "properties": {
+        "executive_summary": {"type": "string", "description": "A brief summary of the project and its objectives."},
+        "target_audience": {"type": "string", "description": "Description of the primary users or consumers of the project output."},
+        "problem_statement": {"type": "string", "description": "The core problem this project aims to solve."},
+        "solution_statement": {"type": "string", "description": "A high-level description of the proposed solution."}
+      },
+      "required": ["executive_summary", "target_audience", "problem_statement", "solution_statement"]
+    },
+    "scope": {
+      "description": "Defines the boundaries of the project.",
+      "type": "object",
+      "properties": {
+        "in_scope": {"type": "array", "items": {"type": "string"}, "description": "List of features/functionalities that are explicitly in scope."},
+        "out_of_scope": {"type": "array", "items": {"type": "string"}, "description": "List of features/functionalities that are explicitly out of scope."}
+      },
+      "required": ["in_scope", "out_of_scope"]
+    },
+    "user_stories": {
+      "description": "Collection of user stories.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "description": "Unique identifier for the user story (e.g., US001)."},
+          "as_a": {"type": "string", "description": "The type of user.", "examples": ["As a [type of user]"]},
+          "i_want_to": {"type": "string", "description": "The action the user wants to perform.", "examples": ["I want [an action]"]},
+          "so_that": {"type": "string", "description": "The benefit or value the user gains.", "examples": ["so that [a benefit/value]"]},
+          "priority": {"type": "string", "enum": ["High", "Medium", "Low"], "description": "Priority of the user story."},
+          "notes": {"type": "string", "description": "Additional notes or context for the user story."}
+        },
+        "required": ["id", "as_a", "i_want_to", "so_that", "priority"]
+      }
+    },
+    "functional_requirements": {
+      "description": "Detailed functional requirements derived from user stories or other sources.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "description": "Unique identifier for the functional requirement (e.g., FR001)."},
+          "description": {"type": "string", "description": "Detailed description of the functional requirement."},
+          "source_user_story_ids": {"type": "array", "items": {"type": "string"}, "description": "List of User Story IDs this FR helps fulfill."},
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string", "description": "Unique identifier for the acceptance criterion (e.g., AC001)."},
+                "description": {"type": "string", "description": "A specific, testable criterion that must be met."}
+              },
+              "required": ["id", "description"]
+            },
+            "description": "List of acceptance criteria for this functional requirement."
+          }
+        },
+        "required": ["id", "description", "acceptance_criteria"]
+      }
+    },
+    "non_functional_requirements": {
+      "description": "Non-functional requirements for the project.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "description": "Unique identifier for the NFR (e.g., NFR001)."},
+          "category": {"type": "string", "enum": ["Performance", "Security", "Usability", "Reliability", "Maintainability", "Scalability", "Accessibility", "Portability", "Other"], "description": "Category of the NFR."},
+          "description": {"type": "string", "description": "Detailed description of the non-functional requirement."},
+          "metric": {"type": "string", "description": "How this NFR will be measured or verified (e.g., 'Response time < 200ms for 99% of requests')."}
+        },
+        "required": ["id", "category", "description", "metric"]
+      }
+    },
+    "assumptions": {
+      "description": "Assumptions made during the requirements gathering and LOPRD creation process.",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "constraints": {
+      "description": "Constraints that impact the project (e.g., budget, timeline, technology stack).",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "data_dictionary_glossary": {
+      "description": "Definitions of key terms, data entities, and concepts used within the project (optional).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "term": {"type": "string"},
+          "definition": {"type": "string"},
+          "related_terms": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["term", "definition"]
+      }
+    }
+  },
+  "required": [
+    "loprd_metadata",
+    "project_overview",
+    "scope",
+    "user_stories",
+    "functional_requirements",
+    "non_functional_requirements"
+  ]
+} 

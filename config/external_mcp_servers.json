@@ -1,0 +1,29 @@
+[
+  {
+    "tool_id": "HumanFeedbackService_v1",
+    "name": "Human Feedback Service",
+    "description": "A service to request and retrieve human feedback or decisions. This is a placeholder for a real external service.",
+    "base_url": "http://localhost:8001/mcp_services/human_feedback", 
+    "mcp_tool_specs": [
+      {
+        "tool_name": "request_human_input",
+        "description": "Pauses a flow and requests input from a human operator.",
+        "input_schema_ref": "external_tool_schemas/human_input_request_schema.json",
+        "output_schema_ref": "external_tool_schemas/human_input_response_schema.json"
+      },
+      {
+        "tool_name": "request_human_approval",
+        "description": "Requests a human to approve or reject an artifact or action.",
+        "input_schema_ref": "external_tool_schemas/human_approval_request_schema.json",
+        "output_schema_ref": "external_tool_schemas/human_approval_response_schema.json"
+      }
+    ],
+    "authentication": {
+      "type": "APIKey",
+      "header_name": "X-HUMAN-MCP-API-KEY",
+      "description": "Requires API key 'X-HUMAN-MCP-API-KEY' in header. Value should be 'dummy-key-for-now'."
+    },
+    "health_check_endpoint": "/health",
+    "notes": "This is a conceptual definition. Actual implementation of the external service and schema files is TBD."
+  }
+] 

@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HumanInputResponse",
+  "description": "Schema for the response received from a human operator.",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The ID of the original input request this response corresponds to."
+    },
+    "response_data": {
+      "description": "The data provided by the human operator. Can be string, JSON object, or selected choice."
+    },
+    "responded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of when the human provided the response."
+    }
+  },
+  "required": ["request_id", "response_data", "responded_at"]
+} 

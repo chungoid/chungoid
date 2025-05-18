@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConfidenceScore",
+  "description": "Schema for representing a confidence score associated with an artifact or agent output.",
+  "type": "object",
+  "properties": {
+    "value": {
+      "type": "number",
+      "format": "float",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "The numerical confidence score, normalized between 0.0 (no confidence) and 1.0 (full confidence)."
+    },
+    "level": {
+      "type": "string",
+      "enum": ["High", "Medium", "Low", "Unknown"],
+      "description": "The qualitative confidence level expressed by the agent or derived from the numerical value."
+    },
+    "method": {
+      "type": "string",
+      "description": "The method used to generate the confidence score (e.g., 'Verbalized Self-Assessment', 'Logit-Based Average', 'Self-Critique Consistency').",
+      "default": "Verbalized Self-Assessment"
+    },
+    "justification": {
+      "type": "string",
+      "description": "A brief textual explanation or justification for the assigned confidence score, often provided by the LLM."
+    },
+    "assessed_by": {
+      "type": "string",
+      "description": "Identifier of the agent or process that assessed this confidence."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of when the confidence score was assessed."
+    },
+    "raw_details": {
+      "type": ["object", "null"],
+      "description": "Optional field for raw scores or additional details from the confidence generation method (e.g., raw logprobs, multiple verbal assessments)."
+    }
+  },
+  "required": ["value", "level", "method", "justification", "assessed_by", "timestamp"]
+} 

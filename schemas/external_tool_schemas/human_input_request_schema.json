@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HumanInputRequest",
+  "description": "Schema for requesting human input during a flow.",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique ID for this input request."
+    },
+    "prompt_message": {
+      "type": "string",
+      "description": "The message/question to display to the human operator."
+    },
+    "expected_input_type": {
+      "type": "string",
+      "enum": ["text", "json", "choice"],
+      "description": "The type of input expected from the human."
+    },
+    "options": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Optional list of choices if expected_input_type is 'choice'."
+    },
+    "context_data": {
+      "type": "object",
+      "description": "Optional arbitrary JSON data to provide context to the human operator."
+    }
+  },
+  "required": ["request_id", "prompt_message", "expected_input_type"]
+} 

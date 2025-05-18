@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 import uuid
+from datetime import datetime, timezone
 
 from chungoid.schemas.agent_master_planner import (
     MasterPlannerInput,
@@ -14,6 +15,7 @@ from chungoid.schemas.user_goal_schemas import UserGoalRequest
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 
 # Placeholder for LLM client - replace with actual implementation path
 # from chungoid.utils.llm_clients import get_llm_client, LLMInterface
@@ -151,15 +153,22 @@ class MasterPlannerAgent:
     CATEGORY = AgentCategory.SYSTEM_ORCHESTRATION
     VISIBILITY = AgentVisibility.PUBLIC
 
-    def __init__(self, llm_provider: LLMProvider): # Modified constructor
+    NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME = "blueprint_to_flow_agent_v1.yaml"
+
+    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager):
         # In a real scenario, the LLM client would be injected or initialized here
         # self.llm_client: LLMInterface = get_llm_client()
         # self.llm_client = MockLLMClient()  # Using placeholder for now
         if llm_provider is None:
             logger.error("MasterPlannerAgent requires an LLMProvider.")
             raise ValueError("LLMProvider cannot be None for MasterPlannerAgent")
+        if prompt_manager is None:
+            logger.error("MasterPlannerAgent requires a PromptManager.")
+            raise ValueError("PromptManager cannot be None for MasterPlannerAgent")
+            
         self.llm_client = llm_provider # Use the injected provider
-        self.system_prompt = ( 
+        self.prompt_manager = prompt_manager # Store prompt_manager
+        self.system_prompt = (
             DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT
         )  # Loaded at init
 
@@ -193,45 +202,80 @@ class MasterPlannerAgent:
 
         # TODO: Add logic for handling existing_plan_json if modification is supported
 
-        user_prompt = DEFAULT_USER_PROMPT_TEMPLATE.format(
-            user_goal_string=user_goal_str,
-            target_platform_string=target_platform_str, # ADDED target_platform
-            project_context_summary_string=project_context_summary,
-            existing_plan_json_if_any=existing_plan_json,
-        )
+        current_prompt_name_to_use: Optional[str] = None
+        prompt_data_for_llm: Dict[str, Any] = {}
+        current_system_prompt: str = ""
+        current_user_prompt: str = ""
+
+        if inputs.blueprint_doc_id:
+            logger.info(f"MasterPlannerAgent invoked in Blueprint-to-Flow mode for blueprint: {inputs.blueprint_doc_id}")
+            current_prompt_name_to_use = self.NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME
+            
+            # MOCK retrieval of blueprint and reviewer feedback (replace with PCMA calls)
+            # Assume pcma = ProjectChromaManagerAgent_v1(project_root=Path("."), project_id=inputs.project_id) # Conceptual
+            mock_blueprint_content = f"# Mock Blueprint Content for {inputs.blueprint_doc_id}\nThis blueprint describes a sophisticated system..."
+            mock_reviewer_feedback_content = None
+            if inputs.blueprint_reviewer_feedback_doc_id:
+                mock_reviewer_feedback_content = f"# Mock Reviewer Feedback for {inputs.blueprint_reviewer_feedback_doc_id}\nConsider using quantum entanglement for module communication."
+
+            prompt_data_for_llm = {
+                "project_id": inputs.project_id or "unknown_project",
+                "blueprint_doc_id": inputs.blueprint_doc_id,
+                "blueprint_reviewer_feedback_doc_id": inputs.blueprint_reviewer_feedback_doc_id,
+                "blueprint_content": mock_blueprint_content,
+                "blueprint_reviewer_feedback_content": mock_reviewer_feedback_content,
+                "current_datetime_iso": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                rendered_blueprint_prompt = self.prompt_manager.render_prompt_template(
+                    template_name=current_prompt_name_to_use,
+                    data=prompt_data_for_llm,
+                    sub_dir="autonomous_engine" # Assuming it's in this sub_dir
+                )
+                if isinstance(rendered_blueprint_prompt, dict):
+                    current_system_prompt = rendered_blueprint_prompt.get("system_prompt", "")
+                    current_user_prompt = rendered_blueprint_prompt.get("prompt_details", "")
+                else:
+                    current_user_prompt = rendered_blueprint_prompt # if template returns a single string
+                    current_system_prompt = "" # Or load a default system prompt if applicable
+                
+                if not current_user_prompt:
+                    raise PromptRenderError("Rendered user prompt for blueprint-to-flow is empty.")
+
+            except PromptRenderError as e:
+                logger.error(f"Failed to render blueprint-to-flow prompt '{current_prompt_name_to_use}': {e}")
+                return MasterPlannerOutput(
+                    master_plan_json="", error_message=f"Prompt rendering failed: {e}"
+                )
+        else: # Fallback to existing user_goal to plan logic
+            logger.info(f"MasterPlannerAgent invoked in UserGoal-to-Flow mode for goal: {inputs.user_goal}")
+            # Use existing prompt logic for user_goal
+            current_system_prompt = self.system_prompt
+            current_user_prompt = DEFAULT_USER_PROMPT_TEMPLATE.format(
+                user_goal_string=user_goal_str,
+                target_platform_string=target_platform_str,
+                project_context_summary_string=project_context_summary,
+                existing_plan_json_if_any=existing_plan_json,
+            )
 
         logger.debug(
-            f"MasterPlannerAgent System Prompt:\n{self.system_prompt}"
+            f"MasterPlannerAgent System Prompt (effective):\n{current_system_prompt}"
         )
         logger.debug(
-            f"MasterPlannerAgent User Prompt:\n{user_prompt}"
+            f"MasterPlannerAgent User Prompt (effective):\n{current_user_prompt}"
         )
 
         try:
-            # This is where the actual LLM call would happen
-            # llm_response_json_str = await self.llm_client.generate(
-            #     system_prompt=self.system_prompt,
-            #     user_prompt=user_prompt
-            # )
-            # For now, using mock that returns a dict directly
-            # llm_generated_plan_dict = await self.llm_client.generate_json(
-            #     system_prompt=self.system_prompt, user_prompt=user_prompt
-            # )
-
-            # Step 1: Call the LLMProvider's generate method, which returns a string.
-            # The system_prompt and user_prompt are combined here, or handled by the LLM provider.
-            # For now, assuming the LLM provider can take a single prompt string effectively or that 
-            # the structure of prompts needs to be re-evaluated for generic providers.
-            # Let's assume for now the llm_provider's generate method is called with a combined prompt
-            # or that the MasterPlannerAgent should format its prompts into a single string if necessary.
-            # For simplicity, let's pass user_prompt to generate(), assuming system_prompt is handled by the provider or overall context.
-            # A more robust solution might involve the LLMProvider having separate system/user prompt capabilities.
-            
-            # Combining system and user prompt for the `generate` call
-            combined_prompt = f"{self.system_prompt}\n\n{user_prompt}"
+            # The LLMProvider's generate method might take system_prompt separately or expect it combined.
+            # For this example, let's assume we combine if system_prompt is present.
+            final_prompt_for_llm = current_user_prompt
+            if current_system_prompt and current_system_prompt.strip(): # Only prepend if system prompt is non-empty
+                final_prompt_for_llm = f"{current_system_prompt}\n\n{current_user_prompt}"
             
             llm_response_str = await self.llm_client.generate(
-                prompt=combined_prompt # Pass the combined prompt
+                prompt=final_prompt_for_llm,
+                # model_id="gpt-4-turbo-preview", # Or from config
+                json_response=True # Crucial: ensure LLM is asked for JSON
             )
 
             # Step 2: Parse the string response as JSON.
@@ -271,6 +315,13 @@ class MasterPlannerAgent:
             # parsed_llm_json = json.loads(llm_response_json_str)
             # plan = MasterExecutionPlan.model_validate(parsed_llm_json)
             plan = MasterExecutionPlan.model_validate(llm_generated_plan_dict)
+
+            if inputs.original_request:
+                plan.original_request = inputs.original_request
+            if inputs.project_id and not plan.project_id: # Add project_id if generating from blueprint and not set by LLM
+                plan.project_id = inputs.project_id
+
+            logger.info(f"MasterPlannerAgent successfully generated plan: {plan.id}")
 
             return MasterPlannerOutput(
                 master_plan_json=plan.model_dump_json(indent=2),

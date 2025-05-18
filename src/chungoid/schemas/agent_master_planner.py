@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Assuming AgentCard might be defined elsewhere, e.g., utils.agent_registry
 # For now, we can use a placeholder or assume it's a dict if needed for available_agents.
@@ -11,7 +11,7 @@ from .user_goal_schemas import UserGoalRequest
 
 
 class MasterPlannerInput(BaseModel):
-    user_goal: str = Field(..., description="The high-level user goal string.")
+    user_goal: Optional[str] = Field(None, description="The high-level user goal string. Optional if blueprint_doc_id is provided.")
     original_request: Optional[UserGoalRequest] = Field(
         None, 
         description="The original UserGoalRequest object, if available."
@@ -28,6 +28,20 @@ class MasterPlannerInput(BaseModel):
         None,
         description="Optional current execution context if planning is invoked mid-flow or for replanning."
     )
+    project_id: Optional[str] = Field(None, description="Identifier for the current project, used when generating plan from blueprint.")
+    blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the ProjectBlueprint.md to be transformed into a plan.")
+    blueprint_reviewer_feedback_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the BlueprintReviewerAgent's feedback report.")
+
+    @model_validator(mode='before')
+    def check_goal_or_blueprint_provided(cls, values):
+        user_goal, blueprint_doc_id = values.get('user_goal'), values.get('blueprint_doc_id')
+        if not user_goal and not blueprint_doc_id:
+            raise ValueError('Either user_goal or blueprint_doc_id must be provided.')
+        if user_goal and blueprint_doc_id:
+            # Allowing both for now, agent logic will decide priority or how to combine.
+            # Could also raise ValueError('Provide either user_goal or blueprint_doc_id, not both.')
+            pass # Or log a warning
+        return values
 
 
 class MasterPlannerOutput(BaseModel):

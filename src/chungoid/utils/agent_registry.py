@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Agent registry backed by Chroma collection `a2a_agent_registry`."""
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -35,20 +35,37 @@ class AgentCard(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     tool_names: List[str] = Field(default_factory=list)
-    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the agent\'s direct input if it\'s a callable.")
-    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the agent\'s direct output if it\'s a callable.")
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the agent's direct input if it's a callable.")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the agent's direct output if it's a callable.")
     mcp_tool_input_schemas: Optional[Dict[str, Any]] = Field(None, description="Summarized input schemas for MCP tools this agent EXPOSES.")
     correlation_id: Optional[str] = Field(None, description="Identifier to correlate related agent invocations or tasks. Can be inherited or generated.")
     metadata: dict = Field(default_factory=dict)
     created: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # New fields for External MCP Tool Proxy
+    agent_type: Optional[Literal["Internal", "ExternalMCPProxy"]] = Field(default="Internal", description="Type of agent: Internal or a proxy for an external MCP tool.")
+    external_tool_info: Optional[Dict[str, Any]] = Field(default=None, description="If agent_type is ExternalMCPProxy, this holds info like base_url, specific_mcp_tool_spec, auth.")
+
 
 class AgentRegistry:
     COLLECTION = "a2a_agent_registry"
+    DEFAULT_EXTERNAL_TOOLS_CONFIG = "config/external_mcp_servers.json"
 
     def __init__(self, *, project_root: Path, chroma_mode: str = "persistent"):
         self._client: ClientAPI = get_client(chroma_mode, project_root)
         self._coll: Collection = self._client.get_or_create_collection(self.COLLECTION)
+        self._project_root = project_root # Store project_root
+
+        # Load external tools if config exists
+        external_tools_config_path = self._project_root / self.DEFAULT_EXTERNAL_TOOLS_CONFIG
+        if external_tools_config_path.exists():
+            logger.info(f"Attempting to load external MCP tools from {external_tools_config_path}")
+            try:
+                self.load_external_mcp_tools(external_tools_config_path)
+            except Exception as e_load_ext:
+                logger.error(f"Failed to load external MCP tools from {external_tools_config_path}: {e_load_ext}")
+        else:
+            logger.info(f"External MCP tools config file not found at {external_tools_config_path}, skipping load.")
 
     def _create_searchable_document_for_agent_card(self, card: AgentCard) -> str:
         """Constructs a single string from AgentCard fields for semantic search."""
@@ -72,6 +89,19 @@ class AgentRegistry:
             doc_parts.append(f"Tags: {', '.join(card.tags)}")
         if card.tool_names: # These are tools the agent *uses* or has affinity with
             doc_parts.append(f"Relevant Tools: {', '.join(card.tool_names)}")
+
+        # Add info for external tools
+        if card.agent_type == "ExternalMCPProxy" and card.external_tool_info:
+            doc_parts.append(f"Agent Type: External MCP Tool Proxy")
+            tool_spec = card.external_tool_info.get('specific_mcp_tool_spec', {})
+            base_url = card.external_tool_info.get('base_url', 'N/A')
+            auth_type = card.external_tool_info.get('authentication', {}).get('type', 'None')
+            
+            doc_parts.append(f"External Tool Action: {tool_spec.get('tool_name', 'Unknown Action')}")
+            doc_parts.append(f"External Tool Base URL: {base_url}")
+            doc_parts.append(f"External Tool Authentication: {auth_type}")
+            if tool_spec.get('description'):
+                 doc_parts.append(f"External Tool Action Description: {tool_spec.get('description')}")
 
         # Summarize direct input/output schemas of the agent itself
         if card.input_schema:
@@ -123,20 +153,33 @@ class AgentRegistry:
     def get(self, agent_id: str) -> Optional[AgentCard]:
         res = self._coll.get(ids=[agent_id])
         
+        # AGENT_NOT_FOUND_HANDLING_START
         if not res["ids"]:
-            # AGENT NOT FOUND - TRY REFRESHING COLLECTION AND RETRYING ONCE
-            logger.warning(f"AgentRegistry.get: Agent ID '{agent_id}' not found on first try. Attempting collection refresh.")
+            logger.warning(f"AgentRegistry.get: Agent ID '{agent_id}' not found on first try. Attempting collection refresh and checking external tools load status.")
+            # Attempt to reload external tools if the default config file exists
+            # This is a simple heuristic: if an agent is not found, maybe external tools weren't loaded.
+            external_tools_config_path = self._project_root / self.DEFAULT_EXTERNAL_TOOLS_CONFIG
+            if external_tools_config_path.exists():
+                logger.info(f"Re-attempting to load external MCP tools from {external_tools_config_path} as part of get() fallback.")
+                try:
+                    self.load_external_mcp_tools(external_tools_config_path, force_reload=True)
+                except Exception as e_load_ext_retry:
+                    logger.error(f"Failed to reload external MCP tools during get() fallback: {e_load_ext_retry}")
+            else:
+                logger.info("External tools config not found, cannot reload them during get() fallback.")
+            
             try:
                 self._coll = self._client.get_or_create_collection(self.COLLECTION) # Re-fetch collection
                 res = self._coll.get(ids=[agent_id]) # Retry the get
                 if not res["ids"]:
-                    logger.warning(f"AgentRegistry.get: Agent ID '{agent_id}' still not found after collection refresh.")
+                    logger.warning(f"AgentRegistry.get: Agent ID '{agent_id}' still not found after collection refresh and potential external tool reload.")
                     return None # Still not found
                 else:
-                    logger.info(f"AgentRegistry.get: Agent ID '{agent_id}' found after collection refresh.")
+                    logger.info(f"AgentRegistry.get: Agent ID '{agent_id}' found after collection refresh and potential external tool reload.")
             except Exception as e:
                 logger.error(f"AgentRegistry.get: Error during collection refresh attempt for '{agent_id}': {e}")
                 return None # Error during refresh, treat as not found
+        # AGENT_NOT_FOUND_HANDLING_END
 
         if not res["ids"]:
             return None # Should be redundant if above logic is correct, but as a safeguard
@@ -193,6 +236,13 @@ class AgentRegistry:
         mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null") 
         card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
 
+        # Deserialize new fields
+        agent_type_str = card_data.pop("agent_type", "Internal") # Default to Internal if missing for backward compatibility
+        card_data["agent_type"] = agent_type_str
+
+        external_tool_info_json_str = card_data.pop("external_tool_info_json", "null")
+        card_data["external_tool_info"] = json.loads(external_tool_info_json_str)
+
         # correlation_id will be directly in card_data if it was stored, no special deserialization needed.
         # If description is not directly in metadata (because it was part of the searchable doc),
         # we might need to extract it or accept that AgentCard.description will be None
@@ -217,6 +267,12 @@ class AgentRegistry:
             # Example of a standard conditional INFO log during list, if necessary for a specific agent.
             # if current_agent_id_from_peek == "SomeOtherAgent_v1":
             #    logger.info(f"Processing {current_agent_id_from_peek} in list, raw meta: {current_chroma_meta}")
+
+            # TEMPORARY_LOG_START - Remove after debugging
+            # if "HumanFeedbackService_v1" in current_agent_id_from_peek:
+            #     logger.info(f"AgentRegistry.list: Processing external tool candidate: {current_agent_id_from_peek}")
+            #     logger.info(f"Raw Chroma Meta for {current_agent_id_from_peek}: {current_chroma_meta}")
+            # TEMPORARY_LOG_END
 
             card_data = current_chroma_meta.copy()
 
@@ -257,6 +313,13 @@ class AgentRegistry:
             
             mcp_schemas_json_str = card_data.pop("_mcp_tool_input_schemas_json", "null")
             card_data["mcp_tool_input_schemas"] = json.loads(mcp_schemas_json_str)
+            
+            # Deserialize new fields for list
+            agent_type_str = card_data.pop("agent_type", "Internal")
+            card_data["agent_type"] = agent_type_str
+
+            external_tool_info_json_str = card_data.pop("external_tool_info_json", "null")
+            card_data["external_tool_info"] = json.loads(external_tool_info_json_str)
             
             validated_card = AgentCard.model_validate(card_data)
             
@@ -346,6 +409,13 @@ class AgentRegistry:
                     print(f"Warning: Missing agent_id or name in metadata for card reconstruction. Skipping. Data: {card_data}")
                     continue
 
+                # Deserialize new fields
+                agent_type_str = card_data.pop("agent_type", "Internal")
+                card_data["agent_type"] = agent_type_str
+
+                external_tool_info_json_str = card_data.pop("external_tool_info_json", "null")
+                card_data["external_tool_info"] = json.loads(external_tool_info_json_str)
+                
                 # correlation_id will be directly in card_data if stored.
                 try:
                     cards.append(AgentCard.model_validate(card_data))
@@ -359,70 +429,135 @@ class AgentRegistry:
         return bool(self._coll.get(ids=[agent_id])["ids"]) 
 
     def _agent_card_to_chroma_metadata(self, agent_card: AgentCard) -> Dict[str, Any]:
-        """Converts AgentCard to a flat dictionary suitable for ChromaDB metadata.
-        Complex types are serialized to strings. Optional simple types that are None
-        have their keys excluded.
-        """
-        # Logger for this method if specific logging is ever needed here.
-        # logger = logging.getLogger(__name__) 
+        """Converts an AgentCard to a flat dictionary suitable for Chroma metadata."""
+        # Start with a model dump, then process fields that need special handling
+        # Using exclude_none=True to avoid storing lots of nulls if Pydantic adds them by default
+        # However, be careful if some fields *should* be None vs not present. Chroma converts None to string "None".
+        # Best to handle conversions explicitly.
+        meta = agent_card.model_dump(mode='json', exclude_none=False) # Get all fields, including None
 
-        meta: Dict[str, Any] = {
+        # Required fields that are directly usable or become string representations
+        # Ensure all AgentCard fields are represented here or handled below
+        chroma_meta = {
             "agent_id": agent_card.agent_id,
             "name": agent_card.name,
+            "version": agent_card.version if agent_card.version is not None else "",
+            "description": agent_card.description if agent_card.description is not None else "",
+            "stage_focus": agent_card.stage_focus if agent_card.stage_focus is not None else "",
+            "correlation_id": agent_card.correlation_id if agent_card.correlation_id is not None else "",
+            "created": agent_card.created.isoformat(),
+            "priority": agent_card.priority if agent_card.priority is not None else 0,
+             # New fields serialization
+            "agent_type": agent_card.agent_type if agent_card.agent_type is not None else "Internal",
+            "external_tool_info_json": json.dumps(agent_card.external_tool_info) if agent_card.external_tool_info is not None else "null",
         }
-        if agent_card.version is not None:
-            meta["version"] = agent_card.version
-        if agent_card.description is not None:
-            meta["description"] = agent_card.description
+
+        # Handle enum fields by storing their string value or empty string for None
+        if agent_card.visibility is not None:
+            chroma_meta["visibility"] = agent_card.visibility.value
+        else:
+            chroma_meta["visibility"] = "" # Store empty string if None
+
+        # Handle existing list fields (store as comma-separated strings)
+        chroma_meta["_capabilities_str"] = ",".join(agent_card.capabilities) if agent_card.capabilities else ""
+        chroma_meta["_tags_str"] = ",".join(agent_card.tags) if agent_card.tags else ""
+        chroma_meta["_tool_names_str"] = ",".join(agent_card.tool_names) if agent_card.tool_names else ""
+
+        # Handle existing dict fields (store as JSON strings)
+        chroma_meta["_input_schema_json"] = json.dumps(agent_card.input_schema) if agent_card.input_schema is not None else "null"
+        chroma_meta["_output_schema_json"] = json.dumps(agent_card.output_schema) if agent_card.output_schema is not None else "null"
+        chroma_meta["_mcp_tool_input_schemas_json"] = json.dumps(agent_card.mcp_tool_input_schemas) if agent_card.mcp_tool_input_schemas is not None else "null"
         
         # Restore original logic for categories and capability_profile
         if agent_card.categories: 
-            meta["categories_str"] = ",".join(agent_card.categories)
+            chroma_meta["categories_str"] = ",".join(agent_card.categories)
         else:
-            meta["categories_str"] = ""
+            chroma_meta["categories_str"] = ""
 
         if agent_card.capability_profile: 
-            meta["capability_profile_json"] = json.dumps(agent_card.capability_profile)
+            chroma_meta["capability_profile_json"] = json.dumps(agent_card.capability_profile)
         else:
-            meta["capability_profile_json"] = "{}"
+            chroma_meta["capability_profile_json"] = "{}"
         
-        if agent_card.priority is not None:
-            meta["priority"] = agent_card.priority
+        return chroma_meta
 
-        # Handle existing optional fields
-        if agent_card.visibility is not None:
-            meta["visibility"] = agent_card.visibility.value
-        else:
-            meta["visibility"] = "" # Store empty string if None
+    def load_external_mcp_tools(self, config_file_path: Path, force_reload: bool = False):
+        """Loads external MCP tool definitions from a JSON config file and registers them."""
+        if not config_file_path.exists():
+            logger.warning(f"External MCP tools config file not found: {config_file_path}")
+            return
 
-        if agent_card.stage_focus is not None:
-            meta["stage_focus"] = agent_card.stage_focus
-        
-        # Handle existing list fields (store as comma-separated strings)
-        meta["_capabilities_str"] = ",".join(agent_card.capabilities) if agent_card.capabilities else ""
-        meta["_tags_str"] = ",".join(agent_card.tags) if agent_card.tags else ""
-        meta["_tool_names_str"] = ",".join(agent_card.tool_names) if agent_card.tool_names else ""
+        # Simple check to avoid reloading if not forced (can be made more sophisticated)
+        # This check is basic. A more robust check might involve checking a timestamp or a specific flag.
+        # For now, if 'force_reload' is False, and we find any ExternalMCPProxy, we assume they are loaded.
+        # This is primarily to prevent redundant loads during the `get` fallback.
+        if not force_reload:
+            existing_proxies = self.search_agents(query_text="External MCP Tool Proxy", n_results=1, where_filter={"agent_type": "ExternalMCPProxy"})
+            if existing_proxies:
+                logger.info(f"External MCP tools seem to be loaded already (found {existing_proxies[0].agent_id}). Skipping reload unless forced.")
+                return
 
-        # Handle existing dict fields (store as JSON strings)
-        meta["_input_schema_json"] = json.dumps(agent_card.input_schema) if agent_card.input_schema is not None else "null"
-        meta["_output_schema_json"] = json.dumps(agent_card.output_schema) if agent_card.output_schema is not None else "null"
-        meta["_mcp_tool_input_schemas_json"] = json.dumps(agent_card.mcp_tool_input_schemas) if agent_card.mcp_tool_input_schemas is not None else "null"
-        
-        if agent_card.correlation_id is not None:
-            meta["correlation_id"] = agent_card.correlation_id
-        
-        # Store other metadata as JSON string
-        meta["_agent_card_metadata_json"] = json.dumps(agent_card.metadata) if agent_card.metadata else "{}"
-        
-        # created field is a datetime object, convert to ISO format string
-        meta["created"] = agent_card.created.isoformat()
-        
-        return meta
+        logger.info(f"Loading external MCP tools from: {config_file_path}")
+        try:
+            with open(config_file_path, 'r') as f:
+                external_tools_data = json.load(f)
+        except Exception as e:
+            logger.error(f"Error reading or parsing external MCP tools config {config_file_path}: {e}")
+            return
+
+        for tool_entry in external_tools_data:
+            tool_id = tool_entry.get("tool_id")
+            tool_name_overall = tool_entry.get("name", tool_id)
+            base_url = tool_entry.get("base_url")
+            authentication = tool_entry.get("authentication")
+            
+            if not tool_id or not base_url:
+                logger.warning(f"Skipping external tool entry due to missing 'tool_id' or 'base_url': {tool_entry}")
+                continue
+
+            for mcp_spec in tool_entry.get("mcp_tool_specs", []):
+                spec_tool_name = mcp_spec.get("tool_name")
+                if not spec_tool_name:
+                    logger.warning(f"Skipping mcp_tool_spec in {tool_id} due to missing 'tool_name': {mcp_spec}")
+                    continue
+
+                agent_id = f"{tool_id}::{spec_tool_name}"
+                agent_name = f"{tool_name_overall} - {spec_tool_name}"
+                description = mcp_spec.get("description", f"External MCP tool action {spec_tool_name} for {tool_name_overall}")
+
+                # TODO: Resolve input_schema_ref and output_schema_ref to actual schemas
+                # For now, storing refs in external_tool_info.
+                # Actual schemas on AgentCard can be generic or None for proxies initially.
+                
+                external_tool_info_payload = {
+                    "base_url": base_url,
+                    "specific_mcp_tool_spec": mcp_spec, # Contains tool_name, description, schema_refs
+                    "authentication": authentication,
+                    "parent_tool_id": tool_id
+                }
+
+                card = AgentCard(
+                    agent_id=agent_id,
+                    name=agent_name,
+                    description=description,
+                    agent_type="ExternalMCPProxy",
+                    categories=["ExternalTool", "MCPProxy", tool_name_overall.replace(" ", "")], # Basic categories
+                    capability_profile={"external_action": spec_tool_name, "proxy_for": tool_id},
+                    external_tool_info=external_tool_info_payload,
+                    # input_schema, output_schema could be generic or loaded from refs if implemented
+                )
+                try:
+                    logger.info(f"Registering external MCP tool proxy: {agent_id}")
+                    self.add(card, overwrite=True) # Overwrite to allow updates if config changes
+                except Exception as e_add_card:
+                    logger.error(f"Failed to register external MCP tool proxy {agent_id}: {e_add_card}")
 
     def delete(self, agent_id: str) -> bool:
         # Implement delete logic here
         try:
             self._coll.delete(ids=[agent_id])
+            logger.info(f"Agent {agent_id} deleted successfully from registry.")
             return True
-        except Exception: # Broad exception, refine if ChromaDB has specific ones
+        except Exception as e:
+            logger.error(f"Error deleting agent {agent_id}: {e}")
             return False 

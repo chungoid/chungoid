@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HumanApprovalResponse",
+  "description": "Schema for the response received from a human approval request.",
+  "type": "object",
+  "properties": {
+    "approval_request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The ID of the original approval request this response corresponds to."
+    },
+    "approved": {
+      "type": "boolean",
+      "description": "True if approved, False if rejected."
+    },
+    "comments": {
+      "type": "string",
+      "description": "Optional comments or reasons provided by the human operator."
+    },
+    "responded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of when the human provided the approval/rejection."
+    }
+  },
+  "required": ["approval_request_id", "approved", "responded_at"]
+} 

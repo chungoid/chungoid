@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
-from chungoid.schemas.agent_code_generator import CodeGeneratorAgentInput, CodeGeneratorAgentOutput
+from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput, SmartCodeGeneratorAgentOutput
+from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, PLANNING_ARTIFACTS_COLLECTION, AGENT_LOGS_COLLECTION, LIVE_CODEBASE_COLLECTION
+import uuid
 
 # Placeholder for a real LLM client and prompt templates
 # from chungoid.utils.llm_clients import get_llm_client, LLMInterface
@@ -79,111 +84,224 @@ def show_config(ctx):
 # --- End Mock LLM Client ---
 
 # --- Placeholder Prompts (to be externalized and refined) ---
-CODE_GENERATION_SYSTEM_PROMPT = """You are an expert Code Generation AI. 
-Given a task description, existing code (if any), and related file contexts, generate the required code in the specified language. 
-Ensure the code is clean, efficient, and well-commented where necessary. 
-Output only the raw code string requested, without any surrounding explanations or markdown fences unless the task specifically asks for that format.
-"""
-
-CODE_GENERATION_USER_PROMPT_TEMPLATE = """Task Description: {task_description}
-Programming Language: {programming_language}
-Target File Path: {target_file_path}
-
-Existing Code Snippet (if modifying):
-```
-{code_to_modify}
-```
-
-Context from Related Files:
-{related_files_formatted_str}
-
-Please generate the code based on the above information.
-"""
+# These are now superseded by the smart_code_generator_agent_v1.yaml prompt file
+# CODE_GENERATION_SYSTEM_PROMPT = """You are an expert Code Generation AI. 
+# ... (rest of old prompt) ...
+# """
+# CODE_GENERATION_USER_PROMPT_TEMPLATE = """Task Description: {task_description}
+# ... (rest of old prompt) ...
+# """
 # --- End Placeholder Prompts ---
+
+SMART_CODE_GENERATOR_PROMPT_NAME = "smart_code_generator_agent_v1.yaml"
 
 class CodeGeneratorAgent:
     AGENT_ID = "CoreCodeGeneratorAgent_v1"
     AGENT_NAME = "Core Code Generator Agent"
     VERSION = "0.1.0"
-    DESCRIPTION = "Generates source code based on a task description, optionally modifying existing code and using context from related files."
+    DESCRIPTION = "Generates or modifies source code with rich contextual awareness using ChromaDB and an LLM."
     CATEGORY = AgentCategory.CODE_GENERATION
     VISIBILITY = AgentVisibility.PUBLIC
 
-    def __init__(self):
-        # self.llm_client = get_llm_client(config_for_code_gen_model) # Replace with actual
-        self.llm_client = MockCodeLLMClient()
-        self.system_prompt = CODE_GENERATION_SYSTEM_PROMPT
-        self.user_prompt_template = CODE_GENERATION_USER_PROMPT_TEMPLATE
+    def __init__(self, 
+                 llm_provider: LLMProvider, 
+                 prompt_manager: PromptManager, 
+                 # pcma_instance: ProjectChromaManagerAgent_v1 # PCMA should be initialized per project_id, not globally for the agent
+                 config: Optional[Dict[str, Any]] = None, # Added config
+                 system_context: Optional[Dict[str, Any]] = None # Added system_context
+                ):
+        if llm_provider is None: raise ValueError("LLMProvider cannot be None")
+        if prompt_manager is None: raise ValueError("PromptManager cannot be None")
+        
+        self.llm_provider = llm_provider
+        self.prompt_manager = prompt_manager
+        # self.pcma_instance = pcma_instance # Removed: PCMA is instantiated per call with project_id
+        self.config = config or {}
+        self.system_context = system_context or {}
+        self._logger_instance = self.system_context.get("logger", logger)
+        # Old prompts are not loaded directly anymore
+        # self.system_prompt = CODE_GENERATION_SYSTEM_PROMPT 
+        # self.user_prompt_template = CODE_GENERATION_USER_PROMPT_TEMPLATE
 
     async def invoke_async(
         self,
-        inputs: Dict[str, Any],
-        full_context: Optional[Dict[str, Any]] = None,
-    ) -> CodeGeneratorAgentOutput:
+        inputs: Dict[str, Any], # Raw dict, will be parsed
+        full_context: Optional[Dict[str, Any]] = None, # Standard BaseAgent __call__ takes this
+    ) -> SmartCodeGeneratorAgentOutput:
         try:
-            # Parse the input dictionary into the Pydantic model
-            parsed_inputs = CodeGeneratorAgentInput(**inputs)
-        except Exception as e: # Handle potential Pydantic validation error
-            logger.error(f"Failed to parse inputs for {self.AGENT_ID}: {e}")
-            return CodeGeneratorAgentOutput(
-                target_file_path=inputs.get("target_file_path", "unknown_target_on_parse_error"), # Best effort
+            parsed_inputs = SmartCodeGeneratorAgentInput(**inputs)
+        except Exception as e:
+            self._logger_instance.error(f"Failed to parse inputs for {self.AGENT_ID}: {e}")
+            return SmartCodeGeneratorAgentOutput(
+                task_id=inputs.get("task_id", "unknown_task_id_on_parse_error"),
+                target_file_path=inputs.get("target_file_path", "unknown_target_on_parse_error"),
                 status="FAILURE_INPUT_VALIDATION",
                 error_message=f"Input parsing failed: {e}"
             )
 
-        logger.info(f"CodeGeneratorAgent invoked for target: {parsed_inputs.target_file_path}")
-        logger.debug(f"CodeGeneratorAgent inputs: {parsed_inputs}")
+        self._logger_instance.info(f"{self.AGENT_ID} invoked for target: {parsed_inputs.target_file_path} in project {parsed_inputs.project_id}")
+        self._logger_instance.debug(f"{self.AGENT_ID} inputs: {parsed_inputs}")
 
-        related_files_str = "No related files provided."
-        if parsed_inputs.related_files_context:
-            formatted_ctx_list = []
-            for path, content in parsed_inputs.related_files_context.items():
-                formatted_ctx_list.append(f"--- File: {path} ---\n{content}\n--- End File: {path} ---")
-            related_files_str = "\n\n".join(formatted_ctx_list)
+        # Initialize PCMA for the given project_id
+        # Assuming project_root is available, e.g. from chungoid-core/ path or config
+        # This needs a robust way to get the project_root. For now, let's assume a placeholder.
+        # In a real system, this would come from the orchestrator or engine context.
+        project_root_placeholder = Path(".") # This MUST be configured correctly in deployment
+        pcma = ProjectChromaManagerAgent_v1(project_root=project_root_placeholder, project_id=parsed_inputs.project_id)
 
-        user_prompt = self.user_prompt_template.format(
-            task_description=parsed_inputs.task_description,
-            programming_language=parsed_inputs.programming_language,
-            target_file_path=parsed_inputs.target_file_path,
-            code_to_modify=parsed_inputs.code_to_modify or "# No existing code provided for modification.",
-            related_files_formatted_str=related_files_str
-        )
-
-        code_context_for_llm = parsed_inputs.code_to_modify # Or a more structured context
+        # --- Context Retrieval (via PCMA) --- MOCKED FOR NOW
+        prompt_render_data: Dict[str, Any] = {
+            "project_id": parsed_inputs.project_id,
+            "target_file_path": parsed_inputs.target_file_path,
+            "programming_language": parsed_inputs.programming_language,
+            "code_specification_doc_id": parsed_inputs.code_specification_doc_id,
+            "additional_instructions": parsed_inputs.additional_instructions
+        }
+        context_retrieval_errors = []
 
         try:
-            llm_response_dict = await self.llm_client.generate_code(
-                system_prompt=self.system_prompt,
-                user_prompt=user_prompt,
-                code_context=code_context_for_llm
-            )
+            # specs_artifact = await pcma.retrieve_artifact(PLANNING_ARTIFACTS_COLLECTION, parsed_inputs.code_specification_doc_id)
+            # if specs_artifact.status == "SUCCESS" and specs_artifact.content:
+            #     prompt_render_data["code_specification_content"] = specs_artifact.content
+            # else:
+            #     context_retrieval_errors.append(f"Failed to retrieve code_specification_doc_id '{parsed_inputs.code_specification_doc_id}'.")
+            prompt_render_data["code_specification_content"] = f"Mock spec for {parsed_inputs.code_specification_doc_id}: Implement class Foo with method bar()."
 
-            generated_code = llm_response_dict.get("generated_code")
-            if not generated_code or not isinstance(generated_code, str):
-                logger.error("LLM did not return a valid code string.")
-                return CodeGeneratorAgentOutput(
-                    target_file_path=parsed_inputs.target_file_path,
-                    status="FAILURE_LLM_GENERATION",
-                    error_message="LLM did not return a valid code string in its response.",
-                    llm_full_response=str(llm_response_dict)
-                )
-
-            return CodeGeneratorAgentOutput(
-                generated_code_string=generated_code,
-                target_file_path=parsed_inputs.target_file_path,
-                status="SUCCESS",
-                llm_full_response=llm_response_dict.get("raw_response"),
-                llm_confidence=llm_response_dict.get("confidence"),
-                usage_metadata=llm_response_dict.get("usage")
-            )
+            if parsed_inputs.existing_code_doc_id:
+                # existing_code_artifact = await pcma.retrieve_artifact(LIVE_CODEBASE_COLLECTION, parsed_inputs.existing_code_doc_id)
+                # if existing_code_artifact.status == "SUCCESS" and existing_code_artifact.content:
+                #     prompt_render_data["existing_code_content"] = existing_code_artifact.content
+                #     prompt_render_data["existing_code_doc_id"] = parsed_inputs.existing_code_doc_id # For prompt display
+                # else:
+                #     self._logger_instance.warning(f"Could not retrieve existing_code_doc_id '{parsed_inputs.existing_code_doc_id}'. Proceeding without it.")
+                prompt_render_data["existing_code_content"] = "# Mock existing code for {parsed_inputs.existing_code_doc_id}\nclass Bar:\n  pass"
+                prompt_render_data["existing_code_doc_id"] = parsed_inputs.existing_code_doc_id
+            
+            # ... (Similarly mock retrieval for blueprint_context_doc_id and loprd_requirements_doc_ids) ...
+            if parsed_inputs.blueprint_context_doc_id:
+                prompt_render_data["blueprint_context_content"] = f"Mock blueprint context for {parsed_inputs.blueprint_context_doc_id}: Use FastAPI framework."
+                prompt_render_data["blueprint_context_doc_id"] = parsed_inputs.blueprint_context_doc_id
+            
+            if parsed_inputs.loprd_requirements_doc_ids:
+                mock_loprd_list = []
+                for req_id in parsed_inputs.loprd_requirements_doc_ids:
+                    mock_loprd_list.append({"id": req_id, "content": f"Mock LOPRD item {req_id}: Must be secure."})
+                prompt_render_data["loprd_requirements_content_list"] = mock_loprd_list
 
         except Exception as e:
-            logger.exception(f"Error during CodeGeneratorAgent LLM call or processing: {e}")
-            return CodeGeneratorAgentOutput(
-                target_file_path=parsed_inputs.target_file_path,
-                status="FAILURE_LLM_GENERATION",
-                error_message=f"LLM interaction failed: {str(e)}"
+            self._logger_instance.error(f"Error during context retrieval via PCMA: {e}", exc_info=True)
+            context_retrieval_errors.append(f"General PCMA error: {e}")
+
+        if context_retrieval_errors:
+            err_msg = f"Failed to retrieve critical context: {'; '.join(context_retrieval_errors)}"
+            self._logger_instance.error(err_msg)
+            return SmartCodeGeneratorAgentOutput(
+                task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, 
+                status="FAILURE_CONTEXT_RETRIEVAL", error_message=err_msg
             )
+
+        # --- Dynamic Prompt Construction --- 
+        try:
+            rendered_prompt = self.prompt_manager.render_prompt_template(
+                SMART_CODE_GENERATOR_PROMPT_NAME,
+                prompt_render_data,
+                sub_dir="autonomous_engine"
+            )
+            if isinstance(rendered_prompt, dict):
+                llm_main_prompt = rendered_prompt.get('prompt_details')
+                llm_system_prompt = rendered_prompt.get('system_prompt')
+            else: # Should be dict based on YAML structure
+                llm_main_prompt = rendered_prompt
+                llm_system_prompt = None # Or load a default if applicable
+
+            if not llm_main_prompt or not llm_system_prompt:
+                raise PromptRenderError(f"Rendered prompt for {SMART_CODE_GENERATOR_PROMPT_NAME} is missing system or main content.")
+
+        except PromptRenderError as e:
+            self._logger_instance.error(f"Failed to render SmartCodeGeneratorAgent prompt: {e}")
+            return SmartCodeGeneratorAgentOutput(
+                task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path,
+                status="FAILURE_INPUT_VALIDATION", # Or a new status like FAILURE_PROMPT_RENDERING
+                error_message=f"Prompt rendering failed: {e}"
+            )
+
+        # --- LLM Interaction --- 
+        generated_code_str: Optional[str] = None
+        llm_raw_response_for_output: Optional[str] = None
+        llm_usage_metadata_for_output: Optional[Dict[str, Any]] = None
+        try:
+            self._logger_instance.info(f"Sending request to LLM for code generation: {parsed_inputs.target_file_path}")
+            # Using llm_provider.generate which returns a string by default
+            # If llm_provider can return richer object with usage, that's better.
+            generated_code_str = await self.llm_provider.generate(
+                prompt=llm_main_prompt,
+                system_prompt=llm_system_prompt,
+                temperature=0.2, # Code gen should be more deterministic
+                # model_id="gpt-4-turbo-preview" # Or from config
+            )
+            llm_raw_response_for_output = generated_code_str # Simplification: raw response is the code string for now
+            self._logger_instance.info(f"Received code from LLM for {parsed_inputs.target_file_path}. Length: {len(generated_code_str or '')}")
+            if not generated_code_str or not generated_code_str.strip():
+                raise ValueError("LLM returned empty or whitespace-only code.")
+
+        except Exception as e:
+            self._logger_instance.error(f"LLM interaction failed for {self.AGENT_ID}: {e}", exc_info=True)
+            return SmartCodeGeneratorAgentOutput(
+                task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path,
+                status="FAILURE_LLM_GENERATION", error_message=f"LLM call failed: {e}",
+                llm_full_response=str(e) # Store exception as raw response for debug
+            )
+        
+        # --- Output Processing & Storage (via PCMA) --- MOCKED FOR NOW
+        generated_code_doc_id = f"mock_generated_code_{parsed_inputs.project_id}_{uuid.uuid4()}.py_doc_id"
+        try:
+            # storage_metadata = {
+            #     "artifact_type": "GeneratedSourceCode",
+            #     "programming_language": parsed_inputs.programming_language,
+            #     "target_file_path": parsed_inputs.target_file_path,
+            #     "source_agent_id": self.AGENT_ID,
+            #     "project_id": parsed_inputs.project_id,
+            #     "based_on_spec_doc_id": parsed_inputs.code_specification_doc_id,
+            #     "status": "pending_integration" # Or directly to live_codebase if that's the flow
+            # }
+            # store_result = await pcma.store_artifact(
+            #     base_collection_name=LIVE_CODEBASE_COLLECTION, # Or a temp collection
+            #     artifact_content=generated_code_str,
+            #     metadata=storage_metadata,
+            #     document_id=generated_code_doc_id # Optionally provide ID or let PCMA gen one
+            # )
+            # if store_result.status != "SUCCESS":
+            #     raise Exception(f"PCMA failed to store generated code: {store_result.error_message}")
+            # generated_code_doc_id = store_result.document_id
+            self._logger_instance.info(f"Generated code (mock) stored in ChromaDB with doc_id: {generated_code_doc_id}")
+        except Exception as e:
+            self._logger_instance.error(f"Failed to store generated code via PCMA: {e}", exc_info=True)
+            return SmartCodeGeneratorAgentOutput(
+                task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path,
+                status="FAILURE_OUTPUT_STORAGE", error_message=f"PCMA storage failed: {e}",
+                generated_code_string=generated_code_str # Still return code if storage failed
+            )
+
+        # --- Confidence Score Generation (Heuristic for MVP) ---
+        # TODO: More sophisticated confidence based on LLM self-assessment & context adherence checks
+        confidence_val = 0.75 
+        confidence_reasoning = "Code generated by LLM based on provided context (mocked retrieval & storage)."
+        if len(generated_code_str) < 50: # Arbitrary short code check
+            confidence_val = 0.5
+            confidence_reasoning += " Generated code is very short."
+
+        final_confidence = ConfidenceScore(value=confidence_val, level="Medium" if confidence_val >=0.6 else "Low", method="LLMGeneration_MVPHeuristic", reasoning=confidence_reasoning)
+
+        return SmartCodeGeneratorAgentOutput(
+            task_id=parsed_inputs.task_id,
+            target_file_path=parsed_inputs.target_file_path,
+            status="SUCCESS",
+            generated_code_artifact_doc_id=generated_code_doc_id,
+            generated_code_string=generated_code_str, # Optional: can be omitted if large
+            confidence_score=final_confidence,
+            llm_full_response=llm_raw_response_for_output,
+            usage_metadata=llm_usage_metadata_for_output
+        )
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
@@ -195,8 +313,8 @@ class CodeGeneratorAgent:
             description=CodeGeneratorAgent.DESCRIPTION,
             categories=[CodeGeneratorAgent.CATEGORY.value],
             visibility=CodeGeneratorAgent.VISIBILITY.value,
-            input_schema=CodeGeneratorAgentInput.model_json_schema(),
-            output_schema=CodeGeneratorAgentOutput.model_json_schema(),
+            input_schema=SmartCodeGeneratorAgentInput.model_json_schema(),
+            output_schema=SmartCodeGeneratorAgentOutput.model_json_schema(),
             capability_profile={
                 "language_support": ["python"],
                 "target_frameworks": ["click", "any"],
@@ -225,7 +343,7 @@ async def main_test_code_gen():
         print(f"Error: {output_create.error_message}")
     if output_create.generated_code_string:
         print(f"Generated Code for {output_create.target_file_path}:\n{output_create.generated_code_string}")
-    print(f"Confidence: {output_create.llm_confidence}")
+    print(f"Confidence: {output_create.confidence_score}")
     print("----------------------------\n")
 
     test_input_modify = CodeGeneratorAgentInput(
@@ -242,7 +360,7 @@ async def main_test_code_gen():
         print(f"Error: {output_modify.error_message}")
     if output_modify.generated_code_string:
         print(f"Generated Code for {output_modify.target_file_path}:\n{output_modify.generated_code_string}")
-    print(f"Confidence: {output_modify.llm_confidence}")
+    print(f"Confidence: {output_modify.confidence_score}")
     print("----------------------------\n")
 
 if __name__ == "__main__":

@@ -555,6 +555,8 @@ def flow_run(ctx: click.Context,
     final_fallback_map: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map()
     # Add/override with core system agents
     final_fallback_map.update(core_system_agents)
+    # Add/override with autonomous engine agents
+    final_fallback_map.update(get_autonomous_engine_agent_fallback_map())
     
     agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=final_fallback_map)
     
