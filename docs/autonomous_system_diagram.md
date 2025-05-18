@@ -16,7 +16,7 @@ graph TD
         direction LR
         FlowExecutor[Flow Executor]:::coreComp
         AgentRegistry[Agent Registry]:::coreComp
-        StateManager[State Manager (.json)]:::coreComp
+        StateManager["State Manager (.json)"]:::coreComp
         ChromaDB[ChromaDB Project Context Repository]:::datastore
         PromptManager[Prompt Manager]:::coreComp
     end
