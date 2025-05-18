@@ -18,6 +18,10 @@ from chungoid.schemas.agent_master_planner import MasterPlannerInput # For instr
 # Import the new documentation agent's input schema
 from .project_documentation_agent import ProjectDocumentationAgentInput, ProjectDocumentationAgent_v1 
 
+# NEW: Import StateManager and related schemas
+from chungoid.utils.state_manager import StateManager, StatusFileError
+from chungoid.schemas.project_state import ProjectStateV2, CycleHistoryItem # CycleHistoryItem might not be directly used if modifying existing
+
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
 
@@ -98,6 +102,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent):
     _llm_provider: Optional[LLMProvider]
     _prompt_manager: Optional[PromptManager]
     _logger: logging.Logger
+    _state_manager: Optional[StateManager]
 
     # Thresholds for decision making (can be made configurable)
     DEFAULT_ACCEPTANCE_THRESHOLD = 0.85  # e.g., If generator_confidence * praa_confidence * rta_confidence > threshold
@@ -111,10 +116,12 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent):
         llm_provider: Optional[LLMProvider] = None, # May not be needed if rule-based
         prompt_manager: Optional[PromptManager] = None, # May not be needed if rule-based
         system_context: Optional[Dict[str, Any]] = None,
+        state_manager: Optional[StateManager] = None, # NEW: Add state_manager parameter
         **kwargs
     ):
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
+        self._state_manager = state_manager
         if system_context and "logger" in system_context:
             self._logger = system_context["logger"]
         else:
@@ -128,11 +135,15 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent):
         llm_provider = self._llm_provider
         prompt_manager = self._prompt_manager
         logger_instance = self._logger
+        state_manager_instance = self._state_manager # NEW: Get StateManager instance
 
         if full_context:
             # No direct LLM/Prompt use in MVP, but provision for future
             if not llm_provider and "llm_provider" in full_context: llm_provider = full_context["llm_provider"]
             if not prompt_manager and "prompt_manager" in full_context: prompt_manager = full_context["prompt_manager"]
+            # NEW: Get StateManager from full_context if not already set
+            if not state_manager_instance and "state_manager" in full_context:
+                state_manager_instance = full_context["state_manager"]
             if "system_context" in full_context and "logger" in full_context["system_context"]:
                 if full_context["system_context"]["logger"] != self._logger: 
                     logger_instance = full_context["system_context"]["logger"]
@@ -265,6 +276,86 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent):
         # For MVP rule-based, it's fairly high if rules are clear.
         arca_confidence_val = 0.9 if decision == "ACCEPT_ARTIFACT" else 0.75
         arca_confidence = ConfidenceScore(value=arca_confidence_val, level="High" if arca_confidence_val > 0.8 else "Medium", method="RuleBasedHeuristic_ARCA_MVP", reasoning=f"ARCA decision based on pre-defined confidence thresholds. Metric: {combined_metric:.2f}")
+
+        # --- NEW: Update Project State at the end of a cycle/review point ---
+        # This logic assumes an ARCA invocation can signify a point where human review is appropriate,
+        # or a sub-part of a cycle completes.
+        # The definition of what constitutes a full "cycle end" to be recorded in StateManager
+        # might also be orchestrated by the calling process (e.g. AsyncOrchestrator)
+        # For now, ARCA will attempt to update the *current* cycle if a StateManager is available.
+
+        issues_for_human_review_list = []
+        cycle_summary_for_state_manager = f"ARCA review complete for artifact {parsed_inputs.artifact_doc_id} ({parsed_inputs.artifact_type}). Decision: {decision}. Reasoning: {reasoning}."
+
+        if decision == "REFINEMENT_REQUIRED" and not next_agent_for_refinement:
+            # This case means refinement is needed but ARCA doesn't know who to send it to.
+            # This is a clear issue for human review.
+            issues_for_human_review_list.append({
+                "issue_id": f"arca_unhandled_refinement_{parsed_inputs.artifact_doc_id}",
+                "description": f"ARCA determined refinement is required for {parsed_inputs.artifact_type} (ID: {parsed_inputs.artifact_doc_id}), but no automated refinement path is defined. {reasoning}",
+                "relevant_artifact_ids": [parsed_inputs.artifact_doc_id]
+            })
+            cycle_summary_for_state_manager += " Escalation: No automated refinement path available."
+
+
+        # Condition to update state: if a state_manager is present and
+        # EITHER the decision is to accept (implying a sub-task completion)
+        # OR if there are issues explicitly flagged for human review by ARCA.
+        # More sophisticated logic for WHEN to update state can be added.
+        # For P3.1.1, we assume ARCA's processing of an artifact can be a point to update cycle status.
+        
+        # Let's assume for now that an ARCA run that results in ACCEPT_ARTIFACT
+        # or a REFINEMENT_REQUIRED that cannot be automated should trigger a state update
+        # and mark the cycle for review if there are such issues.
+        
+        update_state_for_review = False
+        if decision == "ACCEPT_ARTIFACT" or (decision == "REFINEMENT_REQUIRED" and not next_agent_for_refinement) or decision == "PROCEED_TO_DOCUMENTATION":
+            update_state_for_review = True # Good point to potentially pend review or record progress.
+
+        if state_manager_instance and update_state_for_review:
+            try:
+                project_state = state_manager_instance.get_project_state()
+                current_cycle_id = project_state.current_cycle_id
+
+                if current_cycle_id:
+                    current_cycle_item = next((c for c in project_state.cycle_history if c.cycle_id == current_cycle_id), None)
+                    if current_cycle_item:
+                        logger_instance.info(f"Updating cycle {current_cycle_id} in ProjectStateV2 via ARCA.")
+                        current_cycle_item.arca_summary_of_cycle_outcome = (current_cycle_item.arca_summary_of_cycle_outcome or "") + f"\n- {cycle_summary_for_state_manager}"
+                        
+                        if issues_for_human_review_list:
+                             current_cycle_item.issues_flagged_for_human_review.extend(issues_for_human_review_list)
+                        
+                        # If this ARCA decision implies the end of the current cycle processing (e.g., final acceptance or unrecoverable issue)
+                        # set it to pending_human_review.
+                        # This is a simplification; a more complex orchestrator might make this decision.
+                        if decision == "ACCEPT_ARTIFACT" and parsed_inputs.artifact_type == "ProjectDocumentation": # Example: Project complete
+                            project_state.overall_project_status = "project_complete" # Or a new status like "pending_final_review"
+                            current_cycle_item.end_time = datetime.datetime.now(datetime.timezone.utc)
+                            logger_instance.info(f"Project {project_state.project_id} marked as complete after documentation acceptance.")
+                        elif (decision == "REFINEMENT_REQUIRED" and not next_agent_for_refinement) or \
+                             (decision == "ACCEPT_ARTIFACT" and parsed_inputs.artifact_type != "ProjectDocumentation") or \
+                             decision == "PROCEED_TO_DOCUMENTATION": # Assuming these are points for review
+                            project_state.overall_project_status = "pending_human_review"
+                            # We might not set end_time here if the cycle isn't truly "over" but just needs review to continue.
+                            # However, if this ARCA step is the *last* thing in a cycle before review, then end_time is appropriate.
+                            # For now, let's set end_time if it's pending review.
+                            current_cycle_item.end_time = datetime.datetime.now(datetime.timezone.utc)
+                            logger_instance.info(f"Project state for {project_state.project_id} set to 'pending_human_review' by ARCA.")
+
+                        state_manager_instance._save_project_state() # Use the private method to save the modified state
+                        logger_instance.info(f"ARCA updated ProjectStateV2 for project {parsed_inputs.project_id}, cycle {current_cycle_id}.")
+                    else:
+                        logger_instance.warning(f"ARCA: Current cycle ID {current_cycle_id} not found in project state history. Cannot update cycle details.")
+                else:
+                    logger_instance.warning("ARCA: No current_cycle_id set in ProjectStateV2. Cannot update cycle details.")
+            except StatusFileError as e:
+                logger_instance.error(f"ARCA: Failed to update project state due to StatusFileError: {e}", exc_info=True)
+            except Exception as e: # Catch any other unexpected errors
+                logger_instance.error(f"ARCA: Unexpected error updating project state: {e}", exc_info=True)
+        elif not state_manager_instance:
+            logger_instance.warning("ARCA: StateManager instance not available. Skipping project state update.")
+
 
         return ARCAOutput(
             task_id=parsed_inputs.task_id,

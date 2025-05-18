@@ -15,6 +15,7 @@ from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 # Assuming ProjectChromaManagerAgent will provide methods to get/store artifacts
 # from chungoid.utils.project_chroma_manager import ProjectChromaManagerAgent # Placeholder
 from chungoid.schemas.common import ConfidenceScore # Assuming a common schema exists
+from chungoid.schemas.orchestration import SharedContext # ADDED SharedContext IMPORT
 from chungoid.schemas.autonomous_engine.loprd_schema import LOPRD # Import the actual LOPRD schema if available
 from chungoid.utils.json_schema_loader import load_json_schema_from_file # For LOPRD schema
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
@@ -30,6 +31,7 @@ class ProductAnalystAgentInput(BaseModel):
     project_id: str = Field(..., description="The ID of the current project.")
     # Potentially add context from ARCA if this is a refinement loop
     arca_feedback_doc_id: Optional[str] = Field(None, description="Document ID of feedback from ARCA if this is a refinement run.")
+    shared_context: Optional[SharedContext] = Field(None, description="The shared context from the orchestrator, providing broader project and workflow information.")
 
 class ProductAnalystAgentOutput(BaseModel):
     loprd_doc_id: str = Field(..., description="Document ID of the generated LOPRD JSON artifact in Chroma.")
@@ -77,6 +79,12 @@ class ProductAnalystAgent_v1(BaseAgent[ProductAnalystAgentInput, ProductAnalystA
 
     async def __call__(self, inputs: ProductAnalystAgentInput) -> ProductAnalystAgentOutput:
         self._logger_instance.info(f"ProductAnalystAgent_v1 invoked for project {inputs.project_id}.")
+
+        # Example of using shared_context if available
+        if inputs.shared_context:
+            self._logger_instance.info(f"Agent received SharedContext. Current cycle: {inputs.shared_context.current_cycle_id}, Current stage: {inputs.shared_context.current_stage_name}")
+            # Access other fields like inputs.shared_context.artifact_references.get("some_key")
+            # Or inputs.shared_context.get_scratchpad_data("some_temp_info")
 
         if not self.loprd_schema:
             return ProductAnalystAgentOutput(
