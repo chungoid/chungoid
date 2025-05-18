@@ -30,7 +30,7 @@ from chungoid.schemas.common_enums import FlowPauseStatus
 from chungoid.utils.llm_provider import LLMProvider, OpenAILLMProvider 
 # Import MasterStageSpec for type hinting in prompt examples
 from chungoid.schemas.master_flow import MasterStageSpec, MasterExecutionPlan # Added MasterExecutionPlan for helper methods
-from chungoid.agents.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
+from chungoid.runtime.agents.mocks.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
 
 logger = logging.getLogger(__name__)
 
@@ -358,17 +358,83 @@ class MasterPlannerReviewerAgent:
                 return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.MODIFY_MASTER_PLAN, suggestion_details=details, confidence_score=0.98, reasoning="Mock: TC_P2F1_MODIFY_02 - Modifying stage_B_fail_point.")
 
             if "trigger_TC_P2F1_RETRY_02_AGENT_SWAP" in initial_msg_content_from_stage_A:
-                logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_RETRY_02 mock: Swapping agent for stage_B_fail_point.")
-                details_agent_swap = RetryStageWithChangesDetails(target_stage_id="stage_B_fail_point", changes_to_stage_spec={"agent_id": "mock_alternative_agent_v1"})
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.RETRY_STAGE_WITH_CHANGES, suggestion_details=details_agent_swap, confidence_score=1.0, reasoning="Mock for TC_P2F1_RETRY_02: Change agent.")
+                logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_LLM_MODIFY_03 mock: Modifying stage_B_fail_point to use mock_alternative_agent_v1.")
+                original_stage_b_spec_model = input_payload.current_master_plan.stages.get("stage_B_fail_point")
+                if not original_stage_b_spec_model:
+                    return self._default_escalate_to_user("MOCK ERROR: Original spec for stage_B_fail_point not found for TC_P2F1_LLM_MODIFY_03.")
+                
+                try:
+                    # Create a new spec based on the old one, but change the agent_id
+                    updated_spec_data = original_stage_b_spec_model.model_dump(exclude_unset=False)
+                    updated_spec_data["agent_id"] = "mock_alternative_agent_v1"
+                    
+                    # Ensure essential inputs for mock_alternative_agent_v1 are mapped if not already.
+                    # MockAlternativeAgentV1Input requires 'setup_message'.
+                    # It also accepts 'trigger_fail' and 'modified_by_reviewer_TC_P2F1_MODIFY_02' but they are optional.
+                    if not isinstance(updated_spec_data.get("inputs"), dict):
+                        updated_spec_data["inputs"] = {}
+                    
+                    # If the original stage_B_fail_point had specific inputs for 'setup_message',
+                    # we should try to preserve it or set a default if compatible.
+                    # For this mock, we'll ensure 'setup_message' is explicitly set for the new agent.
+                    # The original 'stage_B_fail_point' was using:
+                    # "setup_message": "context.intermediate_outputs.setup_message.message" (or "context.outputs.stage_A_setup.message")
+                    # This path should still be valid for MockAlternativeAgentV1Input.
+                    if "setup_message" not in updated_spec_data["inputs"]:
+                        logger.info("TC_P2F1_LLM_MODIFY_03: 'setup_message' not in original inputs, setting default for mock_alternative_agent_v1.")
+                        # Check where stage_A_setup's message is. Based on recent tests, it's context.outputs.stage_A_setup.message
+                        updated_spec_data["inputs"]["setup_message"] = "context.outputs.stage_A_setup.message"
+
+                    # Preserve trigger_fail if it was there, though mock_alternative_agent_v1 ignores it.
+                    if "trigger_fail" not in updated_spec_data["inputs"] and original_stage_b_spec_model.inputs and isinstance(original_stage_b_spec_model.inputs, dict) and "trigger_fail" in original_stage_b_spec_model.inputs:
+                         updated_spec_data["inputs"]["trigger_fail"] = original_stage_b_spec_model.inputs["trigger_fail"]
+                    
+                    # New success criteria for MockAlternativeAgentV1
+                    updated_spec_data["success_criteria"] = [
+                        "alternative_processed_message EXISTS",
+                        "original_trigger_fail_value IS_BOOL"
+                    ]
+                    
+                    final_updated_stage_spec = MasterStageSpec(**updated_spec_data)
+
+                except Exception as e:
+                    return self._default_escalate_to_user(f"MOCK ERROR: Failed to construct updated spec for TC_P2F1_LLM_MODIFY_03: {e}")
+
+                modification_details = ModifyMasterPlanModifyStageDetails(
+                    action="modify_stage_spec",
+                    target_stage_id="stage_B_fail_point",
+                    updated_stage_spec=final_updated_stage_spec
+                )
+                return MasterPlannerReviewerOutput(
+                    suggestion_type=ReviewerActionType.MODIFY_MASTER_PLAN,
+                    suggestion_details=modification_details,
+                    confidence_score=0.99, # High confidence for mock
+                    reasoning="Mock for TC_P2F1_LLM_MODIFY_03: Change agent_id for stage_B_fail_point to mock_alternative_agent_v1."
+                )
 
             if "trigger_TC_P2F1_RETRY_AS_IS" in initial_msg_content_from_stage_A:
-                error_is_transient = input_payload.triggering_error_details and isinstance(input_payload.triggering_error_details.message, str) and "Intentional transient failure" in input_payload.triggering_error_details.message
-                if error_is_transient:
-                    logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_OTHER_01 mock: RETRY_STAGE_AS_IS for stage_B_fail_point.")
-                    return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.RETRY_STAGE_AS_IS, confidence_score=1.0, reasoning="Mock for TC_P2F1_OTHER_01: Simulated transient error.")
+                # This must match the failure_message_override in test_reviewer_flow_v1.yaml for this TC
+                expected_error_substring = "Intentional transient failure for TC_P2F1_OTHER_01"
+                actual_error_message = input_payload.triggering_error_details.message if input_payload.triggering_error_details else ""
+                
+                logger.debug(f"Reviewer Mock (RETRY_AS_IS): initial_msg contains trigger.")
+                logger.debug(f"Reviewer Mock (RETRY_AS_IS): Expected error substring: '{expected_error_substring}' (Type: {type(expected_error_substring)}, Len: {len(expected_error_substring)}, Repr: {repr(expected_error_substring)})")
+                logger.debug(f"Reviewer Mock (RETRY_AS_IS): Actual error message: '{actual_error_message}' (Type: {type(actual_error_message)}, Len: {len(actual_error_message)}, Repr: {repr(actual_error_message)})")
+
+                comparison_result = expected_error_substring in actual_error_message
+                logger.debug(f"Reviewer Mock (RETRY_AS_IS): Comparison `expected in actual` result: {comparison_result}")
+
+                if comparison_result:
+                    logger.info(f"Reviewer Mock: Matched TC_P2F1_RETRY_AS_IS. Suggesting RETRY_STAGE_AS_IS.")
+                    return MasterPlannerReviewerOutput(
+                        suggestion_type=ReviewerActionType.RETRY_STAGE_AS_IS,
+                        confidence_score=1.0,
+                        reasoning="Mock for TC_P2F1_RETRY_AS_IS: Simulated transient error."
+                    )
                 else:
-                    logger.warning(f"MasterPlannerReviewerAgent: TC_P2F1_RETRY_AS_IS trigger, but error not expected mock transient. Error: {input_payload.triggering_error_details.message if input_payload.triggering_error_details else 'N/A'}")
+                    logger.warning(f"Reviewer Mock: TC_P2F1_RETRY_AS_IS trigger, but error message mismatch. Expected substring {repr(expected_error_substring)} not in actual {repr(actual_error_message)}. Falling back or to LLM.")
+                    # Fallback logic or LLM call would happen here
+                    pass # Allow fallback to LLM or other mocks
 
             if "trigger_TC_P2F1_ESCALATE" in initial_msg_content_from_stage_A:
                 logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_OTHER_02 mock: ESCALATE_TO_USER for stage_B_fail_point.")
@@ -379,39 +445,55 @@ class MasterPlannerReviewerAgent:
                 details = ModifyMasterPlanRemoveStageDetails(action="remove_stage", target_stage_id="stage_B_fail_point")
                 return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.MODIFY_MASTER_PLAN, suggestion_details=details, confidence_score=1.0, reasoning="Mock for TC_P2F1_MODIFY_01: Remove stage_B_fail_point.")
 
-            # Clarification logic for stage_B_fail_point
-            needs_clarification = "stage_B_needs_clarification" in initial_msg_content_from_stage_A
-            clarification_provided = False
-            if input_payload.full_context_at_pause and input_payload.full_context_at_pause.get("intermediate_outputs", {}):
-                clar_key_pattern = "clarification_for_stage_b"
-                alt_clar_key = "stage_BC_clarify_for_B_output"
-                clar_data = input_payload.full_context_at_pause["intermediate_outputs"].get(clar_key_pattern) or \
-                            input_payload.full_context_at_pause["intermediate_outputs"].get(alt_clar_key)
-                if clar_data:
-                    clar_content = getattr(clar_data, 'clarification_provided', None) if hasattr(clar_data, 'clarification_provided') else clar_data.get('clarification_provided')
-                    if clar_content: clarification_provided = True
-            
-            if needs_clarification and not clarification_provided:
-                logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (needs clarification): ADD_CLARIFICATION_STAGE.")
-                new_stage_spec_dict = {
-                    "id": "stage_BC_clarify_for_B", "name": "Clarification for Stage B (Mock)", "description": "Mock clarification stage.",
-                    "number": input_payload.paused_stage_spec.get("number", 0.0) + 0.1, "agent_id": "mock_clarification_agent_v1",
-                    "inputs": {"query": f"Clarification for stage_B based on: {initial_msg_content_from_stage_A}"},
-                    "output_context_path": "intermediate_outputs.clarification_for_stage_b", "next_stage": "stage_B_fail_point",
-                    "success_criteria": ["clarification_provided IS_NOT_EMPTY"], "on_failure": {"action": "FAIL_MASTER_FLOW"}
-                }
-                try: final_new_stage_spec = MasterStageSpec(**new_stage_spec_dict)
-                except Exception as e: return self._default_escalate_to_user(f"Mock ADD_CLARIFICATION_STAGE spec error: {e}")
-                details_add = AddClarificationStageDetails(new_stage_spec=final_new_stage_spec, insert_before_stage_id="stage_B_fail_point", original_failed_stage_id="stage_B_fail_point")
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.ADD_CLARIFICATION_STAGE, suggestion_details=details_add, confidence_score=0.9, reasoning="Mock: Adding clarification for Stage B.")
-
-            if needs_clarification and clarification_provided:
-                logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (clarification provided): RETRY_STAGE_WITH_CHANGES.")
-                details_retry = RetryStageWithChangesDetails(
-                    target_stage_id="stage_B_fail_point",
-                    changes_to_stage_spec={"inputs": {"trigger_fail": False, "setup_message": "context.intermediate_outputs.setup_message.message", "clarification_input": "context.intermediate_outputs.clarification_for_stage_b.clarification_provided"}}
+            # TC_P2F1_OTHER_03: NO_ACTION_SUGGESTED
+            # This mock path is for testing the orchestrator's behavior when the reviewer explicitly suggests NO_ACTION_SUGGESTED,
+            # allowing the stage's on_failure (or the default on_failure if not specified) to take over.
+            if "trigger_TC_P2F1_NO_ACTION" in initial_msg_content_from_stage_A:
+                logger.info("Reviewer Mock: Matched TC_P2F1_NO_ACTION. Suggesting NO_ACTION_SUGGESTED.")
+                return MasterPlannerReviewerOutput(
+                    suggestion_type=ReviewerActionType.NO_ACTION_SUGGESTED,
+                    suggestion_details={}, 
+                    reasoning="Mock for TC_P2F1_NO_ACTION: Explicitly suggesting NO_ACTION_SUGGESTED to test orchestrator's on_failure handling for the stage.",
+                    confidence_score=1.0
                 )
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.RETRY_STAGE_WITH_CHANGES, suggestion_details=details_retry, confidence_score=0.9, reasoning="Mock: Clarification provided. Retrying Stage B.")
+
+            # Clarification logic for stage_B_fail_point
+            # This section is specific to stage_B_fail_point and its clarification needs.
+            # It should ONLY execute if paused_stage_id is 'stage_B_fail_point'.
+            # However, the initial_msg_content_from_stage_A is general.
+            if input_payload.paused_stage_id == "stage_B_fail_point": # Ensure this section is scoped
+                needs_clarification = "stage_B_needs_clarification" in initial_msg_content_from_stage_A
+                clarification_provided = False
+                if input_payload.full_context_at_pause and input_payload.full_context_at_pause.get("intermediate_outputs", {}):
+                    clar_key_pattern = "clarification_for_stage_b"
+                    alt_clar_key = "stage_BC_clarify_for_B_output"
+                    clar_data = input_payload.full_context_at_pause["intermediate_outputs"].get(clar_key_pattern) or \
+                                input_payload.full_context_at_pause["intermediate_outputs"].get(alt_clar_key)
+                    if clar_data:
+                        clar_content = getattr(clar_data, 'clarification_provided', None) if hasattr(clar_data, 'clarification_provided') else clar_data.get('clarification_provided')
+                        if clar_content: clarification_provided = True
+                
+                if needs_clarification and not clarification_provided:
+                    logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (needs clarification): ADD_CLARIFICATION_STAGE.")
+                    new_stage_spec_dict = {
+                        "id": "stage_BC_clarify_for_B", "name": "Clarification for Stage B (Mock)", "description": "Mock clarification stage.",
+                        "number": input_payload.paused_stage_spec.get("number", 0.0) + 0.1, "agent_id": "mock_clarification_agent_v1",
+                        "inputs": {"query": f"Clarification for stage_B based on: {initial_msg_content_from_stage_A}"},
+                        "output_context_path": "intermediate_outputs.clarification_for_stage_b", "next_stage": "stage_B_fail_point",
+                        "success_criteria": ["clarification_provided IS_NOT_EMPTY"], "on_failure": {"action": "FAIL_MASTER_FLOW"}
+                    }
+                    try: final_new_stage_spec = MasterStageSpec(**new_stage_spec_dict)
+                    except Exception as e: return self._default_escalate_to_user(f"Mock ADD_CLARIFICATION_STAGE spec error: {e}")
+                    details_add = AddClarificationStageDetails(new_stage_spec=final_new_stage_spec, insert_before_stage_id="stage_B_fail_point", original_failed_stage_id="stage_B_fail_point")
+                    return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.ADD_CLARIFICATION_STAGE, suggestion_details=details_add, confidence_score=0.9, reasoning="Mock: Adding clarification for Stage B.")
+
+                if needs_clarification and clarification_provided:
+                    logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (clarification provided): RETRY_STAGE_WITH_CHANGES.")
+                    details_retry = RetryStageWithChangesDetails(
+                        target_stage_id="stage_B_fail_point",
+                        changes_to_stage_spec={"inputs": {"trigger_fail": False, "setup_message": "context.intermediate_outputs.setup_message.message", "clarification_input": "context.intermediate_outputs.clarification_for_stage_b.clarification_provided"}}
+                    )
+                    return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.RETRY_STAGE_WITH_CHANGES, suggestion_details=details_retry, confidence_score=0.9, reasoning="Mock: Clarification provided. Retrying Stage B.")
             
             # Fallback for stage_B_fail_point if clarification not explicitly handled by above AND NO LLM
             if not self.llm_client:
@@ -485,11 +567,32 @@ class MasterPlannerReviewerAgent:
                         if raw_details and "updated_stage_spec" in raw_details and isinstance(raw_details["updated_stage_spec"], dict):
                              raw_details["updated_stage_spec"] = MasterStageSpec(**raw_details["updated_stage_spec"])
                         parsed_details = ModifyMasterPlanModifyStageDetails(**raw_details) if raw_details else None
-                    else: parsed_details = raw_details
+                    else: # Default for MODIFY_MASTER_PLAN if action is unknown or not remove/modify_spec
+                        parsed_details = raw_details # Pass through raw details if structure is not recognized for specific parsing
+                elif suggestion_type_val == ReviewerActionType.ESCALATE_TO_USER.value: # ADDED THIS BLOCK
+                    parsed_details = raw_details # Assign raw_details for ESCALATE_TO_USER
+                # For other types like RETRY_STAGE_AS_IS, PROCEED_AS_IS, NO_ACTION_SUGGESTED, 
+                # suggestion_details might be None or a simple dict if the LLM provides one.
+                # If raw_details is None for these, parsed_details will also correctly be None.
+                # If raw_details is a dict (e.g. for ESCALATE_TO_USER's message_to_user), it will be passed.
+                elif parsed_details is None and isinstance(raw_details, dict): # Fallback to assign raw_details if it's a dict and not yet parsed
+                    parsed_details = raw_details
+
+                # Normalise confidence_score from LLM output (could be 0-100 or 0-1)
+                raw_conf = llm_suggestion_dict.get("confidence_score", 0.75)
+                try:
+                    conf_float = float(raw_conf)
+                except (TypeError, ValueError):
+                    conf_float = 0.75
+                if conf_float > 1:
+                    conf_float = conf_float / 100.0 if conf_float <= 100 else 1.0
+                if conf_float < 0:
+                    conf_float = 0.0
 
                 return MasterPlannerReviewerOutput(
-                    suggestion_type=suggestion_type_val, suggestion_details=parsed_details,
-                    confidence_score=llm_suggestion_dict.get("confidence_score", 0.75),
+                    suggestion_type=suggestion_type_val,
+                    suggestion_details=parsed_details,
+                    confidence_score=conf_float,
                     reasoning=llm_suggestion_dict.get("reasoning", "LLM provided suggestion.")
                 )
             except json.JSONDecodeError as json_err:
@@ -545,6 +648,11 @@ class MasterPlannerReviewerAgent:
                 reasoning=f"Failed during sync execution: {e}",
                 confidence_score=0.0
             )
+
+    async def __call__(self, input_payload: MasterPlannerReviewerInput) -> MasterPlannerReviewerOutput:
+        """Makes the agent instance directly callable, invoking its async logic."""
+        logger.debug(f"MasterPlannerReviewerAgent instance __call__ invoked with input_payload: {type(input_payload)}")
+        return await self.invoke_async(input_payload)
 
 def get_agent_card_static() -> AgentCard:
     return MasterPlannerReviewerAgent().get_agent_card()

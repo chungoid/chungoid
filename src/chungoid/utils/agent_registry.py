@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 import json
 import logging
 
+# Define logger at module level
+logger = logging.getLogger(__name__)
+
 from .chroma_client_factory import get_client
 from .agent_registry_meta import AgentCategory, AgentVisibility
 

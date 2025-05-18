@@ -46,7 +46,7 @@ class PausedRunDetails(BaseModel):
     paused_at_stage_id: str = Field(..., description="The ID of the stage where execution paused.")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When the pause occurred.")
     status: FlowPauseStatus = Field(FlowPauseStatus.PAUSED_UNKNOWN, description="Structured status indicating why the flow is paused.")
-    context_snapshot: Dict[str, Any] = Field(..., description="The full execution context at the time of pause.")
+    context_snapshot_ref: Optional[str] = Field(None, description="Reference to where the full context snapshot is stored, e.g., a file path or DB key.")
     error_details: Optional[AgentErrorDetails] = Field(None, description="Details of the error that caused the pause, if applicable.")
     clarification_request: Optional[Dict[str, Any]] = Field(None, description="Details needed for user clarification if status indicates clarification is needed.")
 

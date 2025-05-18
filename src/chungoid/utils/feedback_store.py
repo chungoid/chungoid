@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
+import json
 
 from pydantic import BaseModel, Field
 
@@ -70,6 +71,12 @@ class FeedbackStore:
     # ------------------------------------------------------------------
     def add(self, fb: ProcessFeedback) -> None:
         meta = fb.model_dump(exclude={"comment"})
+        # Convert datetime and dict to string for Chroma compatibility
+        if isinstance(meta.get("timestamp"), datetime):
+            meta["timestamp"] = meta["timestamp"].isoformat()
+        if isinstance(meta.get("extra"), dict):
+            meta["extra"] = json.dumps(meta["extra"])
+            
         self._coll.add(documents=[fb.comment], ids=[self._make_id(fb)], metadatas=[meta])
 
     def add_many(self, fbs: Sequence[ProcessFeedback]) -> None:
@@ -77,8 +84,18 @@ class FeedbackStore:
             return
         ids = [self._make_id(f) for f in fbs]
         docs = [f.comment for f in fbs]
-        metas = [f.model_dump(exclude={"comment"}) for f in fbs]
-        self._coll.add(documents=docs, ids=ids, metadatas=metas)
+        metas_raw = [f.model_dump(exclude={"comment"}) for f in fbs]
+        
+        metas_processed = []
+        for meta_item in metas_raw:
+            # Convert datetime and dict to string for Chroma compatibility
+            if isinstance(meta_item.get("timestamp"), datetime):
+                meta_item["timestamp"] = meta_item["timestamp"].isoformat()
+            if isinstance(meta_item.get("extra"), dict):
+                meta_item["extra"] = json.dumps(meta_item["extra"])
+            metas_processed.append(meta_item)
+            
+        self._coll.add(documents=docs, ids=ids, metadatas=metas_processed)
 
     def query(
         self,

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator # IMPORT model_validator
 import yaml # For from_yaml method
 
 from .user_goal_schemas import UserGoalRequest # <<< ADD IMPORT
-from .common_enums import OnFailureAction # <<< ADD IMPORT FOR OnFailureAction
+from .common_enums import OnFailureAction # <<< MODIFIED IMPORT: Removed AgentCategory here
+from chungoid.utils.agent_registry_meta import AgentCategory # <<< CORRECTED IMPORT
+from chungoid.schemas.common import ArbitraryModel, InputOutputContextPathStr # Ensure InputOutputContextPathStr is defined or imported
+from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus # <<< REMOVED RecoveryAction, StageOnFailureAction
 
 # TODO: Potentially reference or reuse parts of StageSpec from orchestrator.py 
 # if there's significant overlap and it makes sense.
@@ -46,7 +49,7 @@ class MasterStageSpec(BaseModel):
     name: str
     description: Optional[str] = None
     agent_id: Optional[str] = Field(None, description="ID of the agent to invoke (e.g., 'CoreStageExecutorAgent')")
-    agent_category: Optional[str] = Field(None, description="Category of agent to invoke if agent_id is not specified.")
+    agent_category: Optional[AgentCategory] = Field(None, description="Category of agent to invoke if agent_id is not specified.")
     agent_selection_preferences: Optional[Dict[str, Any]] = Field(None, description="Preferences for selecting an agent from agent_category. Example: {'capability_profile_match': {'language': 'python'}, 'priority_gte': 5}")
     inputs: Optional[Dict[str, Any]] = Field(
         None, 

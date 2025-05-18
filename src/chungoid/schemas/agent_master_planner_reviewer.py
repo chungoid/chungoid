@@ -20,6 +20,14 @@ class ReviewerActionType(Enum):
     NO_ACTION_SUGGESTED = "NO_ACTION_SUGGESTED"
 
 
+class ReviewerModifyPlanAction(Enum):
+    """Specific actions for MODIFY_MASTER_PLAN suggestion type."""
+    REMOVE_STAGE = "remove_stage"
+    MODIFY_STAGE_SPEC = "modify_stage_spec"
+    # ADD_STAGE could be another if needed for direct add via MODIFY_MASTER_PLAN
+    # Currently, ADD_CLARIFICATION_STAGE is a separate ReviewerActionType
+
+
 class MasterPlannerReviewerInput(BaseModel):
     """Input for the MasterPlannerReviewerAgent."""
     current_master_plan: MasterExecutionPlan = Field(..., description="The current MasterExecutionPlan that is being executed.")
@@ -65,11 +73,11 @@ class AddClarificationStageDetails(BaseModel):
     )
 
 class ModifyMasterPlanRemoveStageDetails(BaseModel):
-    action: Literal["remove_stage"] = "remove_stage"
+    action: Literal["remove_stage"] = ReviewerModifyPlanAction.REMOVE_STAGE.value
     target_stage_id: str = Field(..., description="The ID of the master stage to remove from the plan.")
 
 class ModifyMasterPlanModifyStageDetails(BaseModel):
-    action: Literal["modify_stage_spec"] = "modify_stage_spec"
+    action: Literal["modify_stage_spec"] = ReviewerModifyPlanAction.MODIFY_STAGE_SPEC.value
     target_stage_id: str = Field(..., description="The ID of the master stage to modify.")
     updated_stage_spec: MasterStageSpec = Field(..., description="The new, complete specification for the target stage.")
 
@@ -113,14 +121,18 @@ class MasterPlannerReviewerOutput(BaseModel):
         elif suggestion_type == ReviewerActionType.MODIFY_MASTER_PLAN:
             if not isinstance(v, (ModifyMasterPlanRemoveStageDetails, ModifyMasterPlanModifyStageDetails)):
                 if isinstance(v, dict) and "action" in v:
-                    action = v.get("action")
-                    if action == "remove_stage":
-                        return ModifyMasterPlanRemoveStageDetails(**v)
-                    elif action == "modify_stage_spec":
-                        return ModifyMasterPlanModifyStageDetails(**v)
-                    else:
-                        raise ValueError(f"Unknown action '{action}' for MODIFY_MASTER_PLAN details")
-                raise ValueError("suggestion_details for MODIFY_MASTER_PLAN must be ModifyMasterPlanRemoveStageDetails or ModifyMasterPlanModifyStageDetails")
+                    action_str = v.get("action")
+                    try:
+                        action_enum = ReviewerModifyPlanAction(action_str)
+                        if action_enum == ReviewerModifyPlanAction.REMOVE_STAGE:
+                            return ModifyMasterPlanRemoveStageDetails(**v)
+                        elif action_enum == ReviewerModifyPlanAction.MODIFY_STAGE_SPEC:
+                            return ModifyMasterPlanModifyStageDetails(**v)
+                        else:
+                            raise ValueError(f"Unknown action enum '{action_enum}' for MODIFY_MASTER_PLAN details")
+                    except ValueError:
+                        raise ValueError(f"Invalid action string '{action_str}' for MODIFY_MASTER_PLAN details")
+                raise ValueError("suggestion_details for MODIFY_MASTER_PLAN must be ModifyMasterPlanRemoveStageDetails or ModifyMasterPlanModifyStageDetails, or a dict with a valid 'action' field.")
         # Add checks for other types if their details become strictly typed
         return v
 

@@ -1,8 +1,67 @@
 import pytest
 from unittest.mock import MagicMock
-import chromadb
 import os # Add os import
 import logging
+
+# ---------------------------------------------------------------------------
+# Lightweight stub for `chromadb` during test collection
+# ---------------------------------------------------------------------------
+# Importing the real `chromadb` package pulls in heavy dependencies which slow
+# down (or, on CI, occasionally hang) pytest collection.  We only need the
+# *names* `ClientAPI` and `Collection` for type-based `spec` arguments used in
+# MagicMocks below – their runtime behaviour is irrelevant for unit testing.
+
+import sys
+from types import ModuleType
+
+# If the real library is already imported keep it, otherwise register a stub.
+if "chromadb" not in sys.modules:
+    chroma_api_stub = ModuleType("chromadb.api")
+
+    class _ClientAPI:  # minimal placeholder – no behaviour needed
+        pass
+
+    class _Collection:  # minimal placeholder – no behaviour needed
+        pass
+
+    # Expose ClientAPI and Collection from the api stub
+    chroma_api_stub.ClientAPI = _ClientAPI
+    chroma_api_stub.Collection = _Collection
+    sys.modules["chromadb.api"] = chroma_api_stub
+
+    # Create a stub for chromadb.config and its Settings class
+    chroma_config_stub = ModuleType("chromadb.config")
+    class _Settings: # minimal placeholder
+        pass
+    chroma_config_stub.Settings = _Settings
+    sys.modules["chromadb.config"] = chroma_config_stub
+
+    # Create a stub for chromadb.utils
+    chroma_utils_stub = ModuleType("chromadb.utils")
+    # Add embedding_functions as a MagicMock or a placeholder
+    embedding_functions_stub = ModuleType("chromadb.utils.embedding_functions")
+    class _MockDefaultEmbeddingFunction: # Placeholder class
+        def __init__(self, name: str = "mock_ef"):
+            self.name = name
+    embedding_functions_stub.DefaultEmbeddingFunction = _MockDefaultEmbeddingFunction
+    chroma_utils_stub.embedding_functions = embedding_functions_stub
+    sys.modules["chromadb.utils"] = chroma_utils_stub
+    sys.modules["chromadb.utils.embedding_functions"] = embedding_functions_stub # Ensure the submodule is also registered
+
+    # Create the top-level chromadb stub and link the api stub to it
+    chroma_stub = ModuleType("chromadb")
+    chroma_stub.api = chroma_api_stub
+    chroma_stub.config = chroma_config_stub
+    chroma_stub.utils = chroma_utils_stub
+
+    # Add ClientAPI and Collection to the top-level stub as well for compatibility
+    # with code that might expect from chromadb import ClientAPI (or similar direct access)
+    chroma_stub.ClientAPI = _ClientAPI
+    chroma_stub.Collection = _Collection
+
+    sys.modules["chromadb"] = chroma_stub
+
+import chromadb  # noqa: E402 – import after stub registration is intentional
 
 # Autouse fixture that patches utils.chroma_utils.get_chroma_client so
 # no test ever tries to connect to a real Chroma server.

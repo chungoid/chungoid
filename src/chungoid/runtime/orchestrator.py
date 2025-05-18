@@ -8,7 +8,7 @@ surface incrementally.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Callable, cast
 from pathlib import Path # ADDED THIS IMPORT
 import datetime as _dt
 from datetime import datetime, timezone
@@ -29,10 +29,12 @@ from chungoid.schemas.agent_master_planner_reviewer import (
     MasterPlannerReviewerInput, 
     MasterPlannerReviewerOutput, 
     ReviewerActionType,
+    ReviewerModifyPlanAction, # ADDED THIS IMPORT
     RetryStageWithChangesDetails, 
     AddClarificationStageDetails, 
     ModifyMasterPlanRemoveStageDetails,
     ModifyMasterPlanModifyStageDetails,
+    ModifyMasterPlanDetails, # This is the discriminated union
 )
 
 # New import for Metrics
@@ -45,6 +47,8 @@ import copy
 import inspect
 import asyncio
 import uuid
+import functools
+import json
 
 # New imports for category resolution errors
 from chungoid.utils.agent_resolver import NoAgentFoundForCategoryError, AmbiguousAgentCategoryError
@@ -610,6 +614,21 @@ class AsyncOrchestrator(BaseOrchestrator):
             self.logger.info(f"Criterion '{criterion}' (ENDS_WITH check: '{str(actual_val)[:50]}...' ENDS_WITH '{expected_substring}') evaluated to {result}")
             return result
 
+        elif " IS_BOOL" in criterion_upper: # ADDED BLOCK FOR IS_BOOL
+            path_to_check = criterion_upper.split(" IS_BOOL", 1)[0].strip()
+            original_path_to_check = criterion[:criterion_upper.find(" IS_BOOL")].strip()
+            actual_val = _resolve_path(original_path_to_check, stage_outputs)
+            
+            is_actually_bool = isinstance(actual_val, bool)
+            # For "IS_NOT_BOOL", the logic is just the negation
+            is_not_bool_operator = " IS_NOT_BOOL" in criterion_upper # Check if "IS_NOT_BOOL" specifically
+            
+            result = not is_actually_bool if is_not_bool_operator else is_actually_bool
+            
+            operator_log_str = "IS_NOT_BOOL" if is_not_bool_operator else "IS_BOOL"
+            self.logger.info(f"Criterion '{criterion}' ({operator_log_str} check for '{original_path_to_check}', actual type: {type(actual_val)}) evaluated to {result}")
+            return result
+
         # Simple Comparison (e.g., "outputs.metric == true", "outputs.count > 0")
         # Re-use parts of _parse_condition logic but scoped to stage_outputs
         try:
@@ -999,31 +1018,61 @@ class AsyncOrchestrator(BaseOrchestrator):
                 "clarification_request": None
             }
 
+            # Determine the correct pause status for the reviewer input
+            # This is typically PAUSED_FOR_AGENT_FAILURE_IN_MASTER for this path
+            actual_pause_status_for_reviewer = FlowPauseStatus.PAUSED_FOR_AGENT_FAILURE_IN_MASTER
+
             reviewer_input = MasterPlannerReviewerInput(
-                current_master_plan=self.current_plan,
-                paused_run_details=synthetic_paused_run_details,
-                pause_status=FlowPauseStatus.PAUSED_FOR_AGENT_FAILURE_IN_MASTER, # <<< THIS LINE CHANGED
-                paused_stage_id=current_stage_name,
+                current_master_plan=self.current_plan, # Corrected: Field name is current_master_plan
+                paused_run_details=synthetic_paused_run_details, # Corrected: Pass the synthetic details
+                pause_status=actual_pause_status_for_reviewer, # Corrected: Pass the determined pause status
+                paused_stage_id=current_stage_name, # Corrected: This is the ID of the stage that led to the pause
                 triggering_error_details=agent_error_details,
-                full_context_at_pause=copy.deepcopy(current_context)
+                full_context_at_pause=current_context # This is the full context from the main loop
+                # project_config_snapshot was removed as it's not a field
             )
 
-            self.logger.debug(f"[RunID: {run_id}] MasterPlannerReviewerAgent input: {reviewer_input.model_dump_json(indent=2)}")
-            
-            reviewer_output: MasterPlannerReviewerOutput # Type hint
-            if inspect.iscoroutinefunction(reviewer_agent_callable) or inspect.iscoroutinefunction(getattr(reviewer_agent_callable, '__call__', None)):
-                reviewer_output = await reviewer_agent_callable(reviewer_input) # REMOVED full_context
-            elif callable(reviewer_agent_callable):
-                # For sync callables, we pass input_payload directly. The callable itself should handle context if needed via input_payload.
-                reviewer_output = await asyncio.to_thread(reviewer_agent_callable, reviewer_input) # REMOVED full_context
-            else:
-                raise TypeError(f"Reviewer agent {self.master_planner_reviewer_agent_id} is not callable.")
+            try:
+                # Attempt to log the detailed input, but be resilient to serialization errors
+                reviewer_input_json = reviewer_input.model_dump_json(indent=2)
+                self.logger.debug(f"[RunID: {run_id}] MasterPlannerReviewerAgent input: {reviewer_input_json}")
+            except Exception as e_ser:
+                self.logger.warning(f"[RunID: {run_id}] Could not serialize MasterPlannerReviewerInput to JSON for logging due to: {e_ser}. Logging summary instead.")
+                summary = {
+                    "failed_stage_id": reviewer_input.paused_stage_id, # Corrected: use paused_stage_id
+                    "triggering_error_type": reviewer_input.triggering_error_details.error_type if reviewer_input.triggering_error_details else "None",
+                    "plan_stage_count": len(reviewer_input.current_master_plan.stages) if reviewer_input.current_master_plan else 0 # Corrected: use current_master_plan
+                }
+                self.logger.debug(f"[RunID: {run_id}] MasterPlannerReviewerAgent input summary: {summary}")
 
-            self.logger.info(f"[RunID: {run_id}] MasterPlannerReviewerAgent suggested: {reviewer_output.suggestion_type.value}. Reasoning: {reviewer_output.reasoning}")
-            return reviewer_output
+            suggestion: Optional[MasterPlannerReviewerOutput] = None
+            try:
+                reviewer_output: MasterPlannerReviewerOutput # Type hint
+                
+                # ADDED DETAILED LOGGING FOR INSPECTION RESULTS
+                is_coro_func = inspect.iscoroutinefunction(reviewer_agent_callable)
+                is_callable_attr_coro = inspect.iscoroutinefunction(getattr(reviewer_agent_callable, '__call__', None))
+                is_plain_callable = callable(reviewer_agent_callable)
+                self.logger.debug(f"[RunID: {run_id}] Reviewer callable inspection: iscoroutinefunction={is_coro_func}, is __call__ coroutine={is_callable_attr_coro}, is callable={is_plain_callable}, type={type(reviewer_agent_callable)}")
 
-        except Exception as reviewer_exc:
-            self.logger.error(f"[RunID: {run_id}] Error during MasterPlannerReviewerAgent invocation: {reviewer_exc}", exc_info=True)
+                if is_coro_func or is_callable_attr_coro:
+                    reviewer_output = await reviewer_agent_callable(input_payload=reviewer_input)
+                elif is_plain_callable:
+                    # For sync callables, we pass input_payload directly. The callable itself should handle context if needed via input_payload.
+                    self.logger.warning(f"[RunID: {run_id}] Reviewer agent '{self.master_planner_reviewer_agent_id}' resolved to a sync callable. Invoking via asyncio.to_thread.") # ADDED WARNING
+                    reviewer_output = await asyncio.to_thread(reviewer_agent_callable, reviewer_input)
+                else:
+                    raise TypeError(f"Reviewer agent {self.master_planner_reviewer_agent_id} is not callable.")
+
+                self.logger.info(f"[RunID: {run_id}] MasterPlannerReviewerAgent suggested: {reviewer_output.suggestion_type.value}. Reasoning: {reviewer_output.reasoning}")
+                return reviewer_output
+
+            except Exception as reviewer_exc:
+                self.logger.error(f"[RunID: {run_id}] Error during MasterPlannerReviewerAgent invocation: {reviewer_exc}", exc_info=True)
+                return None
+
+        except Exception as e:
+            self.logger.error(f"[RunID: {run_id}] Error during MasterPlannerReviewerAgent invocation: {e}", exc_info=True)
             return None
 
     async def _execute_master_flow_loop(
@@ -1147,13 +1196,117 @@ class AsyncOrchestrator(BaseOrchestrator):
                      stage_failed_or_paused = True # Mark as paused
 
                 else: # Resolve and invoke actual agent
-                    agent_callable = self.agent_provider.get(current_stage_spec.agent_id) # REMOVED current_stage_spec.agent_category
-                    if agent_callable:
-                        resolved_agent_id_for_stage = getattr(agent_callable, 'AGENT_ID', current_stage_spec.agent_id) # Get actual resolved agent ID, fallback to spec
-                        self.logger.info(
-                            f"[RunID: {run_id}] Invoking agent '{resolved_agent_id_for_stage}' for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}'."
-                        )
+                    agent_callable: Optional[Callable] = None
+                    resolved_agent_id_for_invocation = current_stage_spec.agent_id
+
+                    if not resolved_agent_id_for_invocation and current_stage_spec.agent_category:
+                        self.logger.info(f"[RunID: {run_id}] Stage '{current_stage_name_for_this_iteration_logging_and_hop_info}' has no agent_id, attempting to resolve by category: {current_stage_spec.agent_category}")
+                        try:
+                            # Resolve enum to raw value to match registry storage
+                            cat_str = (
+                                current_stage_spec.agent_category.value
+                                if hasattr(current_stage_spec.agent_category, "value")
+                                else str(current_stage_spec.agent_category)
+                            )
+                            resolved_agent_id_for_invocation, _resolved_callable = await self.agent_provider.resolve_agent_by_category(
+                                cat_str,
+                                preferences=current_stage_spec.agent_selection_preferences,
+                            )
+                            resolved_agent_id_for_stage = resolved_agent_id_for_invocation  # Keep logging variable in sync
+                            self.logger.info(
+                                f"[RunID: {run_id}] Resolved agent_id '{resolved_agent_id_for_invocation}' from category '{current_stage_spec.agent_category}'."
+                            )
+                        except Exception as e_res_async:
+                            self.logger.error(
+                                f"[RunID: {run_id}] Failed to resolve agent_id from category '{current_stage_spec.agent_category}': {e_res_async}",
+                                exc_info=True,
+                            )
+                            agent_error_details = AgentErrorDetails(
+                                agent_id=None,
+                                error_type="AgentResolutionError",
+                                stage_id=current_stage_name_for_this_iteration_logging_and_hop_info,
+                                message=f"Could not resolve agent from category {current_stage_spec.agent_category}: {e_res_async}",
+                            )
+                            stage_failed_or_paused = True
+                            stage_final_status = StageStatus.ERROR
+                        except Exception as e_resolve:
+                            self.logger.error(f"[RunID: {run_id}] Exception during agent resolution by category '{current_stage_spec.agent_category}': {e_resolve}", exc_info=True)
+                            agent_error_details = AgentErrorDetails(agent_id=None, error_type="AgentResolutionError", stage_id=current_stage_name_for_this_iteration_logging_and_hop_info, message=f"Exception resolving agent from category {current_stage_spec.agent_category}: {e_resolve}")
+                            stage_failed_or_paused = True
+                            stage_final_status = StageStatus.ERROR
+                            # continue
+                    
+                    if not stage_failed_or_paused: # Only try to get callable if no resolution error yet
+                        if not resolved_agent_id_for_invocation:
+                            self.logger.error(f"[RunID: {run_id}] No agent_id specified or resolved for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}'. Cannot proceed with this stage.")
+                            agent_error_details = AgentErrorDetails(agent_id=None, error_type="AgentConfigurationError", stage_id=current_stage_name_for_this_iteration_logging_and_hop_info, message="No agent_id specified or resolved.")
+                            stage_failed_or_paused = True
+                            stage_final_status = StageStatus.ERROR # Mark as error for this attempt
+                        else:
+                            try:
+                                # Now get the agent callable using the (potentially resolved) agent ID
+                                agent_callable = self.agent_provider.get(resolved_agent_id_for_invocation)
+                            except Exception as e_get_agent:
+                                self.logger.error(f"[RunID: {run_id}] Failed to get agent callable for ID '{resolved_agent_id_for_invocation}': {e_get_agent}", exc_info=True)
+                                agent_error_details = AgentErrorDetails(agent_id=resolved_agent_id_for_invocation, error_type="AgentProviderError", stage_id=current_stage_name_for_this_iteration_logging_and_hop_info, message=f"Failed to get agent from provider: {e_get_agent}")
+                                stage_failed_or_paused = True
+                                stage_final_status = StageStatus.ERROR # Mark as error
+
+                    # If after resolution attempts, stage_failed_or_paused is true, skip invocation and go to on_failure
+                    if stage_failed_or_paused:
+                        self.logger.warning(f"[RunID: {run_id}] Stage '{current_stage_name_for_this_iteration_logging_and_hop_info}' marked as failed/paused before agent invocation. Skipping execution and proceeding to on_failure/pause logic.")
+                        # The 'continue' at the end of the main try-except for agent execution will handle this by going to the on_failure block
+                        pass # Explicitly do nothing here, the existing 'continue' after agent execution block handles it
+                    else:
+                        # agent_callable should be valid here if no prior error
+                        self.logger.info(f"[RunID: {run_id}] Invoking agent '{resolved_agent_id_for_invocation}' for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}'.")
                         
+                        # --- Enhanced diagnostic logging for agent_callable and config injection ---
+                        self.logger.debug(f"[RunID: {run_id}] Orchestrator: Pre-injection check. Type(agent_callable): {type(agent_callable)}, ID(agent_callable): {id(agent_callable)}")
+                        target_for_config_injection = None
+                        
+                        if hasattr(agent_callable, '__self__'): # Check if it's a bound method
+                            self.logger.debug(f"[RunID: {run_id}] Orchestrator: agent_callable is a bound method. Type(agent_callable.__self__): {type(agent_callable.__self__)}, ID(agent_callable.__self__): {id(agent_callable.__self__)}")
+                            target_for_config_injection = agent_callable.__self__ # The instance is __self__
+                        elif callable(agent_callable) and not isinstance(agent_callable, functools.partial) and hasattr(agent_callable, 'config'):
+                            # This case handles other callables (e.g., function objects, or callable objects directly)
+                            # that might have a 'config' attribute directly. Less common for class-based agents.
+                            self.logger.debug(f"[RunID: {run_id}] Orchestrator: agent_callable is a direct callable with a 'config' attribute. Type: {type(agent_callable)}")
+                            target_for_config_injection = agent_callable
+                        else:
+                            self.logger.debug(f"[RunID: {run_id}] Orchestrator: agent_callable (type: {type(agent_callable)}) is not a bound method with __self__ nor a direct callable with a 'config' attribute suitable for injection. Skipping system_context injection.")
+
+                        if target_for_config_injection and hasattr(target_for_config_injection, 'config') and \
+                           isinstance(target_for_config_injection.config, dict):
+                            
+                            agent_config_dict = target_for_config_injection.config
+                            self.logger.debug(f"[RunID: {run_id}] Orchestrator: Modifying config for agent '{resolved_agent_id_for_stage}'. Target object for config: {type(target_for_config_injection)}, ID: {id(target_for_config_injection)}")
+                            self.logger.debug(f"[RunID: {run_id}] Orchestrator: Config dict ID BEFORE mod: {id(agent_config_dict)}")
+
+                            # Create system_context dict
+                            system_context_to_inject = {
+                                "run_id": run_id,
+                                "stage_id": current_stage_name_for_this_iteration_logging_and_hop_info,
+                                "flow_id": flow_id,
+                                "current_context": current_context,
+                                "outputs": current_context.get("outputs", {}),
+                                "intermediate_outputs": current_context.get("intermediate_outputs", {}),
+                                "project_config": self.config,
+                                "system_config": {"run_id": run_id, "flow_id": flow_id},
+                            }
+
+                            # Inject system_context into agent's config
+                            agent_config_dict.update(system_context_to_inject) # Modify the actual config dict
+                            self.logger.debug(f"[RunID: {run_id}] Injected system_context into agent '{resolved_agent_id_for_stage}' config.")
+                            
+                            self.logger.debug(f"[RunID: {run_id}] Orchestrator: Agent '{resolved_agent_id_for_stage}' config dict ID AFTER mod: {id(agent_config_dict)}")
+                            # Diagnostic log to show the agent's config *after* injection attempt
+                            self.logger.debug(f"[RunID: {run_id}] Agent '{resolved_agent_id_for_stage}' config after system_context injection: {agent_config_dict}")
+                        else:
+                            if target_for_config_injection: # It was a potential target, but didn't have a suitable .config dict
+                                self.logger.debug(f"[RunID: {run_id}] Orchestrator: Target object (type: {type(target_for_config_injection)}) found, but it does not have a '.config' dictionary. Skipping system_context injection for agent '{resolved_agent_id_for_stage}'.")
+                            # No else needed if target_for_config_injection was None, already logged.
+
                         # Resolve inputs against the current context
                         resolved_inputs = self._resolve_input_values(current_stage_spec.inputs, current_context)
 
@@ -1178,17 +1331,55 @@ class AsyncOrchestrator(BaseOrchestrator):
                         # --- END: ARTIFACT HANDLING ---
 
                         start_time = datetime.now(timezone.utc)
-                        if hasattr(agent_callable, 'invoke_async') and callable(getattr(agent_callable, 'invoke_async')):
-                            stage_result_payload = await agent_callable.invoke_async(resolved_inputs, full_context=current_context)
-                        elif callable(agent_callable):
-                            # If agent_callable is a direct async function (e.g., from MCP or a simple fallback function)
-                            # It might not expect full_context as a separate arg if it's designed to get it via resolved_inputs or other means.
-                            # For now, let's assume if it's a direct callable, it takes only resolved_inputs.
-                            # This matches the _stub and _async_invoke signatures in RegistryAgentProvider.
-                            # If direct callables *also* need full_context, their signatures would need to match.
-                            stage_result_payload = await agent_callable(resolved_inputs) # Simplified call for direct functions
+                        
+                        # Prepare inputs for the agent callable
+                        # Default to passing the resolved_inputs dict if no specific InputSchema is found or parsing fails
+                        parsed_agent_inputs = resolved_inputs
+                        
+                        # Determine the object that might have InputSchema
+                        # This is target_for_config_injection if it was set (typically the agent instance),
+                        # otherwise, agent_callable itself might be an instance that has InputSchema.
+                        object_with_schema = target_for_config_injection if target_for_config_injection else agent_callable
+                        input_model_cls = getattr(object_with_schema, "InputSchema", None)
+
+                        if input_model_cls:
+                            if isinstance(resolved_inputs, dict):
+                                try:
+                                    # Attempt to parse the dict into the agent's specific InputSchema
+                                    parsed_agent_inputs = input_model_cls.model_validate(resolved_inputs)
+                                    self.logger.debug(f"[RunID: {run_id}] Successfully parsed inputs for agent {resolved_agent_id_for_stage} using {input_model_cls.__name__}.")
+                                except Exception as parse_exc:
+                                    self.logger.error(f"[RunID: {run_id}] Error parsing inputs for agent {resolved_agent_id_for_stage} using InputSchema {input_model_cls.__name__}: {parse_exc}. Proceeding with raw dict.")
+                                    # parsed_agent_inputs remains the raw resolved_inputs dict; agent might handle or fail
+                            elif isinstance(resolved_inputs, input_model_cls):
+                                # Inputs are already an instance of the expected InputSchema
+                                parsed_agent_inputs = resolved_inputs
+                                self.logger.debug(f"[RunID: {run_id}] Inputs for agent {resolved_agent_id_for_stage} are already an instance of {input_model_cls.__name__}.")
+                            else:
+                                # This case should be rare if _resolve_input_values works as expected
+                                self.logger.warning(
+                                    f"[RunID: {run_id}] Resolved inputs for agent {resolved_agent_id_for_stage} is type {type(resolved_inputs)}, not a dict or instance of {input_model_cls.__name__}. Passing as is."
+                                )
+                                # parsed_agent_inputs remains resolved_inputs
                         else:
-                            raise TypeError(f"Agent callable for '{resolved_agent_id_for_stage}' is not a callable or an object with invoke_async method.")
+                            self.logger.debug(
+                                f"[RunID: {run_id}] Agent {resolved_agent_id_for_stage} does not have an 'InputSchema' attribute. Passing resolved_inputs dictionary as is."
+                            )
+
+                        # Invoke the agent: handle both async and sync callables
+                        # agent_callable is the method to call (e.g., instance.invoke or instance.invoke_async)
+                        if inspect.iscoroutinefunction(agent_callable):
+                            self.logger.debug(f"[RunID: {run_id}] Awaiting async agent_callable for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}' (Agent: {resolved_agent_id_for_stage})")
+                            stage_result_payload = await agent_callable(parsed_agent_inputs)
+                        elif callable(agent_callable): # It's a sync callable
+                            self.logger.debug(f"[RunID: {run_id}] Running sync agent_callable for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}' (Agent: {resolved_agent_id_for_stage}) in executor")
+                            loop = asyncio.get_event_loop()
+                            # functools.partial ensures 'parsed_agent_inputs' is correctly passed to the target function
+                            func_to_run_in_executor = functools.partial(agent_callable, parsed_agent_inputs)
+                            stage_result_payload = await loop.run_in_executor(None, func_to_run_in_executor)
+                        else: # Should not be reached if agent_provider returns a callable
+                            self.logger.error(f"Agent callable for '{resolved_agent_id_for_stage}' resolved to a non-callable type: {type(agent_callable)}. This is unexpected.")
+                            raise TypeError(f"Agent callable for '{resolved_agent_id_for_stage}' is not callable.")
                         
                         end_time = datetime.now(timezone.utc)
                         duration_seconds = (end_time - start_time).total_seconds()
@@ -1243,16 +1434,16 @@ class AsyncOrchestrator(BaseOrchestrator):
                                 stage_failed_or_paused = True # Mark as failed
                         else: # No success criteria, assume success if agent didn't raise exception
                             stage_final_status = StageStatus.SUCCESS
-                    else: # Agent not found by provider
-                        self.logger.error(f"[RunID: {run_id}] Agent for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}' (agent_id: {current_stage_spec.agent_id}, category: {current_stage_spec.agent_category}) could not be resolved. Stage execution aborted.")
-                        agent_error_details_for_current_stage = AgentErrorDetails(
-                            agent_id=current_stage_spec.agent_id,
-                            error_type="AgentNotFoundError", # More specific than a generic "StageFailed"
-                            message=f"Agent ID '{current_stage_spec.agent_id}' (Category: '{current_stage_spec.agent_category}') not found by provider.",
-                            stage_id=current_stage_name_for_this_iteration_logging_and_hop_info
-                        )
-                        stage_final_status = StageStatus.FAILURE
-                        stage_failed_or_paused = True # Mark as failed
+#                    else: # Agent not found by provider
+#                        self.logger.error(f"[RunID: {run_id}] Agent for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}' (agent_id: {current_stage_spec.agent_id}, category: {current_stage_spec.agent_category}) could not be resolved. Stage execution aborted.")
+#                        agent_error_details_for_current_stage = AgentErrorDetails(
+#                            agent_id=current_stage_spec.agent_id,
+#                            error_type="AgentNotFoundError", # More specific than a generic "StageFailed"
+#                            message=f"Agent ID '{current_stage_spec.agent_id}' (Category: '{current_stage_spec.agent_category}') not found by provider.",
+#                            stage_id=current_stage_name_for_this_iteration_logging_and_hop_info
+#                        )
+#                        stage_final_status = StageStatus.FAILURE
+#                        stage_failed_or_paused = True # Mark as failed
             
             except (NoAgentFoundForCategoryError, AmbiguousAgentCategoryError) as cat_exc:
                 self.logger.error(f"[RunID: {run_id}] Agent resolution error for stage '{current_stage_name_for_this_iteration_logging_and_hop_info}': {cat_exc}", exc_info=True)
@@ -1362,11 +1553,14 @@ class AsyncOrchestrator(BaseOrchestrator):
                         # For brevity here, I'll summarize, but you need the full logic from your previous context or I can re-provide that specific sub-section if needed.
                         # START of reviewer suggestion handling for ON_FAILURE
                         if reviewer_suggestion.suggestion_type == ReviewerActionType.RETRY_STAGE_AS_IS:
-                            self.logger.info(f"[RunID: {run_id}] Reviewer suggested RETRY_STAGE_AS_IS for stage '{reviewer_suggestion.suggestion_details.target_stage_id}'.")
-                            current_stage_name = reviewer_suggestion.suggestion_details.target_stage_id
+                            # For RETRY_STAGE_AS_IS, details are None. The target is the stage that just failed.
+                            self.logger.info(f"[RunID: {run_id}] Reviewer suggested RETRY_STAGE_AS_IS for stage '{stage_name_for_failure_handling}'.")
+                            current_stage_name = stage_name_for_failure_handling # Corrected
                             stage_is_being_retried_after_review = True
                             if current_stage_name in visited_stages: visited_stages.remove(current_stage_name)
                             stage_failed_or_paused = False # Critical: reset for retry
+                            stage_final_status = StageStatus.PENDING  # mark pending so outer logic treats as not finished
+                            continue  # Retry immediately
                         
                         elif reviewer_suggestion.suggestion_type == ReviewerActionType.RETRY_STAGE_WITH_CHANGES:
                             details = reviewer_suggestion.suggestion_details
@@ -1390,7 +1584,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                                 current_stage_name = details.target_stage_id
                                 stage_is_being_retried_after_review = True
                                 if current_stage_name in visited_stages: visited_stages.remove(current_stage_name)
-                                stage_failed_or_paused = False # Critical: reset for retry
+                                stage_failed_or_paused = False  # Critical: reset for retry
+                                stage_final_status = StageStatus.PENDING  # mark pending before retry
+                                continue  # Retry loop with updated stage
                             else:
                                 self.logger.error(f"Reviewer targeted non-existent stage {details.target_stage_id} for RETRY_STAGE_WITH_CHANGES. Terminating.")
                                 current_context["_flow_error"] = AgentErrorDetails(agent_id="orchestrator", error_type="ReviewerInvalidTarget", message=f"Reviewer targeted non-existent stage {details.target_stage_id} for RETRY_STAGE_WITH_CHANGES.")
@@ -1472,10 +1668,20 @@ class AsyncOrchestrator(BaseOrchestrator):
                                     self.current_plan.stages[details.target_stage_id] = details.updated_stage_spec
                                     self.state_manager.save_master_execution_plan(self.current_plan) # Use non-async
                                     self._emit_metric(event_type=MetricEventType.PLAN_MODIFIED, flow_id=flow_id, run_id=run_id, stage_id=details.target_stage_id, data={"action": "MODIFY_STAGE_SPEC", "updated_spec_fields": details.updated_stage_spec.model_dump(exclude_unset=True)})
-                                    current_stage_name = details.target_stage_id
-                                    stage_is_being_retried_after_review = True
-                                    if current_stage_name in visited_stages: visited_stages.remove(current_stage_name)
-                                    stage_failed_or_paused = False # Critical: reset for retry
+                                    
+                                    # If the stage that FAILED is the one we just MODIFIED:
+                                    if stage_name_for_failure_handling == details.target_stage_id: # details.target_stage_id is target_stage_id_for_mod
+                                        self.logger.info(f"[RunID: {run_id}] Plan modified for stage '{details.target_stage_id}' which was the failing stage. Resetting its failure state and queueing for immediate retry.")
+                                        current_stage_name = details.target_stage_id  # Ensure we re-process this stage
+                                        stage_is_being_retried_after_review = True     # Allow re-entry if it was in visited_stages
+                                        if current_stage_name in visited_stages:
+                                            visited_stages.remove(current_stage_name)
+                                        stage_failed_or_paused = False  # CRITICAL: Reset this loop-local flag
+                                        stage_final_status = StageStatus.PENDING # Mark as pending for the retry attempt
+                                        continue  # IMPORTANT: Restart the loop to process the modified stage
+                                    else:
+                                        # If a *different* stage was modified by the reviewer, the original failure still stands.
+                                        self.logger.info(f"[RunID: {run_id}] Plan modified for stage '{details.target_stage_id}', but the failing stage was '{stage_name_for_failure_handling}'. The original failure outcome for '{stage_name_for_failure_handling}' will now proceed.")
                                 else:
                                     self.logger.error(f"Reviewer targeted non-existent stage {details.target_stage_id} for MODIFY_STAGE_SPEC. Terminating.")
                                     current_context["_flow_error"] = AgentErrorDetails(agent_id="orchestrator", error_type="ReviewerInvalidTarget", message=f"Reviewer targeted non-existent stage {details.target_stage_id} for MODIFY_STAGE_SPEC.")
@@ -1599,6 +1805,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                                     current_stage_name = details_rswc.target_stage_id
                                     stage_is_being_retried_after_review = True
                                     if current_stage_name in visited_stages: visited_stages.remove(current_stage_name)
+                                    stage_final_status = StageStatus.PENDING  # reset status so outer loop does not treat as failure
                                     continue # Skip normal next_stage logic, loop back to retry with changes
                                 else:
                                     self.logger.error(f"ON_SUCCESS Reviewer targeted non-existent stage {details_rswc.target_stage_id} for RETRY_STAGE_WITH_CHANGES. Proceeding with normal next_stage.")
@@ -1785,7 +1992,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 # Use the stage ID and error details that originally triggered the reviewer
                 paused_stage_id=stage_id_that_led_to_reviewer if stage_id_that_led_to_reviewer else current_stage_name_for_this_iteration_logging_and_hop_info, # Fallback if somehow not set
                 error_details=error_details_that_led_to_reviewer, # Use the captured error
-                clarification_request=captured_escalation_details_for_saving # Use the (potentially wrapped) dictionary
+                clarification_request=captured_escalation_message # CORRECTED: Use variable assigned in the ESCALATE_TO_USER block
             )
             final_flow_status_for_metric = pause_status_override.value
 
@@ -1836,15 +2043,17 @@ class AsyncOrchestrator(BaseOrchestrator):
         self,
         flow_yaml_path: Optional[str] = None,
         master_plan_id: Optional[str] = None,
+        goal_str: Optional[str] = None, # ADDED
         initial_context: Optional[Dict[str, Any]] = None,
         run_id_override: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Executes a master flow plan, loading it from YAML or by ID.
+        """Executes a master execution plan.
 
         The orchestrator instance must be pre-configured with StateManager, AgentProvider, etc.
         Args:
             flow_yaml_path: Path to the flow YAML file.
             master_plan_id: ID of an existing master plan to load.
+            goal_str: Optional goal string for the flow.
             initial_context: Optional initial context for the flow.
             run_id_override: Optional specific run ID to use; one will be generated if None.
 
@@ -1920,6 +2129,11 @@ class AsyncOrchestrator(BaseOrchestrator):
         context["project_config"] = self.config # Make project_config available in context
         context["system_config"] = {"run_id": self._current_run_id, "flow_id": flow_id}
 
+        # Populate original_request into the context if it exists in the plan
+        if self.current_plan and hasattr(self.current_plan, 'original_request') and self.current_plan.original_request:
+            context['original_request'] = self.current_plan.original_request.model_dump(exclude_none=True)
+            self.logger.info(f"[RunID: {self._current_run_id}] Populated 'original_request' into initial context from plan.")
+
         final_context = await self._execute_master_flow_loop(
             start_stage_name=self.current_plan.start_stage,
             context=context
@@ -1951,12 +2165,12 @@ class AsyncOrchestrator(BaseOrchestrator):
         context_at_pause: Dict[str, Any],
         paused_stage_id: str,
         error_details: Optional[AgentErrorDetails] = None,
-        clarification_request: Optional[str] = None
+        clarification_request: Optional[Dict[str, Any]] = None # Changed from Optional[str]
     ):
-        """Saves the flow's state and prepares for termination of the execution loop."""
-        if not self._current_run_id or not self.current_plan:
+        """Saves the paused state of the flow and sets flags to terminate the execution loop."""
+        if not self.current_plan:
             self.logger.error(
-                "_save_paused_state_and_terminate_loop called with no current run_id or plan. Cannot save state."
+                "_save_paused_state_and_terminate_loop called with no current plan. Cannot save state."
             )
             return
 

@@ -10,6 +10,7 @@ class StageStatus(Enum):
     FAILURE = "FAIL"
     RUNNING = "RUNNING" # Added for orchestrator to indicate active stage
     PENDING = "PENDING" # Added for initializing stage status
+    ERROR = "ERROR"   # Added for fatal errors during execution
     # Could add SKIPPED, etc. in the future 
 
 
