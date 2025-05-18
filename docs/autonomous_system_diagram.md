@@ -59,7 +59,8 @@ graph TD
     end
     class Phase2 phase;
     P1_Blueprint --> P2_BlueprintReviewer;
-    P2_BlueprintReviewer --> P1_Blueprint; %% Refinement loop implied
+    %% Refinement loop implied
+    P2_BlueprintReviewer --> P1_Blueprint;
     P1_Blueprint --> P2_BlueprintToFlow;
     P2_BlueprintToFlow --> P2_MasterPlan;
     P2_MasterPlan --> StateManager; %% Stored/tracked by StateManager
