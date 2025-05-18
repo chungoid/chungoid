@@ -63,8 +63,10 @@ graph TD
     P2_BlueprintReviewer --> P1_Blueprint;
     P1_Blueprint --> P2_BlueprintToFlow;
     P2_BlueprintToFlow --> P2_MasterPlan;
-    P2_MasterPlan --> StateManager; %% Stored/tracked by StateManager
-    P2_MasterPlan --> ChromaDB; %% Also context for other agents
+    %% Stored/tracked by StateManager
+    P2_MasterPlan --> StateManager;
+    %% Also context for other agents
+    P2_MasterPlan --> ChromaDB;
 
     %% Connection to Flow Executor
     P2_MasterPlan --> FlowExecutor;
@@ -100,7 +102,8 @@ graph TD
     class Phase4 phase;
     P3_LiveCode --> P4_SmartTestGen;
     FlowExecutor --> P4_SmartTestGen;
-    P4_SmartTestGen -- "writes tests" --> P3_LiveCode; %% Tests are also code
+    %% Tests are also code
+    P4_SmartTestGen -- "writes tests" --> P3_LiveCode;
     FlowExecutor --> P4_SystemTestRunner;
     P3_LiveCode --> P4_SystemTestRunner;
     P4_SystemTestRunner --> P4_TestReports;
@@ -119,14 +122,16 @@ graph TD
     end
     class Phase5 phase;
     P3_LiveCode --> P5_ProjectDocAgent;
-    ChromaDB -- "Uses full project context" --> P5_ProjectDocAgent; %% Uses full project context
+    ChromaDB -- "Uses full project context" --> P5_ProjectDocAgent;
     FlowExecutor --> P5_ProjectDocAgent;
     P5_ProjectDocAgent --> P5_Readme;
-    P5_Readme --> P3_LiveCode; %% Docs added to codebase
+    %% Docs added to codebase
+    P5_Readme --> P3_LiveCode;
     FlowExecutor --> P5_SmartCodeGenPack;
     P3_LiveCode --> P5_SmartCodeGenPack;
     P5_SmartCodeGenPack --> P5_Deps;
-    P5_Deps --> P3_LiveCode; %% Deps added to codebase
+    %% Deps added to codebase
+    P5_Deps --> P3_LiveCode;
 
     %% Phase 6: Finalization & Release Preparation
     subgraph Phase6 ["Phase 6: Finalization & Release"]
@@ -137,7 +142,8 @@ graph TD
         P6_Release["Project Archive/Release"]:::artifact
     end
     class Phase6 phase;
-    P3_LiveCode --> P6_SystemCommand; %% Linting/Formatting
+    %% Linting/Formatting
+    P3_LiveCode --> P6_SystemCommand;
     FlowExecutor --> P6_SystemCommand;
     P3_LiveCode --> P6_CodeReviewer;
     ChromaDB --> P6_CodeReviewer;
