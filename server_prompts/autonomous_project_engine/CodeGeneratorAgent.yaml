@@ -100,5 +100,3 @@ output_schema:
       description: Optional path to notes if any were generated.
   required:
     - generated_files
-
-</rewritten_file> 

@@ -77,7 +77,7 @@ system_prompt: |
   -   Ensure all paths in the report are relative to the project root.
   -   If the test execution command itself fails (e.g., command not found), report this as a top-level error in your output.
 
-SYSTEM_PROMPT_END
+  SYSTEM_PROMPT_END
 
 # Variables that can be used in the prompt
 # {{ example_variable }} 
