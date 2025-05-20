@@ -42,6 +42,42 @@ output_schema:
     optimization_opportunities_report_md:
       type: string
       description: "A string containing the full Markdown for the High-ROI Optimization Opportunities Report."
+    structured_optimization_suggestions_json:
+      type: array
+      description: "A JSON array of structured optimization suggestions, conforming to the predefined schema. This should be generated IN ADDITION to the Markdown report."
+      items:
+        type: object
+        properties:
+          suggestion_id: { type: string, description: "Unique ID for the suggestion within this report (e.g., OPT-001)." }
+          description: { type: string, description: "A clear, concise description of the optimization." }
+          target_artifact_type: { type: string, enum: ["LOPRD", "Blueprint", "MasterExecutionPlan", "CodeModule"], description: "Type of artifact this suggestion applies to." }
+          target_artifact_id: { type: string, description: "Document ID or file path of the specific artifact." }
+          target_artifact_section: { type: string, description: "Specific section, user story, function name, or line numbers if applicable." }
+          category: { type: string, enum: ["Performance", "Security", "Maintainability", "Cost", "UserExperience", "Clarity", "Completeness", "Other"], description: "Category of the optimization." }
+          priority: { type: string, enum: ["Critical", "High", "Medium", "Low"], description: "Suggested priority." }
+          estimated_impact: { type: string, enum: ["High", "Medium", "Low", "Unknown"], description: "Qualitative assessment of impact." }
+          estimated_effort: { type: string, enum: ["High", "Medium", "Low", "Unknown"], description: "Qualitative assessment of effort to implement." }
+          suggested_action_type: { type: string, enum: ["regenerate_with_directive", "new_task", "modify_existing_task"], description: "How ARCA should act on this suggestion." }
+          action_details: { 
+            type: object, 
+            description: "Specific details based on suggested_action_type. For 'regenerate_with_directive', include 'directive_for_regeneration' (string). For 'new_task', include 'new_task_description' (string) and optionally 'new_task_suggested_agent_category' (string) and 'new_task_dependencies' (array of strings). For 'modify_existing_task', include 'target_task_id_in_plan' (string) and 'modification_description' (string)."
+            # Additional properties can be defined here based on action_type if needed by specific logic,
+            # but the prompt will guide the LLM to include the main ones.
+          }
+          rationale: { type: string, description: "Brief explanation of why this optimization is beneficial." }
+          potential_risks_of_implementation: { type: ["string", "null"], description: "Optional: Any foreseeable risks if this optimization is implemented." }
+        required:
+          - suggestion_id
+          - description
+          - target_artifact_type
+          # target_artifact_id can be optional if suggesting a very general new task not tied to an existing doc/file.
+          # For now, keeping it effectively required via prompt instructions for most cases.
+          - target_artifact_section 
+          - category
+          - priority
+          - suggested_action_type
+          - action_details
+          - rationale
     assessment_confidence:
       type: object
       properties:
@@ -68,6 +104,7 @@ output_schema:
   required:
     - risk_assessment_report_md
     - optimization_opportunities_report_md
+    - structured_optimization_suggestions_json
     - assessment_confidence
 
 model_settings:
@@ -116,8 +153,12 @@ user_prompt_template: |
       *   If `analysis_focus` is "LOPRD" or "BOTH" and `loprd_json_content` is provided, use it as the primary source for requirements. Focus on ambiguities, conflicts, or missing critical NFRs that could lead to downstream risks or missed optimizations.
       *   If `analysis_focus` is "BLUEPRINT" or "BOTH" and `project_blueprint_md_content` is provided, analyze its technical design, component choices, and architectural decisions. If `loprd_json_content` is also available, cross-reference to check if the blueprint adequately addresses LOPRD NFRs related to risk/performance.
   2.  **Generate Reports:** Create the "Risk Assessment Report" and "High-ROI Optimization Opportunities Report" in Markdown format as detailed below.
-  3.  **Assess Confidence:** Determine your overall `assessment_confidence` for both reports combined.
-  4.  **Produce JSON Output:** Structure your entire response as a single JSON object with the keys `risk_assessment_report_md`, `optimization_opportunities_report_md`, and `assessment_confidence`, adhering to the `output_schema`.
+  3.  **Generate Structured Suggestions:** Concurrently with the Markdown report for optimizations, generate a JSON array of structured optimization suggestions. Each object in this array MUST conform to the `structured_optimization_suggestions_json` schema defined in the prompt's main `output_schema`. This JSON array will be used for automated processing. Ensure all fields are accurately populated. For the `action_details` field, populate it with relevant keys based on the `suggested_action_type`:
+      *   If `suggested_action_type` is "regenerate_with_directive", `action_details` MUST include a `directive_for_regeneration` (string) field.
+      *   If `suggested_action_type` is "new_task", `action_details` MUST include `new_task_description` (string), and SHOULD include `new_task_suggested_agent_category` (string) and `new_task_dependencies` (array of strings, optional).
+      *   If `suggested_action_type` is "modify_existing_task", `action_details` MUST include `target_task_id_in_plan` (string) and `modification_description` (string).
+  4.  **Assess Confidence:** Determine your overall `assessment_confidence` for the reports and structured suggestions combined.
+  5.  **Produce JSON Output:** Structure your entire response as a single JSON object with the keys `risk_assessment_report_md`, `optimization_opportunities_report_md`, `structured_optimization_suggestions_json`, and `assessment_confidence`, adhering to the `output_schema`.
 
   **CONTENT FOR "risk_assessment_report_md":**
   Structure the Markdown report as follows (replace placeholders with actual content):

@@ -39,8 +39,48 @@ input_schema:
     - blueprint_content
 
 output_schema:
-  type: string # The output is a single Markdown string, but with a strictly defined internal structure.
-  description: "A 'Blueprint Optimization Suggestions Report' in Markdown format, adhering to a specific detailed structure, including confidence scores for suggestions."
+  type: object # MODIFIED from type: string
+  description: "A JSON object containing the 'Blueprint Optimization Suggestions Report' in Markdown format, and a separate JSON array of structured optimization suggestions."
+  properties:
+    blueprint_optimization_report_md:
+      type: string
+      description: "The full 'Blueprint Optimization Suggestions Report' in Markdown format, adhering to the detailed structure previously requested."
+    structured_optimization_suggestions_json:
+      type: array
+      description: "A JSON array of structured optimization suggestions, conforming to the predefined schema. This should be generated based on the same analysis used for the Markdown report."
+      items:
+        type: object
+        properties:
+          suggestion_id: { type: string, description: "Unique ID for the suggestion (e.g., OPT-BP-001)." }
+          description: { type: string, description: "A clear, concise description of the optimization." }
+          target_artifact_type: { type: string, const: "Blueprint", description: "Type of artifact this suggestion applies to (always Blueprint for this agent)." }
+          target_artifact_id: { type: string, description: "Document ID of the Blueprint being reviewed (same as input blueprint_doc_id)." }
+          target_artifact_section: { type: string, description: "Specific section, component name from the Blueprint." }
+          category: { type: string, enum: ["Performance", "Security", "Maintainability", "Cost", "UserExperience", "Clarity", "Completeness", "Scalability", "ArchitecturalElegance", "FutureProofing", "Other"], description: "Category of the optimization." }
+          priority: { type: string, enum: ["Critical", "High", "Medium", "Low"], description: "Suggested priority." }
+          estimated_impact: { type: string, enum: ["High", "Medium", "Low", "Unknown"], description: "Qualitative assessment of impact." }
+          estimated_effort: { type: string, enum: ["High", "Medium", "Low", "Unknown"], description: "Qualitative assessment of effort to implement." }
+          suggested_action_type: { type: string, enum: ["regenerate_with_directive", "new_task", "modify_existing_task"], description: "How ARCA should act on this suggestion." }
+          action_details: { 
+            type: object, 
+            description: "Specific details based on suggested_action_type. For 'regenerate_with_directive', include 'directive_for_regeneration' (string). For 'new_task', include 'new_task_description' (string) and optionally 'new_task_suggested_agent_category' (string) and 'new_task_dependencies' (array of strings). For 'modify_existing_task', include 'target_task_id_in_plan' (string) and 'modification_description' (string)."
+          }
+          rationale: { type: string, description: "Brief explanation of why this optimization is beneficial, derived from the Markdown report's 'Observation/Rationale'." }
+          potential_risks_of_implementation: { type: ["string", "null"], description: "Optional: Any foreseeable risks, derived from 'Potential Drawbacks/Trade-offs'." }
+        required:
+          - suggestion_id
+          - description
+          - target_artifact_type
+          - target_artifact_id
+          - target_artifact_section
+          - category
+          - priority
+          - suggested_action_type
+          - action_details
+          - rationale
+  required:
+    - blueprint_optimization_report_md
+    - structured_optimization_suggestions_json
 
 model_settings:
   model_name: "gpt-4-turbo-preview" # Or a model with strong analytical and Markdown generation capabilities
@@ -48,7 +88,7 @@ model_settings:
   max_tokens: 3500 # Allow for a comprehensive report
 
 system_prompt_template: |
-  You are BlueprintReviewerAgent_v1, an exceptionally skilled AI Software Architect. You are tasked with reviewing a Project Blueprint that has already undergone initial generation and review cycles (e.g., by ARCA, PRAA, RTA). Your role is to provide a "deep dive" review, focusing on uncovering advanced optimization opportunities, proposing insightful architectural alternatives, and identifying any subtle design flaws or areas for significant improvement that might have been missed. Assume basic functional correctness and traceability have been addressed. Focus on enhancing architectural elegance, future-proofing, performance, scalability, and cost-effectiveness beyond the obvious. The output MUST be a single, well-formatted Markdown string as specified in the user prompt template.
+  You are BlueprintReviewerAgent_v1, an exceptionally skilled AI Software Architect. You are tasked with reviewing a Project Blueprint that has already undergone initial generation and review cycles (e.g., by ARCA, PRAA, RTA). Your role is to provide a "deep dive" review, focusing on uncovering advanced optimization opportunities, proposing insightful architectural alternatives, and identifying any subtle design flaws or areas for significant improvement that might have been missed. Assume basic functional correctness and traceability have been addressed. Focus on enhancing architectural elegance, future-proofing, performance, scalability, and cost-effectiveness beyond the obvious. The output MUST be a single JSON object containing two keys: `blueprint_optimization_report_md` (a string with the well-formatted Markdown report as specified) and `structured_optimization_suggestions_json` (a JSON array of structured suggestions derived from your review, also specified in the user prompt).
   While your primary input is the provided blueprint and ARCA assessment, you have the capability to request retrieval of the original LOPRD or other key artifacts from ProjectChromaManagerAgent if a specific optimization idea requires deep verification against source requirements. Use this sparingly and only if critical; formulate queries clearly if making such a request through an appropriate interface if available.
 
 user_prompt_template: |
@@ -74,7 +114,9 @@ user_prompt_template: |
   ```
 
   **YOUR DELIVERABLE:**
-  Produce a "Blueprint Optimization Suggestions Report" in Markdown format. The report MUST strictly follow this structure:
+  Produce a JSON object containing two top-level keys:
+  1.  `blueprint_optimization_report_md`: A string containing the "Blueprint Optimization Suggestions Report" in Markdown format. This Markdown report MUST strictly follow the structure detailed below.
+  2.  `structured_optimization_suggestions_json`: A JSON array. Each object in this array represents one of your detailed optimization suggestions from section 2 of the Markdown report (e.g., "OPT-BP-001", "OPT-BP-002") and MUST conform to the `structured_optimization_suggestions_json` schema defined in the prompt's main `output_schema`. Ensure all fields in the structured suggestions are accurately populated based on your detailed analysis in the Markdown. For example, `target_artifact_id` should be the input `blueprint_doc_id`. The `rationale` and `potential_risks_of_implementation` in the JSON should be concise summaries derived from your detailed Markdown entries.
 
   ```markdown
   # Blueprint Optimization Suggestions Report
@@ -125,7 +167,7 @@ user_prompt_template: |
   ```
 
   **IMPORTANT INSTRUCTIONS:**
-  - Focus on **actionable, specific, and well-justified** suggestions. Provide both a qualitative level (High/Medium/Low) and an optional numerical score (0.0-1.0) for your confidence in each specific suggestion.
+  - Focus on **actionable, specific, and well-justified** suggestions. Provide both a qualitative level (High/Medium/Low) and an optional numerical score (0.0-1.0) for your confidence in each specific suggestion within the Markdown report.
   - Prioritize suggestions that offer **significant impact** (high ROI).
   - Do NOT repeat basic risk assessment (PRAA) or LOPRD traceability checks (RTA) unless you spot a **critical oversight** directly related to a major architectural flaw.
   - Your tone should be constructive and professional.

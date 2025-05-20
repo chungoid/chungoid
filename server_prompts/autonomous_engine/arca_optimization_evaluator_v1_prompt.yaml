@@ -1,7 +1,7 @@
 prompt_id: "arca_optimization_evaluator_v1"
-version: "1.0.0"
-description: "Instructs an LLM to evaluate optimization suggestions from PRAA and Blueprint Reviewer reports, and to provide actionable incorporation instructions for ARCA."
-prompt_type: "INSTRUCTION" # Or "CHAT" if a conversational style is better, but instruction seems apt.
+version: "1.1.0"
+description: "Instructs an LLM to evaluate a provided list of structured optimization suggestions, and to provide actionable incorporation instructions for ARCA."
+prompt_type: "INSTRUCTION"
 
 input_variables:
   - name: "artifact_type"
@@ -12,14 +12,10 @@ input_variables:
     description: "A summary or key excerpts of the artifact being evaluated, providing context for the optimizations."
     type: "string"
     is_required: true
-  - name: "praa_optimization_report"
-    description: "The content of the Proactive Risk Assessor Agent's optimization suggestions report. May be null if not available."
+  - name: "all_structured_suggestions_json_string"
+    description: "A JSON string representing an array of structured optimization suggestions (from PRAA and/or Blueprint Reviewer) that require evaluation. Each suggestion object should ideally contain 'suggestion_id', 'description', 'source_report' (e.g., 'PRAA', 'BlueprintReviewer'), and other relevant fields from its original generation."
     type: "string"
-    is_required: false
-  - name: "blueprint_reviewer_optimization_report"
-    description: "The content of the Blueprint Reviewer Agent's optimization suggestions report. May be null if not applicable or not available."
-    type: "string"
-    is_required: false
+    is_required: true
   - name: "current_project_goal_summary"
     description: "(Optional) A brief summary of the overall project goal to provide broader context for evaluating optimizations."
     type: "string"
@@ -33,19 +29,19 @@ output_format:
     properties:
       evaluated_optimizations:
         type: "array"
-        description: "A list of detailed evaluations for each identified optimization suggestion."
+        description: "A list of detailed evaluations for each provided optimization suggestion."
         items:
           type: "object"
           properties:
             optimization_id:
               type: "string"
-              description: "A unique identifier generated for this optimization suggestion (e.g., 'opt_praa_001', 'opt_reviewer_001')."
+              description: "The 'suggestion_id' from the original input suggestion."
             source_report:
               type: "string"
-              description: "Indicates the source of the suggestion (e.g., 'PRAA_Optimization_Report', 'Blueprint_Reviewer_Report')."
+              description: "Indicates the source of the suggestion (e.g., 'PRAA', 'BlueprintReviewer') from the input."
             original_suggestion_summary:
               type: "string"
-              description: "A concise summary of the original optimization suggestion from the report."
+              description: "The 'description' field from the original input suggestion."
             is_actionable_and_relevant:
               type: "boolean"
               description: "True if the suggestion is considered actionable and relevant to the current artifact and project goal, False otherwise."
@@ -57,11 +53,28 @@ output_format:
               description: "Describe the potential positive and negative impacts on the artifact and project if this optimization were applied."
             recommendation:
               type: "string"
-              enum: ["INCORPORATE", "DO_NOT_INCORPORATE", "NEEDS_FURTHER_CLARIFICATION"]
+              enum: ["INCORPORATE", "REJECT", "NEEDS_FURTHER_CLARIFICATION", "NEW_TASK_FOR_PLAN"]
               description: "Your recommendation for this specific optimization."
             incorporation_instructions_for_next_agent:
-              type: "string"
+              type: ["string", "null"]
               description: "If 'INCORPORATE', provide clear, specific, and actionable instructions for the *next agent* (e.g., ProductAnalystAgent, ArchitectAgent) on *how* to modify the artifact to implement this optimization. Be precise about what changes are needed. If not 'INCORPORATE', this can be null or explain why no instructions are provided."
+            clarification_query_for_generator:
+              type: ["string", "null"]
+              description: "If 'NEEDS_FURTHER_CLARIFICATION', provide a specific question or clarification needed from the original suggesting agent (PRAA/BlueprintReviewer) or about the artifact."
+            new_task_details_for_plan:
+              type: ["object", "null"]
+              description: "If recommendation is NEW_TASK_FOR_PLAN, provide a structured object with details for the new task. ARCA will formulate the final MasterStageSpec."
+              properties:
+                task_description: { type: "string", description: "Clear description of what the new task should achieve." }
+                suggested_agent_id_or_category: { type: "string", description: "e.g., CoreCodeGeneratorAgent_v1 or CODE_GENERATION" }
+                placement_hint: { type: "string", description: "Guidance on where the new task should be placed in the plan. e.g., 'After blueprint_review_stage'. If possible, provide the exact stage_id to insert *after*, like 'insert_after_stage_id: STAGE_XYZ' within this string or as a separate field if the schema allows." }
+                dependency_hint: { type: "array", items: {type: "string"}, description: "List of stage IDs this new task should depend on, if known." }
+                initial_inputs: {type: "object", description: "A best-effort attempt at defining the 'inputs' object for the MasterStageSpec. Use known context variables (e.g., '{{context.project_id}}', '{{context.stage_outputs.some_stage.doc_id}}') or placeholders that ARCA can resolve. This structure should mirror the target agent's input schema as much as possible."}
+                success_criteria_suggestions: {type: "array", items: {type: "string"}, description: "Suggestions for success criteria for the new task."}
+                output_context_path_suggestion: { type: ["string", "null"], description: "(Optional) If the new task produces a distinct, referable output, suggest a context path (e.g., 'stage_outputs.new_task_output.doc_id'). ARCA will finalize this." }
+              required:
+                - task_description
+                - suggested_agent_id_or_category
             confidence_in_recommendation:
               type: "number"
               minimum: 0.0
@@ -84,61 +97,63 @@ output_format:
       - "overall_summary_of_actions"
 
 prompt_template: |
-  You are an AI assistant helping the Automated Refinement Coordinator Agent (ARCA) to evaluate optimization suggestions for a software project.
-  Your task is to meticulously analyze optimization reports and provide structured advice on how to proceed.
+  You are an AI assistant helping the Automated Refinement Coordinator Agent (ARCA) to evaluate a list of structured optimization suggestions for a software project.
+  Your task is to meticulously analyze each suggestion in the provided list and provide structured advice on how to proceed.
 
   **Context:**
   1.  **Project Goal Summary (Optional):** {{current_project_goal_summary}}
   2.  **Artifact Type Under Review:** {{artifact_type}}
-  3.  **Artifact Content Summary:**
+  3.  **Artifact Content Summary (for context):**
       ```
       {{artifact_content_summary}}
       ```
-  4.  **Proactive Risk Assessor (PRAA) Optimization Report (if provided):**
-      ```
-      {{praa_optimization_report if praa_optimization_report is not none else "No PRAA optimization report provided."}}
-      ```
-  5.  **Blueprint Reviewer Optimization Report (if provided):**
-      ```
-      {{blueprint_reviewer_optimization_report if blueprint_reviewer_optimization_report is not none else "No Blueprint Reviewer optimization report provided."}}
+  4.  **Structured Optimization Suggestions to Evaluate (JSON Array String):**
+      ```json
+      {{all_structured_suggestions_json_string}}
       ```
 
   **Your Task:**
 
-  Carefully review the provided optimization reports. For each distinct optimization suggestion you identify:
-  1.  Generate a unique `optimization_id` (e.g., "opt_praa_001" for the first PRAA suggestion, "opt_reviewer_001" for the first reviewer suggestion).
-  2.  Note the `source_report`.
-  3.  Provide a concise `original_suggestion_summary`.
-  4.  Determine if the suggestion is `is_actionable_and_relevant` to the current `artifact_type`, its `artifact_content_summary`, and the `current_project_goal_summary`.
+  Parse the `all_structured_suggestions_json_string` to get an array of suggestion objects.
+  For each suggestion object in that array:
+  1.  Use its `suggestion_id` as the `optimization_id` in your output.
+  2.  Use its `source_report` (e.g., 'PRAA', 'BlueprintReviewer' - ARCA should ensure this field is present in the input suggestions) as `source_report`.
+  3.  Use its `description` as the `original_suggestion_summary`.
+  4.  Determine if the suggestion `is_actionable_and_relevant` to the current `artifact_type`, its `artifact_content_summary`, and the `current_project_goal_summary`.
   5.  Write a clear `assessment_rationale` explaining your reasoning.
   6.  Describe the `potential_impact_assessment` (both positive and potentially negative consequences).
-  7.  Make a `recommendation`: "INCORPORATE", "DO_NOT_INCORPORATE", or "NEEDS_FURTHER_CLARIFICATION".
-  8.  **Crucially**: If your `recommendation` is "INCORPORATE", provide detailed and actionable `incorporation_instructions_for_next_agent`. These instructions should tell the *next specialized agent* (e.g., ProductAnalystAgent if `artifact_type` is LOPRD, or ArchitectAgent if `artifact_type` is ProjectBlueprint) precisely what changes to make to the artifact.
-      *   Example for LOPRD: "Instruct ProductAnalystAgent to: Update User Story US-005 to include a non-functional requirement for sub-second response times for the search feature. Add a new Acceptance Criterion AC-US-005.3: 'Search results must appear within 800ms.'"
-      *   Example for ProjectBlueprint: "Instruct ArchitectAgent to: Revise Section 4.2 (Data Model) of the ProjectBlueprint. Change the 'User' entity to include a 'last_login_ip' attribute. Justify this change by referencing the new security optimization."
+  7.  Make a `recommendation`: "INCORPORATE", "REJECT", "NEEDS_FURTHER_CLARIFICATION", or "NEW_TASK_FOR_PLAN".
+  8.  **Crucially**: 
+      *   If your `recommendation` is "INCORPORATE", provide detailed and actionable `incorporation_instructions_for_next_agent`. These instructions should tell the *next specialized agent* (e.g., ProductAnalystAgent if `artifact_type` is LOPRD, or ArchitectAgent if `artifact_type` is ProjectBlueprint) precisely what changes to make to the artifact.
+          *   Example for LOPRD: "Instruct ProductAnalystAgent to: Update User Story US-005 to include a non-functional requirement for sub-second response times for the search feature. Add a new Acceptance Criterion AC-US-005.3: 'Search results must appear within 800ms.'"
+          *   Example for ProjectBlueprint: "Instruct ArchitectAgent to: Revise Section 4.2 (Data Model) of the ProjectBlueprint. Change the 'User' entity to include a 'last_login_ip' attribute. Justify this change by referencing the new security optimization."
+      *   If your `recommendation` is "REJECT", this can be null or briefly explain why the suggestion is rejected.
+      *   If your `recommendation` is "NEEDS_FURTHER_CLARIFICATION", provide a `clarification_query_for_generator` specifying what information is missing or ambiguous.
+      *   If your `recommendation` is "NEW_TASK_FOR_PLAN", provide a structured object with details for the new task. ARCA will formulate the final MasterStageSpec.
   9.  Provide your `confidence_in_recommendation` (0.0-1.0).
 
-  After evaluating all suggestions, provide an `overall_summary_of_actions` for ARCA.
+  After evaluating all suggestions from the input list, provide an `overall_summary_of_actions` for ARCA.
 
   **Output Format:**
-  Respond with a single JSON object adhering to the schema defined in the `output_format.json_schema` section of this prompt definition. Ensure all required fields are present.
+  Respond with a single JSON object adhering to the schema defined in the `output_format.json_schema` section of this prompt definition. Ensure all required fields are present for each evaluated optimization.
 
   ```json
   {
     "evaluated_optimizations": [
       {
-        "optimization_id": "example_opt_001",
-        "source_report": "PRAA_Optimization_Report",
-        "original_suggestion_summary": "Example: Consider using a caching layer for frequently accessed data.",
+        "optimization_id": "OPT-PRAA-001",
+        "source_report": "PRAA",
+        "original_suggestion_summary": "Consider using a caching layer for frequently accessed data.",
         "is_actionable_and_relevant": true,
-        "assessment_rationale": "This is relevant as the artifact is a LOPRD for a high-traffic web application, and caching can improve performance and reduce database load, aligning with the project goal of scalability.",
-        "potential_impact_assessment": "Positive: Improved response times, reduced server load. Negative: Increased complexity, potential for stale data if not managed correctly.",
+        "assessment_rationale": "Relevant for high-traffic web app (LOPRD context), aligns with scalability goal.",
+        "potential_impact_assessment": "Positive: Improved response, reduced load. Negative: Complexity, stale data risk.",
         "recommendation": "INCORPORATE",
-        "incorporation_instructions_for_next_agent": "Instruct ProductAnalystAgent to: Add a new Non-Functional Requirement (NFR) to the LOPRD: 'NFR-CACHE-01: The system should implement a caching mechanism for read-heavy operations on product data to ensure average API response times remain below 500ms under peak load.' Also, add a corresponding section in the LOPRD's technical considerations detailing the need for a cache invalidation strategy.",
+        "incorporation_instructions_for_next_agent": "Instruct ProductAnalystAgent to: Add NFR-CACHE-01: 'System should implement caching for read-heavy product data for <500ms response under peak load.' Detail cache invalidation strategy needs in LOPRD technical considerations.",
+        "clarification_query_for_generator": null,
+        "new_task_details_for_plan": null,
         "confidence_in_recommendation": 0.9
       }
-      // ... potentially more evaluated optimizations
     ],
-    "overall_summary_of_actions": "Recommend incorporating the caching optimization into the LOPRD via ProductAnalystAgent due to its high relevance and potential performance benefits. No other actionable optimizations were identified from the provided reports for the current artifact."
+    "overall_summary_of_actions": "Recommend incorporating caching optimization into LOPRD via ProductAnalystAgent."
   }
   ``` 
