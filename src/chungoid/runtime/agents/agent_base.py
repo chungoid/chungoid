@@ -22,6 +22,15 @@ class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema]):
 # Re-export AgentErrorDetails as AgentError to satisfy existing imports
 AgentError = AgentErrorDetails
 
+class AgentInputError(AgentError):
+    """Custom exception for errors related to agent input validation or processing."""
+    def __init__(self, message: str, agent_id: str = "Unknown", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, agent_id=agent_id, error_type="AgentInputError", details=details)
+        # Note: AgentErrorDetails (which AgentError is an alias for) takes these named args.
+
+
+__all__ = ["BaseAgent", "InputSchema", "OutputSchema", "AgentError", "AgentInputError"]
+
 # Example of a more distinct AgentError if needed later:
 # class AgentError(Exception):
 #     """Base exception for agent-related errors."""

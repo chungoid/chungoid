@@ -1,10 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Type, TypeVar
 import logging
 import uuid
 import json
+import os
+
+from pydantic import BaseModel, ValidationError
+from openai import AsyncOpenAI, APIError
+from dotenv import load_dotenv
+
+from chungoid.utils.prompt_manager import PromptManager, PromptDefinition, PromptRenderError, PromptLoadError
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 class LLMProvider(ABC):
     """
@@ -250,3 +259,202 @@ class OpenAILLMProvider(LLMProvider):
 #             raise # Re-raise the exception for the caller to handle
 
 #         return "Error: Could not get response from OpenAI." # Fallback 
+
+class LLMProvider:
+    """
+    Provides an interface to interact with Large Language Models (LLMs),
+    handling prompt management and API communication.
+    """
+
+    def __init__(self, prompt_manager: PromptManager):
+        """
+        Initializes the LLMProvider.
+
+        Args:
+            prompt_manager: An instance of PromptManager to retrieve prompt templates.
+        """
+        self.prompt_manager = prompt_manager
+        load_dotenv()  # Load environment variables from .env file
+
+        self._api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
+        self._openai_client: Optional[AsyncOpenAI] = None
+
+        if self._api_key:
+            self._openai_client = AsyncOpenAI(api_key=self._api_key)
+            logger.info("OpenAI client initialized with API key.")
+        else:
+            logger.warning(
+                "OPENAI_API_KEY not found in environment. "
+                "LLMProvider will not be able to make live API calls."
+            )
+
+    async def generate_text_async_with_prompt_manager(
+        self,
+        prompt_name: str,
+        prompt_version: str,
+        prompt_render_data: Dict[str, Any],
+        prompt_sub_path: Optional[str] = None,
+        project_id: Optional[str] = None, 
+        calling_agent_id: Optional[str] = None, 
+        expected_json_schema: Optional[Type[T]] = None,
+        temperature: Optional[float] = None, # Allow overriding prompt-defined temperature
+        model_id: Optional[str] = None      # Allow overriding prompt-defined model
+    ) -> Any:
+        """
+        Generates text using a specified prompt, version, and render data via PromptManager.
+        Handles fetching prompt definitions, rendering, calling the LLM, and basic JSON validation.
+        """
+        if not self._openai_client:
+            logger.error("OpenAI client not initialized. Missing API key.")
+            raise ValueError(
+                "LLMProvider cannot make API calls: OPENAI_API_KEY not configured."
+            )
+
+        try:
+            prompt_definition = self.prompt_manager.get_prompt_definition(
+                prompt_name, prompt_version, sub_path=prompt_sub_path
+            )
+            if not prompt_definition:
+                # This case should ideally be caught by get_prompt_definition raising PromptNotFoundError
+                raise ValueError(
+                    f"Prompt '{prompt_name}' version '{prompt_version}' (sub_path: {prompt_sub_path}) not found."
+                )
+
+            system_prompt_str = self.prompt_manager.get_rendered_prompt_template(
+                prompt_definition.system_prompt_template, prompt_render_data
+            )
+            user_prompt_str = self.prompt_manager.get_rendered_prompt_template(
+                prompt_definition.user_prompt_template, prompt_render_data
+            )
+            
+            messages = [
+                {"role": "system", "content": system_prompt_str},
+                {"role": "user", "content": user_prompt_str},
+            ]
+
+            # Determine model, temperature, max_tokens
+            # Priority: direct parameter > prompt setting > hardcoded default
+            final_model_id = model_id or prompt_definition.model_settings.model_name or "gpt-4-turbo-preview"
+            final_temperature = temperature if temperature is not None else prompt_definition.model_settings.temperature # Assumes Pydantic model provides a default
+            final_max_tokens = prompt_definition.model_settings.max_tokens or 2048
+            
+            request_params = {
+                "model": final_model_id,
+                "messages": messages,
+                "max_tokens": final_max_tokens,
+                "temperature": final_temperature,
+            }
+
+            # Add response_format for JSON mode if applicable
+            # Common models supporting JSON mode: gpt-4-turbo, gpt-4-turbo-preview, gpt-3.5-turbo-1106, gpt-3.5-turbo-0125, gpt-4-0125-preview, gpt-4-1106-preview
+            json_mode_supported_models = ["gpt-4-turbo", "gpt-4-turbo-preview", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125", "gpt-4-0125-preview", "gpt-4-1106-preview"]
+            if expected_json_schema and final_model_id in json_mode_supported_models:
+                request_params["response_format"] = {"type": "json_object"}
+                logger.info(f"Requesting JSON object response format for model {final_model_id}")
+            elif expected_json_schema:
+                logger.warning(f"Model {final_model_id} may not support JSON object mode, but JSON output is expected. Proceeding without forcing JSON mode.")
+
+            logger.info(
+                f"Making OpenAI API call to model: {final_model_id} for prompt: {prompt_name} v{prompt_version}. Temp: {final_temperature}, MaxTokens: {final_max_tokens}"
+            )
+            # logger.debug(f"OpenAI API request messages: {messages}") # Can be very verbose
+
+            api_response = await self._openai_client.chat.completions.create(**request_params)
+            
+            llm_output_content = api_response.choices[0].message.content
+
+            if not llm_output_content:
+                logger.warning("LLM returned empty content.")
+                raise ValueError("LLM returned empty content.")
+
+            # Basic cleaning of common Markdown fences if JSON is expected
+            if expected_json_schema:
+                cleaned_output = llm_output_content.strip()
+                if cleaned_output.startswith("```json"):
+                    cleaned_output = cleaned_output[7:].strip()
+                    if cleaned_output.endswith("```"):
+                        cleaned_output = cleaned_output[:-3].strip()
+                elif cleaned_output.startswith("```") and cleaned_output.endswith("```"):
+                    cleaned_output = cleaned_output[3:-3].strip()
+                llm_output_content = cleaned_output
+
+            if expected_json_schema:
+                try:
+                    parsed_json = json.loads(llm_output_content)
+                    validated_output = expected_json_schema(**parsed_json)
+                    logger.info(f"LLM response parsed and validated successfully against {expected_json_schema.__name__} for prompt: {prompt_name}")
+                    return validated_output
+                except json.JSONDecodeError as e_json_decode:
+                    logger.error(
+                        f"Failed to parse LLM response as JSON for prompt {prompt_name}. Error: {e_json_decode}. LLM output: '{llm_output_content[:500]}...'"
+                    )
+                    raise # Re-raise the JSONDecodeError
+                except ValidationError as e_validation: # Assuming pydantic.ValidationError
+                    logger.error(
+                        f"LLM JSON response failed Pydantic validation for {expected_json_schema.__name__} for prompt {prompt_name}. Error: {e_validation}. Raw JSON attempted: '{llm_output_content[:500]}...'"
+                    )
+                    raise # Re-raise the ValidationError
+            else:
+                logger.info(f"LLM response received successfully as string for prompt: {prompt_name}")
+                return llm_output_content
+        
+        except PromptLoadError as e_prompt_nf:
+            logger.error(f"Prompt '{prompt_name}' v'{prompt_version}' not found: {e_prompt_nf}", exc_info=True)
+            raise
+        except PromptRenderError as e_render:
+            logger.error(f"Error rendering prompt '{prompt_name}' v'{prompt_version}': {e_render}", exc_info=True)
+            raise
+        except APIError as e_api: # Catch OpenAI specific API errors
+            logger.error(f"OpenAI API error for prompt '{prompt_name}': {e_api}", exc_info=True)
+            raise ValueError(f"OpenAI API error: {e_api}")
+        except Exception as e_general: # Catch any other unexpected errors
+            logger.error(f"Unexpected error in generate_text_async_with_prompt_manager for prompt '{prompt_name}': {e_general}", exc_info=True)
+            raise ValueError(f"Unexpected error during LLM call: {e_general}")
+
+    # Consider adding a method to explicitly close the httpx client used by AsyncOpenAI
+    # if running in a context where it's necessary (e.g. specific server frameworks)
+    async def close_client(self):
+        if self._openai_client:
+            await self._openai_client.close()
+            logger.info("OpenAI client closed.")
+
+# Example usage (conceptual, not runnable here)
+# async def main():
+#     # Setup PromptManager (assuming it's configured correctly)
+#     pm = PromptManager(prompt_directory_paths=["path/to/prompts"])
+#     llm_provider = LLMProvider(prompt_manager=pm)
+#
+#     if not llm_provider._api_key:
+#          print("API Key not configured. Exiting.")
+#          return
+#
+#     try:
+#         # Assuming a prompt named 'example_prompt' version 'v1' exists
+#         # And it expects a 'name' in its render data
+#         response = await llm_provider.generate_text_async_with_prompt_manager(
+#             prompt_name="example_prompt",
+#             prompt_version="v1",
+#             prompt_render_data={"name": "World"}
+#         )
+#         print("LLM Response:", response)
+#
+#         # Example with JSON output (assuming prompt 'json_example' and schema 'MySchema')
+#         # class MySchema(BaseModel):
+#         #     key: str
+#         #     value: int
+#         # json_response = await llm_provider.generate_text_async_with_prompt_manager(
+#         #     prompt_name="json_example",
+#         #     prompt_version="v1",
+#         #     prompt_render_data={},
+#         #     expected_json_schema=MySchema
+#         # )
+#         # print("LLM JSON Response:", json_response)
+#
+#     except Exception as e:
+#         print(f"An error occurred: {e}")
+#     finally:
+#         await llm_provider.close_client()
+
+# if __name__ == "__main__":
+#     import asyncio
+#     asyncio.run(main()) 

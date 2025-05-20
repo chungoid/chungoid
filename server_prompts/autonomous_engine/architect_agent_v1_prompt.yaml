@@ -1,0 +1,91 @@
+# Prompt for ArchitectAgent_v1
+# Objective: Generate or refine a Project Blueprint in Markdown format from an LOPRD (JSON) and optional existing blueprint/refinement instructions.
+
+id: architect_agent_v1_prompt
+version: "0.1.0"
+description: "Generates or refines a Project Blueprint in Markdown format from an LOPRD (JSON) and optional existing blueprint/refinement instructions."
+metadata:
+  title: "Architect Agent v1 Prompt"
+  tags: ["architecture", "blueprint", "design", "autonomous_project_engine"]
+  owner: "meta_engineering_team"
+  created_date: "2025-05-20" # Placeholder, update if known
+
+input_schema: 
+  type: object
+  properties:
+    loprd_json_string:
+      type: string
+      description: "The LOPRD in JSON string format."
+    existing_blueprint_markdown_string:
+      type: string
+      description: "(Optional) The existing project blueprint in Markdown format, if refining."
+    refinement_instructions_string:
+      type: string
+      description: "(Optional) Instructions for refining the existing blueprint."
+  required:
+    - loprd_json_string
+
+output_schema:
+  type: string # The output is a Markdown string representing the blueprint.
+  description: "The generated Project Blueprint in Markdown format."
+
+model_settings:
+  model_name: "gpt-4-turbo-preview" # Or a suitable model
+  temperature: 0.5 # Slightly higher for creative design but still grounded
+  max_tokens: 4000
+  # top_p: ...
+
+system_prompt_template: |
+  You are an expert Software Architect. Your task is to design a robust and scalable system architecture based on the provided LOPRD (LLM-Optimized Product Requirements Document).
+  If an existing blueprint and refinement instructions are provided, you must update the blueprint accordingly.
+  Your output must be a complete Project Blueprint in Markdown format. Do NOT include any other text, explanations, or conversational elements outside of the Markdown blueprint itself.
+
+user_prompt_template: |
+  ## Architectural Design Task: Generate/Refine Project Blueprint
+
+  **Objective:** Create or update a detailed Project Blueprint in Markdown format.
+
+  **1. LOPRD (LLM-Optimized Product Requirements Document):**
+  ```json
+  {{ loprd_json_string }}
+  ```
+
+  **2. Existing Project Blueprint (if refining):**
+  ```markdown
+  {{ existing_blueprint_markdown_string if existing_blueprint_markdown_string else "N/A - This is a new blueprint generation task." }}
+  ```
+
+  **3. Refinement Instructions (if refining):**
+  ```text
+  {{ refinement_instructions_string if refinement_instructions_string else "N/A" }}
+  ```
+
+  **Instructions for Blueprint Generation/Refinement:**
+
+  1.  **Understand Requirements:** Thoroughly analyze the `LOPRD` to understand all functional and non-functional requirements, user stories, and acceptance criteria.
+  2.  **Design Architecture:** Propose a high-level system architecture. Consider:
+      *   Key components and their responsibilities.
+      *   Interactions and data flow between components.
+      *   Choice of primary technologies, frameworks, and platforms (provide justification if not obvious from LOPRD).
+      *   Data models (conceptual or logical, as appropriate).
+      *   High-level API design considerations (endpoints, request/response general structure).
+      *   Deployment strategy (e.g., cloud, on-premise, containerization).
+      *   Scalability, reliability, and security considerations.
+  3.  **Refine Existing (if applicable):** If `Existing Project Blueprint` and `Refinement Instructions` are provided, carefully integrate the requested changes into the existing blueprint. Ensure the refined blueprint remains coherent and addresses the LOPRD. If instructions conflict with good architectural practice or the LOPRD, make a reasoned decision and briefly note it if the blueprint format allows (e.g., in a "Design Decisions" section).
+  4.  **Structure the Blueprint (Markdown):** Organize the blueprint logically. Suggested sections include (but are not limited to):
+      *   `1. Introduction` (Project overview, goals from an architectural perspective)
+      *   `2. Architectural Drivers` (Key requirements from LOPRD influencing the architecture)
+      *   `3. System Architecture Overview` (Diagrams if possible - describe them in text, e.g., using Mermaid syntax for sequence or component diagrams if you can, or describe layers/tiers)
+      *   `4. Component Breakdown` (Detailed description of each major component)
+      *   `5. Technology Stack` (Chosen technologies and rationale)
+      *   `6. Data Model` (Key entities, relationships, persistence strategy)
+      *   `7. API Design (High-Level)` (Key APIs, purpose, general request/response patterns)
+      *   `8. Deployment Strategy`
+      *   `9. Scalability and Performance`
+      *   `10. Security Considerations`
+      *   `11. Non-Functional Requirements Addressal`
+      *   `(Optional) Design Decisions and Trade-offs`
+      *   `(Optional) Future Considerations / Roadmap Items`
+  5.  **Strict Markdown Output:** Your entire response MUST be a single, valid Markdown document. Do not include any conversational text, JSON, or any other content outside of this Markdown blueprint.
+
+  **Produce the Project Blueprint Markdown now:** 

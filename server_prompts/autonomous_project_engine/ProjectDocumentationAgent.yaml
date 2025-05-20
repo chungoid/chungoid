@@ -1,4 +1,6 @@
-id: project_documentation_agent_v1
+# This file is being renamed. The new name will be project_documentation_agent_v1_prompt.yaml.
+# Content remains the same for now, but the 'id' field within the YAML should be updated if it's meant to match the filename (minus extension).
+id: project_documentation_agent_v1_prompt
 agent_name: ProjectDocumentationAgent_v1
 description: >
   Generates comprehensive project documentation (README, API docs, setup guides, etc.) 
@@ -64,14 +66,15 @@ system_prompt: |
 
 user_prompt_template: |
   **Task ID:** `{{task_id}}`
+  **Project ID:** `{{project_id}}`
   **Task Description:** Generate comprehensive project documentation.
 
-  **Project Artifacts & Codebase (Paths and ChromaDB access will be provided by orchestrator):**
-  -   `refined_user_goal_path`: {{refined_user_goal_path}}
-  -   `project_blueprint_path`: {{project_blueprint_path}}
-  -   `master_execution_plan_path`: {{master_execution_plan_path}}
-  -   `Full codebase scan access`
-  -   `ChromaDB query access to all project collections`
+  **Project Artifacts & Codebase (Content will be fetched from ChromaDB using IDs below; codebase scan path also provided):
+  -   `refined_user_goal_doc_id`: {{refined_user_goal_doc_id}}
+  -   `project_blueprint_doc_id`: {{project_blueprint_doc_id}}
+  -   `master_execution_plan_doc_id`: {{master_execution_plan_doc_id}}
+  -   `generated_code_root_path`: {{generated_code_root_path}}
+  -   `test_summary_doc_id`: {{test_summary_doc_id}} (Optional)
 
   Please generate/update `README.md`, create API documentation in `docs/api/`, produce `codebase_dependency_audit.md`, and any other documentation specified (e.g., guides, release notes if applicable).
   Ensure you also prepare your Key Decision Rationale, Contextual Adherence Explanation, and Confidence Score as per your core directives. These should be included in your final output report to the calling system or logged appropriately.
@@ -81,33 +84,41 @@ input_schema:
   properties:
     task_id:
       type: string
-    refined_user_goal_path:
+    project_id:
       type: string
-    project_blueprint_path:
+    refined_user_goal_doc_id:
       type: string
-    master_execution_plan_path:
+    project_blueprint_doc_id:
       type: string
-    # Orchestrator will ensure agent has broad access to codebase & ChromaDB for this task
+    master_execution_plan_doc_id:
+      type: string
+    generated_code_root_path:
+      type: string
+    test_summary_doc_id:
+      type: [string, "null"]
   required:
     - task_id
-    - refined_user_goal_path
-    - project_blueprint_path
-    - master_execution_plan_path
+    - project_id
+    - refined_user_goal_doc_id
+    - project_blueprint_doc_id
+    - master_execution_plan_doc_id
+    - generated_code_root_path
 
 output_schema:
   type: object
   properties:
-    readme_path:
+    readme_doc_id:
       type: string
-    docs_directory_path:
+      description: ChromaDB Document ID for the generated README.md content.
+    docs_directory_doc_id:
       type: string
-      description: Path to the main docs/ directory containing generated documentation.
-    codebase_dependency_audit_path:
+      description: ChromaDB Document ID for a manifest or bundle representing the generated 'docs/' directory content (e.g., a JSON containing file paths and their content, or an ID of a tarball).
+    codebase_dependency_audit_doc_id:
       type: string
-    release_notes_path:
-      type: string
-      description: Optional, path to release notes if generated.
-    # NEW: Fields for enhanced reporting
+      description: ChromaDB Document ID for the generated codebase_dependency_audit.md content.
+    release_notes_doc_id:
+      type: [string, "null"]
+      description: Optional ChromaDB Document ID for generated RELEASE_NOTES.md content.
     contextual_adherence_summary: 
       type: string
       description: Summary of how generated documentation adheres to source artifacts.
@@ -124,13 +135,15 @@ output_schema:
       type: string
       description: Reasoning for the confidence score.
     ambiguities_found_summary:
-      type: string
+      type: [string, "null"]
       description: Optional summary of any ambiguities found in source materials.
   required:
-    - readme_path
-    - docs_directory_path
-    - codebase_dependency_audit_path 
-    # - contextual_adherence_summary # Making these optional for initial MVP of output schema
+    - readme_doc_id
+    - docs_directory_doc_id
+    - codebase_dependency_audit_doc_id
+    # The following were made optional for MVP in the prompt, but the agent's Pydantic output might require them.
+    # For now, keeping them as per prompt, but this means the agent will have to handle their potential absence from LLM if Pydantic makes them non-optional.
+    # - contextual_adherence_summary
     # - key_decision_rationale_summary
     # - confidence_score_value
     # - confidence_score_level

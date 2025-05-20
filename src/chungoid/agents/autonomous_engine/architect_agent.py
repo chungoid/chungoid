@@ -4,7 +4,7 @@ import logging
 import datetime # For potential timestamping
 import uuid
 import json # For LOPRD content if it's retrieved as JSON string
-from typing import Any, Dict, Optional, ClassVar
+from typing import Any, Dict, Optional, ClassVar, Type
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +12,7 @@ from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
-# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, PLANNING_ARTIFACTS_COLLECTION, AGENT_LOGS_COLLECTION
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
 
@@ -41,27 +41,35 @@ class ArchitectAgentOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
-class ArchitectAgent_v1(BaseAgent):
+class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
     AGENT_ID: ClassVar[str] = "ArchitectAgent_v1"
     AGENT_NAME: ClassVar[str] = "Architect Agent v1"
-    DESCRIPTION: ClassVar[str] = "Generates and refines a Project Blueprint (Markdown) from an LOPRD (JSON)."
+    AGENT_DESCRIPTION: ClassVar[str] = "Generates a technical blueprint based on an LOPRD and project context."
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "architect_agent_v1.yaml"
     VERSION: ClassVar[str] = "0.1.0"
-    CATEGORY: ClassVar[AgentCategory] = AgentCategory.DESIGN_ARCHITECTURE # Or custom
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.PLANNING_AND_DESIGN # MODIFIED
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    INPUT_SCHEMA: ClassVar[Type[ArchitectAgentInput]] = ArchitectAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[ArchitectAgentOutput]] = ArchitectAgentOutput
 
     _llm_provider: Optional[LLMProvider]
     _prompt_manager: Optional[PromptManager]
+    _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1]
     _logger: logging.Logger
 
     def __init__(
         self, 
-        llm_provider: Optional[LLMProvider] = None, 
-        prompt_manager: Optional[PromptManager] = None, 
+        llm_provider: LLMProvider,
+        prompt_manager: PromptManager,
+        project_chroma_manager: ProjectChromaManagerAgent_v1,
         system_context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        config: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None
     ):
+        super().__init__(config=config, system_context=system_context, agent_id=agent_id)
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
+        self._project_chroma_manager = project_chroma_manager
         if system_context and "logger" in system_context:
             self._logger = system_context["logger"]
         else:
@@ -69,56 +77,79 @@ class ArchitectAgent_v1(BaseAgent):
 
     async def invoke_async(
         self,
-        inputs: Dict[str, Any],
+        task_input: ArchitectAgentInput,
         full_context: Optional[Dict[str, Any]] = None,
     ) -> ArchitectAgentOutput:
         llm_provider = self._llm_provider
         prompt_manager = self._prompt_manager
         logger_instance = self._logger
+        pcma_agent = self._project_chroma_manager
 
         if full_context:
-            if not llm_provider and "llm_provider" in full_context: llm_provider = full_context["llm_provider"]
-            if not prompt_manager and "prompt_manager" in full_context: prompt_manager = full_context["prompt_manager"]
+            if "llm_provider" in full_context and full_context["llm_provider"] != llm_provider:
+                 llm_provider = full_context["llm_provider"]
+                 logger_instance.info("Using LLMProvider from full_context for ArchitectAgent.")
+            if "prompt_manager" in full_context and full_context["prompt_manager"] != prompt_manager:
+                 prompt_manager = full_context["prompt_manager"]
+                 logger_instance.info("Using PromptManager from full_context for ArchitectAgent.")
+            if "project_chroma_manager_agent_instance" in full_context and full_context["project_chroma_manager_agent_instance"] != pcma_agent:
+                 pcma_agent = full_context["project_chroma_manager_agent_instance"]
+                 logger_instance.info("Using ProjectChromaManagerAgent_v1 from full_context for ArchitectAgent.")
             if "system_context" in full_context and "logger" in full_context["system_context"]:
                 if full_context["system_context"]["logger"] != self._logger: 
                     logger_instance = full_context["system_context"]["logger"]
         
-        if not llm_provider or not prompt_manager:
-            err_msg = "LLMProvider or PromptManager not available."
+        if not llm_provider or not prompt_manager or not pcma_agent:
+            err_msg = "LLMProvider, PromptManager, or ProjectChromaManagerAgent not available."
             logger_instance.error(f"{err_msg} for {self.AGENT_ID}")
-            task_id_fb = inputs.get("task_id", "unknown_task_dep_fail")
-            proj_id_fb = inputs.get("project_id", "unknown_proj_dep_fail")
-            return ArchitectAgentOutput(task_id=task_id_fb, project_id=proj_id_fb, status="FAILURE_CONFIGURATION", message=err_msg, error_message=err_msg)
+            _task_id = getattr(task_input, 'task_id', "unknown_task_dep_fail")
+            _project_id = getattr(task_input, 'project_id', "unknown_proj_dep_fail")
+            return ArchitectAgentOutput(task_id=_task_id, project_id=_project_id, status="FAILURE_CONFIGURATION", message=err_msg, error_message=err_msg)
 
         try:
-            parsed_inputs = ArchitectAgentInput(**inputs)
+            # parsed_inputs = ArchitectAgentInput(**inputs) # Removed this line
+            pass # Placeholder
         except Exception as e:
             logger_instance.error(f"Input parsing failed: {e}", exc_info=True)
-            return ArchitectAgentOutput(task_id=inputs.get("task_id", "parse_err"), project_id=inputs.get("project_id", "parse_err"), status="FAILURE_INPUT_VALIDATION", message=str(e), error_message=str(e))
+            _task_id = getattr(task_input, 'task_id', "parse_err")
+            _project_id = getattr(task_input, 'project_id', "parse_err")
+            return ArchitectAgentOutput(task_id=_task_id, project_id=_project_id, status="FAILURE_INPUT_VALIDATION", message=str(e), error_message=str(e))
 
-        logger_instance.info(f"{self.AGENT_ID} invoked for task {parsed_inputs.task_id}, LOPRD ID {parsed_inputs.loprd_doc_id} in project {parsed_inputs.project_id}")
+        logger_instance.info(f"{self.AGENT_ID} invoked for task {task_input.task_id}, LOPRD ID {task_input.loprd_doc_id} in project {task_input.project_id}")
 
-        # --- MOCK: Retrieve LOPRD content & existing Blueprint (if any) from PCMA ---
+        # --- Retrieve LOPRD content & existing Blueprint (if any) from PCMA ---
         loprd_json_content_str: Optional[str] = None
-        # if pcma_instance:
-        #     retrieved_loprd = await pcma.retrieve_artifact(PLANNING_ARTIFACTS_COLLECTION, parsed_inputs.loprd_doc_id)
-        #     if retrieved_loprd.status == "SUCCESS": loprd_json_content_str = retrieved_loprd.content
-        #     else: # Handle error
-        loprd_json_content_str = f'{{"mock_loprd_for_architect": true, "loprd_id": "{parsed_inputs.loprd_doc_id}", "requirements": ["req1", "req2"]}}'
-        if not loprd_json_content_str:
-            msg = f"Failed to retrieve LOPRD content for doc_id {parsed_inputs.loprd_doc_id}."
-            logger_instance.error(msg)
-            return ArchitectAgentOutput(task_id=parsed_inputs.task_id, project_id=parsed_inputs.project_id, status="FAILURE_INPUT_RETRIEVAL", message=msg, error_message=msg)
-        
         existing_blueprint_md_str: Optional[str] = None
-        if parsed_inputs.existing_blueprint_doc_id:
-            existing_blueprint_md_str = f"### Mock Existing Blueprint for {parsed_inputs.existing_blueprint_doc_id}\nDetails to be refined."
 
+        try:
+            # Conceptual PCMA call for LOPRD:
+            # loprd_artifact = await pcma_agent.get_document_content_by_id(project_id=task_input.project_id, doc_id=task_input.loprd_doc_id, collection_name="loprds_collection") # Example
+            # if loprd_artifact:
+            #     loprd_json_content_str = loprd_artifact # Assuming content is already stringified JSON
+            # else:
+            #     raise ValueError(f"LOPRD document with ID {task_input.loprd_doc_id} not found.")
+            loprd_json_content_str = f'{{"mock_loprd_for_architect": true, "loprd_id": "{task_input.loprd_doc_id}", "requirements": ["req1", "req2"], "description": "This is a conceptual LOPRD content that would be fetched by PCMA."}}'
+            logger_instance.info(f"Conceptual fetch for loprd_doc_id: {task_input.loprd_doc_id}")
+
+            if task_input.existing_blueprint_doc_id:
+                # existing_blueprint_artifact = await pcma_agent.get_document_content_by_id(project_id=task_input.project_id, doc_id=task_input.existing_blueprint_doc_id, collection_name="blueprints_collection") # Example
+                # if existing_blueprint_artifact:
+                #     existing_blueprint_md_str = existing_blueprint_artifact
+                # else:
+                #     logger_instance.warning(f"Existing blueprint with ID {task_input.existing_blueprint_doc_id} not found, proceeding with new generation.")
+                existing_blueprint_md_str = f"### Mock Existing Blueprint for {task_input.existing_blueprint_doc_id}\nThis is conceptual existing blueprint content that would be fetched by PCMA. Details to be refined by LLM."
+                logger_instance.info(f"Conceptual fetch for existing_blueprint_doc_id: {task_input.existing_blueprint_doc_id}")
+
+        except Exception as e_pcma_fetch:
+            msg = f"Failed to retrieve input artifacts via PCMA: {e_pcma_fetch}"
+            logger_instance.error(msg, exc_info=True)
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_INPUT_RETRIEVAL", message=msg, error_message=str(e_pcma_fetch))
+        
         # --- Prompt Rendering ---
         prompt_render_data = {
             "loprd_json_string": loprd_json_content_str,
             "existing_blueprint_markdown_string": existing_blueprint_md_str,
-            "refinement_instructions_string": parsed_inputs.refinement_instructions
+            "refinement_instructions_string": task_input.refinement_instructions
         }
         try:
             rendered_prompts = prompt_manager.render_prompt_template(ARCHITECT_AGENT_PROMPT_NAME, prompt_render_data, sub_dir="autonomous_engine")
@@ -126,37 +157,84 @@ class ArchitectAgent_v1(BaseAgent):
             main_prompt = rendered_prompts.get("prompt_details") # Or user_prompt
             if not system_prompt or not main_prompt:
                 raise PromptRenderError("Missing system or main prompt content after rendering for ArchitectAgent.")
-        except PromptRenderError as e:
-            logger_instance.error(f"Prompt rendering failed: {e}", exc_info=True)
-            return ArchitectAgentOutput(task_id=parsed_inputs.task_id, project_id=parsed_inputs.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e), error_message=str(e))
+        except PromptRenderError as e_prompt:
+            logger_instance.error(f"Prompt rendering failed for {ARCHITECT_AGENT_PROMPT_NAME}: {e_prompt}", exc_info=True)
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
 
-        # --- LLM Interaction ---
+        # --- LLM Interaction using generate_text_async_with_prompt_manager ---
         generated_blueprint_md: Optional[str] = None
+        llm_usage_metadata: Optional[Dict[str, Any]] = None # To store potential usage data from LLM call
+
         try:
-            logger_instance.info(f"Sending request to LLM for Blueprint generation/refinement.")
-            generated_blueprint_md = await llm_provider.generate(prompt=main_prompt, system_prompt=system_prompt, temperature=0.5) # Higher temp for creative architecture
+            logger_instance.info(f"Sending request to LLM via PromptManager for Blueprint generation/refinement (prompt: {ARCHITECT_AGENT_PROMPT_NAME})...")
+            
+            # Assuming generate_text_async_with_prompt_manager can return a more detailed response object
+            # or we adapt it. For now, let's assume it returns the text directly.
+            llm_response_text = await llm_provider.generate_text_async_with_prompt_manager(
+                prompt_manager=prompt_manager,
+                prompt_name=ARCHITECT_AGENT_PROMPT_NAME,
+                prompt_data=prompt_render_data,
+                sub_dir="autonomous_engine",
+                temperature=0.5, # Higher temp for creative architecture
+                # model_id="gpt-4-turbo-preview" # Or from config/LLMProvider default
+            )
+
+            # TODO: If generate_text_async_with_prompt_manager returns a richer object with usage, capture it:
+            # e.g., if it returns a tuple (text, usage_dict) or an object response.text, response.usage
+            # For now, assuming it just returns the text content.
+            generated_blueprint_md = llm_response_text 
+            # llm_usage_metadata = usage_dict # If available
+
             if not generated_blueprint_md or not generated_blueprint_md.strip():
                 raise ValueError("LLM returned empty or whitespace-only Blueprint content.")
             logger_instance.info("Successfully received Blueprint content from LLM.")
-        except Exception as e:
-            logger_instance.error(f"LLM interaction failed: {e}", exc_info=True)
-            return ArchitectAgentOutput(task_id=parsed_inputs.task_id, project_id=parsed_inputs.project_id, status="FAILURE_LLM", message=str(e), error_message=str(e), llm_full_response=str(e))
+        except Exception as e_llm: # Catch other LLM call related errors
+            logger_instance.error(f"LLM interaction failed: {e_llm}", exc_info=True)
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM", message=str(e_llm), error_message=str(e_llm), llm_full_response=str(e_llm) if not generated_blueprint_md else generated_blueprint_md) # Store what we have
 
-        # --- MOCK: Store Blueprint in ChromaDB (via PCMA) ---
-        blueprint_doc_id = f"mock_blueprint_{parsed_inputs.project_id}_{uuid.uuid4()}_doc_id"
-        # Actual PCMA storage calls would go here.
+        # --- Store Blueprint in ChromaDB (via PCMA) ---
+        blueprint_doc_id: Optional[str] = None
+        try:
+            # Conceptual PCMA call:
+            # stored_artifact_response = await pcma_agent.store_text_artifact(
+            #     project_id=task_input.project_id,
+            #     artifact_content=generated_blueprint_md,
+            #     artifact_name=f"project_blueprint_{task_input.project_id}_{uuid.uuid4().hex[:8]}.md",
+            #     collection_name="blueprints_collection", # Example
+            #     metadata={"loprd_source_doc_id": task_input.loprd_doc_id, "agent_id": self.AGENT_ID}
+            # )
+            # if stored_artifact_response and stored_artifact_response.doc_id:
+            #     blueprint_doc_id = stored_artifact_response.doc_id
+            #     logger_instance.info(f"Blueprint artifact (conceptual) stored with doc_id: {blueprint_doc_id}")
+            # else:
+            #     raise ValueError("PCMA failed to return a document ID for the stored blueprint.")
+            blueprint_doc_id = f"blueprint_md_{task_input.project_id}_{uuid.uuid4().hex[:8]}.md_doc_id"
+            logger_instance.info(f"Blueprint artifact (conceptual) stored with doc_id: {blueprint_doc_id}. Content length: {len(generated_blueprint_md)}")
+
+        except Exception as e_pcma_store:
+            logger_instance.error(f"Conceptual PCMA Blueprint storage failed: {e_pcma_store}", exc_info=True)
+            return ArchitectAgentOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
+                blueprint_document_id=None, # Storage failed
+                status="FAILURE_ARTIFACT_STORAGE",
+                message=f"Failed to store generated Blueprint: {e_pcma_store}",
+                error_message=str(e_pcma_store),
+                llm_full_response=generated_blueprint_md # Still return the content if generated
+            )
 
         confidence = ConfidenceScore(value=0.65, level="Medium", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint generated by LLM from LOPRD. Further review and validation recommended.")
-        if parsed_inputs.existing_blueprint_doc_id: confidence.value = 0.7 # Slightly higher if refined
+        if task_input.existing_blueprint_doc_id: confidence.value = 0.7 # Slightly higher if refined
 
         return ArchitectAgentOutput(
-            task_id=parsed_inputs.task_id,
-            project_id=parsed_inputs.project_id,
+            task_id=task_input.task_id,
+            project_id=task_input.project_id,
             blueprint_document_id=blueprint_doc_id,
             status="SUCCESS",
             message=f"Project Blueprint generated/refined. Stored as doc_id: {blueprint_doc_id}",
             confidence_score=confidence,
-            llm_full_response=generated_blueprint_md # Store the generated markdown for debugging
+            llm_full_response=generated_blueprint_md, # Store the generated markdown for debugging
+            usage_metadata=llm_usage_metadata # Store LLM usage if available
         )
 
     @staticmethod
@@ -164,7 +242,7 @@ class ArchitectAgent_v1(BaseAgent):
         return AgentCard(
             agent_id=ArchitectAgent_v1.AGENT_ID,
             name=ArchitectAgent_v1.AGENT_NAME,
-            description=ArchitectAgent_v1.DESCRIPTION,
+            description=ArchitectAgent_v1.AGENT_DESCRIPTION,
             version=ArchitectAgent_v1.VERSION,
             input_schema=ArchitectAgentInput.model_json_schema(),
             output_schema=ArchitectAgentOutput.model_json_schema(),

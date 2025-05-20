@@ -6,23 +6,28 @@ import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+import logging
 
 from pydantic import BaseModel, Field
 
 from chungoid.runtime.agents.agent_base import AgentBase
 from chungoid.schemas.agent_registry import AgentCard, AgentToolSpec
+from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.async_utils import run_in_executor_wrapper
 
+logger = logging.getLogger(__name__)
 
-class FileSystemAgent(AgentBase):
+class SystemFileSystemAgent_v1(AgentBase):
     """
     An agent that provides tools for interacting with the file system.
     """
 
-    AGENT_ID = "chungoid.system.file_system"
-    AGENT_NAME = "File System Agent"
+    AGENT_ID = "SystemFileSystemAgent_v1"
+    AGENT_NAME = "System File System Agent v1"
     AGENT_DESCRIPTION = "Performs file system operations like creating/modifying directories and files."
-    AGENT_VERSION = "0.1.0"
+    AGENT_VERSION = "1.0.0"
+    CATEGORY: AgentCategory = AgentCategory.SYSTEM_OPERATIONS
+    VISIBILITY: AgentVisibility = AgentVisibility.PUBLIC
 
     # --- Pydantic Schemas for Agent Tools ---
 
@@ -76,6 +81,11 @@ class FileSystemAgent(AgentBase):
         content: Optional[Union[str, List[str]]] = Field(default=None, description="Content read from a file or list of directory items.")
         exists: Optional[bool] = Field(default=None, description="Result of a path_exists check.")
 
+    def __init__(self, system_context: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(system_context=system_context, **kwargs)
+        if not hasattr(self, 'logger') or self.logger is None:
+            self.logger = system_context.get("logger", logger) if system_context else logger
+        self.logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
     def _resolve_and_sandbox_path(self, relative_path: str, project_root: Path) -> Path:
         """
@@ -123,14 +133,16 @@ class FileSystemAgent(AgentBase):
                  result = await run_in_executor_wrapper(method, **tool_input, project_root=project_root)
             else:
                  result = await run_in_executor_wrapper(method, **tool_input)
+            # Ensure result is a dictionary before returning, to match expected type
+            if isinstance(result, BaseModel): # Assuming methods return Pydantic models like FileSystemOutput
+                return result.model_dump()
             return result
         except Exception as e:
-            # Log the exception details for debugging
-            # self.logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
+            self.logger.error(f"Error executing tool {tool_name} for agent {self.AGENT_ID}: {e}", exc_info=True)
             return {"success": False, "error": str(e), "details": f"Exception type: {type(e).__name__}"}
 
-    @classmethod
-    def get_agent_card(cls) -> AgentCard:
+    @staticmethod
+    def get_agent_card_static() -> AgentCard:
         """
         Get the AgentCard for this agent.
         """
@@ -138,75 +150,77 @@ class FileSystemAgent(AgentBase):
             AgentToolSpec(
                 name="create_directory",
                 description="Creates a directory (and any parent directories if they don't exist). Input path is relative to project root.",
-                input_schema=cls.CreateDirectoryInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.CreateDirectoryInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="create_file",
                 description="Creates a file with optional content. Fails if overwrite is False and file exists. Input path is relative to project root.",
-                input_schema=cls.CreateFileInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.CreateFileInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="write_to_file",
                 description="Writes content to a file, with an option to append or overwrite. Creates the file if it doesn't exist. Input path is relative to project root.",
-                input_schema=cls.WriteToFileInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.WriteToFileInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="read_file",
                 description="Reads the content of a file. Input path is relative to project root.",
-                input_schema=cls.ReadFileInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.ReadFileInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="delete_file",
                 description="Deletes a file. Input path is relative to project root.",
-                input_schema=cls.DeletePathInput.model_json_schema(), # Uses generic DeletePathInput
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.DeletePathInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="delete_directory",
                 description="Deletes a directory. If recursive is False, the directory must be empty. Input path is relative to project root.",
-                input_schema=cls.DeletePathInput.model_json_schema(), # Uses generic DeletePathInput
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.DeletePathInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="path_exists",
                 description="Checks if a path (file or directory) exists. Input path is relative to project root.",
-                input_schema=cls.PathExistsInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.PathExistsInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="list_directory_contents",
                 description="Lists the contents (files and subdirectories) of a directory. Input path is relative to project root.",
-                input_schema=cls.ListDirectoryInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.ListDirectoryInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="move_path",
                 description="Moves a file or directory. Overwrites destination if overwrite is True. Input paths are relative to project root.",
-                input_schema=cls.MoveCopyPathInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.MoveCopyPathInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
             AgentToolSpec(
                 name="copy_path",
                 description="Copies a file or directory. Overwrites destination if overwrite is True. Input paths are relative to project root.",
-                input_schema=cls.MoveCopyPathInput.model_json_schema(),
-                output_schema=cls.FileSystemOutput.model_json_schema(),
+                input_schema=SystemFileSystemAgent_v1.MoveCopyPathInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
         ]
         return AgentCard(
-            id=cls.AGENT_ID,
-            name=cls.AGENT_NAME,
-            description=cls.AGENT_DESCRIPTION,
-            version=cls.AGENT_VERSION,
+            agent_id=SystemFileSystemAgent_v1.AGENT_ID,
+            name=SystemFileSystemAgent_v1.AGENT_NAME,
+            description=SystemFileSystemAgent_v1.AGENT_DESCRIPTION,
+            version=SystemFileSystemAgent_v1.AGENT_VERSION,
             tools=tools,
-            category="System",
-            visibility="Public",
-            author="Chungoid Systems",
-            # icon_url="URL to an icon for this agent", # Optional
-            # tags=["filesystem", "file management", "io"], # Optional
+            categories=[SystemFileSystemAgent_v1.CATEGORY.value, AgentCategory.AUTONOMOUS_PROJECT_ENGINE.value],
+            visibility=SystemFileSystemAgent_v1.VISIBILITY.value,
+            metadata={
+                "author": "Chungoid Systems",
+                "tags": ["filesystem", "file management", "io"],
+                "callable_fn_path": f"{SystemFileSystemAgent_v1.__module__}.{SystemFileSystemAgent_v1.__name__}"
+            }
         )
 
     # --------------------------------------------------------------------------
@@ -510,18 +524,18 @@ class FileSystemAgent(AgentBase):
 # To be able to run this agent directly for testing (optional)
 if __name__ == "__main__":
     async def main():
-        agent = FileSystemAgent()
+        agent = SystemFileSystemAgent_v1()
         
         # Example usage (will not work until methods and schemas are defined)
         # test_project_dir = Path("./temp_test_project_fs_agent")
         # test_project_dir.mkdir(exist_ok=True)
         #
-        # print("Agent Card:", agent.get_agent_card().model_dump_json(indent=2))
+        # print("Agent Card:", agent.get_agent_card_static().model_dump_json(indent=2))
         #
         # # Test create_directory
         # result_create_dir = await agent.invoke_async(
         #     tool_name="create_directory",
-        #     tool_input=CreateDirectoryInput(path="my_new_folder_from_invoke").model_dump(),
+        #     tool_input=SystemFileSystemAgent_v1.CreateDirectoryInput(path="my_new_folder_from_invoke").model_dump(),
         #     project_root=test_project_dir
         # )
         # print("\nCreate Directory (via invoke_async) Result:", result_create_dir)
@@ -529,7 +543,7 @@ if __name__ == "__main__":
         # # Test sandbox violation
         # result_sandbox_violation = await agent.invoke_async(
         #    tool_name="create_directory",
-        #    tool_input=CreateDirectoryInput(path="../outside_project_folder").model_dump(),
+        #    tool_input=SystemFileSystemAgent_v1.CreateDirectoryInput(path="../outside_project_folder").model_dump(),
         #    project_root=test_project_dir
         # )
         # print("\nCreate Directory (sandbox violation) Result:", result_sandbox_violation)

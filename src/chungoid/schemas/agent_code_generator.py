@@ -27,6 +27,7 @@ class SmartCodeGeneratorAgentOutput(BaseModel):
     status: Literal["SUCCESS", "FAILURE_LLM_GENERATION", "FAILURE_CONTEXT_RETRIEVAL", "FAILURE_OUTPUT_STORAGE", "FAILURE_INPUT_VALIDATION"] = Field(..., description="Status of the code generation attempt.")
     
     generated_code_artifact_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the stored generated code string (e.g., in live_codebase_collection or generated_code_pending_integration collection).")
+    stored_in_collection: Optional[str] = Field(None, description="The ChromaDB collection where the generated code artifact was stored.")
     generated_code_string: Optional[str] = Field(None, description="The generated code string (can be omitted if very large and doc_id is provided).")
     
     confidence_score: Optional[ConfidenceScore] = Field(None, description="Agent's confidence in the generated code's correctness and contextual adherence.")

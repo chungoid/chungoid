@@ -3,11 +3,20 @@ from enum import Enum
 class AgentCategory(str, Enum):
     TESTING_MOCK = "TESTING_MOCK"
     SYSTEM_ORCHESTRATION = "SYSTEM_ORCHESTRATION"
-    CODE_GENERATION = "CODE_GENERATION" # Placeholder
-    TEST_GENERATION = "TEST_GENERATION" # Added for test generator agents
-    DATA_ANALYSIS = "DATA_ANALYSIS"   # Placeholder
-    CODE_EDITING = "CODE_EDITING"     # ADDED
-    DOCUMENTATION_UPDATE = "DOCUMENTATION_UPDATE"  # Added for agents that update documentation
+    AUTONOMOUS_COORDINATION = "AUTONOMOUS_COORDINATION" # For agents like ARCA
+    REQUIREMENTS_ANALYSIS = "REQUIREMENTS_ANALYSIS" # For ProductAnalystAgent, RTA (partial)
+    PLANNING_AND_DESIGN = "PLANNING_AND_DESIGN" # For ArchitectAgent, BlueprintToFlowAgent
+    CODE_GENERATION = "CODE_GENERATION"
+    CODE_INTEGRATION = "CODE_INTEGRATION" # For SmartCodeIntegrationAgent
+    CODE_EDITING = "CODE_EDITING"     # General code modification
+    CODE_REMEDIATION = "CODE_REMEDIATION" # For CodeDebuggingAgent
+    TEST_GENERATION = "TEST_GENERATION"
+    TEST_EXECUTION = "TEST_EXECUTION"   # For SystemTestRunnerAgent
+    QUALITY_ASSURANCE = "QUALITY_ASSURANCE" # For BlueprintReviewer, RTA (partial), PRAA (partial)
+    RISK_ASSESSMENT = "RISK_ASSESSMENT" # For ProactiveRiskAssessorAgent
+    DOCUMENTATION_GENERATION = "DOCUMENTATION_GENERATION" # For ProjectDocumentationAgent
+    DATA_ANALYSIS = "DATA_ANALYSIS"
+    FILE_MANAGEMENT = "FILE_MANAGEMENT" # For SystemFileSystemAgent
     # Add more categories as needed
 
 class AgentVisibility(str, Enum):

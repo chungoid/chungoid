@@ -1,0 +1,94 @@
+# Prompt for ProductAnalystAgent_v1
+# Objective: Transform a refined user goal, along with contextual information, into a detailed LLM-Optimized Product Requirements Document (LOPRD) in strict JSON format.
+
+id: product_analyst_agent_v1_prompt
+version: "0.1.0"
+description: "Transforms a refined user goal into a detailed LLM-Optimized Product Requirements Document (LOPRD) in JSON format."
+metadata:
+  title: "Product Analyst Agent v1 Prompt"
+  tags: ["product_analysis", "loprd", "requirements_generation", "autonomous_project_engine"]
+  owner: "meta_engineering_team"
+  created_date: "2025-05-20" # Placeholder, update if known
+
+input_schema: 
+  type: object
+  properties:
+    refined_user_goal_md:
+      type: string
+      description: "The refined user goal in Markdown format."
+    assumptions_and_ambiguities_md:
+      type: string
+      description: "Assumptions and ambiguities related to the goal (Markdown)."
+    arca_feedback_md:
+      type: string
+      description: "Feedback from ARCA on previous LOPRD generation attempts (Markdown)."
+    loprd_json_schema_str:
+      type: string
+      description: "The JSON schema string that the LOPRD output must conform to."
+  required:
+    - refined_user_goal_md
+    - loprd_json_schema_str
+
+output_schema:
+  type: object # This would be the LOPRD JSON schema itself, which is complex.
+  description: "The generated LOPRD, which must be a valid JSON object conforming to the schema provided in the input `loprd_json_schema_str`."
+  # For a more complete schema, this would mirror the structure of loprd_json_schema_str.
+  # Example (highly simplified):
+  # properties: 
+  #   project_overview: 
+  #     type: string
+
+model_settings:
+  model_name: "gpt-4-turbo-preview" # Or a suitable model
+  temperature: 0.3
+  max_tokens: 4000 
+  # top_p: ...
+  # response_format: { "type": "json_object" } # If supported and needed for strict JSON
+
+system_prompt_template: |
+  You are an expert Product Analyst. Your task is to meticulously analyze the provided user goal, any accompanying assumptions or ambiguities, and feedback from previous refinement cycles.
+  Based on this analysis, you will generate a comprehensive LLM-Optimized Product Requirements Document (LOPRD).
+  The LOPRD must strictly adhere to the JSON schema provided in the user prompt. Your entire output must be a single, valid JSON object conforming to this schema, with no other text before or after it.
+
+user_prompt_template: |
+  ## Product Analysis Task: Generate LOPRD
+
+  **Objective:** Create a detailed LOPRD in JSON format based on the following inputs.
+
+  **1. Refined User Goal:**
+  ```markdown
+  {{ refined_user_goal_md }}
+  ```
+
+  **2. Assumptions and Ambiguities (if provided):**
+  ```markdown
+  {{ assumptions_and_ambiguities_md }}
+  ```
+
+  **3. Feedback from ARCA (Automated Refinement Coordinator Agent) (if provided):**
+  ```markdown
+  {{ arca_feedback_md }}
+  ```
+
+  **4. LOPRD JSON Schema (Your output MUST conform to this schema):**
+  ```json
+  {{ loprd_json_schema_str }}
+  ```
+
+  **Instructions for LOPRD Generation:**
+
+  1.  **Understand Core Needs:** Thoroughly understand the `Refined User Goal`.
+  2.  **Incorporate Context:** Consider `Assumptions and Ambiguities` and `ARCA Feedback` to clarify requirements and avoid past issues.
+  3.  **Structure the LOPRD:** Based on the `LOPRD JSON Schema`, generate all required sections. This typically includes:
+      *   Project Overview (derived from the goal)
+      *   User Personas/Roles (if inferable or standard)
+      *   User Stories (detailing specific user interactions and values)
+      *   Functional Requirements (what the system must do)
+      *   Non-Functional Requirements (quality attributes like performance, security, usability)
+      *   Acceptance Criteria (for each user story/functional requirement to define 'done')
+      *   Data Dictionary / Key Entities (if applicable from the goal)
+      *   Out-of-Scope Items (clarifying what will NOT be built)
+      *   Open Questions/Assumptions Made (documenting any interpretations you had to make)
+  4.  **Strict JSON Output:** Your entire response MUST be a single, valid JSON object that conforms to the `LOPRD JSON Schema` provided above. Do not include any markdown formatting, explanations, or any other text outside of this JSON object.
+
+  **Produce the LOPRD JSON now:** 

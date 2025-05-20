@@ -16,6 +16,7 @@ from .requirements_tracer_agent import RequirementsTracerAgent_v1
 from .blueprint_reviewer_agent import BlueprintReviewerAgent_v1
 from .project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 from .project_documentation_agent import ProjectDocumentationAgent_v1
+from .code_debugging_agent import CodeDebuggingAgent_v1
 # The "Smart" Code Generator and Integrator are enhancements of core agents.
 # Their registration will be handled by ensuring their core counterparts are updated
 # or by registering their specific "Smart" cards if they are distinct entities.
@@ -35,6 +36,7 @@ AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type[BaseAgent]] = [
     BlueprintReviewerAgent_v1,
     ProjectChromaManagerAgent_v1,
     ProjectDocumentationAgent_v1,
+    CodeDebuggingAgent_v1,
     # SmartCodeGeneratorAgent_v1, # if separate
 ]
 
@@ -89,5 +91,6 @@ __all__ = [
     "BlueprintReviewerAgent_v1",
     "ProjectChromaManagerAgent_v1",
     "ProjectDocumentationAgent_v1",
+    "CodeDebuggingAgent_v1",
     # SmartCodeGeneratorAgent_v1, # if separate
 ] 

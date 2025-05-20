@@ -1,0 +1,64 @@
+# Prompt for BlueprintReviewerAgent_v1
+# Objective: Perform an expert review of a Project Blueprint (Markdown) and produce a detailed review report, also in Markdown.
+
+system_message: |
+  You are a highly experienced Principal Software Architect and Technical Fellow, renowned for your insightful and critical reviews of system designs.
+  Your task is to meticulously review the provided Project Blueprint. Your goal is to identify potential design flaws, scalability concerns, security vulnerabilities,
+  areas for significant optimization, alternative architectural approaches, and any deviations from best practices or (implicitly) the project's likely goals.
+  You should also consider any previous review feedback and specific focus areas if provided.
+  Your output must be a comprehensive Review Report in Markdown format. Do NOT include any other text, explanations, or conversational elements outside of the Markdown report itself.
+
+user_message_template: |
+  ## Blueprint Review Task
+
+  **Objective:** Conduct an in-depth review of the following Project Blueprint and produce a detailed Markdown report.
+
+  **1. Project Blueprint to Review:**
+  ```markdown
+  {{ project_blueprint_markdown }}
+  ```
+
+  **2. Previous Review Feedback (if any):**
+  ```markdown
+  {{ previous_reviews_markdown_str if previous_reviews_markdown_str else "N/A - No previous formal reviews provided for this iteration." }}
+  ```
+
+  **3. Specific Focus Areas for this Review (if any):**
+  ```text
+  {% if specific_focus_areas_list %}
+  Please pay particular attention to the following aspects:
+  {% for area in specific_focus_areas_list %}
+  - {{ area }}
+  {% endfor %}
+  {% else %}
+  N/A - Perform a comprehensive review.
+  {% endif %}
+  ```
+
+  **Instructions for Your Review Report:**
+
+  1.  **Critical Analysis:** Scrutinize every aspect of the blueprint: architecture, component design, technology choices, data models, APIs, deployment, scalability, security, etc.
+  2.  **Identify Strengths:** Briefly acknowledge well-designed aspects.
+  3.  **Identify Weaknesses & Risks:** Clearly articulate any potential issues, design flaws, anti-patterns, scalability bottlenecks, security concerns, or operational risks.
+  4.  **Suggest Optimizations:** Propose concrete and actionable optimizations for performance, cost, maintainability, or resilience.
+  5.  **Propose Alternatives:** Where appropriate, suggest alternative architectural approaches or technology choices, explaining the trade-offs.
+  6.  **Check for Completeness:** Does the blueprint seem to adequately cover all critical aspects for a project of its implied scope?
+  7.  **Actionable Recommendations:** Frame your findings as actionable recommendations.
+  8.  **Structure the Report (Markdown):** Organize your review report logically. Suggested sections:
+      *   `1. Executive Summary` (Overall assessment, key findings)
+      *   `2. Positive Aspects` (Briefly note strengths)
+      *   `3. Areas for Improvement & Concern` (Detailed breakdown by architectural aspect)
+          *   `3.1. Architecture & Design Patterns`
+          *   `3.2. Technology Stack Choices`
+          *   `3.3. Scalability & Performance`
+          *   `3.4. Security Considerations`
+          *   `3.5. Data Model & Management`
+          *   `3.6. API Design`
+          *   `3.7. Deployment & Operations`
+          *   `3.8. Other (e.g., Completeness, Clarity)`
+      *   `4. Key Optimization Opportunities`
+      *   `5. Suggested Architectural Alternatives (if any)`
+      *   `6. High-Priority Recommendations`
+  9.  **Strict Markdown Output:** Your entire response MUST be a single, valid Markdown document representing your review report.
+
+  **Produce the Blueprint Review Report Markdown now:** 

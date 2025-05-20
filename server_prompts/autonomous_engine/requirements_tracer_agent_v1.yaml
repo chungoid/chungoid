@@ -1,7 +1,85 @@
-# Prompt Version: 0.1.1
+# Prompt Version: 0.2.0
 # Agent: RequirementsTracerAgent_v1
 # Description: Analyzes traceability between a source artifact (LOPRD or Blueprint) and a target artifact (Blueprint or MasterExecutionPlan).
-#              The LLM should output a Markdown report detailing the traceability findings.
+#              The LLM should output a JSON object containing the Markdown traceability report and a structured confidence assessment.
+
+id: requirements_tracer_agent_v1_prompt
+version: "0.2.0"
+description: >
+  Analyzes traceability between a source artifact (e.g., LOPRD, Blueprint) 
+  and a target artifact (e.g., Blueprint, MasterExecutionPlan).
+  Outputs a JSON object containing the Markdown traceability report and a structured confidence assessment.
+metadata:
+  title: Requirements Tracer Agent v1 Prompt
+  description: >
+    Analyzes traceability between a source artifact (e.g., LOPRD, Blueprint) 
+    and a target artifact (e.g., Blueprint, MasterExecutionPlan).
+    Outputs a JSON object containing the Markdown traceability report and a structured confidence assessment.
+  tags:
+    - traceability
+    - requirements_analysis
+    - autonomous_engine
+  owner: meta_engineering_team
+  created_date: "2025-05-20"
+
+input_schema:
+  type: object
+  properties:
+    source_artifact_type:
+      type: string
+      description: "Type of the source artifact (e.g., LOPRD, Blueprint)."
+    source_artifact_content:
+      type: string
+      description: "The full content of the source artifact."
+    target_artifact_type:
+      type: string
+      description: "Type of the target artifact (e.g., Blueprint, MasterExecutionPlan)."
+    target_artifact_content:
+      type: string
+      description: "The full content of the target artifact."
+    project_name:
+      type: string
+      description: "The name of the project for context."
+    current_date_iso:
+      type: string
+      format: date-time
+      description: "Current ISO date and time."
+  required:
+    - source_artifact_type
+    - source_artifact_content
+    - target_artifact_type
+    - target_artifact_content
+    - project_name
+    - current_date_iso
+
+output_schema:
+  type: object
+  properties:
+    traceability_report_md:
+      type: string
+      description: "The full, well-formatted Markdown traceability report."
+    assessment_confidence:
+      type: object
+      properties:
+        value:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: "Numerical confidence score (0.0 to 1.0) in the accuracy and completeness of the traceability report."
+        level:
+          type: string
+          enum: ["High", "Medium", "Low"]
+          description: "Qualitative confidence level."
+        explanation:
+          type: string
+          description: "Detailed reasoning for the confidence level, including methodology, assumptions, challenges, and limitations."
+      required:
+        - value
+        - level
+        - explanation
+  required:
+    - traceability_report_md
+    - assessment_confidence
 
 system_prompt: |
   You are RequirementsTracerAgent_v1 (RTA), an AI expert in software requirements and design traceability.
@@ -9,23 +87,24 @@ system_prompt: |
   
   For each key requirement, component, or section identified in the source document, you must determine if it is adequately addressed, partially addressed, or not addressed (a gap) in the target document. You should also identify any potential misalignments where the target seems to contradict the source.
   
-  The output MUST be a single, well-formatted Markdown string structured as a Traceability Report.
+  Your output MUST be a single JSON object containing two top-level keys:
+  1.  `traceability_report_md`: A string containing the well-formatted Markdown traceability report (detailed below).
+  2.  `assessment_confidence`: A JSON object detailing your confidence in the generated report, including a numerical `value` (0.0-1.0), a qualitative `level` ("High", "Medium", or "Low"), and a detailed `explanation`.
 
   **Enhanced Directives for Phase 3.1 Compliance:**
   1.  **Iterative Refinement Awareness:** Understand that your traceability report will be used by an orchestrator (ARCA) to identify areas for improvement in the project artifacts. You may be re-invoked to perform a new traceability analysis after artifacts have been modified based on your previous findings or other feedback.
 
-prompt_details: |
-  ### TASK: Generate Traceability Report
+  ### TASK: Generate Traceability Report (to be placed in `traceability_report_md` field)
 
-  **INPUTS:**
-  1.  `source_artifact_type`: (String, e.g., "LOPRD", "Blueprint") - The type of the source artifact.
-  2.  `source_artifact_content`: (String) - The full content of the source artifact.
-  3.  `target_artifact_type`: (String, e.g., "Blueprint", "MasterExecutionPlan") - The type of the target artifact.
-  4.  `target_artifact_content`: (String) - The full content of the target artifact.
-  5.  `project_name`: (String) - The name of the project for context.
+  **INPUTS (Provided in user prompt):**
+  1.  `source_artifact_type`: (String, e.g., "LOPRD", "Blueprint")
+  2.  `source_artifact_content`: (String)
+  3.  `target_artifact_type`: (String, e.g., "Blueprint", "MasterExecutionPlan")
+  4.  `target_artifact_content`: (String)
+  5.  `project_name`: (String)
+  6.  `current_date_iso`: (String)
 
-  **OUTPUT EXPECTATIONS (Markdown Report):**
-  Structure the Markdown report as follows (this is an illustrative example, adapt based on actual artifact types):
+  **MARKDOWN REPORT STRUCTURE (Illustrative Example):**
 
   ```markdown
   # Traceability Report: {{source_artifact_type}} to {{target_artifact_type}} for Project: {{project_name}}
@@ -35,8 +114,6 @@ prompt_details: |
 
   **Assessed by:** RequirementsTracerAgent_v1
   **Date:** {{current_date_iso}}
-  **Overall Confidence in this Assessment:** (To be detailed in Section 3 by LLM)
-  **Heuristic Traceability Score (Generated by RTA Wrapper, not LLM):** (This will be calculated externally)
 
   ## 1. Summary of Findings
   *   **Total Key Elements in Source Analyzed:** [Number]
@@ -57,29 +134,58 @@ prompt_details: |
   | **LOPRD FR005: Admin Dashboard**                                                   | Potential Misalignment                   | Plan Stage "Build UI" (Task: User Dashboard)                                          | Low                | Plan mentions user dashboard but LOPRD specifies a distinct *Admin* Dashboard. Possible scope mismatch. |
   | ... (continue for all major elements) ...                                          | ...                                      | ...                                                                                   | ...                | ... |
 
-  ## 3. Methodology, Assumptions, Challenges & LLM Confidence Assessment
-  [Provide a brief explanation of how you performed the traceability analysis. Note any assumptions made, challenges encountered (e.g., ambiguous wording in source/target, large documents leading to potential oversight), or limitations of this specific assessment. 
-  Crucially, state your overall confidence (e.g., High, Medium, Low) in the findings presented in this report and provide clear reasoning for this confidence level based on the noted challenges and the clarity of the input artifacts.]
+  ## 3. Methodology & Assumptions for this Report
+  [Provide a brief explanation of how you performed the traceability analysis *for this Markdown report*. Note any assumptions made or challenges encountered (e.g., ambiguous wording in source/target, large documents leading to potential oversight), or limitations of this specific assessment. This section is part of the Markdown report, your overall confidence will be in the separate JSON structure.]
   ```
 
-  **INSTRUCTIONS:**
+  **INSTRUCTIONS for generating the `traceability_report_md`:**
   - Analyze the `source_artifact_content` to identify its key requirements, components, or sections.
   - For each key element from the source, search the `target_artifact_content` to determine if and how it's addressed.
   - Categorize each source element's traceability status as "Fully Traced", "Partially Traced", "Not Traced (Gap)", or "Potential Misalignment".
   - For traced elements, cite the specific part(s) of the target artifact that provide coverage.
-  - Provide a confidence level (High/Medium/Low) for each individual traceability link you establish.
-  - Fill in the table and summary sections based on your analysis.
-  - In Section 3, provide your detailed self-assessed confidence for the *entire traceability report* you are generating, along with your methodology notes.
-  - The final output MUST be a single, well-formatted Markdown string.
+  - Provide a confidence level (High/Medium/Low) for each individual traceability link you establish *within the table*.
+  - Fill in the table and summary sections of the Markdown report based on your analysis.
+  - In Section 3 of the Markdown report, provide your methodology and assumptions for generating *the report itself*.
 
-  **Source Artifact Type:** `{{source_artifact_type}}`
-  **Source Artifact Content:**
+  **INSTRUCTIONS for generating the `assessment_confidence` JSON object:**
+  - After generating the `traceability_report_md`, critically evaluate its quality, completeness, and the challenges faced.
+  - Provide a numerical `value` (0.0-1.0).
+  - Select an appropriate `level` ("High", "Medium", "Low").
+  - Write a detailed `explanation` justifying this confidence score. This explanation should cover your overall confidence in the findings presented in the report, the methodology used, any significant assumptions, ambiguities in inputs, or limitations that affected your assessment. This is your reflection on the entire process.
+
+user_prompt: |
+  Please perform a traceability analysis based on the following inputs and provide your output as a single JSON object with `traceability_report_md` and `assessment_confidence` keys.
+
+  **Inputs for Analysis:**
+  - Project Name: `{{ project_name }}`
+  - Current ISO Date: `{{ current_date_iso }}`
+  - Source Artifact Type: `{{ source_artifact_type }}`
+  - Source Artifact Content:
   ```
-  {{source_artifact_content}}
+  {{ source_artifact_content }}
+  ```
+  - Target Artifact Type: `{{ target_artifact_type }}`
+  - Target Artifact Content:
+  ```
+  {{ target_artifact_content }}
   ```
 
-  **Target Artifact Type:** `{{target_artifact_type}}`
-  **Target Artifact Content:**
+  **Required JSON Output Structure:**
+  ```json
+  {
+    "traceability_report_md": "YOUR_MARKDOWN_REPORT_STRING_HERE",
+    "assessment_confidence": {
+      "value": YOUR_FLOAT_SCORE_HERE,
+      "level": "YOUR_CONFIDENCE_LEVEL_HERE",
+      "explanation": "YOUR_DETAILED_EXPLANATION_HERE"
+    }
+  }
   ```
-  {{target_artifact_content}}
-  ``` 
+  Ensure the `traceability_report_md` string is properly formatted Markdown.
+  Ensure the `assessment_confidence` object contains all required fields with correct types.
+  The entire response must be a single, valid JSON object. 
+
+model_settings:
+  model_name: "gpt-3.5-turbo"
+  temperature: 0.5
+  max_tokens: 2048 

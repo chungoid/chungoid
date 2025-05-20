@@ -7,6 +7,7 @@ import logging
 import hashlib
 import uuid
 import tempfile
+import datetime
 
 from chungoid.schemas.agent_code_integration import SmartCodeIntegrationInput, SmartCodeIntegrationOutput
 from chungoid.schemas.common import ConfidenceScore
@@ -17,28 +18,34 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import Proje
 
 logger = logging.getLogger(__name__)
 
-class CoreCodeIntegrationAgentV1:
-    """    Core Code Integration Agent (Version 1) - Enhanced with Smart Capabilities.
+class SmartCodeIntegrationAgent_v1:
+    """    Smart Code Integration Agent (Version 1).
 
-    Fetches code from ChromaDB, integrates it into files using various edit actions,
+    Fetches code from ChromaDB (or direct input), integrates it into files using various edit actions,
     and updates the live codebase representation in ChromaDB.
     """
 
-    AGENT_ID = "core.code_integration_agent_v1"
+    AGENT_ID = "SmartCodeIntegrationAgent_v1"
     AGENT_NAME = "Smart Code Integration Agent V1"
-    AGENT_DESCRIPTION = "Integrates code (sourced from ChromaDB) into files and updates live codebase in ChromaDB."
+    AGENT_DESCRIPTION = "Integrates code (sourced from ChromaDB or direct input) into files and updates live codebase in ChromaDB."
     CATEGORY = AgentCategory.CODE_EDITING
     VISIBILITY = AgentVisibility.PUBLIC
-    VERSION = "0.2.0"
+    VERSION = "0.2.1"
 
-    def __init__(self, 
+    _pcma_agent: ProjectChromaManagerAgent_v1
+
+    def __init__(self,
+                 pcma_agent: ProjectChromaManagerAgent_v1,
                  config: Optional[Dict[str, Any]] = None,
                  system_context: Optional[Dict[str, Any]] = None
                 ):
+        if not pcma_agent:
+            raise ValueError("ProjectChromaManagerAgent_v1 is required for SmartCodeIntegrationAgent_v1")
+        self._pcma_agent = pcma_agent
         self.config = config if config else {}
         self.system_context = system_context or {}
         self._logger_instance = self.system_context.get("logger", logger)
-        self._logger_instance.info(f"{self.AGENT_NAME} initialized with config: {self.config}")
+        self._logger_instance.info(f"{self.AGENT_NAME} initialized.")
 
     async def invoke_async(self, inputs: Dict[str, Any], full_context: Optional[Dict[str, Any]] = None) -> SmartCodeIntegrationOutput:
         task_id_from_input = inputs.get("task_id", str(uuid.uuid4()))
@@ -54,28 +61,38 @@ class CoreCodeIntegrationAgentV1:
                 error_message=f"Input parsing failed: {e}"
             )
         
-        self._logger_instance.info(f"{self.AGENT_NAME} invoked with action '{parsed_inputs.edit_action}' for target: {parsed_inputs.target_file_path} in project {parsed_inputs.project_id}")
+        self._logger_instance.info(f"{self.AGENT_NAME} invoked with action \'{parsed_inputs.edit_action}\' for target: {parsed_inputs.target_file_path} in project {parsed_inputs.project_id}")
         self._logger_instance.debug(f"{self.AGENT_NAME} parsed_inputs: {parsed_inputs}")
-
-        project_root_placeholder = Path(".")
-        pcma = ProjectChromaManagerAgent_v1(project_root=project_root_placeholder, project_id=parsed_inputs.project_id)
 
         code_to_integrate_str: Optional[str] = None
         if parsed_inputs.generated_code_artifact_doc_id:
             self._logger_instance.info(f"Fetching code from ChromaDB artifact ID: {parsed_inputs.generated_code_artifact_doc_id}")
-            code_to_integrate_str = f"# Mock code from doc_id: {parsed_inputs.generated_code_artifact_doc_id}\nprint('Hello from ChromaDB artifact!')"
+            try:
+                code_doc = await self._pcma_agent.get_document_by_id(
+                    doc_id=parsed_inputs.generated_code_artifact_doc_id,
+                    project_id=parsed_inputs.project_id 
+                )
+                if code_doc and code_doc.document_content:
+                    code_to_integrate_str = code_doc.document_content
+                    self._logger_instance.info(f"Successfully fetched code from doc_id: {parsed_inputs.generated_code_artifact_doc_id}")
+                else:
+                    raise ValueError(f"Document not found or content is empty for doc_id: {parsed_inputs.generated_code_artifact_doc_id}")
+            except Exception as e_fetch:
+                err_msg = f"Failed to fetch code from ChromaDB artifact {parsed_inputs.generated_code_artifact_doc_id}: {e_fetch}"
+                self._logger_instance.error(err_msg, exc_info=True)
+                return SmartCodeIntegrationOutput(task_id=parsed_inputs.task_id, status="FAILURE_CHROMA_FETCH", message=err_msg, modified_file_path=parsed_inputs.target_file_path, error_message=err_msg)
         elif parsed_inputs.code_to_integrate_directly:
             self._logger_instance.info("Using directly provided code string for integration.")
             code_to_integrate_str = parsed_inputs.code_to_integrate_directly
         else:
             err_msg = "Neither 'generated_code_artifact_doc_id' nor 'code_to_integrate_directly' was provided."
             self._logger_instance.error(err_msg)
-            return SmartCodeIntegrationOutput(task_id=parsed_inputs.task_id, status="FAILURE", message=err_msg, modified_file_path=parsed_inputs.target_file_path, error_message=err_msg)
+            return SmartCodeIntegrationOutput(task_id=parsed_inputs.task_id, status="FAILURE_INPUT", message=err_msg, modified_file_path=parsed_inputs.target_file_path, error_message=err_msg)
 
         if code_to_integrate_str is None:
             err_msg = "Code to integrate could not be determined."
             self._logger_instance.error(err_msg)
-            return SmartCodeIntegrationOutput(task_id=parsed_inputs.task_id, status="FAILURE", message=err_msg, modified_file_path=parsed_inputs.target_file_path, error_message=err_msg)
+            return SmartCodeIntegrationOutput(task_id=parsed_inputs.task_id, status="FAILURE_INPUT", message=err_msg, modified_file_path=parsed_inputs.target_file_path, error_message=err_msg)
 
         target_path = Path(parsed_inputs.target_file_path)
         backup_file_path_str: Optional[str] = None
@@ -182,13 +199,31 @@ class CoreCodeIntegrationAgentV1:
                     final_content = f_read_final.read()
                 md5_hash = hashlib.md5(final_content.encode('utf-8')).hexdigest()
                 
-                updated_doc_id = f"mock_live_code_{parsed_inputs.project_id}_{target_path.name}_{uuid.uuid4()}.py_doc_id"
+                doc_metadata = {
+                    "source_agent": self.AGENT_ID,
+                    "task_id": parsed_inputs.task_id,
+                    "original_path": parsed_inputs.target_file_path,
+                    "md5_hash": md5_hash,
+                    "edit_action": parsed_inputs.edit_action,
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                if parsed_inputs.generated_code_artifact_doc_id:
+                    doc_metadata["derived_from_doc_id"] = parsed_inputs.generated_code_artifact_doc_id
+
+                updated_doc_id = await self._pcma_agent.store_document_content(
+                    project_id=parsed_inputs.project_id,
+                    collection_name=LIVE_CODEBASE_COLLECTION,
+                    document_content=final_content,
+                    document_relative_path=parsed_inputs.target_file_path,
+                    metadata=doc_metadata
+                )
+
                 chroma_update_status = "SUCCESS"
-                chroma_update_message = f"(Mocked) Successfully updated live_codebase_collection for {target_path} (Doc ID: {updated_doc_id})."
+                chroma_update_message = f"Successfully updated {LIVE_CODEBASE_COLLECTION} for {target_path} (Doc ID: {updated_doc_id})."
                 self._logger_instance.info(chroma_update_message)
 
             except Exception as e_chroma:
-                chroma_update_message = f"Error during ChromaDB update for {target_path}: {e_chroma}"
+                chroma_update_message = f"Error during ChromaDB update for {target_path} into {LIVE_CODEBASE_COLLECTION}: {e_chroma}"
                 self._logger_instance.error(chroma_update_message, exc_info=True)
         
         final_status = chroma_update_status if action_status == "SUCCESS" else action_status
@@ -218,18 +253,25 @@ class CoreCodeIntegrationAgentV1:
     def get_agent_card_static() -> AgentCard:
         """Returns the static AgentCard for this agent."""
         return AgentCard(
-            agent_id=CoreCodeIntegrationAgentV1.AGENT_ID,
-            name=CoreCodeIntegrationAgentV1.AGENT_NAME,
-            description=CoreCodeIntegrationAgentV1.AGENT_DESCRIPTION,
-            categories=[CoreCodeIntegrationAgentV1.CATEGORY.value],
-            visibility=CoreCodeIntegrationAgentV1.VISIBILITY.value,
+            agent_id=SmartCodeIntegrationAgent_v1.AGENT_ID,
+            name=SmartCodeIntegrationAgent_v1.AGENT_NAME,
+            description=SmartCodeIntegrationAgent_v1.AGENT_DESCRIPTION,
+            categories=[cat.value for cat in [SmartCodeIntegrationAgent_v1.CATEGORY, AgentCategory.AUTONOMOUS_PROJECT_ENGINE]],
+            visibility=SmartCodeIntegrationAgent_v1.VISIBILITY.value,
             capability_profile={
                 "edit_action_support": ["APPEND", "CREATE_OR_APPEND", "ADD_TO_CLICK_GROUP", "ADD_PYTHON_IMPORTS", "REPLACE_FILE_CONTENT"],
-                "language_support": ["python"]
+                "language_support": ["python"],
+                "pcma_collections_used": [
+                    LIVE_CODEBASE_COLLECTION, 
+                    PLANNING_ARTIFACTS_COLLECTION
+                ]
             },
             input_schema=SmartCodeIntegrationInput.model_json_schema(),
             output_schema=SmartCodeIntegrationOutput.model_json_schema(),
-            version=CoreCodeIntegrationAgentV1.VERSION
+            version=SmartCodeIntegrationAgent_v1.VERSION,
+            metadata={
+                "callable_fn_path": f"{SmartCodeIntegrationAgent_v1.__module__}.{SmartCodeIntegrationAgent_v1.__name__}"
+            }
         )
 
 async def main_test_integration():
@@ -238,7 +280,8 @@ async def main_test_integration():
     project_root = Path(temp_dir)
     mock_project_id = "test_smart_integration_proj_001"
 
-    agent = CoreCodeIntegrationAgentV1(
+    agent = SmartCodeIntegrationAgent_v1(
+        pcma_agent=ProjectChromaManagerAgent_v1(project_root=project_root, project_id=mock_project_id),
         config={"project_root_dir_for_pcma_init": str(project_root)}
     )
 

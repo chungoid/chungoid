@@ -1,12 +1,15 @@
-"""Manages loading of core and stage-specific prompt files."""
+"""Manages loading of core and agent-specific prompt files."""
 
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, List
+from typing import Dict, Any, Optional, List
 
 import yaml
 from jinja2 import Environment, TemplateError, select_autoescape
+from pydantic import BaseModel, field_validator, Field
 
+
+logger = logging.getLogger(__name__)
 
 # Custom Exception for Prompt Loading/Rendering Errors
 class PromptLoadError(Exception):
@@ -21,7 +24,34 @@ class PromptRenderError(PromptLoadError):
     pass
 
 
-# --- Jinja Filters (Example - needs implementation if used) ---
+# --- Pydantic Models for Prompt Structure ---
+class PromptModelSettings(BaseModel):
+    """Defines settings for the LLM model to be used with the prompt."""
+    model_name: Optional[str] = "gpt-4-turbo-preview" # Default model
+    temperature: float = 0.7
+    max_tokens: Optional[int] = 2048
+    # Can add other OpenAI compatible settings like top_p, presence_penalty, etc.
+
+class PromptDefinition(BaseModel):
+    """Represents the structure of a loaded prompt YAML file."""
+    id: str = Field(..., description="Unique identifier for the prompt (e.g., agent name or task type).")
+    version: str = Field(..., description="Version of the prompt (e.g., v1, v1.1).")
+    description: str = Field(..., description="A brief description of what the prompt is for.")
+    system_prompt_template: str = Field(..., alias="system_prompt") # Allow alias for YAML key
+    user_prompt_template: str = Field(..., alias="user_prompt")   # Allow alias for YAML key
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for expected input variables in prompt_render_data.")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the expected LLM output structure.")
+    model_settings: PromptModelSettings = Field(default_factory=PromptModelSettings)
+
+    @field_validator('system_prompt_template', 'user_prompt_template', mode='before')
+    @classmethod
+    def ensure_string_template(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("Prompt templates must be strings.")
+        return value
+
+
+# --- Jinja Filters (Example - needs implementation if used elsewhere) ---
 def format_as_bullets(items: List[str]) -> str:
     """Formats a list of strings as a bulleted list."""
     if not items:
@@ -41,345 +71,223 @@ def to_json_filter(value) -> str:
 
 
 class PromptManager:
-    """Loads, caches, and renders prompts from individual YAML files using Jinja2."""
+    """Loads, caches, and renders prompts from YAML files using Jinja2, structured by PromptDefinition."""
 
-    def __init__(self, server_stages_dir: str, common_template_path: str):
+    def __init__(self, prompt_directory_paths: List[str]):
         """Initializes the PromptManager.
 
         Args:
-            server_stages_dir: Path to the directory containing stage-specific YAML template files (e.g., stage0.yaml) relative to the server installation.
-            common_template_path: Path to the common YAML template file containing preamble/postamble.
-
+            prompt_directory_paths: A list of paths to directories containing prompt YAML files.
+                                     Prompts are organized by subdirectories (e.g., 'autonomous_engine').
         Raises:
-            ValueError: If paths are empty.
-            PromptLoadError: If directories/files don't exist or cannot be loaded.
+            PromptLoadError: If directories don't exist or no prompts are loaded.
         """
         self.logger = logging.getLogger(__name__)
+        self.prompt_definitions: Dict[str, PromptDefinition] = {} # Key: "sub_path/prompt_name/version"
+        self.jinja_env = self._create_jinja_environment()
 
-        # <<< DEBUG PRINTS START >>>
-        # print(f"DEBUG PM __init__: Received server_stages_dir: {server_stages_dir}") # REMOVE
-        # print(f"DEBUG PM __init__: Received common_template_path: {common_template_path}") # REMOVE
-        # <<< DEBUG PRINTS END >>>
+        if not prompt_directory_paths:
+            raise PromptLoadError("At least one prompt directory path must be provided.")
 
-        if not server_stages_dir:
-            raise ValueError("Server stage template directory must be provided.")
-        if not common_template_path:
-            raise ValueError("Common template path must be provided.")
+        for dir_path_str in prompt_directory_paths:
+            dir_path = Path(dir_path_str).resolve()
+            if not dir_path.is_dir():
+                self.logger.warning(f"Prompt directory not found: {dir_path}")
+                continue
+            self._load_prompts_from_directory(dir_path)
 
-        # Resolve paths during initialization to ensure they are absolute and correct
-        self.stages_dir = Path(server_stages_dir).resolve()
-        self.common_template_path = Path(common_template_path).resolve()
+        if not self.prompt_definitions:
+            self.logger.error("No prompt definitions were loaded. Check directory paths and prompt file structures.")
+            # Depending on strictness, could raise PromptLoadError here
+            # For now, allowing initialization but get_prompt_definition will fail.
 
-        # <<< DEBUG PRINTS START >>>
-        # print(f"DEBUG PM __init__: Resolved self.stages_dir: {self.stages_dir}") # REMOVE
-        # print(f"DEBUG PM __init__: Resolved self.common_template_path: {self.common_template_path}") # REMOVE
-        # stages_dir_exists = self.stages_dir.exists() # REMOVE
-        # stages_dir_is_dir = self.stages_dir.is_dir() # REMOVE
-        # common_file_exists = self.common_template_path.exists() # REMOVE
-        # common_file_is_file = self.common_template_path.is_file() # REMOVE
-        # print(f"DEBUG PM __init__: self.stages_dir exists: {stages_dir_exists}") # REMOVE
-        # print(f"DEBUG PM __init__: self.stages_dir is_dir: {stages_dir_is_dir}") # REMOVE
-        # print(f"DEBUG PM __init__: self.common_template_path exists: {common_file_exists}") # REMOVE
-        # print(f"DEBUG PM __init__: self.common_template_path is_file: {common_file_is_file}") # REMOVE
-        # <<< DEBUG PRINTS END >>>
-
-        if not self.stages_dir.is_dir(): # Check after print
-            raise PromptLoadError(
-                f"Resolved server stage template directory not found: {self.stages_dir}"
-            )
-
-        self.common_template_env = self._create_jinja_environment()
-        self.stage_definitions: Dict[float, Dict[str, Any]] = {}
-        self.stage_jinja_envs: Dict[float, Environment] = {}
-
-        # <<< ADDED DIAGNOSTIC LOGGING >>>
-        self.logger.info(f"DEBUG PromptManager: Initializing with server_stages_dir='{self.stages_dir}'")
-        # <<< END DIAGNOSTIC LOGGING >>>
-
-        # Load templates immediately upon initialization
-        self._load_common_template()
-        self._load_stage_definitions()  # Load and cache stage files
-
-    def _load_yaml_file(self, file_path: Path) -> Dict[str, Any]:
-        """Loads and parses a single YAML file."""
-        self.logger.debug("Loading YAML file: %s", file_path)
-        if not file_path.is_file():
-            raise PromptLoadError(f"YAML file not found: {file_path}")
-        try:
-            content = file_path.read_text(encoding="utf-8") # Read content first
-            # <<< ADDED DIAGNOSTIC LOGGING (Moved here for context) >>>
-            filename = file_path.name
-            if filename in ["stage0.yaml", "stage1.yaml"]:
-                 self.logger.info(f"DEBUG PromptManager: Reading {filename} in _load_yaml_file. Content repr(): {repr(content)}")
-            # <<< END DIAGNOSTIC LOGGING >>>
-
-            try:
-                # Attempt standard YAML load
-                data = yaml.safe_load(content)
-            except yaml.YAMLError as yaml_err:
-                self.logger.warning(f"Standard YAML parsing failed for {file_path}: {yaml_err}. Attempting JSON fallback after Jinja removal.")
-                try:
-                    # Fallback: Remove Jinja and try JSON
-                    import re
-                    import json
-                    content_no_jinja = re.sub(r"\{\{.*?\}\}", '""', content)
-                    data = json.loads(content_no_jinja)
-                    self.logger.info(f"Successfully loaded {file_path} using JSON fallback after Jinja removal.")
-                except (json.JSONDecodeError, Exception) as fallback_err:
-                    self.logger.error(f"JSON fallback also failed for {file_path}: {fallback_err}")
-                    raise PromptLoadError(f"Invalid YAML format in {file_path} (and JSON fallback failed): {yaml_err}") from yaml_err
-
-            if not isinstance(data, dict):
-                raise PromptLoadError(f"YAML/JSON content is not a dictionary: {file_path}")
-            self.logger.debug("Successfully loaded and parsed YAML (or JSON fallback): %s", file_path)
-            return data
-        except IOError as e:
-            self.logger.error("Failed to read YAML file '%s': %s", file_path, e)
-            raise PromptLoadError(f"Could not read YAML file {file_path}: {e}") from e
-        except Exception as e:
-            self.logger.exception("Unexpected error loading YAML file '%s': %s", file_path, e)
-            raise PromptLoadError(f"Unexpected error loading {file_path}: {e}") from e
-
-    def _extract_stage_number(self, filename: str) -> Optional[Union[int, float]]:
-        """Extracts stage number (int or float) from filename like 'stage1.yaml' or 'stage0.5.yaml'."""
-        if filename.startswith("stage") and filename.endswith(".yaml"):
-            try:
-                num_str = filename[len("stage") : -len(".yaml")]
-                if "." in num_str:
-                    return float(num_str)
-                else:
-                    return int(num_str)
-            except ValueError:
-                return None
-        return None
-
-    def _load_stage_definitions(self):
-        """Loads all stage definition YAML files from the stages directory."""
-        self.logger.info("Loading stage definitions from %s", self.stages_dir)
-        self.stage_definitions = {}
-        errors = []
-        loaded_count = 0
-
-        # <<< DEBUG PRINT START >>>
-        # try: # REMOVE
-        #     glob_files = list(self.stages_dir.glob("stage*.yaml")) # REMOVE
-        #     print(f"DEBUG PM _load_stage_definitions: Files found by glob('stage*.yaml'): {glob_files}") # REMOVE
-        # except Exception as e: # REMOVE
-        #     print(f"DEBUG PM _load_stage_definitions: Error during glob: {e}") # REMOVE
-        # <<< DEBUG PRINT END >>>
-
-        for file_path in self.stages_dir.glob("stage*.yaml"):
-            stage_number = self._extract_stage_number(file_path.name)
-            if stage_number is not None:
-                try:
-                    self.logger.info(f"Attempting to load stage definition from {file_path.name}")
-                    # <<< ADDED DEBUG LOGGING: Read file content directly >>>
-                    debug_content_snippet = "ERROR READING SNIPPET"
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f_debug:
-                            # Read first few lines for logging
-                            debug_lines = [next(f_debug) for _ in range(10)]
-                            debug_content_snippet = "".join(debug_lines)
-                        self.logger.debug(f"DEBUG: Content snippet read directly from '{file_path}' before parsing:\\n{debug_content_snippet}")
-                    except Exception as e_debug:
-                        self.logger.error(f"DEBUG: Failed to read snippet directly from '{file_path}': {e_debug}")
-                    # <<< END ADDED DEBUG LOGGING >>>
-
-                    stage_data = self._load_yaml_file(file_path)
-                    # Basic validation of required keys
-                    required_keys = ['system_prompt', 'user_prompt']
-                    missing_keys = [k for k in required_keys if k not in stage_data or not isinstance(stage_data[k], str)]
-                    if missing_keys:
-                        raise PromptLoadError(f"Stage {stage_number} definition missing required string keys: {missing_keys}")
-
-                    # Store the entire loaded data under the stage number key
-                    self.stage_definitions[stage_number] = stage_data
-                    loaded_count += 1
-                    self.logger.debug(
-                        "Loaded stage definition for %s from %s", stage_number, file_path.name
-                    )
-                    self.logger.info(f"Successfully loaded and stored stage definition for {stage_number} from {file_path.name}")
-                except PromptLoadError as e:
-                    self.logger.error(
-                        "Failed to load stage definition from %s: %s", file_path.name, e
-                    )
-                    errors.append(f"{file_path.name}: {e}") # Add error details
-                except Exception as e:  # Catch unexpected errors during loading
-                    self.logger.exception(
-                        "Unexpected error loading stage definition from %s: %s", file_path.name, e
-                    )
-                    errors.append(f"{file_path.name}: Unexpected error - {e}") # Add error details
-            else:
-                self.logger.warning("Skipping file with non-standard name: %s", file_path.name)
-
-        if errors:
-            error_details = "\n".join(errors)
-            self.logger.error(
-                f"Encountered {len(errors)} error(s) while loading stage definitions:\n{error_details}"
-            )
-            # Raise an error if any stage failed to load
-            raise PromptLoadError(f"Failed to load {len(errors)} stage definition file(s). See logs for details.")
-
-        if not self.stage_definitions:
-            # If no errors occurred but still no definitions, it's a different issue
-            self.logger.error(
-                "No valid stage definition files (stage*.yaml) found in %s", self.stages_dir
-            )
-            raise PromptLoadError(f"No valid stage definition files found in {self.stages_dir}")
-
-        self.logger.info(
-            "Finished loading stage definitions. Found %d stages.", len(self.stage_definitions)
-        )
-
-    def get_stage_definition(self, stage_number: Union[int, float, str]) -> Dict[str, Any]:
-        """Retrieves the definition for a specific stage number."""
-        if not self.stage_definitions:
-            self._load_stage_definitions()  # Ensure loaded (or attempt reload if empty)
-
-        # Attempt lookup with the provided type first
-        stage_def = self.stage_definitions.get(stage_number)
-
-        # If not found, try converting type (float to int, or int to float if applicable)
-        if not stage_def:
-            self.logger.debug(
-                "Stage %s not found with original type (%s). Trying type conversion.",
-                stage_number,
-                type(stage_number),
-            )
-            try:
-                if isinstance(stage_number, float) and stage_number.is_integer():
-                    stage_def = self.stage_definitions.get(int(stage_number))
-                elif isinstance(stage_number, int):
-                    stage_def = self.stage_definitions.get(float(stage_number))
-            except Exception as e: # Catch potential errors during conversion/lookup
-                 self.logger.warning(f"Error during type conversion lookup for stage {stage_number}: {e}")
-
-        if not stage_def:
-            self.logger.error("Definition for stage '%s' not found in loaded files.", stage_number)
-            # Include available keys for debugging
-            self.logger.debug(f"Available stage keys: {list(self.stage_definitions.keys())}")
-            raise PromptLoadError(f"Stage {stage_number} definition not found.")
-        return stage_def
-
-    def _load_common_template(self):
-        """Loads the common template YAML file."""
-        self.logger.info("Loading common template from %s", self.common_template_path)
-        try:
-            common_data = self._load_yaml_file(self.common_template_path)
-            # Expecting keys like 'preamble' and 'postamble'
-            if not isinstance(common_data.get("preamble"), str) or not isinstance(
-                common_data.get("postamble"), str
-            ):
-                raise PromptLoadError(
-                    "Common template missing required 'preamble' or 'postamble' string keys."
-                )
-            self.common_template = {
-                "preamble": common_data.get("preamble", ""),
-                "postamble": common_data.get("postamble", ""),
-            }
-            self.logger.info("Successfully loaded common template.")
-        except PromptLoadError as e:
-            self.logger.error("Failed to load common template: %s", e)
-            raise PromptLoadError(f"Could not load common template: {e}") from e
-        except Exception as e:  # Catch unexpected errors
-            self.logger.exception("Unexpected error loading common template: %s", e)
-            raise PromptLoadError(f"Unexpected error loading common template: {e}") from e
-
-    def get_rendered_prompt(
-        self, stage_number: Union[int, float, str], context_data: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """Loads the specific stage YAML, merges data, and renders the full prompt using Jinja2.
-
-        Args:
-            stage_number: The number of the stage to render the prompt for.
-            context_data: Additional context data to inject into the template (e.g., reflections_summary).
-
-        Returns:
-            The fully rendered prompt string for the specified stage.
-
-        Raises:
-            PromptLoadError: If stage definition cannot be loaded.
-            PromptRenderError: If there is an error during template rendering.
-        """
-        self.logger.info("Generating rendered prompt for stage %s", stage_number)
-        context_data = context_data or {}
-
-        try:
-            # Get stage definition (raises PromptLoadError if not found)
-            stage_def = self.get_stage_definition(stage_number)
-
-            # Safely get template strings
-            system_prompt_template_str = stage_def.get("system_prompt", "")
-            user_prompt_template_str = stage_def.get("user_prompt", "")
-            common_preamble = self.common_template.get("preamble", "")
-            common_postamble = self.common_template.get("postamble", "")
-
-            if not system_prompt_template_str and not user_prompt_template_str:
-                 raise PromptLoadError(f"Stage {stage_number} definition is missing both 'system_prompt' and 'user_prompt'.")
-
-            # Merge context: Stage-specific context overrides common context if keys conflict
-            # Wrap context_data in a dict so templates can use {{ context_data.key }}
-            render_context = {"context_data": context_data}
-
-            # Render parts
-            rendered_system = ""
-            rendered_user = ""
-
-            if system_prompt_template_str:
-                system_template = self.common_template_env.from_string(system_prompt_template_str)
-                rendered_system = system_template.render(render_context)
-
-            if user_prompt_template_str:
-                user_template = self.common_template_env.from_string(user_prompt_template_str)
-                rendered_user = user_template.render(render_context)
-
-            # Combine parts (ensure some spacing)
-            full_prompt = f"{common_preamble}\n\n{rendered_system}\n\n{rendered_user}\n\n{common_postamble}".strip()
-
-            self.logger.debug("Successfully rendered prompt for stage %s", stage_number)
-            return full_prompt
-
-        except PromptLoadError: # Re-raise errors from get_stage_definition
-            raise
-        except (TemplateError, TypeError, KeyError) as e:
-            self.logger.error(
-                "Failed to render prompt template for stage %s: %s", stage_number, e, exc_info=True # Log traceback
-            )
-            raise PromptRenderError(
-                f"Error rendering prompt for stage {stage_number}: {type(e).__name__} - {e}"
-            ) from e
-        except Exception as e:
-            self.logger.exception(
-                "Unexpected error rendering prompt for stage %s: %s", stage_number, e
-            )
-            raise PromptRenderError(
-                f"Unexpected error rendering prompt for stage {stage_number}: {e}"
-            ) from e
+        self.logger.info(f"PromptManager initialized. Loaded {len(self.prompt_definitions)} prompt definitions.")
 
     def _create_jinja_environment(self) -> Environment:
-        """Creates and configures the Jinja2 environment."""
+        """Creates a Jinja2 environment with custom filters."""
         env = Environment(
-            loader=None, # Using from_string, so no loader needed here
-            autoescape=select_autoescape(['html', 'xml']), # Basic autoescape
-            trim_blocks=True,
-            lstrip_blocks=True
+            loader=None, # Templates are loaded as strings directly
+            autoescape=select_autoescape(['html', 'xml']), # Though likely not needed for LLM prompts
+            undefined=jinja2.StrictUndefined, # Raise error on undefined variables
         )
-        # Add custom filters (ensure filter functions are defined)
+        env.filters['format_as_bullets'] = format_as_bullets
         env.filters['to_json'] = to_json_filter
-        env.filters['as_bullets'] = format_as_bullets
-        self.logger.info("Jinja2 environment created.")
         return env
 
-    def _load_single_stage_definition(self, file_path: Path) -> Optional[Dict[str, Any]]:
-        """Loads and parses a single YAML stage definition file. (Now simplified, main logic in _load_yaml_file)"""
+    def _load_prompts_from_directory(self, base_dir_path: Path):
+        """Recursively loads all prompt YAML files from a base directory and its subdirectories."""
+        self.logger.info(f"Scanning for prompt YAML files in: {base_dir_path}")
+        for yaml_file_path in base_dir_path.rglob("*.yaml"): # rglob for recursive
+            try:
+                relative_path = yaml_file_path.relative_to(base_dir_path)
+                # sub_path is the parent directory of the prompt file (e.g., autonomous_engine)
+                # prompt_name is the filename without .yaml (e.g., requirements_tracer_agent_v1_prompt)
+                
+                sub_path_parts = list(relative_path.parent.parts)
+                sub_path_str = "/".join(sub_path_parts) if sub_path_parts else ""
+                
+                prompt_file_name = yaml_file_path.stem 
+                # Assuming filename itself contains name and version, e.g., "my_agent_prompt_v1"
+                # Or YAML content has id and version. We rely on YAML content for id & version.
+
+                self.logger.debug(f"Attempting to load prompt definition from: {yaml_file_path}")
+                with open(yaml_file_path, 'r', encoding='utf-8') as f:
+                    prompt_data = yaml.safe_load(f)
+                
+                if not isinstance(prompt_data, dict):
+                    self.logger.warning(f"Skipping non-dictionary YAML file: {yaml_file_path}")
+                    continue
+
+                # Use Pydantic to parse and validate
+                prompt_def = PromptDefinition(**prompt_data)
+                
+                # Construct a unique key. Ensure sub_path is handled correctly if it's empty.
+                # Prompt ID should be unique (e.g., agent name). Version is separate.
+                # Example key: "autonomous_engine/requirements_tracer_agent/v1"
+                # The YAML 'id' field should be the core name, e.g. "requirements_tracer_agent"
+                # The YAML 'version' field is the version, e.g. "v1"
+                
+                key_parts = []
+                if sub_path_str:
+                    key_parts.append(sub_path_str)
+                key_parts.append(prompt_def.id)
+                key_parts.append(prompt_def.version)
+                cache_key = "/".join(key_parts)
+
+                if cache_key in self.prompt_definitions:
+                    self.logger.warning(f"Duplicate prompt definition found for key '{cache_key}' from file {yaml_file_path}. Overwriting.")
+                
+                self.prompt_definitions[cache_key] = prompt_def
+                self.logger.info(f"Successfully loaded and cached prompt: '{cache_key}' from {yaml_file_path}")
+
+            except FileNotFoundError:
+                self.logger.error(f"Prompt file not found during scan: {yaml_file_path}") # Should not happen with glob
+            except yaml.YAMLError as e:
+                self.logger.error(f"Error parsing YAML file '{yaml_file_path}': {e}")
+            except ValueError as e: # Catches Pydantic validation errors or others
+                self.logger.error(f"Error validating prompt data from '{yaml_file_path}': {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error loading prompt from '{yaml_file_path}': {e}", exc_info=True)
+
+
+    def get_prompt_definition(
+        self, prompt_name: str, prompt_version: str, sub_path: Optional[str] = None
+    ) -> PromptDefinition:
+        """
+        Retrieves a parsed PromptDefinition.
+
+        Args:
+            prompt_name: The base name of the prompt (e.g., 'requirements_tracer_agent', from YAML 'id' field).
+            prompt_version: The version of the prompt (e.g., 'v1', from YAML 'version' field).
+            sub_path: Optional subdirectory where the prompt is located (e.g., 'autonomous_engine').
+
+        Returns:
+            The PromptDefinition object.
+
+        Raises:
+            PromptLoadError: If the prompt definition is not found.
+        """
+        key_parts = []
+        if sub_path:
+            key_parts.append(sub_path)
+        key_parts.append(prompt_name)
+        key_parts.append(prompt_version)
+        cache_key = "/".join(key_parts)
+        
+        prompt_def = self.prompt_definitions.get(cache_key)
+        if not prompt_def:
+            self.logger.error(f"Prompt definition not found for key: '{cache_key}'. Available keys: {list(self.prompt_definitions.keys())}")
+            raise PromptLoadError(f"Prompt '{prompt_name}' version '{prompt_version}' (sub-path: '{sub_path}') not found.")
+        return prompt_def
+
+    def get_rendered_prompt_template(
+        self, template_string: str, context_data: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Renders a given prompt template string with the provided context data.
+
+        Args:
+            template_string: The Jinja2 template string.
+            context_data: Data to render the prompt template.
+
+        Returns:
+            The rendered prompt string.
+
+        Raises:
+            PromptRenderError: If there is an error during template rendering.
+        """
+        if context_data is None:
+            context_data = {}
         try:
-            # Directly use the enhanced _load_yaml_file method
-            stage_data = self._load_yaml_file(file_path)
-            return stage_data
-        except PromptLoadError as e:
-            # Log the error specifically for this context if needed, but re-raise
-            self.logger.error(f"Failed to load single stage definition from {file_path}: {e}")
-            raise
+            template = self.jinja_env.from_string(template_string)
+            rendered_prompt = template.render(context_data)
+            return rendered_prompt
+        except TemplateError as e:
+            self.logger.error(f"Error rendering prompt template: {e}. Template (first 100 chars): '{template_string[:100]}...' Context: {context_data}")
+            raise PromptRenderError(f"Error rendering prompt template: {e}") from e
         except Exception as e:
-            self.logger.exception("Unexpected error loading single stage definition from %s: %s", file_path, e)
-            raise PromptLoadError(f"Unexpected error loading {file_path}: {e}") from e
+            self.logger.error(f"Unexpected error rendering template: {e}. Template: '{template_string[:100]}...'", exc_info=True)
+            raise PromptRenderError(f"Unexpected error during template rendering: {e}") from e
+
+    # --- Deprecated/Old methods that might need removal or adaptation ---
+    # The following methods are from the older version of PromptManager seen in the snippet.
+    # They need to be reviewed. get_rendered_prompt is similar to what an agent might call,
+    # but it would now use get_prompt_definition first.
+
+    # def _load_yaml_file(self, file_path: Path) -> Dict[str, Any]: ... (covered by new loading logic)
+    # def _extract_stage_number(self, filename: str) -> Optional[Union[int, float]]: ... (not relevant for new structure)
+    # def _load_stage_definitions(self): ... (replaced by _load_prompts_from_directory)
+    # def get_stage_definition(self, stage_number: Union[int, float, str]) -> Dict[str, Any]: ... (replaced by get_prompt_definition)
+    # def _load_common_template(self): ... (common templates concept needs rethinking if still needed)
+    
+    # def get_rendered_prompt(
+    #     self, stage_number: Union[int, float, str], context_data: Optional[Dict[str, Any]] = None
+    # ) -> str:
+    # Might be useful as a helper for agents if they don't want to call get_prompt_definition then render themselves.
+    # Example of a convenience method:
+    async def get_rendered_system_and_user_prompts(
+        self, 
+        prompt_name: str, 
+        prompt_version: str, 
+        prompt_render_data: Dict[str, Any],
+        prompt_sub_path: Optional[str] = None
+    ) -> (str, str):
+        prompt_def = self.get_prompt_definition(prompt_name, prompt_version, sub_path=prompt_sub_path)
+        system_prompt = self.get_rendered_prompt_template(prompt_def.system_prompt_template, prompt_render_data)
+        user_prompt = self.get_rendered_prompt_template(prompt_def.user_prompt_template, prompt_render_data)
+        return system_prompt, user_prompt
+
+# Ensure jinja2 is imported if StrictUndefined is used directly
+import jinja2
+
+"""
+Example YAML prompt file structure (e.g., chungoid-core/server_prompts/autonomous_engine/my_agent_v1_prompt.yaml):
+
+id: "my_agent" # Base name of the agent/prompt
+version: "v1"
+description: "Prompt for My Agent to do X."
+model_settings:
+  model_name: "gpt-4-turbo-preview"
+  temperature: 0.5
+  max_tokens: 1500
+system_prompt: |
+  You are My Agent. Your goal is to {{ goal }}.
+  Always respond in JSON.
+user_prompt: |
+  Based on the input: {{ input_data }}, perform your task.
+  Details: {{ details }}
+input_schema:
+  type: "object"
+  properties:
+    goal: { type: "string" }
+    input_data: { type: "string" }
+    details: { type: "string" }
+  required: ["goal", "input_data"]
+output_schema:
+  type: "object"
+  properties:
+    result: { type: "string" }
+    confidence: { type: "number" }
+  required: ["result", "confidence"]
+
+"""

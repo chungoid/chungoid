@@ -17,6 +17,18 @@ from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 
+# MODIFIED: Added ProjectChromaManagerAgent_v1 and Path for conceptual PCMA instantiation
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+    ProjectChromaManagerAgent_v1,
+    BLUEPRINT_ARTIFACTS_COLLECTION,        # For fetching blueprint
+    QUALITY_ASSURANCE_LOGS_COLLECTION,   # For fetching reviewer feedback
+    EXECUTION_PLANS_COLLECTION,          # For storing generated plan
+    StoreArtifactInput,
+    StoreArtifactOutput,
+    RetrieveArtifactOutput
+)
+from pathlib import Path # For conceptual PCMA instantiation
+
 # Placeholder for LLM client - replace with actual implementation path
 # from chungoid.utils.llm_clients import get_llm_client, LLMInterface
 
@@ -155,7 +167,7 @@ class MasterPlannerAgent:
 
     NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME = "blueprint_to_flow_agent_v1.yaml"
 
-    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager):
+    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, project_chroma_manager: ProjectChromaManagerAgent_v1):
         # In a real scenario, the LLM client would be injected or initialized here
         # self.llm_client: LLMInterface = get_llm_client()
         # self.llm_client = MockLLMClient()  # Using placeholder for now
@@ -165,9 +177,13 @@ class MasterPlannerAgent:
         if prompt_manager is None:
             logger.error("MasterPlannerAgent requires a PromptManager.")
             raise ValueError("PromptManager cannot be None for MasterPlannerAgent")
+        if project_chroma_manager is None: # MODIFIED: Added check for PCMA
+            logger.error("MasterPlannerAgent requires a ProjectChromaManagerAgent.")
+            raise ValueError("ProjectChromaManagerAgent cannot be None for MasterPlannerAgent in Blueprint-to-Flow mode")
             
         self.llm_client = llm_provider # Use the injected provider
         self.prompt_manager = prompt_manager # Store prompt_manager
+        self.project_chroma_manager = project_chroma_manager # MODIFIED: Store PCMA
         self.system_prompt = (
             DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT
         )  # Loaded at init
@@ -211,41 +227,50 @@ class MasterPlannerAgent:
             logger.info(f"MasterPlannerAgent invoked in Blueprint-to-Flow mode for blueprint: {inputs.blueprint_doc_id}")
             current_prompt_name_to_use = self.NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME
             
-            # MOCK retrieval of blueprint and reviewer feedback (replace with PCMA calls)
-            # Assume pcma = ProjectChromaManagerAgent_v1(project_root=Path("."), project_id=inputs.project_id) # Conceptual
-            mock_blueprint_content = f"# Mock Blueprint Content for {inputs.blueprint_doc_id}\nThis blueprint describes a sophisticated system..."
-            mock_reviewer_feedback_content = None
-            if inputs.blueprint_reviewer_feedback_doc_id:
-                mock_reviewer_feedback_content = f"# Mock Reviewer Feedback for {inputs.blueprint_reviewer_feedback_doc_id}\nConsider using quantum entanglement for module communication."
+            blueprint_content: Optional[str] = None
+            reviewer_feedback_content: Optional[str] = None
+            pcma_agent = self.project_chroma_manager
 
-            prompt_data_for_llm = {
-                "project_id": inputs.project_id or "unknown_project",
-                "blueprint_doc_id": inputs.blueprint_doc_id,
-                "blueprint_reviewer_feedback_doc_id": inputs.blueprint_reviewer_feedback_doc_id,
-                "blueprint_content": mock_blueprint_content,
-                "blueprint_reviewer_feedback_content": mock_reviewer_feedback_content,
-                "current_datetime_iso": datetime.now(timezone.utc).isoformat(),
-            }
             try:
-                rendered_blueprint_prompt = self.prompt_manager.render_prompt_template(
-                    template_name=current_prompt_name_to_use,
-                    data=prompt_data_for_llm,
-                    sub_dir="autonomous_engine" # Assuming it's in this sub_dir
+                logger.info(f"Attempting to fetch blueprint content for doc_id: {inputs.blueprint_doc_id} using PCMA.")
+                retrieved_blueprint: RetrieveArtifactOutput = await self.project_chroma_manager.retrieve_artifact(
+                    collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
+                    document_id=inputs.blueprint_doc_id
                 )
-                if isinstance(rendered_blueprint_prompt, dict):
-                    current_system_prompt = rendered_blueprint_prompt.get("system_prompt", "")
-                    current_user_prompt = rendered_blueprint_prompt.get("prompt_details", "")
+                if retrieved_blueprint and retrieved_blueprint.status == "SUCCESS" and retrieved_blueprint.content:
+                    blueprint_content = str(retrieved_blueprint.content)
+                    logger.info(f"Successfully fetched blueprint content for {inputs.blueprint_doc_id}.")
                 else:
-                    current_user_prompt = rendered_blueprint_prompt # if template returns a single string
-                    current_system_prompt = "" # Or load a default system prompt if applicable
-                
-                if not current_user_prompt:
-                    raise PromptRenderError("Rendered user prompt for blueprint-to-flow is empty.")
+                    logger.error(f"Blueprint content not found or empty for doc_id: {inputs.blueprint_doc_id} in project {inputs.project_id}. Status: {retrieved_blueprint.status if retrieved_blueprint else 'N/A'}")
+                    return MasterPlannerOutput(
+                        master_plan_json="{}", # Default empty plan on error
+                        error_message=f"Blueprint content not found for doc_id: {inputs.blueprint_doc_id}. Status: {retrieved_blueprint.status if retrieved_blueprint else 'N/A'}"
+                    )
 
-            except PromptRenderError as e:
-                logger.error(f"Failed to render blueprint-to-flow prompt '{current_prompt_name_to_use}': {e}")
+                if inputs.blueprint_reviewer_feedback_doc_id:
+                    logger.info(f"Attempting to fetch reviewer feedback for doc_id: {inputs.blueprint_reviewer_feedback_doc_id} using PCMA.")
+                    retrieved_feedback: RetrieveArtifactOutput = await self.project_chroma_manager.retrieve_artifact(
+                        collection_name=QUALITY_ASSURANCE_LOGS_COLLECTION, # Assuming feedback is a QA log
+                        document_id=inputs.blueprint_reviewer_feedback_doc_id
+                    )
+                    if retrieved_feedback and retrieved_feedback.status == "SUCCESS" and retrieved_feedback.content:
+                        reviewer_feedback_content = str(retrieved_feedback.content)
+                        logger.info(f"Successfully fetched reviewer feedback for {inputs.blueprint_reviewer_feedback_doc_id}.")
+                    else:
+                        logger.warning(f"Reviewer feedback {inputs.blueprint_reviewer_feedback_doc_id} not found, content empty, or retrieval failed. Status: {retrieved_feedback.status if retrieved_feedback else 'N/A'}. Proceeding without it.")
+                
+                prompt_data_for_llm = {
+                    "blueprint_content": blueprint_content,
+                    "reviewer_feedback_content": reviewer_feedback_content or "No feedback provided."
+                    # Add other necessary fields for this prompt like project_id, available_agents if schema expects them
+                }
+                # The system prompt for blueprint-to-flow might be implicitly handled by the prompt_name in PromptManager
+
+            except Exception as e:
+                logger.error(f"Error fetching context from PCMA for Blueprint-to-Flow mode: {e}", exc_info=True)
                 return MasterPlannerOutput(
-                    master_plan_json="", error_message=f"Prompt rendering failed: {e}"
+                    master_plan_json="{}",
+                    error_message=f"PCMA context retrieval error: {e}"
                 )
         else: # Fallback to existing user_goal to plan logic
             logger.info(f"MasterPlannerAgent invoked in UserGoal-to-Flow mode for goal: {inputs.user_goal}")
@@ -323,10 +348,49 @@ class MasterPlannerAgent:
 
             logger.info(f"MasterPlannerAgent successfully generated plan: {plan.id}")
 
+            # --- Store generated plan to PCMA --- 
+            generated_plan_artifact_id: Optional[str] = None
+            stored_in_collection_name: Optional[str] = None
+
+            if inputs.project_id: # Only store if project_id is available
+                try:
+                    store_input = StoreArtifactInput(
+                        base_collection_name=EXECUTION_PLANS_COLLECTION,
+                        artifact_content=plan.model_dump_json(indent=2), # Store the JSON string
+                        metadata={
+                            "artifact_type": "MasterExecutionPlan",
+                            "plan_name": plan.name,
+                            "plan_version": plan.version if hasattr(plan, 'version') else "1.0", # Assuming version exists
+                            "generated_by_agent": self.AGENT_ID,
+                            "user_goal": inputs.user_goal, # If available
+                            "source_blueprint_id": inputs.blueprint_doc_id, # If from blueprint
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        },
+                        project_id=inputs.project_id,
+                        document_id=plan.id, # Use plan's own ID
+                        cycle_id=inputs.current_context.get("cycle_id") if inputs.current_context else None
+                    )
+                    logger.info(f"Storing MasterExecutionPlan '{plan.id}' in PCMA collection {EXECUTION_PLANS_COLLECTION}.")
+                    store_output: StoreArtifactOutput = await self.project_chroma_manager.store_artifact(args=store_input)
+
+                    if store_output and store_output.status == "SUCCESS":
+                        generated_plan_artifact_id = store_output.document_id
+                        stored_in_collection_name = EXECUTION_PLANS_COLLECTION
+                        logger.info(f"MasterExecutionPlan stored successfully in PCMA. Doc ID: {generated_plan_artifact_id}")
+                    else:
+                        logger.error(f"Failed to store MasterExecutionPlan in PCMA. Status: {store_output.status if store_output else 'N/A'}, Message: {store_output.message if store_output else 'N/A'}")
+                
+                except Exception as e_store:
+                    logger.error(f"Exception during PCMA storage of MasterExecutionPlan: {e_store}", exc_info=True)
+            else:
+                logger.warning("project_id not provided in MasterPlannerInput, generated plan will not be stored in PCMA.")
+
             return MasterPlannerOutput(
                 master_plan_json=plan.model_dump_json(indent=2),
                 confidence_score=0.75,  # Confidence from LLM (mocked)
                 planner_notes="Plan generated by LLM (mocked).",
+                generated_plan_artifact_id=generated_plan_artifact_id,
+                stored_in_collection=stored_in_collection_name
             )
 
         except json.JSONDecodeError as e:

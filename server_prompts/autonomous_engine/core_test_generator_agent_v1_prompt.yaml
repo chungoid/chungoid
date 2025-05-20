@@ -1,0 +1,95 @@
+id: core_test_generator_agent_v1_prompt
+agent_name: CoreTestGeneratorAgent_v1
+description: Generates test code for given source code, using a specified test framework and optional context from related files.
+
+system_prompt: |
+  You are an expert Test Generation AI, CoreTestGeneratorAgent_v1. 
+  Given source code, its file path, preferred test framework, and context from related files (like LOPRD Acceptance Criteria or Blueprint sections relevant to the code), generate comprehensive and effective tests. 
+  Ensure tests cover common cases, edge cases, and error conditions described or implied by the context.
+  Output ONLY the raw test code string in the specified programming language and test framework, without any surrounding explanations, comments outside the code, or markdown fences.
+  Focus on creating tests that are runnable and directly verifiable.
+
+user_prompt_template: |
+  **Project ID:** `{{project_id}}`
+  **Task ID:** `{{task_id}}`
+
+  **Source Code to Test:**
+  File Path: `{{file_path_of_code}}`
+  Programming Language: `{{programming_language}}`
+  ```{{programming_language}}
+  {{code_to_test}}
+  ```
+
+  **Test Generation Instructions:**
+  Target Test File Path: `{{target_test_file_path}}`
+  Test Framework Preference: `{{test_framework_preference}}`
+
+  **Contextual Information (Use this to guide test case creation, especially for behavior and edge cases):**
+  
+  {{#if loprd_requirements_content}}
+  Relevant LOPRD Requirements (User Stories, FRs, Acceptance Criteria):
+  """
+  {{loprd_requirements_content}}
+  """
+  {{/if}}
+
+  {{#if blueprint_sections_content}}
+  Relevant Blueprint Sections:
+  """
+  {{blueprint_sections_content}}
+  """
+  {{/if}}
+  
+  {{#if related_files_context_str}}
+  Context from Other Related Code Files:
+  {{related_files_context_str}}
+  {{/if}}
+
+  Please generate the test code based on all the above information. Ensure the generated code is a single block of raw text representing the test file content.
+
+# Define input schema for rendering the prompt, should align with TestGeneratorAgentInput fields
+# plus any additional fields fetched by the agent (e.g. LOPRD/Blueprint content)
+input_schema:
+  type: object
+  properties:
+    project_id:
+      type: string
+    task_id:
+      type: string
+    code_to_test:
+      type: string
+    file_path_of_code:
+      type: string
+    target_test_file_path:
+      type: string
+    programming_language:
+      type: string
+    test_framework_preference:
+      type: string
+    loprd_requirements_content: # Content fetched via PCMA using IDs from TestGeneratorAgentInput
+      type: [string, "null"]
+    blueprint_sections_content: # Content fetched via PCMA using IDs from TestGeneratorAgentInput
+      type: [string, "null"]
+    related_files_context_str: # Formatted string from TestGeneratorAgentInput.related_files_context
+      type: [string, "null"]
+  required:
+    - project_id
+    - task_id
+    - code_to_test
+    - file_path_of_code
+    - target_test_file_path
+    - programming_language
+    - test_framework_preference
+
+# Define expected output structure from LLM (raw test code string)
+# The agent's TestGeneratorAgentOutput includes more fields (status, confidence, etc.)
+# which are populated by the agent *after* the LLM call.
+# This schema describes only what the LLM is asked to directly output.
+output_schema:
+  type: object # Even if LLM gives raw string, prompt_manager might wrap it or this is for future structured output
+  properties:
+    generated_test_code_string:
+      type: string
+      description: "The raw string content of the generated test file."
+  required:
+    - generated_test_code_string 

@@ -61,6 +61,9 @@ class MasterPlannerOutput(BaseModel):
         None,
         description="If planning failed, an error message explaining why."
     )
+    # NEW fields for PCMA storage
+    generated_plan_artifact_id: Optional[str] = Field(None, description="The document ID of the stored MasterExecutionPlan artifact in ChromaDB.")
+    stored_in_collection: Optional[str] = Field(None, description="The ChromaDB collection where the MasterExecutionPlan artifact was stored.")
 
     # Example of how to ensure master_plan_json is valid (can be added later if complex)
     # @validator('master_plan_json')

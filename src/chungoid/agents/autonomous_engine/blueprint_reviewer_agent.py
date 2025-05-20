@@ -11,9 +11,9 @@ from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
-# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, PLANNING_ARTIFACTS_COLLECTION, AGENT_LOGS_COLLECTION, OPTIMIZATION_REPORTS_COLLECTION # When PCMA is integrated
-from chungoid.utils.agent_registry import AgentCard # For AgentCard
-from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+from chungoid.utils.agent_registry import AgentCard
+from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 
 logger = logging.getLogger(__name__)
 
@@ -40,27 +40,34 @@ class BlueprintReviewerOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
-class BlueprintReviewerAgent_v1(BaseAgent):
+class BlueprintReviewerAgent_v1(BaseAgent[BlueprintReviewerInput, BlueprintReviewerOutput]):
     AGENT_ID: ClassVar[str] = "BlueprintReviewerAgent_v1"
     AGENT_NAME: ClassVar[str] = "Blueprint Reviewer Agent v1"
     DESCRIPTION: ClassVar[str] = "Performs an advanced review of a Project Blueprint, suggesting optimizations, architectural alternatives, and identifying subtle flaws."
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "blueprint_reviewer_agent_v1.yaml"
     VERSION: ClassVar[str] = "0.1.0"
-    CATEGORY: ClassVar[AgentCategory] = AgentCategory.DESIGN_REVIEW # Or custom
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.QUALITY_ASSURANCE # Or custom
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    INPUT_SCHEMA: ClassVar = BlueprintReviewerInput # No type hint needed for ClassVar with direct assignment
 
     _llm_provider: Optional[LLMProvider]
     _prompt_manager: Optional[PromptManager]
+    _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1]
     _logger: logging.Logger
 
     def __init__(
         self, 
-        llm_provider: Optional[LLMProvider] = None, 
-        prompt_manager: Optional[PromptManager] = None, 
+        llm_provider: LLMProvider,
+        prompt_manager: PromptManager,
+        project_chroma_manager: ProjectChromaManagerAgent_v1,
         system_context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        config: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None
     ):
+        super().__init__(config=config, system_context=system_context, agent_id=agent_id)
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
+        self._project_chroma_manager = project_chroma_manager
         if system_context and "logger" in system_context:
             self._logger = system_context["logger"]
         else:
@@ -68,87 +75,160 @@ class BlueprintReviewerAgent_v1(BaseAgent):
 
     async def invoke_async(
         self,
-        inputs: Dict[str, Any],
+        task_input: BlueprintReviewerInput,
         full_context: Optional[Dict[str, Any]] = None,
     ) -> BlueprintReviewerOutput:
         llm_provider = self._llm_provider
         prompt_manager = self._prompt_manager
+        pcma_agent = self._project_chroma_manager
         logger_instance = self._logger
 
         if full_context:
-            if not llm_provider and "llm_provider" in full_context: llm_provider = full_context["llm_provider"]
-            if not prompt_manager and "prompt_manager" in full_context: prompt_manager = full_context["prompt_manager"]
+            if "llm_provider" in full_context and full_context["llm_provider"] != llm_provider:
+                 llm_provider = full_context["llm_provider"]
+                 logger_instance.info("Using LLMProvider from full_context for BlueprintReviewerAgent.")
+            if "prompt_manager" in full_context and full_context["prompt_manager"] != prompt_manager:
+                 prompt_manager = full_context["prompt_manager"]
+                 logger_instance.info("Using PromptManager from full_context for BlueprintReviewerAgent.")
+            if "project_chroma_manager_agent_instance" in full_context and full_context["project_chroma_manager_agent_instance"] != pcma_agent:
+                 pcma_agent = full_context["project_chroma_manager_agent_instance"]
+                 logger_instance.info("Using ProjectChromaManagerAgent_v1 from full_context for BlueprintReviewerAgent.")
             if "system_context" in full_context and "logger" in full_context["system_context"]:
                 if full_context["system_context"]["logger"] != self._logger: 
                     logger_instance = full_context["system_context"]["logger"]
         
-        if not llm_provider or not prompt_manager:
-            err_msg = "LLMProvider or PromptManager not available."
+        if not llm_provider or not prompt_manager or not pcma_agent:
+            err_msg = "LLMProvider, PromptManager, or ProjectChromaManagerAgent not available."
             logger_instance.error(f"{err_msg} for {self.AGENT_ID}")
-            task_id_fb = inputs.get("task_id", "unknown_task_dep_fail")
-            proj_id_fb = inputs.get("project_id", "unknown_proj_dep_fail")
-            return BlueprintReviewerOutput(task_id=task_id_fb, project_id=proj_id_fb, status="FAILURE_CONFIGURATION", message=err_msg, error_message=err_msg)
+            _task_id = getattr(task_input, 'task_id', "unknown_task_dep_fail")
+            _project_id = getattr(task_input, 'project_id', "unknown_proj_dep_fail")
+            return BlueprintReviewerOutput(task_id=_task_id, project_id=_project_id, status="FAILURE_CONFIGURATION", message=err_msg, error_message=err_msg)
 
         try:
-            parsed_inputs = BlueprintReviewerInput(**inputs)
-        except Exception as e:
-            logger_instance.error(f"Input parsing failed: {e}", exc_info=True)
-            return BlueprintReviewerOutput(task_id=inputs.get("task_id", "parse_err"), project_id=inputs.get("project_id", "parse_err"), status="FAILURE_INPUT_VALIDATION", message=str(e), error_message=str(e))
+            # parsed_inputs = BlueprintReviewerInput(**inputs) # Input is already parsed
+            pass
+        except Exception as e: # Should not happen if task_input is already BlueprintReviewerInput
+            logger_instance.error(f"Input validation/access failed: {e}", exc_info=True)
+            _task_id = getattr(task_input, 'task_id', "parse_err")
+            _project_id = getattr(task_input, 'project_id', "parse_err")
+            return BlueprintReviewerOutput(task_id=_task_id, project_id=_project_id, status="FAILURE_INPUT_VALIDATION", message=str(e), error_message=str(e))
 
-        logger_instance.info(f"{self.AGENT_ID} invoked for task {parsed_inputs.task_id}, blueprint {parsed_inputs.blueprint_doc_id} in project {parsed_inputs.project_id}")
+        logger_instance.info(f"{self.AGENT_ID} invoked for task {task_input.task_id}, blueprint {task_input.blueprint_doc_id} in project {task_input.project_id}")
 
-        # --- MOCK: Retrieve Blueprint content and previous reviews from PCMA ---
-        blueprint_md_content: Optional[str] = f"### Mock Blueprint for {parsed_inputs.blueprint_doc_id}\nThis is a detailed blueprint..."
-        # In real implementation, handle retrieval failures
-        if not blueprint_md_content:
-            msg = f"Failed to retrieve content for blueprint_doc_id {parsed_inputs.blueprint_doc_id}."
-            logger_instance.error(msg)
-            return BlueprintReviewerOutput(task_id=parsed_inputs.task_id, project_id=parsed_inputs.project_id, status="FAILURE_INPUT_RETRIEVAL", message=msg, error_message=msg)
-        
-        previous_reviews_content_list = []
-        if parsed_inputs.previous_review_doc_ids:
-            for rev_id in parsed_inputs.previous_review_doc_ids:
-                # Mock retrieval
-                previous_reviews_content_list.append(f"Mock review content for {rev_id}: Suggests refactoring X.")
-        previous_reviews_combined_str = "\n\n---\n\n".join(previous_reviews_content_list) if previous_reviews_content_list else None
+        # --- Retrieve Blueprint content and previous reviews from PCMA (Conceptual) ---
+        blueprint_md_content: Optional[str] = None
+        previous_reviews_content_list: List[str] = []
+
+        try:
+            # Actual PCMA call for Blueprint:
+            doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.blueprint_doc_id)
+            if doc and doc.document_content:
+                blueprint_md_content = doc.document_content
+                logger_instance.debug(f"Retrieved blueprint_doc_id: {task_input.blueprint_doc_id}")
+            else:
+                raise ValueError(f"Blueprint document with ID {task_input.blueprint_doc_id} not found or content empty.")
+
+            if task_input.previous_review_doc_ids:
+                for rev_id in task_input.previous_review_doc_ids:
+                    # Actual PCMA call for previous review:
+                    doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=rev_id)
+                    if doc and doc.document_content:
+                        previous_reviews_content_list.append(doc.document_content)
+                        logger_instance.debug(f"Retrieved previous_review_doc_id: {rev_id}")
+                    else:
+                        logger_instance.warning(f"Previous review with ID {rev_id} not found or content empty for project {task_input.project_id}.")
+            
+        except Exception as e_pcma_fetch:
+            msg = f"Failed to retrieve input artifacts via PCMA: {e_pcma_fetch}"
+            logger_instance.error(msg, exc_info=True)
+            return BlueprintReviewerOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_INPUT_RETRIEVAL", message=msg, error_message=str(e_pcma_fetch))
+
+        previous_reviews_combined_str = "\\n\\n---\\n\\n".join(previous_reviews_content_list) if previous_reviews_content_list else None
 
         # --- Prompt Rendering ---
         prompt_render_data = {
             "project_blueprint_markdown": blueprint_md_content,
             "previous_reviews_markdown_str": previous_reviews_combined_str,
-            "specific_focus_areas_list": parsed_inputs.specific_focus_areas or []
+            "specific_focus_areas_list": task_input.specific_focus_areas or []
         }
         try:
             rendered_prompts = prompt_manager.render_prompt_template(BLUEPRINT_REVIEWER_PROMPT_NAME, prompt_render_data, sub_dir="autonomous_engine")
-            system_prompt = rendered_prompts.get("system_prompt")
-            main_prompt = rendered_prompts.get("prompt_details")
-            if not system_prompt or not main_prompt:
-                raise PromptRenderError("Missing system or main prompt content after rendering for BlueprintReviewer.")
-        except PromptRenderError as e:
-            logger_instance.error(f"Prompt rendering failed: {e}", exc_info=True)
-            return BlueprintReviewerOutput(task_id=parsed_inputs.task_id, project_id=parsed_inputs.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e), error_message=str(e))
+            # system_prompt = rendered_prompts.get("system_prompt") # Will be handled by generate_text_async_with_prompt_manager
+            # main_prompt = rendered_prompts.get("prompt_details") # Will be handled by generate_text_async_with_prompt_manager
+            # if not system_prompt or not main_prompt:
+            #     raise PromptRenderError("Missing system or main prompt content after rendering for BlueprintReviewer.")
+        except PromptRenderError as e_prompt:
+            logger_instance.error(f"Prompt rendering preparation failed: {e_prompt}", exc_info=True)
+            return BlueprintReviewerOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
 
-        # --- LLM Interaction ---
+        # --- LLM Interaction using generate_text_async_with_prompt_manager ---
         generated_review_report_md: Optional[str] = None
+        llm_usage_metadata: Optional[Dict[str, Any]] = None
+
         try:
-            logger_instance.info("Sending request to LLM for Blueprint review.")
-            generated_review_report_md = await llm_provider.generate(prompt=main_prompt, system_prompt=system_prompt, temperature=0.6) # Higher temp for insightful review
+            logger_instance.info(f"Sending request to LLM via PromptManager for Blueprint review (prompt: {BLUEPRINT_REVIEWER_PROMPT_NAME})...")
+            
+            generated_review_report_md = await llm_provider.generate_text_async_with_prompt_manager(
+                prompt_manager=prompt_manager,
+                prompt_name=BLUEPRINT_REVIEWER_PROMPT_NAME,
+                prompt_data=prompt_render_data,
+                sub_dir="autonomous_engine",
+                temperature=0.6, 
+                # model_id="gpt-4-turbo-preview" # Or from config/LLMProvider default
+            )
+            # llm_usage_metadata = usage_dict # If generate_text_async_with_prompt_manager returns it
+
             if not generated_review_report_md or not generated_review_report_md.strip():
                 raise ValueError("LLM returned empty or whitespace-only review report.")
             logger_instance.info("Successfully received review report from LLM.")
-        except Exception as e:
-            logger_instance.error(f"LLM interaction failed: {e}", exc_info=True)
-            return BlueprintReviewerOutput(task_id=parsed_inputs.task_id, project_id=parsed_inputs.project_id, status="FAILURE_LLM", message=str(e), error_message=str(e), llm_full_response=str(e))
+        except Exception as e_llm: 
+            logger_instance.error(f"LLM interaction failed: {e_llm}", exc_info=True)
+            return BlueprintReviewerOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM", message=str(e_llm), error_message=str(e_llm), llm_full_response=str(e_llm) if not generated_review_report_md else generated_review_report_md)
 
-        # --- MOCK: Store Review Report in ChromaDB (via PCMA) ---
-        report_doc_id = f"mock_blueprint_review_{parsed_inputs.project_id}_{uuid.uuid4()}_doc_id"
-        # Actual PCMA storage calls would go here.
+        # --- Store Review Report in ChromaDB (via PCMA) ---
+        report_doc_id: Optional[str] = None
+        try:
+            review_metadata = {
+                "document_type": "blueprint_review_report.md",
+                "source_blueprint_doc_id": task_input.blueprint_doc_id,
+                "related_previous_review_ids": task_input.previous_review_doc_ids or [],
+                "focus_areas_input": task_input.specific_focus_areas or [],
+                "generated_by_agent": self.AGENT_ID,
+                "project_id": task_input.project_id,
+                "task_id": task_input.task_id,
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
 
-        confidence = ConfidenceScore(value=0.75, level="High", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint review generated by LLM. Subjective quality depends on LLM's architectural insight.")
+            report_doc_id = await pcma_agent.store_document_content(
+                project_id=task_input.project_id,
+                collection_name="review_reports_collection", # Example, ensure this collection exists/is standard
+                document_content=generated_review_report_md,
+                metadata=review_metadata
+                # document_relative_path could be f"reviews/blueprint_{task_input.blueprint_doc_id}_review_{uuid.uuid4().hex[:8]}.md"
+            )
+
+            if not report_doc_id:
+                raise ValueError("PCMA failed to return a document ID for the stored review report.")
+            
+            logger_instance.info(f"Blueprint review report stored with doc_id: {report_doc_id}. Content length: {len(generated_review_report_md)}")
+
+        except Exception as e_pcma_store:
+            logger_instance.error(f"Conceptual PCMA review report storage failed: {e_pcma_store}", exc_info=True)
+            return BlueprintReviewerOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
+                review_report_doc_id=None, 
+                status="FAILURE_ARTIFACT_STORAGE",
+                message=f"Failed to store generated review report: {e_pcma_store}",
+                error_message=str(e_pcma_store),
+                llm_full_response=generated_review_report_md 
+            )
+
+        confidence = ConfidenceScore(value=0.70, level="MediumHigh", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint review generated by LLM. Quality depends on LLM's insight and prompt adherence.")
 
         return BlueprintReviewerOutput(
-            task_id=parsed_inputs.task_id,
-            project_id=parsed_inputs.project_id,
+            task_id=task_input.task_id,
+            project_id=task_input.project_id,
             review_report_doc_id=report_doc_id,
             status="SUCCESS",
             message=f"Blueprint review report generated. Stored as doc_id: {report_doc_id}",

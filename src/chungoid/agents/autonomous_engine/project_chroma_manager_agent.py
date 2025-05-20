@@ -7,24 +7,64 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Literal
 import uuid
 import collections
+import datetime
 
 from pydantic import BaseModel, Field
 
-from chungoid.utils.chroma_utils import ChromaDBManager
+# MODIFIED IMPORTS: Remove ChromaDBManager, import specific utils
+from chungoid.utils.chroma_utils import (
+    set_chroma_project_context,
+    clear_chroma_project_context, # Good practice to have if setting context
+    get_or_create_collection,
+    add_or_update_document,
+    get_document_by_id,
+    query_documents,
+    add_documents, # If batch adding is used
+    # get_chroma_client # PCMA might not need to call this directly if other utils use it
+)
+from chungoid.utils.config_loader import get_config # For default embedding function name
+
+from chungoid.schemas.agent_logs import ARCALogEntry
 
 logger = logging.getLogger(__name__)
 
-# --- Collection Base Names --- #
-PLANNING_ARTIFACTS_COLLECTION = "planning_artifacts"
-RISK_REPORTS_COLLECTION = "risk_assessment_reports"
-OPTIMIZATION_REPORTS_COLLECTION = "optimization_suggestion_reports"
-TRACEABILITY_REPORTS_COLLECTION = "traceability_reports"
-AGENT_LOGS_COLLECTION = "agent_reflections_and_logs"
-# Add more as defined in P3.M0.3.3, e.g.:
-# PROJECT_GOALS_COLLECTION = "project_goals"
-# LIVE_CODEBASE_COLLECTION = "live_codebase_collection"
-# TEST_REPORTS_COLLECTION = "test_reports_collection"
-# QA_LOGS_COLLECTION = "quality_assurance_logs"
+# --- Collection Base Names (as per Blueprint M0.3.3 & EXECUTION_PLAN.md Phase 3.1.3) --- #
+PROJECT_GOALS_COLLECTION = "project_goals"
+LOPRD_ARTIFACTS_COLLECTION = "loprd_artifacts_collection" # Used by ProductAnalystAgent
+BLUEPRINT_ARTIFACTS_COLLECTION = "blueprint_artifacts_collection"
+EXECUTION_PLANS_COLLECTION = "execution_plans_collection"
+RISK_ASSESSMENT_REPORTS_COLLECTION = "risk_assessment_reports" # Replaces RISK_REPORTS_COLLECTION
+OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION = "optimization_suggestion_reports" # Replaces OPTIMIZATION_REPORTS_COLLECTION
+TRACEABILITY_REPORTS_COLLECTION = "traceability_reports" # Existing
+LIVE_CODEBASE_COLLECTION = "live_codebase_collection"
+GENERATED_CODE_ARTIFACTS_COLLECTION = "generated_code_artifacts"
+TEST_REPORTS_COLLECTION = "test_reports_collection"
+DEBUGGING_SESSION_LOGS_COLLECTION = "debugging_session_logs"
+PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION = "project_documentation_artifacts"
+AGENT_REFLECTIONS_AND_LOGS_COLLECTION = "agent_reflections_and_logs" # Replaces AGENT_LOGS_COLLECTION
+QUALITY_ASSURANCE_LOGS_COLLECTION = "quality_assurance_logs"
+LIBRARY_DOCUMENTATION_COLLECTION = "library_documentation_collection"
+EXTERNAL_MCP_TOOLS_DOCUMENTATION_COLLECTION = "external_mcp_tools_documentation_collection"
+
+# List of all defined collections for easy iteration
+ALL_PROJECT_COLLECTIONS = [
+    PROJECT_GOALS_COLLECTION,
+    LOPRD_ARTIFACTS_COLLECTION,
+    BLUEPRINT_ARTIFACTS_COLLECTION,
+    EXECUTION_PLANS_COLLECTION,
+    RISK_ASSESSMENT_REPORTS_COLLECTION,
+    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
+    TRACEABILITY_REPORTS_COLLECTION,
+    LIVE_CODEBASE_COLLECTION,
+    GENERATED_CODE_ARTIFACTS_COLLECTION,
+    TEST_REPORTS_COLLECTION,
+    DEBUGGING_SESSION_LOGS_COLLECTION,
+    PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+    AGENT_REFLECTIONS_AND_LOGS_COLLECTION,
+    QUALITY_ASSURANCE_LOGS_COLLECTION,
+    LIBRARY_DOCUMENTATION_COLLECTION,
+    EXTERNAL_MCP_TOOLS_DOCUMENTATION_COLLECTION,
+]
 
 
 # --- API Method Schemas (as Pydantic models) --- #
@@ -126,6 +166,15 @@ class StoreArtifactInput(BaseModel):
     source_task_id: Optional[str] = Field(None, description="Optional source task ID for lineage tracking.")
     linked_relationships: Optional[Dict[str, str]] = Field(default_factory=dict, description="Key-value pairs representing custom relationships to other artifacts. Key is relationship type (e.g., 'DERIVED_FROM_BLUEPRINT'), value is target artifact ID.")
 
+# --- Schemas for ARCA Logging --- #
+
+class LogStorageConfirmation(BaseModel):
+    log_id: str = Field(..., description="The ID of the log entry that was processed.")
+    status: Literal["SUCCESS", "FAILURE"] = Field(..., description="Status of the log storage operation.")
+    message: Optional[str] = Field(None, description="Optional message providing details about the operation's outcome.")
+    stored_timestamp: Optional[datetime.datetime] = Field(None, description="Timestamp when the log was actually stored, if successful.")
+    error_message: Optional[str] = Field(None, description="Error message if the operation failed.")
+
 
 # --- ProjectChromaManagerAgent Class --- #
 
@@ -134,123 +183,133 @@ class ProjectChromaManagerAgent_v1:
     Manages project-specific ChromaDB collections for the Autonomous Project Engine.
     Provides an API for other agents to store and retrieve project artifacts.
     """
-    DEFAULT_DB_SUBDIR = ".project_chroma_dbs"
+    DEFAULT_DB_SUBDIR = ".project_chroma_dbs" # Relative to project_root, not chungoid-core workspace root
 
-    def __init__(self, project_root: Path, project_id: str, chroma_mode: str = "persistent"):
+    def __init__(self, project_root_workspace_path: Path, project_id: str):
         """
         Initializes the manager for a specific project.
         Args:
-            project_root: The root directory of the chungoid-core workspace.
-            project_id: Unique identifier for the project.
-            chroma_mode: "persistent" or "in-memory".
+            project_root_workspace_path: The root directory of the chungoid-mcp workspace.
+                                        The actual project data will be in a subdirectory.
+            project_id: Unique identifier for the project (e.g., 'my_flask_app').
         """
         if not project_id:
             raise ValueError("project_id cannot be empty.")
             
         self.project_id = project_id
-        self.project_root = project_root
-        # Each project gets its own subdirectory within the main ChromaDB location
-        self._project_db_path = project_root / self.DEFAULT_DB_SUBDIR / self.project_id
-        self._project_db_path.mkdir(parents=True, exist_ok=True)
+        # The project_root_workspace_path is the overall workspace (e.g., /home/user/chungoid-mcp)
+        # The PCMA will manage its DB within a project-specific subfolder of a general chroma DB store.
+        # Example: /home/user/chungoid-mcp/dev_chroma_db/my_flask_app/
+        # For simplicity, we will use a fixed subdir within the workspace for all project chroma DBs.
+        # This means `project_root_workspace_path` is more like the chungoid-mcp root.
+        # The actual DB path for chroma_utils.set_chroma_project_context will be more specific.
         
-        # Initialize ChromaDBManager for this project's specific DB path
-        self.chroma_manager = ChromaDBManager(
-            db_directory=str(self._project_db_path),
-            mode=chroma_mode
-        )
-        logger.info(f"ProjectChromaManagerAgent_v1 initialized for project '{project_id}' at path '{self._project_db_path}'")
+        # Define the base directory for all project-specific ChromaDBs
+        # This should align with where chroma_utils expects to find/create them based on context.
+        # For persistent mode, chroma_utils uses `_current_project_directory` which is set by `set_chroma_project_context`.
+        # The path given to set_chroma_project_context becomes the root for its internal .chungoid/chroma_db structure.
+
+        # Let's assume projects are created in a standard location within the workspace, e.g., './project_workspaces/<project_id>'.
+        # PCMA needs to set the context for chroma_utils to *this* specific project workspace directory.
+        self.actual_project_workspace_path = project_root_workspace_path / "project_workspaces" / self.project_id
+        self.actual_project_workspace_path.mkdir(parents=True, exist_ok=True)
+        
+        # Set the context for chroma_utils to use this project's directory for its DB operations.
+        # chroma_utils will then create its .chungoid/chroma_db within this path.
+        set_chroma_project_context(self.actual_project_workspace_path)
+        
+        logger.info(f"ProjectChromaManagerAgent_v1 initialized for project '{project_id}'.")
+        logger.info(f"ChromaDB context set to: {self.actual_project_workspace_path}")
+        # No self.chroma_manager instance anymore. Calls go direct to chroma_utils functions.
 
     def _get_project_collection_name(self, base_collection_name: str) -> str:
-        """
-        Generates a project-specific collection name.
-        While ChromaDBManager uses a subdirectory per project_id, 
-        keeping collection names simple (without project_id prefix) is fine as they are isolated.
-        This method is kept for potential future use if a single DB is used with prefixed collections.
-        For now, it just returns the base_collection_name.
-        """
-        # return f"{self.project_id}_{base_collection_name}"
+        """Prepends project_id to base collection name for namespacing."""
+        # return f"{self.project_id}_{base_collection_name}" # Previous method
+        # Chroma_utils get_or_create_collection does not namespace by project_id automatically.
+        # The namespacing is achieved by setting the DB path per project via set_chroma_project_context.
+        # So, we use the base collection names directly.
+        if base_collection_name not in ALL_PROJECT_COLLECTIONS:
+            logger.warning(f"Base collection name '{base_collection_name}' is not in ALL_PROJECT_COLLECTIONS. Using it directly but this might be an error.")
         return base_collection_name
 
-    async def ensure_collection_exists(self, base_collection_name: str, embedding_function_name: Optional[str] = "default") -> bool:
+    async def ensure_collection_exists(self, base_collection_name: str, embedding_function_name: Optional[str] = None) -> bool:
         """
-        Ensures a specific collection exists for the project.
+        Ensures a collection exists for the project. The actual collection in ChromaDB
+        will be project-specific due to the DB path context.
         Args:
-            base_collection_name: The base name of the collection (e.g., "planning_artifacts").
-            embedding_function_name: Name of the embedding function to use if creating.
+            base_collection_name: The base name for the collection.
+            embedding_function_name: Optional name of the embedding function.
         Returns:
-            True if the collection exists or was created, False on error.
+            True if collection exists or was created, False otherwise.
         """
-        collection_name = self._get_project_collection_name(base_collection_name)
+        # Set context just in case it was cleared or changed by another PCMA instance for a different project.
+        # This makes each PCMA call relatively stateless regarding context setting for chroma_utils.
+        set_chroma_project_context(self.actual_project_workspace_path)
+        
+        collection_name_to_ensure = self._get_project_collection_name(base_collection_name)
         try:
-            await asyncio.to_thread(self.chroma_manager.get_or_create_collection, collection_name, embedding_function_name)
-            logger.debug(f"Collection '{collection_name}' ensured for project '{self.project_id}'.")
-            return True
+            # embedding_function_name is not directly used by get_or_create_collection in chroma_utils
+            # but chroma_utils.get_chroma_client() might pick up default embedding from config.
+            collection = get_or_create_collection(collection_name=collection_name_to_ensure)
+            return collection is not None
         except Exception as e:
-            logger.error(f"Error ensuring collection '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
+            logger.error(f"Error ensuring collection '{collection_name_to_ensure}' for project '{self.project_id}': {e}", exc_info=True)
             return False
-
+    
     async def store_artifact(
         self,
         args: StoreArtifactInput # Changed to use the Pydantic model
     ) -> StoreArtifactOutput:
         """
-        Stores an artifact in the specified project collection.
-        Handles embedding for string content if the collection is set up for it.
-        Args:
-            args: StoreArtifactInput containing all parameters for storing an artifact.
-        Returns:
-            StoreArtifactOutput indicating success or failure.
+        Stores or updates an artifact in the project-specific collection.
+        The content is converted to JSON string if it's a dict.
+        Manages lineage and other common metadata fields.
         """
+        set_chroma_project_context(self.actual_project_workspace_path)
         collection_name = self._get_project_collection_name(args.base_collection_name)
+        
         doc_id = args.document_id or str(uuid.uuid4())
         
-        # Make a copy of metadata to avoid modifying the input model directly
-        metadata_to_store = args.metadata.copy()
+        content_to_store = (
+            json.dumps(args.artifact_content, indent=2)
+            if isinstance(args.artifact_content, dict)
+            else str(args.artifact_content) # Ensure it's a string
+        )
 
-        if not metadata_to_store.get("artifact_type"):
-            logger.warning(f"Storing artifact in '{collection_name}' without 'artifact_type' in metadata for doc_id '{doc_id}'.")
-        metadata_to_store["project_id"] = self.project_id # Ensure project_id is in metadata
-
-        # Add lineage metadata if provided
+        final_metadata = args.metadata.copy()
+        final_metadata["project_id"] = self.project_id
+        final_metadata["artifact_id"] = doc_id # Store the doc_id in metadata as well for easier querying
+        final_metadata["last_modified_utc"] = datetime.datetime.utcnow().isoformat()
         if args.cycle_id:
-            metadata_to_store["cycle_id"] = args.cycle_id
-        if args.previous_version_artifact_id:
-            metadata_to_store["previous_version_artifact_id"] = args.previous_version_artifact_id
+            final_metadata["cycle_id"] = args.cycle_id
         if args.source_agent_id:
-            metadata_to_store["source_agent_id"] = args.source_agent_id
+            final_metadata["source_agent_id"] = args.source_agent_id
         if args.source_task_id:
-            metadata_to_store["source_task_id"] = args.source_task_id
-        
-        # Add custom linked relationships
+            final_metadata["source_task_id"] = args.source_task_id
+        if args.previous_version_artifact_id:
+            final_metadata["previous_version_artifact_id"] = args.previous_version_artifact_id
         if args.linked_relationships:
-            metadata_to_store["linked_relationships"] = args.linked_relationships
+            final_metadata["linked_relationships"] = json.dumps(args.linked_relationships) # Store as JSON string if complex
+
+        if "artifact_type" not in final_metadata:
+            logger.warning(f"Storing artifact '{doc_id}' in '{collection_name}' without 'artifact_type' in metadata.")
+            # return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message="'artifact_type' is required in metadata.")
 
         try:
-            # Ensure collection exists (using default embedding for now)
-            if not await self.ensure_collection_exists(args.base_collection_name):
-                 return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message=f"Failed to ensure collection '{collection_name}' exists.")
-
-            # Prepare document content (ChromaDB expects string documents)
-            if isinstance(args.artifact_content, dict):
-                doc_content_str = json.dumps(args.artifact_content, indent=2)
-                metadata_to_store["content_format"] = "json"
-            elif isinstance(args.artifact_content, str):
-                doc_content_str = args.artifact_content
-                metadata_to_store["content_format"] = "text" # or "markdown" etc.
-            else:
-                return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message="artifact_content must be str or dict.")
-
-            await asyncio.to_thread(
-                self.chroma_manager.add_documents,
+            # Use add_or_update_document from chroma_utils
+            success = add_or_update_document(
                 collection_name=collection_name,
-                documents=[doc_content_str],
-                metadatas=[metadata_to_store], # Use the modified copy
-                ids=[doc_id]
+                doc_id=doc_id,
+                document_content=content_to_store,
+                metadata=final_metadata,
             )
-            logger.info(f"Artifact '{doc_id}' (type: {metadata_to_store.get('artifact_type')}) stored in collection '{collection_name}' for project '{self.project_id}'.")
-            return StoreArtifactOutput(document_id=doc_id, status="SUCCESS", message=f"Artifact '{doc_id}' stored successfully.")
+            if success:
+                return StoreArtifactOutput(document_id=doc_id, status="SUCCESS", message=f"Artifact '{doc_id}' stored in '{collection_name}'.")
+            else:
+                # This path might not be hit if add_or_update_document raises exceptions on failure
+                return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message=f"Failed to store artifact '{doc_id}' in '{collection_name}'.")
         except Exception as e:
-            logger.error(f"Error storing artifact '{doc_id}' in '{collection_name}': {e}", exc_info=True)
+            logger.error(f"Error storing artifact '{doc_id}' in '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
             return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message=str(e))
 
     async def retrieve_artifact(
@@ -258,359 +317,381 @@ class ProjectChromaManagerAgent_v1:
         base_collection_name: str,
         document_id: str
     ) -> RetrieveArtifactOutput:
-        """
-        Retrieves an artifact from the specified project collection.
-        Args:
-            base_collection_name: Base name of the collection.
-            document_id: The ID of the document to retrieve.
-        Returns:
-            RetrieveArtifactOutput with content, metadata, and status.
-        """
+        """Retrieves an artifact by its ID from the project-specific collection."""
+        set_chroma_project_context(self.actual_project_workspace_path)
         collection_name = self._get_project_collection_name(base_collection_name)
         try:
-            # ChromaDBManager.get_document returns a dict with 'document', 'metadata', 'id' or None
-            retrieved = await asyncio.to_thread(self.chroma_manager.get_document, collection_name, document_id)
+            # Use get_document_by_id from chroma_utils
+            result = get_document_by_id(
+                collection_name=collection_name, 
+                doc_id=document_id,
+                include=["documents", "metadatas"] # Ensure both are included
+            )
+            if result and result.get("ids") and result.get("documents"):
+                retrieved_doc_id = result["ids"][0]
+                content_str = result["documents"][0]
+                metadata = result["metadatas"][0] if result.get("metadatas") else {}
+                
+                # Try to parse content as JSON if it looks like it
+                parsed_content: Union[str, Dict[str, Any]] = content_str
+                try:
+                    if content_str.strip().startswith(("{", "[")):
+                        parsed_content = json.loads(content_str)
+                except json.JSONDecodeError:
+                    pass # Keep as string if not valid JSON
 
-            if retrieved and retrieved.get("document") is not None: # Check if document key exists and is not None
-                content_str = retrieved["document"]
-                ret_metadata = retrieved.get("metadata", {})
-                
-                # Attempt to parse JSON if metadata indicates it
-                final_content: Union[str, Dict[str, Any]] = content_str
-                if ret_metadata.get("content_format") == "json":
-                    try:
-                        final_content = json.loads(content_str)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse document '{document_id}' from '{collection_name}' as JSON, returning as string. Metadata indicated JSON.")
-                
-                logger.info(f"Artifact '{document_id}' retrieved from collection '{collection_name}'.")
                 return RetrieveArtifactOutput(
-                    document_id=document_id,
-                    content=final_content,
-                    metadata=ret_metadata,
+                    document_id=retrieved_doc_id,
+                    content=parsed_content,
+                    metadata=metadata,
                     status="SUCCESS"
                 )
             else:
-                logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}'.")
+                logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}' for project '{self.project_id}'. Result: {result}")
                 return RetrieveArtifactOutput(document_id=document_id, status="NOT_FOUND", error_message="Artifact not found.")
         except Exception as e:
-            logger.error(f"Error retrieving artifact '{document_id}' from '{collection_name}': {e}", exc_info=True)
+            logger.error(f"Error retrieving artifact '{document_id}' from '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
             return RetrieveArtifactOutput(document_id=document_id, status="FAILURE", error_message=str(e))
 
     async def get_related_artifacts(self, params: GetRelatedArtifactsInput) -> GetRelatedArtifactsOutput:
         """
-        Retrieves artifacts related to a concept query and/or metadata filter.
-        Uses ChromaDBManager.query_collection.
+        Queries a collection for artifacts related to a concept or matching metadata filters.
+        Excludes specified document IDs from the results.
         """
+        set_chroma_project_context(self.actual_project_workspace_path)
         collection_name = self._get_project_collection_name(params.base_collection_name)
-        results_artifacts: List[RelatedArtifactItem] = [] 
-
-        if not params.concept_query and not params.metadata_filter:
-            return GetRelatedArtifactsOutput(
-                status="FAILURE", 
-                error_message="Either concept_query or metadata_filter must be provided."
-            )
+        related_items: List[RelatedArtifactItem] = []
+        
+        # Adjust n_results if we need to filter out excluded IDs later
+        # This is a simple approach; more sophisticated handling might query more and then filter.
+        query_n_results = params.n_results + len(params.document_ids_to_exclude or [])
+        if query_n_results > 20: # Cap to avoid excessive queries
+            query_n_results = 20 
 
         try:
-            # Ensure collection exists
-            if not await self.ensure_collection_exists(params.base_collection_name):
-                return GetRelatedArtifactsOutput(status="FAILURE", error_message=f"Collection '{collection_name}' does not exist or could not be created.")
-
-            # Construct the where clause for ChromaDB query
-            # If document_ids_to_exclude is provided, and metadata_filter is also provided, we need to combine them.
-            # ChromaDB's where clause for excluding IDs can be tricky with $nin if the ID field isn't standard.
-            # For simplicity, we'll rely on metadata_filter for direct queries and filter out excluded IDs post-query if necessary,
-            # or if `concept_query` is the primary mode.
-            # A more robust way would be to ensure `id` is a standard metadata field if we want to use $nin on `id`.
-            # For now, if `metadata_filter` is used, it should handle ID exclusion if critical.
-            # If only `concept_query` is used, we will fetch slightly more and filter.
-
-            query_texts_list = [params.concept_query] if params.concept_query else None
-            effective_n_results = params.n_results
-            if params.document_ids_to_exclude and not params.metadata_filter: # If semantic search, fetch more to filter
-                effective_n_results = params.n_results + len(params.document_ids_to_exclude) + 5 # Fetch a bit more
-
-            query_results = await asyncio.to_thread(
-                self.chroma_manager.query_collection,
+            # Use query_documents from chroma_utils
+            query_results = query_documents(
                 collection_name=collection_name,
-                query_texts=query_texts_list,
+                query_texts=[params.concept_query] if params.concept_query else None,
+                n_results=query_n_results, # Fetch a bit more to allow for filtering
                 where_filter=params.metadata_filter,
-                n_results=effective_n_results,
-                include=["metadatas", "documents", "distances"] if params.include_content else ["metadatas", "distances"] # Include documents only if requested
+                include=["documents", "metadatas", "distances"]
             )
 
-            if query_results:
-                ids = query_results.get('ids', [[]])[0]
-                docs = query_results.get('documents', [[]])[0] if params.include_content else [None] * len(ids) 
-                metadatas = query_results.get('metadatas', [[]])[0]
-                distances = query_results.get('distances', [[]])[0]
-
-                for i, doc_id in enumerate(ids):
-                    if doc_id in params.document_ids_to_exclude:
+            if query_results and query_results.get("ids") and query_results.get("documents"):
+                num_results = len(query_results["ids"][0])
+                for i in range(num_results):
+                    doc_id = query_results["ids"][0][i]
+                    if doc_id in (params.document_ids_to_exclude or []):
                         continue # Skip excluded IDs
+
+                    if len(related_items) >= params.n_results:
+                        break # Reached desired number of results after filtering
+
+                    content_str = query_results["documents"][0][i] if query_results.get("documents") and query_results["documents"][0] else None
+                    metadata = query_results["metadatas"][0][i] if query_results.get("metadatas") and query_results["metadatas"][0] else {}
+                    distance = query_results["distances"][0][i] if query_results.get("distances") and query_results["distances"][0] else None
+
+                    parsed_content: Optional[Union[str, Dict[str, Any]]] = None
+                    if params.include_content and content_str:
+                        parsed_content = content_str
+                        try:
+                            if content_str.strip().startswith(("{", "[")):
+                                parsed_content = json.loads(content_str)
+                        except json.JSONDecodeError:
+                            pass # Keep as string
                     
-                    item_content: Optional[Union[str, Dict[str, Any]]] = None
-                    if params.include_content and docs[i] is not None:
-                        content_str = docs[i]
-                        meta = metadatas[i] if metadatas and i < len(metadatas) else {}
-                        if meta.get("content_format") == "json":
-                            try:
-                                item_content = json.loads(content_str)
-                            except json.JSONDecodeError:
-                                logger.warning(f"Failed to parse JSON content for doc '{doc_id}' in '{collection_name}'. Returning as string.")
-                                item_content = content_str
-                        else:
-                            item_content = content_str
-                    
-                    results_artifacts.append(RelatedArtifactItem(
+                    related_items.append(RelatedArtifactItem(
                         document_id=doc_id,
-                        content=item_content,
-                        metadata=metadatas[i] if metadatas and i < len(metadatas) else None,
-                        distance=distances[i] if distances and i < len(distances) else None
+                        content=parsed_content if params.include_content else None,
+                        metadata=metadata,
+                        distance=distance
                     ))
-                    if len(results_artifacts) >= params.n_results:
-                        break # Stop once we have enough non-excluded items
             
-            return GetRelatedArtifactsOutput(artifacts=results_artifacts, status="SUCCESS")
+            return GetRelatedArtifactsOutput(artifacts=related_items, status="SUCCESS", message=f"Found {len(related_items)} related artifacts.")
 
         except Exception as e:
-            logger.error(f"Error querying related artifacts from '{collection_name}': {e}", exc_info=True)
-            return GetRelatedArtifactsOutput(status="FAILURE", error_message=str(e))
+            logger.error(f"Error querying related artifacts in '{collection_name}': {e}", exc_info=True)
+            return GetRelatedArtifactsOutput(artifacts=[], status="FAILURE", error_message=str(e))
 
+    # ... (get_artifact_history and get_artifact_genealogy would also need similar refactoring
+    #      to use chroma_utils.get_document_by_id and potentially chroma_utils.query_documents
+    #      instead of self.chroma_manager. ...)
+    # Placeholder for brevity, these need full implementation using chroma_utils
     async def get_artifact_history(self, params: GetArtifactHistoryInput) -> GetArtifactHistoryOutput:
-        """
-        Retrieves the history (previous versions) of a given artifact.
-        It traverses backwards using the 'previous_version_artifact_id' metadata field.
-        """
-        collection_name = self._get_project_collection_name(params.base_collection_name)
-        versions_found: List[ArtifactVersionItem] = []
-        current_doc_id: Optional[str] = params.document_id
-        visited_ids = set() # To prevent infinite loops in case of bad data
+        set_chroma_project_context(self.actual_project_workspace_path)
+        logger.warning("get_artifact_history is not fully implemented with new chroma_utils.")
+        # Basic logic: Start with the given doc_id, then iteratively call get_document_by_id 
+        # for 'previous_version_artifact_id' found in metadata.
+        versions: List[ArtifactVersionItem] = []
+        current_doc_id = params.document_id
+        processed_ids = set()
 
-        try:
-            for depth in range(params.max_versions + 1): # +1 to include the starting artifact if found
-                if not current_doc_id or current_doc_id in visited_ids:
-                    break 
-                visited_ids.add(current_doc_id)
+        for i in range(params.max_versions + 1): # +1 to fetch the initial doc
+            if not current_doc_id or current_doc_id in processed_ids:
+                break
+            processed_ids.add(current_doc_id)
 
-                # We need to ensure that retrieve_artifact is called with the correct base_collection_name
-                # Assuming all versions of an artifact are in the same collection as the initial artifact.
-                retrieved_artifact_data = await self.retrieve_artifact(params.base_collection_name, current_doc_id)
-
-                if retrieved_artifact_data.status == "SUCCESS":
-                    # Ensure content is not None before trying to access it, even if include_content is True
-                    artifact_content = None
-                    if params.include_content and retrieved_artifact_data.content is not None:
-                        artifact_content = retrieved_artifact_data.content
-                    elif not params.include_content:
-                        artifact_content = None # Explicitly None if not requested
-                    
-                    versions_found.append(ArtifactVersionItem(
-                        document_id=retrieved_artifact_data.document_id,
-                        content=artifact_content,
-                        metadata=retrieved_artifact_data.metadata,
-                        version_depth=depth 
+            try:
+                retrieved_doc = await self.retrieve_artifact(params.base_collection_name, current_doc_id)
+                if retrieved_doc.status == "SUCCESS" and retrieved_doc.document_id:
+                    content_to_include = retrieved_doc.content if params.include_content else None
+                    versions.append(ArtifactVersionItem(
+                        document_id=retrieved_doc.document_id,
+                        content=content_to_include,
+                        metadata=retrieved_doc.metadata,
+                        version_depth=i
                     ))
-                    
-                    if retrieved_artifact_data.metadata:
-                        current_doc_id = retrieved_artifact_data.metadata.get("previous_version_artifact_id")
-                    else:
-                        current_doc_id = None 
-                elif depth == 0 and retrieved_artifact_data.status == "NOT_FOUND":
-                    return GetArtifactHistoryOutput(versions=[], status="NOT_FOUND", error_message=f"Starting artifact '{params.document_id}' not found in '{collection_name}'.")
-                elif retrieved_artifact_data.status != "SUCCESS": # Handles FAILURE or other non-SUCCESS statuses
-                    logger.warning(f"Could not retrieve version for doc_id '{current_doc_id}' (depth {depth}) in history trace for '{params.document_id}'. Status: {retrieved_artifact_data.status}, Error: {retrieved_artifact_data.error_message}")
-                    break 
-            
-            return GetArtifactHistoryOutput(versions=versions_found, status="SUCCESS")
-
-        except Exception as e:
-            logger.error(f"Error retrieving artifact history for '{params.document_id}' from '{collection_name}': {e}", exc_info=True)
-            return GetArtifactHistoryOutput(versions=[], status="FAILURE", error_message=str(e))
+                    current_doc_id = retrieved_doc.metadata.get("previous_version_artifact_id") if retrieved_doc.metadata else None
+                else:
+                    if i == 0: # If the initial document is not found
+                         return GetArtifactHistoryOutput(versions=[], status="NOT_FOUND", message=f"Initial artifact {params.document_id} not found.")
+                    break # Stop if a previous version is not found
+            except Exception as e:
+                logger.error(f"Error retrieving version {i} (doc_id: {current_doc_id}) for history of {params.document_id}: {e}", exc_info=True)
+                return GetArtifactHistoryOutput(versions=versions, status="FAILURE", error_message=str(e))
+        
+        return GetArtifactHistoryOutput(versions=versions, status="SUCCESS")
 
     async def get_artifact_genealogy(self, args: GetArtifactGenealogyInput) -> GetArtifactGenealogyOutput:
-        """
-        Retrieves the genealogy (lineage and relationships) of an artifact.
-        Traces 'previous_version_artifact_id' and custom 'linked_relationships' in metadata.
-        Args:
-            args: GetArtifactGenealogyInput specifying the root artifact and traversal parameters.
-        Returns:
-            GetArtifactGenealogyOutput with nodes and links representing the genealogy graph.
-        """
+        set_chroma_project_context(self.actual_project_workspace_path)
+        logger.warning("get_artifact_genealogy is not fully implemented with new chroma_utils.")
+        # This method is complex and would require careful traversal of linked_relationships and previous_version_artifact_id
+        # using multiple calls to self.retrieve_artifact (which uses chroma_utils.get_document_by_id)
+        # For now, returning a placeholder.
         nodes: List[ArtifactGenealogyNode] = []
         links: List[ArtifactGenealogyLink] = []
-        processed_ids: set[str] = set()
-        # Use collections.deque for efficient appends and pops from the left
-        queue: collections.deque = collections.deque([(args.artifact_id, 0)]) 
+        q = collections.deque([(args.artifact_id, 0)]) # (doc_id, depth)
+        visited_ids = set()
 
-        collection_name = self._get_project_collection_name(args.base_collection_name)
+        initial_artifact_retrieved = False
 
-        while queue:
-            current_artifact_id, current_depth = queue.popleft()
+        while q:
+            current_doc_id, depth = q.popleft()
 
-            if current_artifact_id in processed_ids:
+            if current_doc_id in visited_ids or depth > args.max_depth:
                 continue
-            
-            # Retrieve the artifact
-            # Assuming retrieve_artifact is an async method based on others.
-            # It was defined in the provided context.
-            retrieved_artifact_data = await self.retrieve_artifact(
-                base_collection_name=args.base_collection_name, # Use collection from input args
-                document_id=current_artifact_id
-            )
+            visited_ids.add(current_doc_id)
 
-            if retrieved_artifact_data.status != "SUCCESS" or retrieved_artifact_data.metadata is None:
-                logger.warning(f"Genealogy: Could not retrieve artifact '{current_artifact_id}' from '{collection_name}'. Status: {retrieved_artifact_data.status}")
-                # Optionally, add a dummy node indicating it was not found or skip
-                continue
-
-            processed_ids.add(current_artifact_id)
-            current_metadata = retrieved_artifact_data.metadata
-            
-            # Create and add node
-            node_name = current_metadata.get("name", current_metadata.get("artifact_name", f"Artifact {current_artifact_id}"))
-            if isinstance(retrieved_artifact_data.content, dict) and not current_metadata.get("name"):
-                 # Try to get a name from content if it's a dict and no name in metadata
-                node_name = retrieved_artifact_data.content.get("name", node_name)
-
-            node = ArtifactGenealogyNode(
-                id=current_artifact_id,
-                name=str(node_name), # Ensure name is a string
-                type=str(current_metadata.get("artifact_type", "UnknownType")),
-                cycle_id=current_metadata.get("cycle_id"),
-                source_agent_id=current_metadata.get("source_agent_id"),
-                source_task_id=current_metadata.get("source_task_id"),
-                raw_metadata=current_metadata
-            )
-            nodes.append(node)
-
-            if current_depth < args.max_depth:
-                # 1. Process 'previous_version_artifact_id'
-                if args.include_previous_versions:
-                    prev_version_id = current_metadata.get("previous_version_artifact_id")
-                    if prev_version_id and isinstance(prev_version_id, str):
-                        links.append(ArtifactGenealogyLink(
-                            source_id=current_artifact_id,
-                            target_id=prev_version_id,
-                            relationship_type="PREVIOUS_VERSION"
-                        ))
-                        if prev_version_id not in processed_ids:
-                            queue.append((prev_version_id, current_depth + 1))
+            try:
+                # Use self.retrieve_artifact which is already refactored
+                artifact_data = await self.retrieve_artifact(args.base_collection_name, current_doc_id)
                 
-                # 2. Process 'linked_relationships'
-                custom_links = current_metadata.get("linked_relationships")
-                if isinstance(custom_links, dict):
-                    for rel_type, target_artifact_id in custom_links.items():
-                        if isinstance(target_artifact_id, str): # Ensure target_id is a string
-                            links.append(ArtifactGenealogyLink(
-                                source_id=current_artifact_id,
-                                target_id=target_artifact_id,
-                                relationship_type=f"CUSTOM:{str(rel_type)}" # Ensure rel_type is string
-                            ))
-                            if target_artifact_id not in processed_ids:
-                                queue.append((target_artifact_id, current_depth + 1))
-                        else:
-                            logger.warning(f"Genealogy: Invalid target_artifact_id '{target_artifact_id}' for relationship '{rel_type}' in artifact '{current_artifact_id}'. Expected string.")
-        
-        if not nodes and args.artifact_id not in processed_ids: # Root artifact itself was not found/processed
-             return GetArtifactGenealogyOutput(
-                query_artifact_id=args.artifact_id,
-                status="NOT_FOUND",
-                message=f"Root artifact '{args.artifact_id}' not found in collection '{collection_name}'."
-            )
+                if artifact_data.status != "SUCCESS" or not artifact_data.metadata or not artifact_data.document_id:
+                    if not initial_artifact_retrieved and current_doc_id == args.artifact_id:
+                        return GetArtifactGenealogyOutput(query_artifact_id=args.artifact_id, status="NOT_FOUND", message=f"Root artifact {args.artifact_id} not found.")
+                    logger.warning(f"Could not retrieve artifact {current_doc_id} for genealogy.")
+                    continue
+                
+                if not initial_artifact_retrieved and current_doc_id == args.artifact_id:
+                    initial_artifact_retrieved = True
 
-        return GetArtifactGenealogyOutput(
-            query_artifact_id=args.artifact_id,
-            nodes=nodes,
-            links=links,
-            status="SUCCESS",
-            message=f"Genealogy retrieved with {len(nodes)} nodes and {len(links)} links."
-        )
+                node_name = artifact_data.metadata.get("name", artifact_data.metadata.get("artifact_type", current_doc_id))
+                if isinstance(artifact_data.content, str) and len(artifact_data.content) < 50 and not node_name:
+                    node_name = artifact_data.content # Fallback name for short content
+                
+                nodes.append(ArtifactGenealogyNode(
+                    id=artifact_data.document_id,
+                    name=node_name,
+                    type=artifact_data.metadata.get("artifact_type", "Unknown"),
+                    cycle_id=artifact_data.metadata.get("cycle_id"),
+                    source_agent_id=artifact_data.metadata.get("source_agent_id"),
+                    source_task_id=artifact_data.metadata.get("source_task_id"),
+                    raw_metadata=artifact_data.metadata
+                ))
+
+                # Process previous version link
+                if args.include_previous_versions:
+                    prev_version_id = artifact_data.metadata.get("previous_version_artifact_id")
+                    if prev_version_id and prev_version_id not in visited_ids: # Check visited_ids here too
+                        links.append(ArtifactGenealogyLink(source_id=prev_version_id, target_id=current_doc_id, relationship_type="PREVIOUS_VERSION"))
+                        if depth + 1 <= args.max_depth:
+                            q.append((prev_version_id, depth + 1))
+                
+                # Process custom linked relationships
+                linked_rels_str = artifact_data.metadata.get("linked_relationships")
+                if linked_rels_str:
+                    try:
+                        linked_rels: Dict[str, str] = json.loads(linked_rels_str) if isinstance(linked_rels_str, str) else linked_rels_str
+                        for rel_type, target_id in linked_rels.items():
+                            if target_id and target_id not in visited_ids: # Check visited_ids here too
+                                links.append(ArtifactGenealogyLink(source_id=target_id, target_id=current_doc_id, relationship_type=f"CUSTOM_LINK:{rel_type}"))
+                                # Also add reverse link for visualization or allow user to specify directionality?
+                                # For now, assume links point *to* current_doc_id from the target_id in metadata key
+                                # If we want to explore *from* current_doc_id *to* its links, we need to store them differently or query differently.
+                                # The current design means `linked_relationships` are "things this artifact is linked FROM"
+                                # To trace outwards, the source artifact would need to list its targets.
+                                # For now, we are tracing backwards based on these links.
+                                if depth + 1 <= args.max_depth:
+                                     q.append((target_id, depth + 1))
+                    except json.JSONDecodeError:
+                        logger.warning(f"Could not parse linked_relationships for {current_doc_id}: {linked_rels_str}")
+
+            except Exception as e:
+                logger.error(f"Error processing artifact {current_doc_id} for genealogy: {e}", exc_info=True)
+                # Continue processing other branches if possible
+        
+        if not initial_artifact_retrieved and args.artifact_id and not any(n.id == args.artifact_id for n in nodes):
+             return GetArtifactGenealogyOutput(query_artifact_id=args.artifact_id, status="NOT_FOUND", message=f"Root artifact {args.artifact_id} could not be processed or found.")
+
+        return GetArtifactGenealogyOutput(query_artifact_id=args.artifact_id, nodes=nodes, links=links, status="SUCCESS")
+
 
     async def initialize_project_collections(self) -> bool:
         """
-        Ensures all standard collections for a project are created.
-        This should be called after PCMA initialization for a new project.
+        Ensures all standard project collections are initialized in ChromaDB for the current project.
+        This should be called when a new project is created or to verify existing setup.
+        Uses the default embedding function specified in the global config or ChromaDB's default.
         """
-        standard_collections = [
-            PLANNING_ARTIFACTS_COLLECTION,
-            RISK_REPORTS_COLLECTION,
-            OPTIMIZATION_REPORTS_COLLECTION,
-            TRACEABILITY_REPORTS_COLLECTION,
-            AGENT_LOGS_COLLECTION,
-            # Add other standard collections here
-        ]
-        results = []
-        for coll_name in standard_collections:
-            # Using default embedding function for all initially.
-            # This could be more nuanced, e.g., some collections might not need embeddings.
-            success = await self.ensure_collection_exists(coll_name)
-            results.append(success)
+        set_chroma_project_context(self.actual_project_workspace_path)
+        logger.info(f"Initializing all standard collections for project: {self.project_id}")
         
-        if all(results):
-            logger.info(f"All standard collections initialized successfully for project '{self.project_id}'.")
-            return True
+        app_config = get_config()
+        chroma_db_config = app_config.get("chromadb", {})
+        default_embedding_function_name = chroma_db_config.get("default_embedding_function")
+        
+        all_successful = True
+        for base_collection_name in ALL_PROJECT_COLLECTIONS:
+            project_collection_name = self._get_project_collection_name(base_collection_name)
+            try:
+                logger.debug(f"Ensuring collection: {project_collection_name} with embedding: {default_embedding_function_name or 'ChromaDefault'}")
+                # ensure_collection_exists uses get_or_create_collection from chroma_utils
+                success = await self.ensure_collection_exists(
+                    base_collection_name=base_collection_name,
+                    embedding_function_name=default_embedding_function_name
+                )
+                if not success:
+                    all_successful = False
+                    logger.error(f"Failed to ensure existence of collection: {project_collection_name}")
+            except Exception as e:
+                all_successful = False
+                logger.error(f"Exception while ensuring collection {project_collection_name}: {e}", exc_info=True)
+        
+        if all_successful:
+            logger.info(f"Successfully initialized/verified all standard collections for project {self.project_id}.")
         else:
-            logger.error(f"Failed to initialize one or more standard collections for project '{self.project_id}'.")
-            return False
+            logger.warning(f"One or more collections could not be initialized/verified for project {self.project_id}.")
+        return all_successful
 
-# Example usage (conceptual, typically other agents would use PCMA)
+    async def log_arca_event(
+        self,
+        project_id: str, # For validation against self.project_id
+        cycle_id: str,   # For metadata or partitioning, if PCMA uses it
+        log_entry: ARCALogEntry
+    ) -> LogStorageConfirmation:
+        """
+        Stores an ARCALogEntry into the AGENT_REFLECTIONS_AND_LOGS_COLLECTION.
+        Args:
+            project_id: The ID of the project this log belongs to.
+            cycle_id: The specific autonomous cycle ID this log is associated with.
+            log_entry: The ARCALogEntry Pydantic model instance.
+        Returns:
+            LogStorageConfirmation indicating success or failure.
+        """
+        set_chroma_project_context(self.actual_project_workspace_path)
+        if project_id != self.project_id:
+            err_msg = f"Mismatched project_id in log_arca_event. Expected '{self.project_id}', got '{project_id}'."
+            logger.error(err_msg)
+            return LogStorageConfirmation(log_id=log_entry.log_id, status="FAILURE", error_message=err_msg)
+
+        collection_name = self._get_project_collection_name(AGENT_REFLECTIONS_AND_LOGS_COLLECTION)
+        
+        document_content = log_entry.model_dump_json(indent=2)
+        doc_id = f"arca_log_{log_entry.log_id}"
+        
+        metadata = {
+            "artifact_type": "ARCA_LogEntry",
+            "project_id": self.project_id,
+            "cycle_id": cycle_id,
+            "agent_id": log_entry.agent_id,
+            "task_id": log_entry.task_id,
+            "event_type": log_entry.event_type.value, # Store enum value
+            "timestamp_utc": log_entry.timestamp_utc.isoformat(),
+            "log_id_prop": log_entry.log_id # Adding log_id also as a direct metadata field for easier query
+        }
+        if log_entry.related_artifact_id:
+            metadata["related_artifact_id"] = log_entry.related_artifact_id
+
+        try:
+            success = add_or_update_document(
+                collection_name=collection_name,
+                doc_id=doc_id,
+                document_content=document_content,
+                metadata=metadata,
+            )
+            if success:
+                msg = f"ARCA LogEntry '{log_entry.log_id}' stored successfully in '{collection_name}'."
+                logger.debug(msg)
+                return LogStorageConfirmation(
+                    log_id=log_entry.log_id, 
+                    status="SUCCESS", 
+                    message=msg,
+                    stored_timestamp=datetime.datetime.utcnow() # Actual store time
+                )
+            else:
+                err_msg = f"Failed to store ARCA LogEntry '{log_entry.log_id}' in '{collection_name}' (add_or_update_document returned False)."
+                logger.error(err_msg)
+                return LogStorageConfirmation(log_id=log_entry.log_id, status="FAILURE", error_message=err_msg)
+        except Exception as e:
+            logger.error(f"Error storing ARCA LogEntry '{log_entry.log_id}' in '{collection_name}': {e}", exc_info=True)
+            return LogStorageConfirmation(log_id=log_entry.log_id, status="FAILURE", error_message=str(e))
+
+    # Optional: Add a destructor or cleanup method if needed, e.g., to clear context for this project.
+    # def __del__(self):
+    #     # This might be called when the PCMA instance is garbage collected.
+    #     # Be cautious with global context manipulation here if multiple PCMA instances for different projects
+    #     # might exist and be GC'd unpredictably.
+    #     # For now, explicit context setting per call is safer.
+    #     # if _current_project_directory == self.actual_project_workspace_path:
+    #     #     clear_chroma_project_context() # Clear context if it was for this project
+    #     pass
+
+
+# Example Usage (Conceptual - for understanding, not direct execution here)
 async def _example_pcma_usage():
-    project_root_path = Path(__file__).parent.parent.parent.parent # Assuming chungoid-core
-    example_project_id = "example_proj_123"
-    
-    pcma = ProjectChromaManagerAgent_v1(project_root=project_root_path, project_id=example_project_id)
-    
-    # Initialize collections (important for a new project)
+    # This would typically be in a higher-level orchestrator or test script
+    workspace_root = Path(__file__).resolve().parents[3] # Adjust to your actual workspace root
+    project_name = "example_project_for_pcma"
+
+    # Create a PCMA instance for a specific project
+    pcma = ProjectChromaManagerAgent_v1(project_root_workspace_path=workspace_root, project_id=project_name)
+
+    # Initialize collections for the project
     await pcma.initialize_project_collections()
 
-    # Store an LOPRD (JSON)
-    loprd_content_dict = {"version": "1.0", "goal": "Create an awesome app"}
-    loprd_meta = {
-        "artifact_type": "LOPRD_JSON", 
-        "source_agent": "ProductAnalystAgent_v1",
-        "cycle_id": "cycle_001_initial_dev",
-        "source_task_id": "task_generate_loprd_abc"
-    }
-    store_loprd_result = await pcma.store_artifact(
-        base_collection_name=PLANNING_ARTIFACTS_COLLECTION,
-        artifact_content=loprd_content_dict,
-        metadata=loprd_meta,
-        document_id="loprd_v1"
+    # Store an artifact
+    loprd_content = {"goal": "Test LOPRD for PCMA", "requirements": ["Req1"]}
+    store_input = StoreArtifactInput(
+        base_collection_name=LOPRD_ARTIFACTS_COLLECTION,
+        artifact_content=loprd_content,
+        metadata={"artifact_type": "LOPRD_JSON", "author": "Test Script"},
+        cycle_id="cycle_001",
+        source_agent_id="TestAgent_v1"
     )
-    print(f"Store LOPRD: {store_loprd_result.status}, ID: {store_loprd_result.document_id}")
+    store_result = await pcma.store_artifact(store_input)
+    print(f"Store result: {store_result.model_dump_json(indent=2)}")
 
-    if store_loprd_result.status == "SUCCESS":
-        retrieved_loprd = await pcma.retrieve_artifact(PLANNING_ARTIFACTS_COLLECTION, store_loprd_result.document_id)
-        print(f"Retrieve LOPRD: {retrieved_loprd.status}, Content: {retrieved_loprd.content}")
+    if store_result.status == "SUCCESS":
+        doc_id = store_result.document_id
+        # Retrieve the artifact
+        retrieve_result = await pcma.retrieve_artifact(LOPRD_ARTIFACTS_COLLECTION, doc_id)
+        print(f"Retrieve result: {retrieve_result.model_dump_json(indent=2)}")
 
-    # Store a Blueprint (Markdown)
-    blueprint_md = "# Project Blueprint\\n## Section 1..."
-    blueprint_meta = {
-        "artifact_type": "Blueprint_MD", 
-        "source_agent": "ArchitectAgent_v1",
-        "cycle_id": "cycle_001_initial_dev",
-        "previous_version_artifact_id": "loprd_v1_old_version_id_example",
-        "source_task_id": "task_create_blueprint_xyz"
-    }
-    store_bp_result = await pcma.store_artifact(
-        base_collection_name=PLANNING_ARTIFACTS_COLLECTION,
-        artifact_content=blueprint_md,
-        metadata=blueprint_meta,
-        document_id="blueprint_v1"
+        if retrieve_result.status == "SUCCESS" and isinstance(retrieve_result.content, dict):
+            assert retrieve_result.content["goal"] == "Test LOPRD for PCMA"
+
+    # Example of ARCA logging
+    from chungoid.schemas.agent_logs import ARCAEventType # Assuming enum definition
+    log_event = ARCALogEntry(
+        log_id=str(uuid.uuid4()),
+        agent_id="ARCA_v1",
+        task_id="task_abc",
+        event_type=ARCAEventType.ARCA_DECISION_MADE,
+        summary="LOPRD approved, proceeding to blueprinting.",
+        details={"loprd_doc_id": store_result.document_id if store_result.status == "SUCCESS" else "N/A", "confidence": 0.95}
     )
-    print(f"Store Blueprint: {store_bp_result.status}, ID: {store_bp_result.document_id}")
+    log_conf = await pcma.log_arca_event(project_id=project_name, cycle_id="cycle_001", log_entry=log_event)
+    print(f"Log confirmation: {log_conf.model_dump_json(indent=2)}")
 
-    if store_bp_result.status == "SUCCESS":
-        retrieved_bp = await pcma.retrieve_artifact(PLANNING_ARTIFACTS_COLLECTION, store_bp_result.document_id)
-        print(f"Retrieve Blueprint: {retrieved_bp.status}, Content: {retrieved_bp.content}")
-
-if __name__ == "__main__":
-    # This is for basic testing of the PCMA class structure.
-    # To run this example properly, ChromaDB service needs to be accessible
-    # and the project_root path must be correct.
-    logging.basicConfig(level=logging.INFO)
-    # Ensure the event loop is running if testing async main directly (Python 3.7+)
-    # For simple script testing, you might run: asyncio.run(_example_pcma_usage())
-    # However, this file is a module, so direct execution is not typical for agent operation.
-    pass 
+# if __name__ == "__main__":
+#     asyncio.run(_example_pcma_usage()) 

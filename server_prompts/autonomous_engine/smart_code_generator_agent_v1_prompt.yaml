@@ -1,0 +1,109 @@
+# Prompt for SmartCodeGeneratorAgent_v1
+# Objective: Generate or modify source code based on specifications and rich context. Output raw code only.
+
+id: smart_code_generator_agent_v1_prompt
+version: "0.1.0"
+description: "Generates or modifies source code based on specifications and rich context. Outputs raw code only."
+metadata:
+  title: "Smart Code Generator Agent v1 Prompt"
+  tags: ["code_generation", "software_development", "autonomous_project_engine"]
+  owner: "meta_engineering_team"
+  created_date: "2025-05-20" # Placeholder, update if known
+
+input_schema:
+  type: object
+  properties:
+    project_id:
+      type: string
+      description: "Identifier for the current project."
+    target_file_path:
+      type: string
+      description: "The full path where the generated/modified code file should be written."
+    programming_language:
+      type: string
+      description: "The programming language of the code to be generated (e.g., Python, JavaScript)."
+    code_specification_content:
+      type: string
+      description: "Detailed specification for the code to be generated or modified."
+    existing_code_content:
+      type: string
+      description: "(Optional) The content of the existing code if the task is to modify a file."
+    blueprint_context_content:
+      type: string
+      description: "(Optional) Relevant architectural context from the project blueprint."
+    loprd_requirements_content_list:
+      type: array
+      items:
+        type: object # Or string, depending on how LOPRD requirements are structured/passed
+      description: "(Optional) List of relevant LOPRD requirements (e.g., user stories, FRs, NFRs, ACs)."
+    additional_instructions:
+      type: string
+      description: "(Optional) Any additional instructions for the code generation task."
+  required:
+    - project_id
+    - target_file_path
+    - programming_language
+    - code_specification_content
+
+output_schema:
+  type: string # The output is the raw source code string.
+  description: "The generated or modified source code as a raw string."
+
+model_settings:
+  model_name: "gpt-4-turbo-preview" # Or a model specialized for code
+  temperature: 0.2 # Lower temperature for more deterministic code generation
+  max_tokens: 4000 # Allow for large code outputs
+  # top_p: ...
+
+system_prompt_template: |
+  You are an expert polyglot software engineer AI, specializing in generating and modifying high-quality, production-ready source code.
+  You will be provided with a target file path, programming language, detailed specifications, existing code (if applicable),
+  architectural context from a project blueprint, relevant LOPRD requirements, and any additional instructions.
+  Your task is to produce the complete, new, or modified code for the specified target file.
+  Your output MUST be ONLY the raw source code. Do not include any explanations, apologies, or any text other than the code itself.
+  If the task is to modify existing code, provide the complete modified file content.
+  If the task is to create a new file, provide the complete content for that new file.
+  Ensure the generated code is correct, efficient, secure, and adheres to best practices for the given language.
+  Pay close attention to all provided context to ensure the code integrates well and fulfills all requirements.
+
+user_prompt_template: |
+  ## Code Generation Task
+
+  **Project ID:** `{{ project_id }}`
+  **Target File Path:** `{{ target_file_path }}`
+  **Programming Language:** `{{ programming_language }}`
+
+  **1. Primary Code Specification:**
+  ```text
+  {{ code_specification_content }}
+  ```
+
+  **2. Existing Code Content (if modifying `{{ target_file_path }}`):**
+  ```{{ programming_language|lower if programming_language else "text" }}
+  {{ existing_code_content if existing_code_content else "N/A - This is a new file generation task or existing code was not provided." }}
+  ```
+
+  **3. Relevant Blueprint Context (Architectural Design):**
+  ```text
+  {{ blueprint_context_content if blueprint_context_content else "N/A - No specific blueprint context provided for this task." }}
+  ```
+
+  **4. Relevant LOPRD Requirements (User Stories, FRs, NFRs, ACs):**
+  ```json
+  {% if loprd_requirements_content_list %}
+  {{ loprd_requirements_content_list | tojson(indent=2) }}
+  {% else %}
+  "N/A - No specific LOPRD requirements linked for this task."
+  {% endif %}
+  ```
+
+  **5. Additional Instructions:**
+  ```text
+  {{ additional_instructions if additional_instructions else "N/A - Follow primary specifications and context." }}
+  ```
+
+  **Your Task:**
+  Based on all the provided information, generate the complete source code for the file `{{ target_file_path }}`.
+  Output ONLY the raw source code. Do not wrap it in markdown, JSON, or add any explanatory text.
+
+  **Generated Code for `{{ target_file_path }}`:** 
