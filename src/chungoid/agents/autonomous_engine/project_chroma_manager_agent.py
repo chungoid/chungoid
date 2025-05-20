@@ -45,6 +45,7 @@ AGENT_REFLECTIONS_AND_LOGS_COLLECTION = "agent_reflections_and_logs" # Replaces 
 QUALITY_ASSURANCE_LOGS_COLLECTION = "quality_assurance_logs"
 LIBRARY_DOCUMENTATION_COLLECTION = "library_documentation_collection"
 EXTERNAL_MCP_TOOLS_DOCUMENTATION_COLLECTION = "external_mcp_tools_documentation_collection"
+REVIEW_REPORTS_COLLECTION = "review_reports_collection" # Added for blueprint reviews and similar
 
 # List of all defined collections for easy iteration
 ALL_PROJECT_COLLECTIONS = [
@@ -64,6 +65,7 @@ ALL_PROJECT_COLLECTIONS = [
     QUALITY_ASSURANCE_LOGS_COLLECTION,
     LIBRARY_DOCUMENTATION_COLLECTION,
     EXTERNAL_MCP_TOOLS_DOCUMENTATION_COLLECTION,
+    REVIEW_REPORTS_COLLECTION, # Added to the list
 ]
 
 # --- Standardized Artifact Types (for metadata.artifact_type) --- #
@@ -84,6 +86,7 @@ ARTIFACT_TYPE_RISK_ASSESSMENT_REPORT_MD = "RiskAssessmentReport_MD" # For RISK_A
 ARTIFACT_TYPE_OPTIMIZATION_SUGGESTION_REPORT_MD = "OptimizationSuggestionReport_MD" # For OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION
 ARTIFACT_TYPE_TRACEABILITY_MATRIX_MD = "TraceabilityMatrix_MD" # For TRACEABILITY_REPORTS_COLLECTION
 ARTIFACT_TYPE_TEST_EXECUTION_REPORT_JSON = "TestExecutionReport_JSON" # For TEST_REPORTS_COLLECTION
+ARTIFACT_TYPE_BLUEPRINT_REVIEW_REPORT_MD = "BlueprintReviewReport_MD" # For REVIEW_REPORTS_COLLECTION
 
 # Code & Related
 ARTIFACT_TYPE_SOURCE_CODE_FILE = "SourceCodeFile" # General, for LIVE_CODEBASE_COLLECTION (metadata can specify language)

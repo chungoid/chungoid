@@ -95,7 +95,7 @@ class ARCALogEntry(BaseModel):
 class QALogEntry(BaseModel):
     """Schema for a Quality Assurance log entry."""
     log_id: uuid.UUID = Field(default_factory=uuid.uuid4, description="Unique identifier for this QA log entry.")
-    timestamp_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of when the QA check was performed.")
+    timestamp_utc: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc), description="Timestamp of when the QA check was performed.")
     project_id: str = Field(..., description="Identifier of the project this QA log pertains to.")
     cycle_id: str = Field(..., description="Identifier of the autonomous cycle during which this QA check occurred.")
     
@@ -141,8 +141,8 @@ class ToolCallDetails(BaseModel):
     tool_output_summary: Optional[str] = Field(None, description="A brief summary of the tool's output or key results.")
     status: Literal["SUCCESS", "FAILURE", "PENDING"] = Field(..., description="Status of the tool call.")
     error_message: Optional[str] = Field(None, description="Error message if the tool call failed.")
-    start_time: datetime = Field(default_factory=datetime.utcnow)
-    end_time: Optional[datetime] = None
+    start_time: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    end_time: Optional[datetime.datetime] = None
     duration_seconds: Optional[float] = None
 
 
@@ -212,7 +212,7 @@ class QualityAssuranceLogEntry(BaseModel):
     log_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this QA log entry.")
     project_id: str = Field(..., description="Identifier for the project context.")
     cycle_id: Optional[str] = Field(None, description="Identifier for the current development or refinement cycle.")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 
     artifact_doc_id_assessed: Optional[str] = Field(None, description="ChromaDB document ID of the artifact being assessed. Optional if QA log is about a process rather than a specific artifact.")
     artifact_type_assessed: Optional[str] = Field(None, description="Type of the artifact being assessed (e.g., LOPRD, Blueprint, CodeModule).")

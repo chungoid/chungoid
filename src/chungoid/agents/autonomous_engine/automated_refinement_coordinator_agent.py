@@ -4,7 +4,8 @@ import logging
 import datetime
 import uuid
 import json
-from typing import Any, Dict, Optional, Literal, Union, ClassVar, List, Type, get_args, Enum
+from typing import Any, Dict, Optional, Literal, Union, ClassVar, List, Type, get_args
+from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -22,7 +23,7 @@ from .project_documentation_agent import ProjectDocumentationAgentInput, Project
 
 # NEW: Import StateManager and related schemas
 from chungoid.utils.state_manager import StateManager, StatusFileError
-from chungoid.schemas.project_state import ProjectStateV2, CycleHistoryItem, CycleStatus, ProjectOverallStatus # CycleHistoryItem might not be directly used if modifying existing
+from chungoid.schemas.project_status_schema import ProjectStateV2, CycleStatus, ProjectOverallStatus, CycleInfo # Corrected import
 
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard

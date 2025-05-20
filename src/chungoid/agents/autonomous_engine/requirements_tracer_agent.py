@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
-from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.utils.prompt_manager import PromptManager, PromptRenderError, PromptLoadError
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     ProjectChromaManagerAgent_v1, 
@@ -273,8 +273,19 @@ class RequirementsTracerAgent_v1(BaseAgent[RequirementsTracerInput, Requirements
                 input_artifacts_used = [task_input.source_artifact_doc_id, task_input.target_artifact_doc_id]
                 output_artifacts_generated = [trace_report_doc_id] if trace_report_doc_id else []
 
+                # Get model_name from prompt definition for reflection
+                model_name_for_reflection = "unknown" # Default
+                try:
+                    prompt_def = prompt_manager.get_prompt_definition(
+                        RTA_PROMPT_NAME, self.VERSION, "autonomous_engine"
+                    )
+                    model_name_for_reflection = prompt_def.model_settings.model_name
+                except PromptLoadError:
+                    logger_instance.warning(f"Could not load prompt definition to get model_name for reflection: {RTA_PROMPT_NAME} v{self.VERSION}")
+                    # model_name_for_reflection remains "unknown" or some other placeholder
+
                 llm_call_details = LLMCallDetails(
-                    model_name=llm_provider.model_id, # Assuming model_id is accessible
+                    model_name=model_name_for_reflection,
                     prompt_template_id=RTA_PROMPT_NAME,
                     # Add other llm details if available from llm_usage_metadata
                 )
@@ -322,12 +333,16 @@ class RequirementsTracerAgent_v1(BaseAgent[RequirementsTracerInput, Requirements
                 logger_instance.error(f"Exception storing GenericAgentReflection for RTA: {e_store_reflection}", exc_info=True)
 
             # Prepare final output
+            success_message = "Successfully generated traceability report (storage failed or was skipped)."
+            if trace_report_doc_id:
+                success_message = f"Traceability report generated. Stored as doc_id: {trace_report_doc_id}"
+            
             return RequirementsTracerOutput(
                 task_id=task_input.task_id,
                 project_id=task_input.project_id,
                 traceability_report_doc_id=trace_report_doc_id, # Pass the stored doc ID
                 status="SUCCESS", # Assuming success if LLM part worked, storage failures are logged
-                message="Successfully generated traceability report.",
+                message=success_message, # Use the conditionally constructed message
                 agent_confidence_score=llm_confidence,
                 llm_full_response=llm_response_json_str,
                 usage_metadata=llm_usage_metadata

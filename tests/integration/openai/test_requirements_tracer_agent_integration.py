@@ -14,6 +14,8 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     RetrieveArtifactOutput,
     TRACEABILITY_REPORTS_COLLECTION,
     StoreArtifactOutput,
+    StoreArtifactInput,
+    ARTIFACT_TYPE_TRACEABILITY_MATRIX_MD,
 )
 from chungoid.utils.prompt_manager import PromptManager
 from chungoid.utils.llm_provider import LLMProvider
@@ -142,25 +144,30 @@ async def test_requirements_tracer_agent_live_llm_call(
     assert mock_pcma_integration.retrieve_artifact.call_count == 2
 
     # Verify PCMA store_artifact call
-    mock_pcma_integration.store_artifact.assert_called_once()
-    store_call = mock_pcma_integration.store_artifact.call_args
-    assert store_call is not None, "store_artifact was not called with any arguments"
-    
-    # The store_artifact method is called with a single keyword argument 'args'
-    # which is an instance of StoreArtifactInput.
-    stored_artifact_input_args = store_call.kwargs.get('args')
-    assert stored_artifact_input_args is not None, "store_artifact was not called with 'args' keyword argument"
+    assert mock_pcma_integration.store_artifact.call_count == 2, \
+        f"Expected store_artifact to be called 2 times (once for report, once for reflection), but was called {mock_pcma_integration.store_artifact.call_count} times."
 
-    assert stored_artifact_input_args.base_collection_name == TRACEABILITY_REPORTS_COLLECTION
-    assert isinstance(stored_artifact_input_args.artifact_content, str)
-    assert len(stored_artifact_input_args.artifact_content) > 0
-    
-    # Check metadata fields within the StoreArtifactInput object
-    assert stored_artifact_input_args.metadata["project_id"] == project_id
-    assert "confidence_value" in stored_artifact_input_args.metadata
-    assert isinstance(stored_artifact_input_args.metadata["confidence_value"], float)
-    assert stored_artifact_input_args.metadata["source_artifact_id"] == source_artifact_doc_id
-    assert stored_artifact_input_args.metadata["target_artifact_id"] == target_artifact_doc_id
+    # Inspect the first call (traceability report)
+    assert len(mock_pcma_integration.store_artifact.call_args_list[0].args) == 1, "First call to store_artifact should have one positional argument."
+    first_store_call_input_arg = mock_pcma_integration.store_artifact.call_args_list[0].args[0]
+    assert first_store_call_input_arg is not None, "First call to store_artifact did not receive StoreArtifactInput as argument"
+    assert isinstance(first_store_call_input_arg, StoreArtifactInput), "Argument to store_artifact is not StoreArtifactInput"
+
+    assert first_store_call_input_arg.base_collection_name == TRACEABILITY_REPORTS_COLLECTION
+    assert isinstance(first_store_call_input_arg.artifact_content, str)
+    assert len(first_store_call_input_arg.artifact_content) > 0
+    assert first_store_call_input_arg.metadata["project_id"] == project_id
+    assert first_store_call_input_arg.metadata["source_artifact_doc_id"] == source_artifact_doc_id
+    assert first_store_call_input_arg.metadata["target_artifact_doc_id"] == target_artifact_doc_id
+    assert first_store_call_input_arg.metadata["artifact_type"] == ARTIFACT_TYPE_TRACEABILITY_MATRIX_MD
+    assert "assessment_confidence" in first_store_call_input_arg.metadata
+    assert first_store_call_input_arg.metadata["assessment_confidence"]["value"] == result.agent_confidence_score.value
+
+    # Optionally, inspect the second call (agent reflection)
+    # second_store_call_args = mock_pcma_integration.store_artifact.call_args_list[1].kwargs.get('args')
+    # assert second_store_call_args is not None, "Second call to store_artifact did not have 'args' keyword argument"
+    # assert second_store_call_args.base_collection_name == AGENT_REFLECTIONS_AND_LOGS_COLLECTION
+    # assert second_store_call_args.metadata["artifact_type"] == ARTIFACT_TYPE_AGENT_REFLECTION_JSON
 
     print("Live LLM call test for RequirementsTracerAgent_v1 passed.")
 

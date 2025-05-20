@@ -81,7 +81,7 @@ output_schema:
     - traceability_report_md
     - assessment_confidence
 
-system_prompt_template: |
+system_prompt: |
   You are RequirementsTracerAgent_v1 (RTA), an AI expert in software requirements and design traceability.
   Your task is to analyze two project artifacts: a source document (e.g., LOPRD JSON or Project Blueprint Markdown) and a target document (e.g., Project Blueprint Markdown or Master Execution Plan YAML/JSON).
   
@@ -153,7 +153,7 @@ system_prompt_template: |
   - Select an appropriate `level` ("High", "Medium", "Low").
   - Write a detailed `explanation` justifying this confidence score. This explanation should cover your overall confidence in the findings presented in the report, the methodology used, any significant assumptions, ambiguities in inputs, or limitations that affected your assessment. This is your reflection on the entire process.
 
-user_prompt_template: |
+user_prompt: |
   Please perform a traceability analysis based on the following inputs and provide your output as a single JSON object with `traceability_report_md` and `assessment_confidence` keys.
 
   **Inputs for Analysis:**

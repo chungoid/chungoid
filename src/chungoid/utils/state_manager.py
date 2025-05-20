@@ -29,6 +29,14 @@ from chungoid.schemas.master_flow import MasterExecutionPlan # Added import
 # from chungoid.schemas.file_schemas import FileProcessResult, StatusEntry # Removed unused
 # from .file_ops import find_project_root, load_json_from_file, write_json_to_file # Changed to relative import - NOW REMOVING AS UNUSED
 
+from pydantic import BaseModel, Field
+
+# from chungoid.schemas.orchestration import PausedRunDetails # Not directly used here, but for context
+# from chungoid.schemas.agent_errors import AgentErrorDetails # Not directly used, context
+
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import StoreArtifactInput, RetrieveArtifactOutput # Corrected import path
+from chungoid.schemas.project_status_schema import CycleInfo, ProjectStateV2, CycleStatus, ProjectOverallStatus, ArtifactLink, KeyDecision, HumanReviewRecord # Restored project_status_schema imports
+
 
 class StatusFileError(Exception):
     """Custom exception for errors related to status file operations."""
