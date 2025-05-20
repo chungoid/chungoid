@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import chromadb
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Literal
+from typing import Any, Dict, List, Optional, Union, Literal, ClassVar
 import uuid
 import collections
 import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 # MODIFIED IMPORTS: Remove ChromaDBManager, import specific utils
 from chungoid.utils.chroma_utils import (
@@ -26,6 +27,8 @@ from chungoid.utils.config_loader import get_config # For default embedding func
 
 from chungoid.schemas.agent_logs import ARCALogEntry
 
+# Logger setup - module level logger can be used if preferred,
+# but instance logger is also common for agents.
 logger = logging.getLogger(__name__)
 
 # --- Collection Base Names (as per Blueprint M0.3.3 & EXECUTION_PLAN.md Phase 3.1.3) --- #
@@ -220,49 +223,92 @@ class LogStorageConfirmation(BaseModel):
 
 # --- ProjectChromaManagerAgent Class --- #
 
-class ProjectChromaManagerAgent_v1:
+class ProjectChromaManagerAgent_v1(BaseModel):
     """
     Manages project-specific ChromaDB collections for the Autonomous Project Engine.
     Provides an API for other agents to store and retrieve project artifacts.
     """
-    DEFAULT_DB_SUBDIR = ".project_chroma_dbs" # Relative to project_root, not chungoid-core workspace root
+    project_id: str = Field(..., description="Unique identifier for the project.")
+    # project_root_workspace_path: Path = Field(..., description="The root directory of the chungoid-mcp workspace.")
+    # This will be handled by __init__ for now due to potential circular dependencies or complex init logic if directly a field
+    _project_root_workspace_path: Optional[Path] = PrivateAttr(default=None)
+    _client: Optional[chromadb.PersistentClient] = PrivateAttr(default=None)
+    _db_path: Optional[Path] = PrivateAttr(default=None)
+    _logger: Optional[logging.Logger] = PrivateAttr(default=None) # Type changed to Optional[logging.Logger]
+    _actual_project_workspace_path: Optional[Path] = PrivateAttr(default=None)
 
-    def __init__(self, project_root_workspace_path: Path, project_id: str):
-        """
-        Initializes the manager for a specific project.
-        Args:
-            project_root_workspace_path: The root directory of the chungoid-mcp workspace.
-                                        The actual project data will be in a subdirectory.
-            project_id: Unique identifier for the project (e.g., 'my_flask_app').
-        """
-        if not project_id:
-            raise ValueError("project_id cannot be empty.")
-            
-        self.project_id = project_id
-        # The project_root_workspace_path is the overall workspace (e.g., /home/user/chungoid-mcp)
-        # The PCMA will manage its DB within a project-specific subfolder of a general chroma DB store.
-        # Example: /home/user/chungoid-mcp/dev_chroma_db/my_flask_app/
-        # For simplicity, we will use a fixed subdir within the workspace for all project chroma DBs.
-        # This means `project_root_workspace_path` is more like the chungoid-mcp root.
-        # The actual DB path for chroma_utils.set_chroma_project_context will be more specific.
-        
-        # Define the base directory for all project-specific ChromaDBs
-        # This should align with where chroma_utils expects to find/create them based on context.
-        # For persistent mode, chroma_utils uses `_current_project_directory` which is set by `set_chroma_project_context`.
-        # The path given to set_chroma_project_context becomes the root for its internal .chungoid/chroma_db structure.
+    # Class variable, not a Pydantic field
+    DEFAULT_DB_SUBDIR: ClassVar[str] = ".project_chroma_dbs" # Relative to project_root, not chungoid-core workspace root
 
-        # Let's assume projects are created in a standard location within the workspace, e.g., './project_workspaces/<project_id>'.
-        # PCMA needs to set the context for chroma_utils to *this* specific project workspace directory.
-        self.actual_project_workspace_path = project_root_workspace_path / "project_workspaces" / self.project_id
-        self.actual_project_workspace_path.mkdir(parents=True, exist_ok=True)
+    class Config:
+        arbitrary_types_allowed = True
+        validate_assignment = True
+
+    def __init__(self, project_root_workspace_path: Path, project_id: str, **data: Any):
+        # Pass project_id to super().__init__ as it's a Pydantic field
+        data['project_id'] = project_id
+        super().__init__(**data) 
+        # self.project_id = project_id # This is now handled by Pydantic field initialization
+
+        self._logger = logging.getLogger(f"{self.__class__.__name__}.{self.project_id}") 
+        self._project_root_workspace_path = project_root_workspace_path # Initialize PrivateAttr
+
+        # NEW: Define the actual project-specific workspace path
+        # This is where project-specific subdirectories (like a subdirectory for its ChromaDB) will live.
+        # It's constructed based on the overall workspace root and the project ID.
+        self._actual_project_workspace_path = self._project_root_workspace_path / "project_workspaces" / self.project_id
+        self._actual_project_workspace_path.mkdir(parents=True, exist_ok=True) # Ensure it exists
+
+        # Initialize ChromaDB settings using this actual project workspace path
+        # The ChromaDB for this project will be inside _actual_project_workspace_path / DEFAULT_DB_SUBDIR_NAME_IN_PROJECT_DIR
+        # For example: /tmp/workspace_root/project_workspaces/project_123/.chroma_db
+        # self._db_path = self._actual_project_workspace_path / "instance_chroma_db" # Example, if DB is directly in it
+        # The _get_or_initialize_client method will further refine db_path based on DEFAULT_DB_SUBDIR if used that way.
+
+        # Set ChromaDB context to this specific project's isolated workspace
+        # This is crucial for ensuring that ChromaDB operations are scoped correctly.
+        # The set_chroma_project_context function should ideally use this path
+        # to configure where ChromaDB looks for or creates its database files.
+        set_chroma_project_context(self._actual_project_workspace_path) # USE _actual_project_workspace_path
         
-        # Set the context for chroma_utils to use this project's directory for its DB operations.
-        # chroma_utils will then create its .chungoid/chroma_db within this path.
-        set_chroma_project_context(self.actual_project_workspace_path)
-        
-        logger.info(f"ProjectChromaManagerAgent_v1 initialized for project '{project_id}'.")
-        logger.info(f"ChromaDB context set to: {self.actual_project_workspace_path}")
+        self._logger.info(f"ProjectChromaManagerAgent_v1 initialized for project '{self.project_id}'.")
+        self._logger.info(f"ChromaDB context (actual project workspace) set to: {self._actual_project_workspace_path}")
         # No self.chroma_manager instance anymore. Calls go direct to chroma_utils functions.
+
+        if not self._client:
+            try:
+                # Ensure the parent directory for ChromaDB databases exists
+                # self._project_root_workspace_path is like /path/to/chungoid-mcp (overall workspace)
+                # self.DEFAULT_DB_SUBDIR is like .project_chroma_dbs (a general subdir in overall workspace for all project DBs)
+                # self.project_id is like my_project_123
+                # So, db_path should be /path/to/chungoid-mcp/.project_chroma_dbs/my_project_123
+
+                projects_db_base_dir = self._project_root_workspace_path / self.DEFAULT_DB_SUBDIR
+                self._db_path = projects_db_base_dir / self.project_id # This is the specific path for THIS project's DB
+                
+                self._logger.info(f"Ensuring ChromaDB directory exists for project specific DB: {self._db_path}")
+                self._db_path.mkdir(parents=True, exist_ok=True)
+
+                self._logger.info(f"Attempting to initialize ChromaDB PersistentClient at project-specific path: {self._db_path}")
+                self._client = chromadb.PersistentClient(path=str(self._db_path))
+                self._client.list_collections() # Confirm connectivity
+                self._logger.info(f"ChromaDB PersistentClient initialized successfully for project '{self.project_id}' at '{self._db_path}'.")
+
+            except Exception as e:
+                self._logger.error(f"Failed to initialize ChromaDB client for project '{self.project_id}' at path '{self._db_path}': {e}", exc_info=True)
+                raise  # Re-raise the exception to signal failure
+
+    @model_validator(mode='after')
+    def _initialize_chroma_resources(self) -> 'ProjectChromaManagerAgent_v1':
+        # This validator runs after __init__ and initial field validation.
+        # It's a good place to initialize resources that depend on validated fields,
+        # like the ChromaDB client which needs the project_id and paths.
+        
+        # The _get_or_initialize_client method will be called on first use,
+        # ensuring lazy initialization if preferred, or it can be called here explicitly.
+        # For now, relying on lazy init via _get_collection -> _get_or_initialize_client.
+        # If explicit init here is desired: self._get_or_initialize_client()
+        return self
 
     def _get_project_collection_name(self, base_collection_name: str) -> str:
         """Prepends project_id to base collection name for namespacing."""
@@ -271,7 +317,7 @@ class ProjectChromaManagerAgent_v1:
         # The namespacing is achieved by setting the DB path per project via set_chroma_project_context.
         # So, we use the base collection names directly.
         if base_collection_name not in ALL_PROJECT_COLLECTIONS:
-            logger.warning(f"Base collection name '{base_collection_name}' is not in ALL_PROJECT_COLLECTIONS. Using it directly but this might be an error.")
+            self._logger.warning(f"Base collection name '{base_collection_name}' is not in ALL_PROJECT_COLLECTIONS. Using it directly but this might be an error.")
         return base_collection_name
 
     async def ensure_collection_exists(self, base_collection_name: str, embedding_function_name: Optional[str] = None) -> bool:
@@ -286,7 +332,7 @@ class ProjectChromaManagerAgent_v1:
         """
         # Set context just in case it was cleared or changed by another PCMA instance for a different project.
         # This makes each PCMA call relatively stateless regarding context setting for chroma_utils.
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         
         collection_name_to_ensure = self._get_project_collection_name(base_collection_name)
         try:
@@ -295,7 +341,7 @@ class ProjectChromaManagerAgent_v1:
             collection = get_or_create_collection(collection_name=collection_name_to_ensure)
             return collection is not None
         except Exception as e:
-            logger.error(f"Error ensuring collection '{collection_name_to_ensure}' for project '{self.project_id}': {e}", exc_info=True)
+            self._logger.error(f"Error ensuring collection '{collection_name_to_ensure}' for project '{self.project_id}': {e}", exc_info=True)
             return False
     
     async def store_artifact(
@@ -307,7 +353,7 @@ class ProjectChromaManagerAgent_v1:
         The content is converted to JSON string if it's a dict.
         Manages lineage and other common metadata fields.
         """
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         collection_name = self._get_project_collection_name(args.base_collection_name)
         
         doc_id = args.document_id or str(uuid.uuid4())
@@ -334,7 +380,7 @@ class ProjectChromaManagerAgent_v1:
             final_metadata["linked_relationships"] = json.dumps(args.linked_relationships) # Store as JSON string if complex
 
         if "artifact_type" not in final_metadata:
-            logger.warning(f"Storing artifact '{doc_id}' in '{collection_name}' without 'artifact_type' in metadata.")
+            self._logger.warning(f"Storing artifact '{doc_id}' in '{collection_name}' without 'artifact_type' in metadata.")
             # return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message="'artifact_type' is required in metadata.")
 
         try:
@@ -351,7 +397,7 @@ class ProjectChromaManagerAgent_v1:
                 # This path might not be hit if add_or_update_document raises exceptions on failure
                 return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message=f"Failed to store artifact '{doc_id}' in '{collection_name}'.")
         except Exception as e:
-            logger.error(f"Error storing artifact '{doc_id}' in '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
+            self._logger.error(f"Error storing artifact '{doc_id}' in '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
             return StoreArtifactOutput(document_id=doc_id, status="FAILURE", error_message=str(e))
 
     async def retrieve_artifact(
@@ -360,7 +406,7 @@ class ProjectChromaManagerAgent_v1:
         document_id: str
     ) -> RetrieveArtifactOutput:
         """Retrieves an artifact by its ID from the project-specific collection."""
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         collection_name = self._get_project_collection_name(base_collection_name)
         try:
             # Use get_document_by_id from chroma_utils
@@ -371,33 +417,57 @@ class ProjectChromaManagerAgent_v1:
                 include=["documents", "metadatas"] # Ensure both are included
             )
             
-            # Updated condition to match the flat dictionary structure from get_document_by_id
-            if result and result.get("id") == document_id and result.get("document") is not None:
-                retrieved_doc_id = result["id"] 
-                content_str = result["document"]
-                metadata = result.get("metadata", {}) # .get already handles if metadata key is missing
-                
-                # Try to parse content as JSON if it looks like it
-                parsed_content: Union[str, Dict[str, Any]] = content_str
-                if isinstance(content_str, str): # Only attempt parse if it's a string
-                    try:
-                        if content_str.strip().startswith(("{", "[")):
-                            parsed_content = json.loads(content_str)
-                    except json.JSONDecodeError:
-                        pass # Keep as string if not valid JSON
-                # If content_str was already a dict (e.g. if chroma_utils returned it pre-parsed), it remains so.
+            self._logger.info(f"Retrieve artifact DEBUG: Raw result from get_document_by_id for doc '{document_id}': {result}") 
 
-                return RetrieveArtifactOutput(
-                    document_id=retrieved_doc_id,
-                    content=parsed_content,
-                    metadata=metadata,
-                    status="SUCCESS"
-                )
-            else:
-                logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}' for project '{self.project_id}'. Result from get_document_by_id: {result}")
+            if result and result.get("id") == document_id:
+                content_str = result.get("document")
+                metadata = result.get("metadata")
+
+                self._logger.error(f"PCMA_RETRIEVE_DEBUG: DOC_ID='{document_id}'")
+                self._logger.error(f"PCMA_RETRIEVE_DEBUG: RAW_CONTENT_STR_FROM_CHROMA='{content_str}'")
+                self._logger.error(f"PCMA_RETRIEVE_DEBUG: TYPE_OF_RAW_CONTENT_STR='{type(content_str)}'")
+                self._logger.error(f"PCMA_RETRIEVE_DEBUG: IS_CONTENT_STR_NONE='{content_str is None}'")
+                self._logger.error(f"PCMA_RETRIEVE_DEBUG: IS_CONTENT_STR_EMPTY_STRING='{content_str == ""}'")
+
+                if content_str and isinstance(content_str, str) and \
+                   ((content_str.startswith('{') and content_str.endswith('}')) or \
+                    (content_str.startswith('[') and content_str.endswith(']'))):
+                    # Looks like JSON, try to parse
+                    try:
+                        parsed_content = json.loads(content_str)
+                        self._logger.error(f"PCMA_RETRIEVE_DEBUG: PRE_RETURN_PARSED_CONTENT='{parsed_content}'")
+                        self._logger.error(f"PCMA_RETRIEVE_DEBUG: PRE_RETURN_PARSED_CONTENT_TYPE='{type(parsed_content)}'")
+                        return RetrieveArtifactOutput(
+                            document_id=document_id,
+                            content=parsed_content,
+                            metadata=metadata,
+                            status="SUCCESS"
+                        )
+                    except json.JSONDecodeError as e:
+                        self._logger.error(f"JSONDecodeError for doc_id {document_id} while parsing presumed JSON: {e}. Raw content: '{str(content_str)[:500]}'")
+                        # Return original string as content on decode error, but mark as failure for this attempt
+                        return RetrieveArtifactOutput(
+                            document_id=document_id,
+                            content=content_str, 
+                            metadata=metadata, 
+                            status="FAILURE", 
+                            error_message=f"Content looked like JSON but failed to parse: {e}"
+                        )
+                else:
+                    # Not JSON-like, or content_str is None / not a string. Return as is.
+                    # If content_str is None, content in output will be None.
+                    self._logger.info(f"PCMA_RETRIEVE_INFO: Returning content as non-JSON (or None) for doc_id {document_id}. Type: {type(content_str)}")
+                    return RetrieveArtifactOutput(
+                        document_id=document_id,
+                        content=content_str, 
+                        metadata=metadata,
+                        status="SUCCESS" # Success in retrieving, even if content is None or not JSON
+                    )
+            else: # result from Chroma was None or ID didn't match
+                self._logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}' for project '{self.project_id}'. Result from get_document_by_id: {result}") # Changed to self._logger
                 return RetrieveArtifactOutput(document_id=document_id, status="NOT_FOUND", error_message="Artifact not found.")
         except Exception as e:
-            logger.error(f"Error retrieving artifact '{document_id}' from '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
+            self._logger.error(f"Error retrieving artifact '{document_id}' from '{collection_name}' for project '{self.project_id}': {e}", exc_info=True) # Changed to self._logger
             return RetrieveArtifactOutput(document_id=document_id, status="FAILURE", error_message=str(e))
 
     async def get_related_artifacts(self, params: GetRelatedArtifactsInput) -> GetRelatedArtifactsOutput:
@@ -405,7 +475,7 @@ class ProjectChromaManagerAgent_v1:
         Queries a collection for artifacts related to a concept or matching metadata filters.
         Excludes specified document IDs from the results.
         """
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         collection_name = self._get_project_collection_name(params.base_collection_name)
         related_items: List[RelatedArtifactItem] = []
         
@@ -466,7 +536,7 @@ class ProjectChromaManagerAgent_v1:
     #      instead of self.chroma_manager. ...)
     # Placeholder for brevity, these need full implementation using chroma_utils
     async def get_artifact_history(self, params: GetArtifactHistoryInput) -> GetArtifactHistoryOutput:
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         logger.warning("get_artifact_history is not fully implemented with new chroma_utils.")
         # Basic logic: Start with the given doc_id, then iteratively call get_document_by_id 
         # for 'previous_version_artifact_id' found in metadata.
@@ -501,7 +571,7 @@ class ProjectChromaManagerAgent_v1:
         return GetArtifactHistoryOutput(versions=versions, status="SUCCESS")
 
     async def get_artifact_genealogy(self, args: GetArtifactGenealogyInput) -> GetArtifactGenealogyOutput:
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         logger.warning("get_artifact_genealogy is not fully implemented with new chroma_utils.")
         # This method is complex and would require careful traversal of linked_relationships and previous_version_artifact_id
         # using multiple calls to self.retrieve_artifact (which uses chroma_utils.get_document_by_id)
@@ -590,7 +660,7 @@ class ProjectChromaManagerAgent_v1:
         This should be called when a new project is created or to verify existing setup.
         Uses the default embedding function specified in the global config or ChromaDB's default.
         """
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         logger.info(f"Initializing all standard collections for project: {self.project_id}")
         
         app_config = get_config()
@@ -635,7 +705,7 @@ class ProjectChromaManagerAgent_v1:
         Returns:
             LogStorageConfirmation indicating success or failure.
         """
-        set_chroma_project_context(self.actual_project_workspace_path)
+        set_chroma_project_context(self._actual_project_workspace_path)
         if project_id != self.project_id:
             err_msg = f"Mismatched project_id in log_arca_event. Expected '{self.project_id}', got '{project_id}'."
             logger.error(err_msg)

@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 from typing import Optional
 from unittest.mock import patch, AsyncMock
+import inspect
 
 from chungoid.agents.autonomous_engine.automated_refinement_coordinator_agent import (
     AutomatedRefinementCoordinatorAgent_v1,
@@ -22,13 +23,14 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     ProjectChromaManagerAgent_v1,
     StoreArtifactInput,
     EXECUTION_PLANS_COLLECTION,
-    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION
+    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
+    ARTIFACT_TYPE_MASTER_EXECUTION_PLAN_YAML
 )
 from chungoid.utils.state_manager import StateManager
-from chungoid.schemas.project_state import ProjectStateV2, CycleHistoryItem
+from chungoid.schemas.project_status_schema import ProjectStateV2, ProjectOverallStatus
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
-from chungoid.utils.llm_provider import OpenAILLMProvider, LLMProvider as ConcreteLLMProvider
+from chungoid.utils.llm_provider import OpenAILLMProvider, LLMManager
 from chungoid.utils.prompt_manager import PromptManager
 from chungoid.utils.agent_registry_meta import AgentCategory
 
@@ -40,6 +42,8 @@ MOCK_OPTIMIZATION_REPORT_DOC_ID = f"mock_opt_report_{uuid.uuid4().hex[:8]}.json"
 
 # Load environment variables (especially OPENAI_API_KEY)
 load_dotenv()
+
+print(f"DEBUG: ProjectChromaManagerAgent_v1 imported from module: {ProjectChromaManagerAgent_v1.__module__} which is file: {inspect.getfile(ProjectChromaManagerAgent_v1)}")
 
 @pytest.fixture(scope="module")
 def openai_api_key():
@@ -134,22 +138,27 @@ def prompt_manager_arca_new_task() -> PromptManager:
     # prompts_dir.mkdir(parents=True, exist_ok=True) # Not strictly needed if PM handles it
     return PromptManager([str(prompts_dir)]) # Pass as a list of strings
 
-
 @pytest.fixture(scope="module")
-def concrete_llm_provider_for_arca(
+def llm_manager_for_arca(
     openai_api_key, # Ensures API key is present or test is skipped
     prompt_manager_arca_new_task: PromptManager
-) -> ConcreteLLMProvider:
-    """Provides the concrete LLMProvider that ARCA expects."""
-    # The ConcreteLLMProvider loads the API key from env vars internally via load_dotenv()
-    return ConcreteLLMProvider(prompt_manager=prompt_manager_arca_new_task)
+) -> LLMManager:
+    """Provides the LLMManager configured with OpenAILLMProvider for ARCA."""
+    # OpenAILLMProvider is designed to load the API key from env vars if not provided,
+    # or can take it as an argument. Here we explicitly pass it to ensure test isolation if needed,
+    # though OpenAILLMProvider itself might still fall back to env vars if api_key is None.
+    underlying_provider = OpenAILLMProvider(api_key=openai_api_key)
+    return LLMManager(
+        llm_provider_instance=underlying_provider,
+        prompt_manager=prompt_manager_arca_new_task
+    )
 
 @pytest.fixture(scope="function")
 def arca_instance_new_task(
     project_chroma_manager_agent_arca_new_task: ProjectChromaManagerAgent_v1,
     state_manager_arca_new_task: StateManager,
     prompt_manager_arca_new_task: PromptManager, # ARCA still needs its own PromptManager for other things
-    concrete_llm_provider_for_arca: ConcreteLLMProvider # Use the corrected provider
+    llm_manager_for_arca: LLMManager # UPDATED PARAMETER NAME AND TYPE
 ) -> AutomatedRefinementCoordinatorAgent_v1:
     return AutomatedRefinementCoordinatorAgent_v1(
         project_id=TEST_PROJECT_ID_ARCA_NEW_TASK,
@@ -157,11 +166,11 @@ def arca_instance_new_task(
         state_manager=state_manager_arca_new_task,
         project_chroma_manager=project_chroma_manager_agent_arca_new_task,
         prompt_manager=prompt_manager_arca_new_task, # ARCA's own prompt manager
-        llm_provider=concrete_llm_provider_for_arca, # Pass the concrete LLMProvider
+        llm_provider=llm_manager_for_arca, # UPDATED ARGUMENT
         optimization_evaluator_prompt_name=ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME
         # Note: The OpenAILLMProvider fixture is no longer directly used by ARCA's instantiation
         # but other parts of the test or other tests might still use it if it was designed for more general OpenAI calls.
-        # For this specific ARCA test, concrete_llm_provider_for_arca is the correct one.
+        # For this specific ARCA test, llm_manager_for_arca is the correct one.
     )
 
 @pytest.fixture(scope="function")
@@ -202,7 +211,7 @@ def mock_optimization_report_for_new_task_content() -> dict:
 
 @pytest.fixture(scope="function")
 def mock_openai_chat_completion_v2_eval_standard(
-    concrete_llm_provider_for_arca: ConcreteLLMProvider,
+    llm_manager_for_arca: LLMManager, # UPDATED PARAMETER TO USE THE NEW FIXTURE
     mock_optimization_report_for_new_task_content: dict
 ):
     """
@@ -240,15 +249,28 @@ def mock_openai_chat_completion_v2_eval_standard(
     mock_llm_json_response_str = json.dumps(mock_llm_response_content)
 
     # ARCA calls llm_provider.instruct_direct_async
-    # We need to patch this method on the *instance* of ConcreteLLMProvider that ARCA uses.
-    # The concrete_llm_provider_for_arca fixture provides this instance.
+    # We need to patch this method on the *instance* of LLMManager that ARCA uses.
+    # The llm_manager_for_arca fixture provides this instance.
     
     # Use a context manager for patching if this fixture is function-scoped
     # If it were module/session scoped and shared, direct patching might be okay,
     # but function scope is safer to avoid test interference.
-    patcher = patch.object(concrete_llm_provider_for_arca, 'generate_text_async_with_prompt_manager', new_callable=AsyncMock)
+    patcher = patch.object(llm_manager_for_arca, 'generate_text_async_with_prompt_manager', new_callable=AsyncMock)
     mocked_method = patcher.start()
-    mocked_method.return_value = mock_llm_json_response_str
+
+    async def mock_llm_call_side_effect(*args, **kwargs):
+        # Check if the prompt_name and prompt_version match the one ARCA uses for optimization evaluation
+        if (kwargs.get('prompt_name') == ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME and
+            kwargs.get('prompt_version') == "v1"):
+            return mock_llm_json_response_str
+        # Fallback for other prompts
+        return json.dumps({
+            "error": "Mock not configured for this prompt/version combination",
+            "received_prompt_name": kwargs.get('prompt_name'),
+            "received_prompt_version": kwargs.get('prompt_version')
+        })
+
+    mocked_method.side_effect = mock_llm_call_side_effect
     
     yield mocked_method # The test doesn't strictly need the mock, but can be useful for assertions
 
@@ -290,8 +312,11 @@ async def test_arca_adds_new_task_to_plan_via_llm_eval(
         base_collection_name=EXECUTION_PLANS_COLLECTION,
         document_id=INITIAL_MASTER_PLAN_DOC_ID,
         artifact_content=initial_master_plan_path.read_text(),
-        document_type="master_execution_plan", # Matches field in StoreArtifactInput
-        metadata={"version": initial_master_plan_content.version, "project_id": TEST_PROJECT_ID_ARCA_NEW_TASK} # Added project_id to metadata
+        metadata={
+            "version": initial_master_plan_content.version, 
+            "project_id": TEST_PROJECT_ID_ARCA_NEW_TASK,
+            "artifact_type": ARTIFACT_TYPE_MASTER_EXECUTION_PLAN_YAML # CORRECTED METADATA
+        }
     )
     initial_plan_doc_ref = await project_chroma_manager_agent_arca_new_task.store_artifact(args=store_plan_input)
     assert initial_plan_doc_ref.document_id == INITIAL_MASTER_PLAN_DOC_ID
@@ -318,7 +343,7 @@ async def test_arca_adds_new_task_to_plan_via_llm_eval(
         print("DEBUG: current_state has neither model_fields nor __fields__")
     current_state.latest_accepted_master_plan_doc_id = initial_plan_doc_ref.document_id
     # current_state.current_stage_id = current_stage_id_before_arca # Field does not exist on ProjectStateV2 from project_status_schema
-    current_state.overall_status = "IN_PROGRESS" # Or an appropriate ProjectOverallStatus enum value
+    current_state.overall_status = ProjectOverallStatus.REFINEMENT_CYCLE_IN_PROGRESS # CORRECTED ENUM MEMBER
     current_state.historical_cycles = [] # Correct field name for ProjectStateV2 from project_status_schema
 
     # ARCA needs a current cycle to operate on. StateManager.initialize_project might set up an initial cycle_0, 
@@ -338,8 +363,11 @@ async def test_arca_adds_new_task_to_plan_via_llm_eval(
         base_collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
         document_id=MOCK_OPTIMIZATION_REPORT_DOC_ID,
         artifact_content=mock_report_str, # Content is a string (JSON string)
-        document_type="optimization_suggestion_report",
-        metadata={"source": "mock_test_agent", "project_id": TEST_PROJECT_ID_ARCA_NEW_TASK} # Added project_id
+        metadata={
+            "source": "mock_test_agent", 
+            "project_id": TEST_PROJECT_ID_ARCA_NEW_TASK,
+            "artifact_type": ARCAReviewArtifactType.OPTIMIZATION_SUGGESTION_REPORT.value # CORRECTED METADATA
+        }
     )
     mock_report_doc_ref = await project_chroma_manager_agent_arca_new_task.store_artifact(args=store_report_input)
     assert mock_report_doc_ref.document_id == MOCK_OPTIMIZATION_REPORT_DOC_ID

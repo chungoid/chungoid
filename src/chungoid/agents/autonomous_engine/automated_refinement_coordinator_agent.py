@@ -36,7 +36,8 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     RISK_ASSESSMENT_REPORTS_COLLECTION, # Added
     OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION, # Added
     TRACEABILITY_REPORTS_COLLECTION, # Added
-    REVIEW_REPORTS_COLLECTION # Added
+    REVIEW_REPORTS_COLLECTION, # Added
+    EXECUTION_PLANS_COLLECTION # ADDED IMPORT
 )
 
 # Added import for FailedTestReport
@@ -359,6 +360,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
         praa_risk_report_content_md: Optional[str] = None
         rta_report_content_md: Optional[str] = None
         new_tasks_to_add_to_plan: List[Dict[str, Any]] = [] # Initialize here
+        main_artifact_content: Optional[str] = None # Initialize main_artifact_content
 
         # --- NEW: Handle OPTIMIZATION_SUGGESTION_REPORT as primary input for suggestions ---
         if task_input.artifact_type == ARCAReviewArtifactType.OPTIMIZATION_SUGGESTION_REPORT and task_input.artifact_doc_id and self._project_chroma_manager:
@@ -368,38 +370,88 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                     base_collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
                     document_id=task_input.artifact_doc_id
                 )
-                # Check if retrieval was successful and content exists
-                if retrieved_opt_report_artifact.status == "SUCCESS" and retrieved_opt_report_artifact.content: # CORRECTED .artifact_content to .content
-                    # Content should be the JSON string of the report
-                    report_content_str = retrieved_opt_report_artifact.content
-                    if isinstance(report_content_str, str):
-                        try:
-                            # Assuming the content of OPTIMIZATION_SUGGESTION_REPORT (like the mock) is a JSON string
-                            # with a "suggestions" key.
-                            report_content_json = json.loads(report_content_str)
+
+                report_content_json = None # Initialize to None
+
+                if retrieved_opt_report_artifact.status == "SUCCESS":
+                    artifact_actual_content = retrieved_opt_report_artifact.content
+                    
+                    if artifact_actual_content:
+                        if isinstance(artifact_actual_content, dict):
+                            self._logger_instance.info(f"Content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) is already a dict.")
+                            report_content_json = artifact_actual_content
+                        elif isinstance(artifact_actual_content, str):
+                            self._logger_instance.info(f"Content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) is a string. Attempting JSON parse.")
+                            try:
+                                report_content_json = json.loads(artifact_actual_content)
+                            except json.JSONDecodeError as e:
+                                self._logger_instance.error(f"Failed to parse JSON string from OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e}. Content (first 500 chars): {artifact_actual_content[:500]}")
+                                # report_content_json remains None, error logged
+                            else:
+                                self._logger_instance.warning(f"Content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) is of unexpected type: {type(artifact_actual_content)}. Cannot process as JSON.")
+                                # report_content_json remains None, warning logged
+
+                        # Now, process if report_content_json was successfully obtained (is not None)
+                        if report_content_json:
                             suggestions_from_input_report = report_content_json.get("suggestions", [])
-                            
                             if isinstance(suggestions_from_input_report, list):
                                 for sugg in suggestions_from_input_report:
-                                    if isinstance(sugg, dict): # Ensure suggestion is a dict
+                                    if isinstance(sugg, dict):
                                         sugg['source_report'] = 'OPTIMIZATION_SUGGESTION_REPORT_INPUT'
                                         all_structured_suggestions_for_llm.append(sugg)
                                     else:
-                                        self._logger_instance.warning(f"Suggestion in OPTIMIZATION_SUGGESTION_REPORT was not a dictionary: {sugg}")
-                                self._logger_instance.info(f"Successfully parsed {len(suggestions_from_input_report)} suggestions from OPTIMIZATION_SUGGESTION_REPORT artifact doc_id: {task_input.artifact_doc_id}.")
+                                        self._logger_instance.warning(f"Suggestion in OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) was not a dictionary: {sugg}")
+                                self._logger_instance.info(f"Successfully processed {len(suggestions_from_input_report)} suggestions from OPTIMIZATION_SUGGESTION_REPORT artifact doc_id: {task_input.artifact_doc_id}.")
                             else:
-                                self._logger_instance.warning(f"Content of OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) had 'suggestions' field, but it was not a list.")
-                        except json.JSONDecodeError as e:
-                            self._logger_instance.error(f"Failed to parse JSON from OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e}. Content: {report_content_str[:500]}")
-                        except Exception as e_parse: # Catch other potential errors during parsing/processing
-                            self._logger_instance.error(f"Error processing suggestions from OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e_parse}", exc_info=True)
-                    else:
-                        self._logger_instance.warning(f"Failed to retrieve content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}). Status: {retrieved_opt_report_artifact.status}, Message: {retrieved_opt_report_artifact.error_message or 'Unknown error'}") # MODIFIED
+                                self._logger_instance.warning(f"OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) has 'suggestions' field, but it's not a list. Type: {type(suggestions_from_input_report)}")
+                        # else: (report_content_json is None)
+                            # This means content was not a dict, or was not a parsable JSON string, or was an unexpected type.
+                            # Previous logs would have indicated the specific reason.
+                            # The 'else' block for 'if artifact_actual_content:' (below) will handle if it was initially None/empty.
+
+                    else: # artifact_actual_content is None or empty
+                        self._logger_instance.warning(f"Retrieved OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) successfully, but its content was None or empty.")
+                    
+                else: # retrieved_opt_report_artifact.status != "SUCCESS"
+                    self._logger_instance.warning(f"Failed to retrieve OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}). Status: {retrieved_opt_report_artifact.status}, Message: {retrieved_opt_report_artifact.error_message or 'Unknown retrieval error'}")
+            
+            except Exception as e_opt_report_retrieval: # ADDED THIS EXCEPT BLOCK
+                self._logger_instance.error(f"Exception occurred while retrieving/processing OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e_opt_report_retrieval}", exc_info=True)
+                # report_content_json remains None, error logged. The flow will continue without these suggestions.
+
+            # ADDED BLOCK: If suggestions were found from the OPTIMIZATION_SUGGESTION_REPORT,
+            # try to fetch the current master plan to serve as context (main_artifact_content) for LLM evaluation.
+            if all_structured_suggestions_for_llm: # Check if any suggestions were actually parsed
+                self._logger_instance.info(f"ARCA: Suggestions found from OPTIMIZATION_SUGGESTION_REPORT. Attempting to fetch current master plan for LLM context.")
+                current_master_plan_doc_id_for_context: Optional[str] = None
+                if self._state_manager:
+                    try:
+                        self._state_manager._load_or_initialize_project_state() # ADDED: Force reload from disk
+                        project_state = self._state_manager.get_project_state()
+                        if project_state and project_state.latest_accepted_master_plan_doc_id:
+                            current_master_plan_doc_id_for_context = project_state.latest_accepted_master_plan_doc_id
+                            self._logger_instance.info(f"ARCA: Found current master plan doc ID for context: {current_master_plan_doc_id_for_context}")
+                        else:
+                            self._logger_instance.warning(f"ARCA: Could not find latest_accepted_master_plan_doc_id in project state for LLM context.")
+                    except Exception as e_state_fetch:
+                        self._logger_instance.error(f"ARCA: Exception fetching project state for master plan context: {e_state_fetch}", exc_info=True)
                 else:
-                    self._logger_instance.warning(f"Failed to retrieve content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}). Status: {retrieved_opt_report_artifact.status}, Message: {retrieved_opt_report_artifact.error_message or 'Unknown error'}") # MODIFIED
-            except Exception as e_retrieve:
-                self._logger_instance.error(f"Exception retrieving OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e_retrieve}", exc_info=True)
-        # --- END NEW BLOCK ---
+                    self._logger_instance.warning("ARCA: StateManager not available, cannot fetch current master plan for LLM context.")
+
+                if current_master_plan_doc_id_for_context and self._project_chroma_manager:
+                    try:
+                        plan_artifact_retrieved: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
+                            base_collection_name=EXECUTION_PLANS_COLLECTION, # Ensure this is the correct collection name
+                            document_id=current_master_plan_doc_id_for_context
+                        )
+                        if plan_artifact_retrieved and plan_artifact_retrieved.status == "SUCCESS" and plan_artifact_retrieved.content:
+                            main_artifact_content = str(plan_artifact_retrieved.content) # Set main_artifact_content
+                            self._logger_instance.info(f"ARCA: Successfully retrieved current master plan content (doc_id: {current_master_plan_doc_id_for_context}) to use as main_artifact_content for LLM evaluation.")
+                        else:
+                            self._logger_instance.warning(f"ARCA: Failed to retrieve content for current master plan (doc_id: {current_master_plan_doc_id_for_context}) for LLM context. Status: {plan_artifact_retrieved.status if plan_artifact_retrieved else 'N/A'}")
+                    except Exception as e_plan_retrieve:
+                        self._logger_instance.error(f"ARCA: Exception retrieving current master plan content (doc_id: {current_master_plan_doc_id_for_context}): {e_plan_retrieve}", exc_info=True)
+            # END ADDED BLOCK
 
         # --- Retrieve and Parse PRAA Optimization Report ---
         # Only run this if suggestions weren't already populated from a primary OPTIMIZATION_SUGGESTION_REPORT input,
@@ -712,11 +764,17 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                             severity="INFO"
                         )
 
-                    llm_response_raw = await self._llm_provider.instruct_direct_async(
+                    # llm_response_raw = await self._llm_provider.instruct_direct_async(
+                    #     prompt_name=ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME,
+                    #     prompt_manager=self._prompt_manager,
+                    #     input_vars=optimization_eval_inputs,
+                    #     # model_name, temperature, etc., could be configured via prompt_definition if needed
+                    # )
+                    llm_response_raw = await self._llm_provider.generate_text_async_with_prompt_manager(
                         prompt_name=ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME,
-                        prompt_manager=self._prompt_manager,
-                        input_vars=optimization_eval_inputs,
-                        # model_name, temperature, etc., could be configured via prompt_definition if needed
+                        prompt_version="v1", # Assuming v1 from prompt name
+                        prompt_render_data=optimization_eval_inputs
+                        # expected_json_schema could be added here if a Pydantic model for the response exists
                     )
 
                     if llm_response_raw:

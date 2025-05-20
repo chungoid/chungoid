@@ -251,42 +251,41 @@ class OpenAILLMProvider(LLMProvider):
 #                     max_tokens=max_tokens,
 #                     **kwargs
 #                 )
-#                 return response.choices[0].text.strip()
+#                 return response.choices[0].message.content or "" # Ensure it returns string
+
 
 #         except Exception as e:
 #             logger.error(f"Error calling OpenAI API: {e}")
-#             # Consider specific error handling or re-raising
-#             raise # Re-raise the exception for the caller to handle
+#             raise
 
-#         return "Error: Could not get response from OpenAI." # Fallback 
 
-class LLMProvider:
+class LLMManager: # RENAMED from LLMProvider
     """
-    Provides an interface to interact with Large Language Models (LLMs),
-    handling prompt management and API communication.
+    Manages interactions with an LLM, leveraging a PromptManager for structured prompts
+    and an underlying LLMProvider instance for actual API calls.
+    This class is responsible for orchestrating prompt rendering, making the LLM call
+    via the provided provider, and potentially parsing the response.
     """
 
-    def __init__(self, prompt_manager: PromptManager):
+    def __init__(self, llm_provider_instance: LLMProvider, prompt_manager: PromptManager):
         """
-        Initializes the LLMProvider.
+        Initializes the LLMManager.
 
         Args:
-            prompt_manager: An instance of PromptManager to retrieve prompt templates.
+            llm_provider_instance: An instance of a class that implements the LLMProvider ABC 
+                                   (e.g., OpenAILLMProvider, MockLLMProvider). This instance
+                                   will be used for the actual LLM API calls.
+            prompt_manager: An instance of PromptManager to load and render prompts.
         """
+        # load_dotenv() # Dotenv loading should ideally be handled at app entry or by specific providers
+        # self.openai_api_key = os.getenv("OPENAI_API_KEY") # API key management is now handled by llm_provider_instance
+        # if not self.openai_api_key:
+        #     logger.warning("OPENAI_API_KEY not found in environment variables if direct OpenAI calls were intended here.")
+        # self.client = AsyncOpenAI(api_key=self.openai_api_key) # OpenAI client is now managed by llm_provider_instance (e.g. OpenAILLMProvider)
+        
+        self._llm_provider = llm_provider_instance
         self.prompt_manager = prompt_manager
-        load_dotenv()  # Load environment variables from .env file
-
-        self._api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-        self._openai_client: Optional[AsyncOpenAI] = None
-
-        if self._api_key:
-            self._openai_client = AsyncOpenAI(api_key=self._api_key)
-            logger.info("OpenAI client initialized with API key.")
-        else:
-            logger.warning(
-                "OPENAI_API_KEY not found in environment. "
-                "LLMProvider will not be able to make live API calls."
-            )
+        logger.info(f"LLMManager initialized with provider: {type(llm_provider_instance).__name__} and PromptManager.")
 
     async def generate_text_async_with_prompt_manager(
         self,
@@ -301,159 +300,153 @@ class LLMProvider:
         model_id: Optional[str] = None      # Allow overriding prompt-defined model
     ) -> Any:
         """
-        Generates text using a specified prompt, version, and render data via PromptManager.
+        Generates text using a specified prompt from the PromptManager and an underlying LLMProvider.
         Handles fetching prompt definitions, rendering, calling the LLM, and basic JSON validation.
         """
-        if not self._openai_client:
-            logger.error("OpenAI client not initialized. Missing API key.")
+        if not self._llm_provider:
+            logger.error("LLM provider not initialized within LLMManager.")
             raise ValueError(
-                "LLMProvider cannot make API calls: OPENAI_API_KEY not configured."
+                "LLMManager cannot make API calls: LLMProvider instance not configured."
             )
 
         try:
-            prompt_definition = self.prompt_manager.get_prompt_definition(
-                prompt_name, prompt_version, sub_path=prompt_sub_path
+            prompt_definition: PromptDefinition = self.prompt_manager.get_prompt_definition(
+                prompt_name=prompt_name,
+                prompt_version=prompt_version,
+                prompt_sub_path=prompt_sub_path,
+                project_id=project_id,
+                calling_agent_id=calling_agent_id,
             )
-            if not prompt_definition:
-                # This case should ideally be caught by get_prompt_definition raising PromptNotFoundError
-                raise ValueError(
-                    f"Prompt '{prompt_name}' version '{prompt_version}' (sub_path: {prompt_sub_path}) not found."
+        except PromptLoadError as e:
+            logger.error(f"Failed to load prompt definition for {prompt_name} v{prompt_version}: {e}")
+            raise
+
+        try:
+            # Render the user prompt (main content)
+            rendered_user_prompt = self.prompt_manager.render_prompt_template_content(
+                template_content=prompt_definition.user_prompt_template_content,
+                data=prompt_render_data
+            )
+            # System prompt is taken directly from the definition (it might be None)
+            system_prompt_content = prompt_definition.system_prompt_template_content
+            if system_prompt_content: # Render if it has variables
+                 system_prompt_content = self.prompt_manager.render_prompt_template_content(
+                    template_content=system_prompt_content,
+                    data=prompt_render_data # Assuming system prompt might also use render data
                 )
 
-            system_prompt_str = self.prompt_manager.get_rendered_prompt_template(
-                prompt_definition.system_prompt_template, prompt_render_data
-            )
-            user_prompt_str = self.prompt_manager.get_rendered_prompt_template(
-                prompt_definition.user_prompt_template, prompt_render_data
+        except PromptRenderError as e:
+            logger.error(f"Failed to render prompt {prompt_name} v{prompt_version}: {e}")
+            raise
+
+        # Determine parameters for the underlying LLMProvider call
+        # Use overrides if provided, otherwise use values from prompt_definition.model_config
+        final_model_id = model_id if model_id is not None else prompt_definition.model_config.model_id
+        final_temperature = temperature if temperature is not None else prompt_definition.model_config.temperature
+        final_max_tokens = prompt_definition.model_config.max_tokens # No direct override for max_tokens in this method's signature yet
+
+        # Prepare kwargs for provider-specific parameters from model_config, excluding known ones
+        provider_kwargs = prompt_definition.model_config.provider_specific_params or {}
+
+        # Ensure response_format is passed if defined in prompt (OpenAILLMProvider handles this)
+        if prompt_definition.model_config.response_format:
+            provider_kwargs['response_format'] = prompt_definition.model_config.response_format
+        
+        logger.info(f"LLMManager: Calling underlying LLM provider ({type(self._llm_provider).__name__}) for prompt: {prompt_name} v{prompt_version}")
+        logger.debug(
+            f"LLMManager call details: model_id='{final_model_id}', temperature={final_temperature}, "
+            f"max_tokens={final_max_tokens}, system_prompt_present={bool(system_prompt_content)}, "
+            f"provider_kwargs={provider_kwargs}"
+        )
+        # logger.debug(f"LLMManager User Prompt (first 200 chars): {rendered_user_prompt[:200]}") # Can be verbose
+
+        try:
+            llm_output_content = await self._llm_provider.generate(
+                prompt=rendered_user_prompt,
+                model_id=final_model_id,
+                temperature=final_temperature,
+                max_tokens=final_max_tokens,
+                system_prompt=system_prompt_content, 
+                **provider_kwargs 
             )
             
-            messages = [
-                {"role": "system", "content": system_prompt_str},
-                {"role": "user", "content": user_prompt_str},
-            ]
-
-            # Determine model, temperature, max_tokens
-            # Priority: direct parameter > prompt setting > hardcoded default
-            final_model_id = model_id or prompt_definition.model_settings.model_name or "gpt-4-turbo-preview"
-            final_temperature = temperature if temperature is not None else prompt_definition.model_settings.temperature # Assumes Pydantic model provides a default
-            final_max_tokens = prompt_definition.model_settings.max_tokens or 2048
-            
-            request_params = {
-                "model": final_model_id,
-                "messages": messages,
-                "max_tokens": final_max_tokens,
-                "temperature": final_temperature,
-            }
-
-            # Add response_format for JSON mode if applicable
-            # Common models supporting JSON mode: gpt-4-turbo, gpt-4-turbo-preview, gpt-3.5-turbo-1106, gpt-3.5-turbo-0125, gpt-4-0125-preview, gpt-4-1106-preview
-            json_mode_supported_models = ["gpt-4-turbo", "gpt-4-turbo-preview", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125", "gpt-4-0125-preview", "gpt-4-1106-preview"]
-            if expected_json_schema and final_model_id in json_mode_supported_models:
-                request_params["response_format"] = {"type": "json_object"}
-                logger.info(f"Requesting JSON object response format for model {final_model_id}")
-            elif expected_json_schema:
-                logger.warning(f"Model {final_model_id} may not support JSON object mode, but JSON output is expected. Proceeding without forcing JSON mode.")
-
-            logger.info(
-                f"Making OpenAI API call to model: {final_model_id} for prompt: {prompt_name} v{prompt_version}. Temp: {final_temperature}, MaxTokens: {final_max_tokens}"
-            )
-            # logger.debug(f"OpenAI API request messages: {messages}") # Can be very verbose
-
-            api_response = await self._openai_client.chat.completions.create(**request_params)
-            
-            llm_output_content = api_response.choices[0].message.content
-
             if not llm_output_content:
-                logger.warning("LLM returned empty content.")
-                raise ValueError("LLM returned empty content.")
+                logger.warning(f"LLM call for prompt {prompt_name} v{prompt_version} returned empty or None content.")
+                # Depending on expected_json_schema, might need to raise or return default
+                if expected_json_schema:
+                    raise ValueError("LLM returned empty content but a JSON schema was expected.")
+                return "" # Return empty string if no schema expected and content is empty
 
-            # Basic cleaning of common Markdown fences if JSON is expected
-            if expected_json_schema:
-                cleaned_output = llm_output_content.strip()
-                if cleaned_output.startswith("```json"):
-                    cleaned_output = cleaned_output[7:].strip()
-                    if cleaned_output.endswith("```"):
-                        cleaned_output = cleaned_output[:-3].strip()
-                elif cleaned_output.startswith("```") and cleaned_output.endswith("```"):
-                    cleaned_output = cleaned_output[3:-3].strip()
-                llm_output_content = cleaned_output
-
+            # Attempt to parse if a JSON schema is expected
             if expected_json_schema:
                 try:
+                    # The llm_output_content should already be cleaned by OpenAILLMProvider if it was that one.
+                    # Other providers might need cleaning here.
+                    # For now, assume llm_output_content is a string ready for json.loads.
                     parsed_json = json.loads(llm_output_content)
-                    validated_output = expected_json_schema(**parsed_json)
-                    logger.info(f"LLM response parsed and validated successfully against {expected_json_schema.__name__} for prompt: {prompt_name}")
-                    return validated_output
-                except json.JSONDecodeError as e_json_decode:
-                    logger.error(
-                        f"Failed to parse LLM response as JSON for prompt {prompt_name}. Error: {e_json_decode}. LLM output: '{llm_output_content[:500]}...'"
-                    )
-                    raise # Re-raise the JSONDecodeError
-                except ValidationError as e_validation: # Assuming pydantic.ValidationError
-                    logger.error(
-                        f"LLM JSON response failed Pydantic validation for {expected_json_schema.__name__} for prompt {prompt_name}. Error: {e_validation}. Raw JSON attempted: '{llm_output_content[:500]}...'"
-                    )
-                    raise # Re-raise the ValidationError
+                    validated_data = expected_json_schema(**parsed_json)
+                    logger.info(f"Successfully parsed and validated LLM JSON output against {expected_json_schema.__name__} for prompt {prompt_name} v{prompt_version}.")
+                    return validated_data
+                except json.JSONDecodeError as e_json:
+                    logger.error(f"JSONDecodeError for prompt {prompt_name} v{prompt_version}. LLM Output (first 500 chars): {llm_output_content[:500]}. Error: {e_json}")
+                    raise ValueError(f"LLM output was not valid JSON. Error: {e_json}. Output: {llm_output_content[:200]}...") from e_json
+                except ValidationError as e_val:
+                    logger.error(f"Pydantic ValidationError for prompt {prompt_name} v{prompt_version}. LLM Output (first 500 chars): {llm_output_content[:500]}. Error: {e_val}")
+                    raise ValueError(f"LLM output did not match expected schema {expected_json_schema.__name__}. Error: {e_val}. Output: {llm_output_content[:200]}...") from e_val
+                except Exception as e_parse: # Catch any other parsing/validation error
+                    logger.error(f"Unexpected error parsing/validating LLM output for prompt {prompt_name} v{prompt_version}. Error: {e_parse}. Output: {llm_output_content[:500]}")
+                    raise ValueError(f"Failed to process LLM output against schema. Error: {e_parse}") from e_parse
             else:
-                logger.info(f"LLM response received successfully as string for prompt: {prompt_name}")
+                # Return raw text if no JSON schema is expected
+                logger.info(f"LLM call successful for prompt {prompt_name} v{prompt_version}. Returning raw text output.")
                 return llm_output_content
-        
-        except PromptLoadError as e_prompt_nf:
-            logger.error(f"Prompt '{prompt_name}' v'{prompt_version}' not found: {e_prompt_nf}", exc_info=True)
-            raise
-        except PromptRenderError as e_render:
-            logger.error(f"Error rendering prompt '{prompt_name}' v'{prompt_version}': {e_render}", exc_info=True)
-            raise
-        except APIError as e_api: # Catch OpenAI specific API errors
-            logger.error(f"OpenAI API error for prompt '{prompt_name}': {e_api}", exc_info=True)
-            raise ValueError(f"OpenAI API error: {e_api}")
-        except Exception as e_general: # Catch any other unexpected errors
-            logger.error(f"Unexpected error in generate_text_async_with_prompt_manager for prompt '{prompt_name}': {e_general}", exc_info=True)
-            raise ValueError(f"Unexpected error during LLM call: {e_general}")
 
-    # Consider adding a method to explicitly close the httpx client used by AsyncOpenAI
-    # if running in a context where it's necessary (e.g. specific server frameworks)
+        except APIError as e: # Specific error from OpenAI library if that's the provider
+            logger.error(f"OpenAI APIError during LLM call for prompt {prompt_name} v{prompt_version}: {e}")
+            raise # Re-raise APIError to be handled by caller
+        except Exception as e_call:
+            logger.error(f"Generic Exception during LLM call for prompt {prompt_name} v{prompt_version} via provider {type(self._llm_provider).__name__}: {e_call}", exc_info=True)
+            raise # Re-raise generic exception
+
+    # Consider if close_client is needed at this manager level,
+    # or if it should be managed by the owner of the llm_provider_instance.
+    # If LLMManager creates the provider, it should close it. If it receives it, the creator should close it.
+    # For now, providing a pass-through.
     async def close_client(self):
-        if self._openai_client:
-            await self._openai_client.close()
-            logger.info("OpenAI client closed.")
+        if self._llm_provider and hasattr(self._llm_provider, 'close_client'):
+            try:
+                # Assuming close_client is an async method on the provider
+                await self._llm_provider.close_client()
+                logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider).__name__}) client closed.")
+            except Exception as e:
+                logger.error(f"LLMManager: Error closing underlying LLM provider client: {e}", exc_info=True)
+        else:
+            logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider).__name__}) does not have a close_client method or provider not set.")
 
 # Example usage (conceptual, not runnable here)
 # async def main():
 #     # Setup PromptManager (assuming it's configured correctly)
 #     pm = PromptManager(prompt_directory_paths=["path/to/prompts"])
-#     llm_provider = LLMProvider(prompt_manager=pm)
+#     # Create an instance of a concrete LLMProvider (ABC compliant)
+#     concrete_provider = OpenAILLMProvider(api_key="your_openai_api_key") 
+#     llm_manager = LLMManager(llm_provider_instance=concrete_provider, prompt_manager=pm)
 #
-#     if not llm_provider._api_key:
-#          print("API Key not configured. Exiting.")
+#     if not concrete_provider.client: # Adjust check based on concrete_provider's attributes
+#          print("Concrete provider not configured (e.g. API Key). Exiting.")
 #          return
 #
 #     try:
-#         # Assuming a prompt named 'example_prompt' version 'v1' exists
-#         # And it expects a 'name' in its render data
-#         response = await llm_provider.generate_text_async_with_prompt_manager(
+#         response = await llm_manager.generate_text_async_with_prompt_manager(
 #             prompt_name="example_prompt",
 #             prompt_version="v1",
-#             prompt_render_data={"name": "World"}
+#             prompt_render_data={"user_name": "TestUser"},
+#             # expected_json_schema=MyExpectedPydanticModel # Optional
 #         )
 #         print("LLM Response:", response)
-#
-#         # Example with JSON output (assuming prompt 'json_example' and schema 'MySchema')
-#         # class MySchema(BaseModel):
-#         #     key: str
-#         #     value: int
-#         # json_response = await llm_provider.generate_text_async_with_prompt_manager(
-#         #     prompt_name="json_example",
-#         #     prompt_version="v1",
-#         #     prompt_render_data={},
-#         #     expected_json_schema=MySchema
-#         # )
-#         # print("LLM JSON Response:", json_response)
-#
 #     except Exception as e:
 #         print(f"An error occurred: {e}")
 #     finally:
-#         await llm_provider.close_client()
+#         await llm_manager.close_client() # This will call concrete_provider.close_client()
 
 # if __name__ == "__main__":
 #     import asyncio

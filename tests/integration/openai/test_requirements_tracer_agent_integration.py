@@ -3,6 +3,7 @@ import os
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 from typing import Optional
+import uuid
 
 from chungoid.agents.autonomous_engine.requirements_tracer_agent import (
     RequirementsTracerAgent_v1,
@@ -18,7 +19,9 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     ARTIFACT_TYPE_TRACEABILITY_MATRIX_MD,
 )
 from chungoid.utils.prompt_manager import PromptManager
-from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.llm_provider import LLMProvider, OpenAILLMProvider, LLMManager
+from chungoid.utils.state_manager import StateManager
+from chungoid.schemas.project_state import ProjectStateV2
 
 # Get the OpenAI API Key from environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -43,10 +46,20 @@ async def llm_provider_instance(prompt_manager_instance):
     if not OPENAI_API_KEY:
         pytest.skip(REASON_TO_SKIP)
     
-    provider = LLMProvider(prompt_manager=prompt_manager_instance)
-    yield provider
+    # First, ensure API key is available or skip
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY not found, skipping test that requires live LLM calls.")
+    
+    underlying_llm_provider = OpenAILLMProvider(api_key=api_key) # Instantiate the concrete provider
+    llm_manager_instance = LLMManager( # Instantiate the manager, injecting the provider
+        llm_provider_instance=underlying_llm_provider, 
+        prompt_manager=prompt_manager_instance
+    )
+    
+    yield llm_manager_instance
     # Clean up the client after all tests in the module are done
-    await provider.close_client()
+    await llm_manager_instance.close_client()
 
 @pytest.fixture
 def mock_pcma_integration():
@@ -85,7 +98,7 @@ def mock_pcma_integration():
 @pytest.mark.integration_openai  # Custom marker for OpenAI integration tests
 @pytest.mark.asyncio
 async def test_requirements_tracer_agent_live_llm_call(
-    llm_provider_instance: LLMProvider,  # Use the real LLMProvider
+    llm_provider_instance: LLMManager,  # Use the real LLMManager
     prompt_manager_instance: PromptManager, # Use the real PromptManager
     mock_pcma_integration: ProjectChromaManagerAgent_v1,
 ):
@@ -94,8 +107,9 @@ async def test_requirements_tracer_agent_live_llm_call(
     Mocks PCMA for document retrieval and storage.
     """
     agent = RequirementsTracerAgent_v1(
-        llm_provider=llm_provider_instance,
+        project_id=str(uuid.uuid4()),
         prompt_manager=prompt_manager_instance,
+        llm_provider=llm_provider_instance,
         project_chroma_manager=mock_pcma_integration,
     )
 
