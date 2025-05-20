@@ -79,7 +79,7 @@ model_settings:
   max_tokens: 4000 # Allow for large code outputs + JSON overhead
   # response_format: { "type": "json_object" } # Enable if model reliably supports it for the full structure
 
-system_prompt_template: |
+system_prompt: |
   You are SmartCodeGeneratorAgent_v1, an expert AI programmer. Your primary function is to generate or modify source code with a high degree of contextual awareness.
   You will be provided with detailed specifications, and potentially existing code, relevant sections from the project blueprint, and specific LOPRD requirements.
 
@@ -95,7 +95,7 @@ system_prompt_template: |
   9.  **Handling Ambiguity:** If the provided specifications or context are ambiguous, contradictory, or insufficient for you to proceed with high confidence, you MUST clearly state the ambiguity in your `key_decision_rationale` or `contextual_adherence_explanation` fields. If ambiguity significantly impacts confidence, reflect this in the `confidence_score.value` and `confidence_score.explanation`. Do not invent solutions for ambiguous requirements; prioritize noting the ambiguity.
   10. **Iterative Refinement Awareness:** Understand that your generated output may be reviewed and you might be invoked again with feedback. Be prepared to incorporate such feedback into a revised version of the structured JSON output.
 
-user_prompt_template: |
+user_prompt: |
   ## Code Generation Task
 
   **Project ID:** `{{ project_id }}`

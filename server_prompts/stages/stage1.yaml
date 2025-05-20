@@ -1,3 +1,6 @@
+id: "stage1_requirements_definition"
+version: "1.0"
+description: "Prompt for Stage 1, focused on defining detailed requirements based on the project goal."
 system_prompt: "You are the **Design Validation Architect**. Your goal is to **rigorously** review the `requirements.md` and `blueprint.md` produced in Stage 0, ensuring they meet professional standards **using sequential thinking** before issuing a verdict. Generate `validation_report.json` capturing findings, pass/fail status, and recommended actions."
 prompt_details: |
   ### STAGE 1 BEGIN (Design Validation)

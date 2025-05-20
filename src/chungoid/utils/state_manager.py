@@ -194,32 +194,16 @@ class StateManager:
             )
             raise StatusFileError(f"Failed to create .chungoid directory: {e}") from e
 
-        # Initial read of the status file
+        # Initial read of the status file.
+        # _load_or_initialize_project_state will set self._project_state
+        # either by reading an existing file or creating an in-memory placeholder.
+        # It handles logging and potential errors during this process.
         self._load_or_initialize_project_state()
         self.logger.info("StateManager initialized for file: %s", self.status_file_path)
 
-        # Validate status file on init, but don't attempt ChromaDB connection here
-        # This part will be heavily modified to use ProjectStateV2
-        try:
-            self._project_state = self._read_status_file()
-            self.logger.debug("Initial status file read and parsed as ProjectStateV2 successful.")
-        except StatusFileError as e:
-            self.logger.error(f"Failed to read or parse status file as ProjectStateV2: {e}. Re-initializing with default V2 state.")
-            # This will create a new V2 file if parsing failed or old format was detected by _read_status_file
-            self._project_state = self._create_default_project_state_v2(
-                project_id=f"default_proj_{uuid.uuid4().hex[:8]}",
-                initial_user_goal_summary="Project not yet initialized."
-            )
-            try:
-                self._write_status_file(self._project_state) # Persist the new default V2 state
-                self.logger.info("Successfully re-initialized and wrote default ProjectStateV2.")
-            except StatusFileError as write_e:
-                self.logger.critical(f"CRITICAL: Failed to write newly initialized ProjectStateV2: {write_e}")
-                # This is a critical failure, as StateManager cannot operate without a valid state file.
-                raise # Re-raise the exception, as the StateManager is in an unusable state.
-        except Exception as e: # Catch any other unexpected errors during init
-            self.logger.critical(f"CRITICAL: Unexpected error initializing StateManager with ProjectStateV2: {e}", exc_info=True)
-            raise StatusFileError(f"Unexpected critical error during StateManager V2 init: {e}")
+        # The problematic try-except block that was here has been removed.
+        # _load_or_initialize_project_state is now solely responsible for
+        # setting the initial self._project_state.
 
         self._current_cycle_info = None # Explicitly initialize in __init__
 
@@ -240,36 +224,34 @@ class StateManager:
 
     def _load_or_initialize_project_state(self) -> None:
         """Loads project state from file or initializes a new one if not found or invalid."""
+        self.logger.info("UNIQUE_LOG_MARKER_V3: Entering _load_or_initialize_project_state") # <<< UNIQUE MARKER
         try:
-            with self._get_lock():
+            with self._get_lock(): # Lock ensures atomicity if multiple threads/processes were to access this (unlikely for typical StateManager use)
                 if self.status_file_path.exists():
                     self.logger.debug(f"Attempting to read existing status file: {self.status_file_path}")
                     self._project_state = self._read_status_file()
+                    self.logger.info(f"Successfully loaded project state for {self._project_state.project_id} from {self.status_file_path}")
                     # Attempt to load current cycle info if one was active
                     if self._project_state.current_cycle_id:
-                        # Find the active cycle in historical_cycles if it was completed but not cleared from current_cycle_id
-                        # Or assume it's a fresh start and _current_cycle_info will be set by start_new_cycle
                         found_cycle = next((c for c in self._project_state.historical_cycles if c.cycle_id == self._project_state.current_cycle_id and c.status == CycleStatus.IN_PROGRESS), None)
                         if found_cycle:
                             self._current_cycle_info = found_cycle
-                            self.logger.info(f"Loaded active cycle {self._project_state.current_cycle_id} from historical records (likely a recovery scenario).")
-                        # else:
-                            # If not found as IN_PROGRESS, it might have completed. start_new_cycle will handle creating a new one.
-                            # self._current_cycle_info = None # Ensure it's None if not actively in progress
+                            self.logger.info(f"Loaded active cycle {self._project_state.current_cycle_id} from historical records.")
                 else:
-                    self.logger.warning(f"Status file not found at {self.status_file_path}. Project not initialized. Call initialize_project() first.")
-                    # Create a minimal valid in-memory state but log warning
-                    # This state should not be written to disk unless initialize_project is called.
-                    self._project_state = self._create_placeholder_project_state()
+                    # File does not exist, so create a placeholder in memory.
+                    # initialize_project() will be responsible for creating and writing the actual initial file.
+                    self.logger.warning(f"Status file not found at {self.status_file_path}. Project is not yet initialized. Using in-memory placeholder. Call initialize_project() to create the project file.")
+                    self._project_state = self._create_placeholder_project_state() # Placeholder has a dummy ID
                     self._current_cycle_info = None
 
-        except StatusFileError as e:
-            self.logger.error(f"Failed to read or parse status file: {e}. Creating placeholder state.")
+        except StatusFileError as e: # Covers issues from _read_status_file like bad JSON, validation errors, or empty file
+            self.logger.error(f"Failed to read or parse existing status file: {e}. Using in-memory placeholder. The file might be corrupted or of an incompatible version.")
             self._project_state = self._create_placeholder_project_state()
             self._current_cycle_info = None
-            # Do not attempt to write here, as the file might be corrupt or unwritable.
-        except Exception as e:
+            # DO NOT WRITE a new default file here if the existing one is corrupt.
+        except Exception as e: # Catch-all for unexpected errors during load
             self.logger.critical(f"CRITICAL: Unexpected error loading/initializing project state: {e}", exc_info=True)
+            # Use a placeholder and re-raise to signal a severe issue.
             self._project_state = self._create_placeholder_project_state()
             self._current_cycle_info = None
             raise StatusFileError(f"Unexpected critical error during state loading/initialization: {e}") from e

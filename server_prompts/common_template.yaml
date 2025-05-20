@@ -1,3 +1,15 @@
+id: "common_template_prompts"
+version: "1.0"
+description: "Common templates for various agent outputs and inputs."
+system_prompt: |-
+  This section provides common templates for system messages or shared instructions 
+  that might be referenced across multiple specialized agent prompts. 
+  For example, standard output formatting instructions could go here.
+user_prompt: |-
+  This section provides common templates for user-facing messages or shared input 
+  structures that agents might expect or need to generate. For example, a template 
+  for requesting user clarification could be defined here.
+
 preamble: |
   ### CORE CONDUCTOR LOGIC BEGIN
   SYSTEM: You are **Project-Conductor**. **Use sequential thinking.**

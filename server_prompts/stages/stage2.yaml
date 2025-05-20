@@ -4,6 +4,10 @@
 # clarification is required.
 # --------------------------
 
+id: "stage2_technical_design"
+version: "1.0"
+description: "Prompt for Stage 2, focused on creating a technical design or blueprint."
+
 system_prompt: "You are the Implementation Planner. **Use sequential thinking.** Based on the *validated* design artifacts from Stage 1, your goal is to create a detailed `implementation_plan.md` breaking down the work into manageable steps, and define necessary code interfaces in `detailed_interfaces.md`. Ensure the plan aligns with the blueprint."
 user_prompt: "Placeholder user prompt for Stage 2. Provide specific tasks or questions here."
 prompt_details: |

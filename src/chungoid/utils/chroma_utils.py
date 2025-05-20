@@ -298,18 +298,43 @@ def get_document_by_id(
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a single document by its ID. Returns the document object or None."""
     results = get_documents(collection_name, doc_ids=[doc_id], include=include)
-    if results and results.get("ids") and results["ids"] and results["ids"][0]: # check inner list too
-        doc_index = 0 
-        single_result = {
-            "id": results["ids"][0][doc_index],
-            "metadata": results.get("metadatas", [[None]])[0][doc_index],
-            "document": results.get("documents", [[None]])[0][doc_index],
-            "embedding": results.get("embeddings", [[None]])[0][doc_index] if results.get("embeddings") and results["embeddings"][0] else None
-        }
-        logger.debug(f"Retrieved document ID {doc_id} from '{collection_name}'.")
-        return single_result
+
+    # Based on logs, for collection.get(ids=[doc_id]), results structure appears to be:
+    # results['ids'] = [doc_id_found] (a flat list of strings)
+    # results['metadatas'] = [metadata_dict_or_none] (a flat list)
+    # results['documents'] = [document_content_or_none] (a flat list)
+    # results['embeddings'] = [embedding_list_or_none] (a flat list)
+
+    if (results and 
+        results.get("ids") and 
+        isinstance(results["ids"], list) and 
+        doc_id in results["ids"]) : # Check if doc_id is in the list of returned IDs
+        
+        try:
+            # Find the index of our doc_id in the returned list of IDs.
+            # For a single queried ID, if found, this index should be 0 if results["ids"] is like [doc_id].
+            idx = results["ids"].index(doc_id)
+
+            meta_list = results.get("metadatas")
+            doc_list = results.get("documents")
+            embed_list = results.get("embeddings")
+
+            single_result = {
+                "id": results["ids"][idx],
+                "metadata": meta_list[idx] if meta_list and isinstance(meta_list, list) and len(meta_list) > idx else None,
+                "document": doc_list[idx] if doc_list and isinstance(doc_list, list) and len(doc_list) > idx else None,
+                "embedding": embed_list[idx] if embed_list and isinstance(embed_list, list) and len(embed_list) > idx else None,
+            }
+            logger.debug(f"Retrieved document ID {doc_id} from '{collection_name}'.")
+            return single_result
+        except ValueError: # doc_id not in results["ids"] (should be caught by outer if, but for safety)
+            logger.warning(f"Document ID {doc_id} was not found via index() in results.get('ids') though 'in' check passed. This is unexpected. Results: {results}")
+            return None
+        except IndexError: # Should not happen if ID is found and lists are parallel and non-empty for the found item
+             logger.warning(f"IndexError accessing data for document ID {doc_id} even though ID was found and indexed. Potential list mismatch. Results: {results}")
+             return None
     else:
-        logger.warning(f"Document ID {doc_id} not found in collection '{collection_name}'.")
+        logger.warning(f"Document ID {doc_id} not found in collection '{collection_name}' (or results['ids'] empty/malformed). Results: {results}")
         return None
 
 def add_or_update_document(

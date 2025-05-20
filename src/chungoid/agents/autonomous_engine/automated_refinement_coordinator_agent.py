@@ -8,12 +8,13 @@ from typing import Any, Dict, Optional, Literal, Union, ClassVar, List, Type, ge
 from enum import Enum
 import yaml
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, PrivateAttr
 
 from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider # Assuming direct LLM call for complex decisions might be an option
 from chungoid.utils.prompt_manager import PromptManager # If decision logic uses prompts
 from chungoid.schemas.common import ConfidenceScore
+from chungoid.schemas.arca_request_and_response import ARCAReviewArtifactType # ADDED IMPORT
 # Mocked Agent Inputs for agents ARCA might call
 # from .product_analyst_agent import ProductAnalystInput # For LOPRD refinement - OLD
 from . import product_analyst_agent as pa_module # For LOPRD refinement - NEW
@@ -75,22 +76,8 @@ ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME = "arca_optimization_evaluator_v1_prompt
 MAX_DEBUGGING_ATTEMPTS_PER_MODULE: ClassVar[int] = 3 # Added ClassVar
 DEFAULT_ACCEPTANCE_THRESHOLD: ClassVar[float] = 0.85 # MODIFIED: Added ClassVar
 
-# Define the Literal for artifact types including the new one
-class ARCAReviewArtifactType(Enum):
-    LOPRD = "LOPRD"
-    ProjectBlueprint = "ProjectBlueprint"
-    MasterExecutionPlan = "MasterExecutionPlan"
-    CodeModule = "CodeModule"  # Generic code module
-    RiskAssessmentReport = "RiskAssessmentReport"
-    TraceabilityReport = "TraceabilityReport"
-    OptimizationSuggestionReport = "OptimizationSuggestionReport"
-    ProjectDocumentation = "ProjectDocumentation"  # For reviewing existing documentation
-    CodeModule_TestFailure = "CodeModule_TestFailure"
-    QA_Summary_Report = "QA_Summary_Report" # Placeholder, as in the original Literal
-    CodeModule_Generated = "CodeModule_Generated"
-    GenerateProjectDocumentation = "GenerateProjectDocumentation" # Signal to generate new documentation
-# --- Input and Output Schemas for ARCA --- #
 
+# --- Input and Output Schemas for ARCA --- #
 class ARCAReviewInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this ARCA review task.")
     project_id: str = Field(..., description="Identifier for the current project.")
@@ -223,14 +210,15 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
     INPUT_SCHEMA: ClassVar[Type[ARCAReviewInput]] = ARCAReviewInput
     OUTPUT_SCHEMA: ClassVar[Type[ARCAOutput]] = ARCAOutput
 
-    _llm_provider: Optional[LLMProvider]
-    _prompt_manager: Optional[PromptManager]
-    _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] # Added instance variable
-    _code_debugging_agent_instance: Optional[CodeDebuggingAgent_v1] = None # Instance for debugger
-    _logger_instance: logging.Logger # Use instance logger
-    _state_manager: Optional[StateManager] = None # Ensure this is typed and initialized
-    _current_debug_attempts_for_module: int = 0 # Instance variable for tracking
-    _last_feedback_doc_id: Optional[str] = None # Instance variable for refinement loops
+    # Declare private attributes using PrivateAttr
+    _llm_provider: Optional[LLMProvider] = PrivateAttr(default=None)
+    _prompt_manager: Optional[PromptManager] = PrivateAttr(default=None)
+    _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = PrivateAttr(default=None)
+    _code_debugging_agent_instance: Optional[CodeDebuggingAgent_v1] = PrivateAttr(default=None)
+    _logger_instance: logging.Logger = PrivateAttr() # No default, will be set in __init__
+    _state_manager: Optional[StateManager] = PrivateAttr(default=None)
+    _current_debug_attempts_for_module: int = PrivateAttr(default=0)
+    _last_feedback_doc_id: Optional[str] = PrivateAttr(default=None)
 
     # Thresholds for decision making (can be made configurable later)
     MIN_GENERATOR_CONFIDENCE: ClassVar[float] = 0.6
@@ -238,50 +226,50 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
     MIN_RTA_CONFIDENCE: ClassVar[float] = 0.6
     MIN_DOC_AGENT_CONFIDENCE_FOR_ACCEPT: ClassVar[float] = 0.5
 
+    DEFAULT_ACCEPTANCE_THRESHOLD: ClassVar[float] = 0.75 # Default acceptance threshold
+
     def __init__(
-        self, 
+        self,
         llm_provider: Optional[LLMProvider] = None,
         prompt_manager: Optional[PromptManager] = None,
-        project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = None, # Added
+        project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = None,
         system_context: Optional[Dict[str, Any]] = None,
         state_manager: Optional[StateManager] = None,
-        **kwargs
+        **kwargs  # Pydantic will populate model fields from here
     ):
-        # Initialize logger first
+        super().__init__(**kwargs) # Initialize Pydantic model fields first
+
+        # Now initialize PrivateAttrs
         if system_context and "logger" in system_context:
             self._logger_instance = system_context["logger"]
         else:
-            self._logger_instance = logging.getLogger(self.AGENT_ID)
-
-        super().__init__(**kwargs) # Ensure superclass is called if it has an __init__
+            # Ensure AGENT_ID is accessible, might need to be self.AGENT_ID if BaseAgent sets it up
+            # or AutomatedRefinementCoordinatorAgent_v1.AGENT_ID if accessed as class variable
+            self._logger_instance = logging.getLogger(AutomatedRefinementCoordinatorAgent_v1.AGENT_ID)
 
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
-        self._project_chroma_manager = project_chroma_manager # Stored
-        self._state_manager = state_manager # Initialize instance variable
-        
+        self._project_chroma_manager = project_chroma_manager
+        self._state_manager = state_manager
+        self._current_debug_attempts_for_module = 0 # Explicitly initialize, though PrivateAttr has default
+        self._last_feedback_doc_id = None # Explicitly initialize
+
         # Initialize CodeDebuggingAgent instance
         if self._llm_provider and self._prompt_manager and self._project_chroma_manager:
             try:
+                # Ensure CodeDebuggingAgent_v1 is correctly imported
                 self._code_debugging_agent_instance = CodeDebuggingAgent_v1(
                     llm_provider=self._llm_provider,
                     prompt_manager=self._prompt_manager,
-                    project_chroma_manager=self._project_chroma_manager,
+                    project_chroma_manager=self._project_chroma_manager, # Pass the PCMA instance
                     system_context={"logger": self._logger_instance.getChild("CodeDebuggingAgent_v1")}
                 )
-                self._logger_instance.info("CodeDebuggingAgent_v1 instance successfully created and configured within ARCA.")
             except Exception as e:
-                self._code_debugging_agent_instance = None
                 self._logger_instance.error(f"Failed to initialize CodeDebuggingAgent_v1 within ARCA: {e}", exc_info=True)
+                self._code_debugging_agent_instance = None
         else:
+            self._logger_instance.warning("LLMProvider, PromptManager, or ProjectChromaManager not available for CodeDebuggingAgent initialization.")
             self._code_debugging_agent_instance = None
-            missing_deps = []
-            if not self._llm_provider: missing_deps.append("LLMProvider")
-            if not self._prompt_manager: missing_deps.append("PromptManager")
-            if not self._project_chroma_manager: missing_deps.append("ProjectChromaManagerAgent_v1")
-            self._logger_instance.warning(
-                f"CodeDebuggingAgent_v1 could not be instantiated in ARCA due to missing dependencies: {', '.join(missing_deps)}."
-            )
 
     async def _log_event_to_pcma(
         self,
@@ -306,6 +294,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
     ):
         """Helper method to log an ARCA event to ProjectChromaManagerAgent."""
         log_entry = ARCALogEntry(
+            agent_id=self.AGENT_ID, # Added agent_id
             # log_id is generated by default_factory in ARCALogEntry
             timestamp=datetime.datetime.now(datetime.timezone.utc), # Ensure timestamp is set here
             arca_task_id=arca_task_id,
@@ -371,8 +360,51 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
         rta_report_content_md: Optional[str] = None
         new_tasks_to_add_to_plan: List[Dict[str, Any]] = [] # Initialize here
 
+        # --- NEW: Handle OPTIMIZATION_SUGGESTION_REPORT as primary input for suggestions ---
+        if task_input.artifact_type == ARCAReviewArtifactType.OPTIMIZATION_SUGGESTION_REPORT and task_input.artifact_doc_id and self._project_chroma_manager:
+            self._logger_instance.info(f"ARCA: Artifact type is OPTIMIZATION_SUGGESTION_REPORT. Attempting to parse suggestions from its content (doc_id: {task_input.artifact_doc_id}).")
+            try:
+                retrieved_opt_report_artifact: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
+                    base_collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
+                    document_id=task_input.artifact_doc_id
+                )
+                # Check if retrieval was successful and content exists
+                if retrieved_opt_report_artifact.status == "SUCCESS" and retrieved_opt_report_artifact.content: # CORRECTED .artifact_content to .content
+                    # Content should be the JSON string of the report
+                    report_content_str = retrieved_opt_report_artifact.content
+                    if isinstance(report_content_str, str):
+                        try:
+                            # Assuming the content of OPTIMIZATION_SUGGESTION_REPORT (like the mock) is a JSON string
+                            # with a "suggestions" key.
+                            report_content_json = json.loads(report_content_str)
+                            suggestions_from_input_report = report_content_json.get("suggestions", [])
+                            
+                            if isinstance(suggestions_from_input_report, list):
+                                for sugg in suggestions_from_input_report:
+                                    if isinstance(sugg, dict): # Ensure suggestion is a dict
+                                        sugg['source_report'] = 'OPTIMIZATION_SUGGESTION_REPORT_INPUT'
+                                        all_structured_suggestions_for_llm.append(sugg)
+                                    else:
+                                        self._logger_instance.warning(f"Suggestion in OPTIMIZATION_SUGGESTION_REPORT was not a dictionary: {sugg}")
+                                self._logger_instance.info(f"Successfully parsed {len(suggestions_from_input_report)} suggestions from OPTIMIZATION_SUGGESTION_REPORT artifact doc_id: {task_input.artifact_doc_id}.")
+                            else:
+                                self._logger_instance.warning(f"Content of OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) had 'suggestions' field, but it was not a list.")
+                        except json.JSONDecodeError as e:
+                            self._logger_instance.error(f"Failed to parse JSON from OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e}. Content: {report_content_str[:500]}")
+                        except Exception as e_parse: # Catch other potential errors during parsing/processing
+                            self._logger_instance.error(f"Error processing suggestions from OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e_parse}", exc_info=True)
+                    else:
+                        self._logger_instance.warning(f"Failed to retrieve content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}). Status: {retrieved_opt_report_artifact.status}, Message: {retrieved_opt_report_artifact.error_message or 'Unknown error'}") # MODIFIED
+                else:
+                    self._logger_instance.warning(f"Failed to retrieve content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}). Status: {retrieved_opt_report_artifact.status}, Message: {retrieved_opt_report_artifact.error_message or 'Unknown error'}") # MODIFIED
+            except Exception as e_retrieve:
+                self._logger_instance.error(f"Exception retrieving OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e_retrieve}", exc_info=True)
+        # --- END NEW BLOCK ---
+
         # --- Retrieve and Parse PRAA Optimization Report ---
-        if task_input.praa_optimization_report_doc_id and self._project_chroma_manager:
+        # Only run this if suggestions weren't already populated from a primary OPTIMIZATION_SUGGESTION_REPORT input,
+        # or if we want to aggregate (for now, let's make it conditional to avoid double processing if not intended)
+        if not all_structured_suggestions_for_llm and task_input.praa_optimization_report_doc_id and self._project_chroma_manager:
             try:
                 retrieved_praa_opt_report = await self._project_chroma_manager.retrieve_artifact(
                     doc_id=task_input.praa_optimization_report_doc_id,
@@ -489,7 +521,8 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
         # This is a simplified placeholder for the complex decision tree.
 
         # --- Handle GenerateProjectDocumentation Task ---
-        if task_input.artifact_type == ARCAReviewArtifactType.GenerateProjectDocumentation:
+        
+        if task_input.artifact_type == ARCAReviewArtifactType.GENERATE_PROJECT_DOCUMENTATION: # Corrected typo: GenerateProjectDocumentation -> GENERATE_PROJECT_DOCUMENTATION
             self._logger_instance.info(f"ARCA: Received GenerateProjectDocumentation task for project {task_input.project_id}, cycle {task_input.cycle_id}.")
             if not (task_input.final_loprd_doc_id_for_docs and \
                     task_input.final_blueprint_doc_id_for_docs and \
@@ -588,9 +621,9 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                 # This lookup logic is simplified:
                 artifact_collection_map = {
                     ARCAReviewArtifactType.LOPRD: "loprds_collection", # Example, needs to be correct
-                    ARCAReviewArtifactType.ProjectBlueprint: "project_blueprints_collection", # Example
-                    ARCAReviewArtifactType.MasterExecutionPlan: "master_execution_plans_collection", # Example
-                    ARCAReviewArtifactType.CodeModule: GENERATED_CODE_ARTIFACTS_COLLECTION,
+                    ARCAReviewArtifactType.PROJECT_BLUEPRINT: "project_blueprints_collection", # Corrected
+                    ARCAReviewArtifactType.MASTER_EXECUTION_PLAN: "master_execution_plans_collection", # Corrected
+                    ARCAReviewArtifactType.CODE_MODULE: GENERATED_CODE_ARTIFACTS_COLLECTION,
                     # Add other types if they need to be fetched for summarization
                 }
                 main_artifact_collection_name = artifact_collection_map.get(task_input.artifact_type)
@@ -794,20 +827,26 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
         combined_metric = 0.0
         if task_input.artifact_type == ARCAReviewArtifactType.LOPRD:
             combined_metric = (generator_confidence_val * 0.6) + (praa_confidence_val_num * 0.4)
-        elif task_input.artifact_type == ARCAReviewArtifactType.ProjectBlueprint:
-            combined_metric = (generator_confidence_val * 0.4) + (praa_confidence_val_num * 0.3) + (rta_confidence_val_num * 0.3)
-        elif task_input.artifact_type == ARCAReviewArtifactType.MasterExecutionPlan:
-            blueprint_review_confidence_val = 0.7 if blueprint_reviewer_report_content_md else 0.0 
-            combined_metric = (generator_confidence_val * 0.3) + (praa_confidence_val_num * 0.2) + (rta_confidence_val_num * 0.3) + (blueprint_review_confidence_val * 0.2)
-        elif task_input.artifact_type == ARCAReviewArtifactType.CodeModule:
-            combined_metric = (generator_confidence_val * 0.7) + (praa_confidence_val_num * 0.3)
+        elif task_input.artifact_type == ARCAReviewArtifactType.PROJECT_BLUEPRINT: # Corrected
+            # For blueprint, RTA becomes more important, PRAA (risk) also.
+            combined_metric = (generator_confidence_val * 0.5) + (praa_confidence_val_num * 0.25) + (rta_confidence_val_num * 0.25)
+        elif task_input.artifact_type == ARCAReviewArtifactType.MASTER_EXECUTION_PLAN: # Corrected
+            # For plan, RTA (to blueprint) is critical. Generator confidence also high.
+            combined_metric = (generator_confidence_val * 0.4) + (praa_confidence_val_num * 0.2) + (rta_confidence_val_num * 0.4)
+        # No combined_metric for CodeModule or CodeModule_TestFailure if it needs specific handling,
+        # or can add a general case if appropriate.
+        elif task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE: # Corrected (was already correct but good to be explicit)
+            # For code, RTA (to plan/requirements) is important.
+            combined_metric = (generator_confidence_val * 0.5) + (praa_confidence_val_num * 0.2) + (rta_confidence_val_num * 0.3)
+        else: # Default for other types or if specific metrics aren't defined
+            combined_metric = generator_confidence_val # Fallback to generator's confidence
 
         # Store heuristic reasoning separately for clarity, might append later if relevant
         heuristic_reasoning_part = f" Heuristic confidence scores: Gen_Conf={generator_confidence_val:.2f}, PRAA_Risk_Conf(h)={praa_confidence_val_num:.2f}, RTA_Conf(h)={rta_confidence_val_num:.2f}. Combined_Heuristic_Metric={combined_metric:.2f}. Default_Accept_Threshold={self.DEFAULT_ACCEPTANCE_THRESHOLD:.2f}."
 
         # Decision logic based on artifact type
-        if task_input.artifact_type == ARCAReviewArtifactType.CodeModule_TestFailure:
-            self._logger_instance.info(f"ARCA handling CodeModule_TestFailure for: {task_input.code_module_file_path or task_input.artifact_doc_id}")
+        if task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE: # Corrected
+            self._logger_instance.info(f"ARCA: Handling CodeModule_TestFailure for {task_input.code_module_file_path}.")
             # This block sets its own 'decision' and 'reasoning'. 
             # The initial 'decision' and 'reasoning' (including LLM eval for other artifacts) are effectively bypassed for this path.
             
@@ -944,7 +983,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                         initial_user_goal=initial_user_goal_for_paa, 
                         cycle_id=task_input.cycle_id
                     )
-                elif task_input.artifact_type == ARCAReviewArtifactType.ProjectBlueprint:
+                elif task_input.artifact_type == ARCAReviewArtifactType.PROJECT_BLUEPRINT: # Corrected
                     next_agent_for_refinement = ArchitectAgentInput.AGENT_ID 
                     loprd_id_for_architect = "unknown_loprd_id_for_blueprint_refinement" 
                     if full_context and full_context.get("latest_accepted_loprd_doc_id"): 
@@ -956,7 +995,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                         refinement_instructions=refinement_instructions_for_agent,
                         cycle_id=task_input.cycle_id
                     )
-                elif task_input.artifact_type == ARCAReviewArtifactType.MasterExecutionPlan:
+                elif task_input.artifact_type == ARCAReviewArtifactType.MASTER_EXECUTION_PLAN: # Corrected
                     next_agent_for_refinement = "SystemMasterPlannerAgent_v1" 
                     blueprint_id_for_planner = "unknown_blueprint_id_for_plan_refinement"
                     if full_context and full_context.get("latest_accepted_blueprint_doc_id"):
@@ -967,7 +1006,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                         refinement_instructions=refinement_instructions_for_agent,
                         existing_plan_doc_id=task_input.artifact_doc_id 
                     )
-                elif task_input.artifact_type == ARCAReviewArtifactType.CodeModule:
+                elif task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE:
                     next_agent_for_refinement = "CoreCodeGeneratorAgent_v1" 
                     code_spec_doc_id_for_refinement = "unknown_spec_for_code_refinement" 
                     if full_context and full_context.get("current_task_specification_doc_id"): 
@@ -988,13 +1027,25 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                     next_agent_refinement_input = None
                     self._logger_instance.warning(f"ARCA: Refinement decided for {task_input.artifact_type.value}, but no agent path defined. Final Reasoning: {reasoning}")
 
+        # AGENT DIAGNOSTIC: Right before final escalation check (L988)
+        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): decision == {decision}")
+        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): next_agent_for_refinement is None == {next_agent_for_refinement is None}")
+        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE == {task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE}")
+        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): new_tasks_to_add_to_plan is empty == {not new_tasks_to_add_to_plan}")
+        if new_tasks_to_add_to_plan:
+            try:
+                self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): new_tasks_to_add_to_plan content: {json.dumps(new_tasks_to_add_to_plan, indent=2)}")
+            except TypeError as e_json:
+                self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): Could not serialize new_tasks_to_add_to_plan for logging: {e_json}. Content: {str(new_tasks_to_add_to_plan)}")
+        # END AGENT DIAGNOSTIC (L988)
+
         # Final fallback for escalation if refinement was needed but no agent path found (outside CodeModule_TestFailure)
-        if decision == "REFINEMENT_REQUIRED" and not next_agent_for_refinement and task_input.artifact_type != ARCAReviewArtifactType.CodeModule_TestFailure:
+        if decision == "REFINEMENT_REQUIRED" and not next_agent_for_refinement and task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE and not new_tasks_to_add_to_plan: # MODIFIED: Added 'and not new_tasks_to_add_to_plan'
             decision = "ESCALATE_TO_USER"
-            escalation_reason = " Escalating: Refinement required by ARCA, but no automated agent refinement path was identified for this artifact type."
+            escalation_reason = " Escalating: Refinement required by ARCA, but no automated agent refinement path was identified for this artifact type (and no new tasks were suggested by LLM to take precedence)."
             if escalation_reason not in reasoning:
                 reasoning += escalation_reason
-            self._logger_instance.warning(f"ARCA: Changing decision to ESCALATE_TO_USER for {task_input.artifact_doc_id or task_input.code_module_file_path} as no refinement agent identified. Final Reasoning: {reasoning}")
+            self._logger_instance.warning(f"ARCA: Changing decision to ESCALATE_TO_USER for {task_input.artifact_doc_id or task_input.code_module_file_path} as no refinement agent identified (and no new tasks from LLM). Final Reasoning: {reasoning}")
 
         # --- Handle New Task Generation if any were identified ---
         # Initialize new_plan_doc_id here for the ARCAOutput
@@ -1006,7 +1057,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
             try:
                 if self._state_manager:
                     project_state = await self._state_manager.get_project_state_v2(task_input.project_id)
-                    if project_state and project_state.master_execution_plan_doc_id:
+                    if project_state and project_state.master_execution_plan_doc_id: # CHECKING FOR CORRECT FIELD
                         current_master_plan_doc_id = project_state.master_execution_plan_doc_id
                         self._logger_instance.info(f"ARCA: Retrieved current master plan doc ID: {current_master_plan_doc_id} from project state.")
                     else:
@@ -1025,6 +1076,16 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                 decision = "ERROR"
                 arca_error_message = f"Error retrieving master plan doc id from state: {str(e)}"
 
+            # AGENT DIAGNOSTIC: Check before new task handling
+            self._logger_instance.warning(f"AGENT DIAGNOSTIC: Before new task handling - decision == {decision}")
+            self._logger_instance.warning(f"AGENT DIAGNOSTIC: Before new task handling - new_tasks_to_add_to_plan is empty == {not new_tasks_to_add_to_plan}")
+            if new_tasks_to_add_to_plan:
+                try:
+                    self._logger_instance.warning(f"AGENT DIAGNOSTIC: Before new task handling - new_tasks_to_add_to_plan content: {json.dumps(new_tasks_to_add_to_plan, indent=2)}")
+                except TypeError as e_json: # Handle cases where content might not be directly JSON serializable for logging
+                    self._logger_instance.warning(f"AGENT DIAGNOSTIC: Could not serialize new_tasks_to_add_to_plan for logging: {e_json}. Content: {str(new_tasks_to_add_to_plan)}")
+            # END AGENT DIAGNOSTIC
+
             if current_master_plan_doc_id and decision != "ERROR":
                 # Call the new helper method
                 decision, reasoning, new_plan_doc_id_from_helper, arca_error_message = await self._handle_new_task_generation_and_plan_modification(
@@ -1032,7 +1093,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                     new_tasks_to_add_to_plan=new_tasks_to_add_to_plan,
                     current_master_plan_doc_id=current_master_plan_doc_id,
                     initial_reasoning=reasoning,
-                    current_decision=decision # Pass current decision to potentially override it
+                    initial_decision=decision # Corrected parameter name back
                 )
                 if new_plan_doc_id_from_helper:
                     new_plan_doc_id = new_plan_doc_id_from_helper # Update the main new_plan_doc_id
@@ -1041,9 +1102,9 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                 self._logger_instance.warning("ARCA: Could not proceed with adding new tasks as master plan doc ID was not retrieved (and not already in ERROR state from prior steps).")
 
         # --- Final Output Preparation ---
-        arca_confidence = ConfidenceScore(score=0.9, reasoning="ARCA decision process completed.") # Placeholder
+        arca_confidence = ConfidenceScore(value=0.9, reasoning="ARCA decision process completed.") # Placeholder, corrected score to value
 
-        code_module_path_for_output = task_input.code_module_file_path if task_input.artifact_type == ARCAReviewArtifactType.CodeModule_TestFailure else None
+        code_module_path_for_output = task_input.code_module_file_path if task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE else None
         output_reviewed_doc_id = task_input.artifact_doc_id or code_module_path_for_output or "N/A"
 
         # Prepare final_artifact_doc_id for ARCAOutput
@@ -1093,6 +1154,14 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
         if self._project_chroma_manager:
             try:
                 # ... (quality_status_mapping and action_taken_summary as before) ...
+
+                # AGENT DIAGNOSTIC PRINTS FOR OverallQualityStatus
+                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): __module__ == {OverallQualityStatus.__module__}")
+                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): __name__ == {OverallQualityStatus.__name__}")
+                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): members == {[member.name for member in OverallQualityStatus]}")
+                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): final_arca_output.decision == {final_arca_output.decision}")
+                # END AGENT DIAGNOSTIC PRINTS
+
                 quality_status_mapping = {
                     "ACCEPT_ARTIFACT": OverallQualityStatus.APPROVED_PASSED,
                     "PROCEED_TO_DOCUMENTATION": OverallQualityStatus.APPROVED_PASSED, 
@@ -1124,7 +1193,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                         "generator_agent_id": task_input.generator_agent_id,
                         "generator_confidence": task_input.generator_agent_confidence.score if task_input.generator_agent_confidence else None,
                         "arca_decision_confidence": final_arca_output.confidence_in_decision.value if final_arca_output.confidence_in_decision else None,
-                        "combined_heuristic_metric": combined_metric if task_input.artifact_type != ARCAReviewArtifactType.CodeModule_TestFailure else None,
+                        "combined_heuristic_metric": combined_metric if task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE else None,
                         "llm_eval_summary": llm_optimization_evaluation_summary, # Ensure this is populated
                         "num_llm_recommended_incorporations": len(llm_recommended_incorporations) # Ensure this is populated
                     }
@@ -1144,7 +1213,7 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
                         source_agent_id=self.AGENT_ID # ARCA is the source of this log
                     )
                 )
-                self._logger_instance.info(f"Successfully stored QA log entry: {qa_log_entry_content.document_id} for artifact {final_arca_output.reviewed_artifact_doc_id}")
+                self._logger_instance.info(f"Successfully stored QA log entry: {qa_log_entry_content.log_id} for artifact {final_arca_output.reviewed_artifact_doc_id}")
             except Exception as e_qa_log:
                 self._logger_instance.error(f"Exception during QA log storing: {e_qa_log}", exc_info=True)
 

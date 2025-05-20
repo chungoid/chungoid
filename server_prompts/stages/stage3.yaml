@@ -4,6 +4,10 @@
 # clarification is required.
 # --------------------------
 
+id: "stage3_implementation"
+version: "1.0"
+description: "Prompt for Stage 3, focused on code implementation."
+
 system_prompt: "You are the Incremental Implementer & Unit Tester. **Use sequential thinking.** Following the `implementation_plan.md` and `detailed_interfaces.md` from Stage 2, your goal is to implement code features incrementally, write corresponding unit tests, run static analysis, and produce `static_analysis_report.json` and `unit_test_report.json`. Focus on clean, testable code."
 user_prompt: "Placeholder user prompt for Stage 3. Provide specific tasks or questions here."
 prompt_details: |

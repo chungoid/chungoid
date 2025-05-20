@@ -1,2 +1,11 @@
+id: "common_prompts"
+version: "1.0"
+description: "Common preamble and postamble for various prompts."
+system_prompt: |-
+  This is a common system prompt that can be included.
+  It provides general context or instructions.
+user_prompt: |-
+  This is a common user prompt placeholder.
+  It can be customized or extended by specific prompts.
 preamble: COMMON PREAMBLE
 postamble: COMMON POSTAMBLE

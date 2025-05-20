@@ -364,23 +364,28 @@ class ProjectChromaManagerAgent_v1:
         collection_name = self._get_project_collection_name(base_collection_name)
         try:
             # Use get_document_by_id from chroma_utils
+            # This now returns a flat dict: {'id': ..., 'document': ..., 'metadata': ...} or None
             result = get_document_by_id(
                 collection_name=collection_name, 
                 doc_id=document_id,
                 include=["documents", "metadatas"] # Ensure both are included
             )
-            if result and result.get("ids") and result.get("documents"):
-                retrieved_doc_id = result["ids"][0]
-                content_str = result["documents"][0]
-                metadata = result["metadatas"][0] if result.get("metadatas") else {}
+            
+            # Updated condition to match the flat dictionary structure from get_document_by_id
+            if result and result.get("id") == document_id and result.get("document") is not None:
+                retrieved_doc_id = result["id"] 
+                content_str = result["document"]
+                metadata = result.get("metadata", {}) # .get already handles if metadata key is missing
                 
                 # Try to parse content as JSON if it looks like it
                 parsed_content: Union[str, Dict[str, Any]] = content_str
-                try:
-                    if content_str.strip().startswith(("{", "[")):
-                        parsed_content = json.loads(content_str)
-                except json.JSONDecodeError:
-                    pass # Keep as string if not valid JSON
+                if isinstance(content_str, str): # Only attempt parse if it's a string
+                    try:
+                        if content_str.strip().startswith(("{", "[")):
+                            parsed_content = json.loads(content_str)
+                    except json.JSONDecodeError:
+                        pass # Keep as string if not valid JSON
+                # If content_str was already a dict (e.g. if chroma_utils returned it pre-parsed), it remains so.
 
                 return RetrieveArtifactOutput(
                     document_id=retrieved_doc_id,
@@ -389,7 +394,7 @@ class ProjectChromaManagerAgent_v1:
                     status="SUCCESS"
                 )
             else:
-                logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}' for project '{self.project_id}'. Result: {result}")
+                logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}' for project '{self.project_id}'. Result from get_document_by_id: {result}")
                 return RetrieveArtifactOutput(document_id=document_id, status="NOT_FOUND", error_message="Artifact not found.")
         except Exception as e:
             logger.error(f"Error retrieving artifact '{document_id}' from '{collection_name}' for project '{self.project_id}': {e}", exc_info=True)
@@ -638,21 +643,23 @@ class ProjectChromaManagerAgent_v1:
 
         collection_name = self._get_project_collection_name(AGENT_REFLECTIONS_AND_LOGS_COLLECTION)
         
-        document_content = log_entry.model_dump_json(indent=2)
+        document_content = log_entry.model_dump_json(indent=2) # Reverted to model_dump_json
         doc_id = f"arca_log_{log_entry.log_id}"
         
+        # Prepare metadata for ChromaDB, ensuring all values are suitable (e.g., enums to values)
         metadata = {
-            "artifact_type": "ARCA_LogEntry",
-            "project_id": self.project_id,
-            "cycle_id": cycle_id,
+            "project_id": log_entry.project_id,
+            "cycle_id": log_entry.cycle_id,
+            "event_type": log_entry.event_type, # It's a Literal[str], already a string value
+            "severity": log_entry.severity, # It's a Literal[str], already a string value
             "agent_id": log_entry.agent_id,
-            "task_id": log_entry.task_id,
-            "event_type": log_entry.event_type.value, # Store enum value
-            "timestamp_utc": log_entry.timestamp_utc.isoformat(),
-            "log_id_prop": log_entry.log_id # Adding log_id also as a direct metadata field for easier query
+            "arca_task_id": log_entry.arca_task_id, # Corrected field name
+            "timestamp_iso": log_entry.timestamp.isoformat()
         }
-        if log_entry.related_artifact_id:
-            metadata["related_artifact_id"] = log_entry.related_artifact_id
+
+        # Add any other relevant simple fields from log_entry to metadata if they are useful for filtering/querying
+        # For example, if there was a simple 'status' field, it could be added.
+        # Complex fields like event_details (dict) are generally kept in the document body.
 
         try:
             success = add_or_update_document(

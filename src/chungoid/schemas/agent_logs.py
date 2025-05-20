@@ -36,6 +36,7 @@ class ARCALogEntry(BaseModel):
     related_artifact_doc_ids: List[str] = Field(default_factory=list, description="List of ChromaDB document IDs for artifacts relevant to this log event.")
     
     severity: Literal["INFO", "WARNING", "ERROR"] = Field(default="INFO", description="Severity level of the log event.")
+    agent_id: str = Field(..., description="ID of the agent generating this log entry, typically ARCA itself.")
 
     class Config:
         # Example for event_details based on event_type (for documentation/validation if needed later)
@@ -207,6 +208,7 @@ class OverallQualityStatus(str, Enum):
     REJECTED_NEEDS_REFINEMENT = "REJECTED_NEEDS_REFINEMENT" # Does not meet quality criteria, requires rework
     FLAGGED_FOR_MANUAL_REVIEW = "FLAGGED_FOR_MANUAL_REVIEW" # Automated QA cannot make a determination
     ERROR_IN_QA_PROCESS = "ERROR_IN_QA_PROCESS" # The QA process itself failed
+    UNDER_REMEDIATION = "UNDER_REMEDIATION" # Added for artifacts being actively debugged/fixed
 
 class QualityAssuranceLogEntry(BaseModel):
     log_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this QA log entry.")

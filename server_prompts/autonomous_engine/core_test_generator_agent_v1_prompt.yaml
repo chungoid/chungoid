@@ -78,7 +78,7 @@ model_settings:
   temperature: 0.25 
   max_tokens: 3000
 
-system_prompt_template: |
+system_prompt: |
   You are CoreTestGeneratorAgent_v1, an expert AI Test Engineer. Your primary function is to generate comprehensive and effective tests (unit tests, integration tests) for given source code modules. You will be provided with the code itself, relevant LOPRD requirements (especially Acceptance Criteria), and project blueprint context.
 
   **Core Directives:**
@@ -93,7 +93,7 @@ system_prompt_template: |
   9.  **Handling Ambiguity:** If LOPRD requirements, code specifications, or the code itself are ambiguous or unclear, hindering effective test generation, clearly state the ambiguity in your `key_test_design_rationale` or `requirements_coverage_explanation` fields. If ambiguity significantly impacts confidence, reflect this in the `confidence_score.value` and `confidence_score.explanation`. Do not write tests for poorly understood features; prioritize noting the ambiguity.
   10. **Iterative Refinement Awareness:** Understand that your generated output may be reviewed and you might be invoked again with feedback. Be prepared to incorporate such feedback into a revised version of the structured JSON output.
 
-user_prompt_template: |
+user_prompt: |
   ### TASK: Generate Tests for `{{source_code_file_path}}`
 
   **Project ID:** `{{project_id}}`

@@ -4,59 +4,7 @@
 id: blueprint_to_flow_agent_v1_prompt
 version: "0.2.0" # New structure, incorporates task_context_dependencies
 description: "Transforms a Project Blueprint and optional reviewer feedback into a MasterExecutionPlan JSON. Emphasizes granular `task_context_dependencies` for traceability and adherence to Blueprint/LOPRD elements."
-metadata:
-  title: "Blueprint To Flow Agent v1 Prompt (Detailed Context Dependencies)"
-  tags: ["planning", "blueprint_to_plan", "master_execution_plan", "autonomous_project_engine", "json_output", "traceability"]
-  owner: "meta_engineering_team"
-  created_date: "2025-05-21" # Date of refactor to new structure
-  last_modified: "2025-05-21"
-
-input_schema:
-  type: object
-  properties:
-    project_id:
-      type: string
-      description: "Identifier for the current project."
-    blueprint_doc_id:
-      type: string
-      description: "Document ID of the Project Blueprint."
-    blueprint_content:
-      type: string
-      description: "Markdown content of the Project Blueprint."
-    blueprint_reviewer_feedback_doc_id:
-      type: ["string", "null"]
-      description: "(Optional) Document ID of the Blueprint Reviewer Feedback report."
-    blueprint_reviewer_feedback_content:
-      type: ["string", "null"]
-      description: "(Optional) Markdown content of the Blueprint Reviewer Feedback."
-    previous_master_execution_plan_json_content: # For plan revisions
-      type: ["string", "null"]
-      description: "(Optional) JSON content of a previous MasterExecutionPlan if this is a revision task."
-    feedback_on_plan_md_content: # For plan revisions
-      type: ["string", "null"]
-      description: "(Optional) Markdown content of feedback received on a previous version of this plan."
-    current_datetime_iso: # Added as it was used in example output
-      type: string
-      description: "Current datetime in ISO 8601 format, e.g., for created_at/updated_at fields."
-  required:
-    - project_id
-    - blueprint_doc_id
-    - blueprint_content
-    - current_datetime_iso
-
-output_schema:
-  # The primary output is the MasterExecutionPlan JSON. Confidence is part of its description or a separate meta-field.
-  type: object # Represents the MasterExecutionPlan JSON itself
-  description: "A MasterExecutionPlan JSON object. Confidence about the plan is expected to be embedded in its description field or as a separate structured output if the system supports multi-part outputs."
-  # The detailed schema for MasterExecutionPlan and MasterStageSpec is provided in the system_prompt_template.
-
-model_settings:
-  model_name: "gpt-4-turbo-preview" # Model capable of complex JSON generation and logical decomposition
-  temperature: 0.15 # Low temperature for more deterministic and structured plan generation
-  max_tokens: 4000   # Allow for very large and detailed plans
-  # response_format: { "type": "json_object" } # Strongly recommended if model supports it reliably for complex nested JSON
-
-system_prompt_template: |
+system_prompt: |
   You are the BlueprintToFlow capability within the SystemMasterPlannerAgent. Your expertise is translating a detailed Project Blueprint (Markdown) and an optional Blueprint Optimization Suggestions Report (Markdown) into a structured, multi-stage `MasterExecutionPlan` JSON object. This plan will be executed by the Chungoid Autonomous Build System.
 
   Strictly follow the `MasterExecutionPlan` and `MasterStageSpec` Pydantic schemas provided below. The output MUST be a single JSON object representing the entire MasterExecutionPlan. You should ideally be provided with an up-to-date list of available agents and their capabilities. If an AgentRegistry query tool is available, use it to confirm agent capabilities before assigning them to stages. For now, use the illustrative list provided, assuming it is current.
@@ -110,8 +58,7 @@ system_prompt_template: |
   - `SystemFileSystemAgent_v1` (was FileOperationAgent_v1): Performs file system operations.
   - `HumanInputAgent_v1`: (Use sparingly) Requests specific input from a human.
   - (Add other relevant agents from the Autonomous Project Engine)
-
-user_prompt_template: |
+user_prompt: |
   ### TASK: Generate MasterExecutionPlan from Project Blueprint
 
   **Project ID:** `{{project_id}}`
@@ -168,3 +115,56 @@ user_prompt_template: |
   10. **Confidence Embedding:** Embed your confidence assessment (value: 0.0-1.0, method: string, explanation: string) directly within the `description` field of the root `MasterExecutionPlan` JSON object.
 
   Begin generating the `MasterExecutionPlan` JSON based on the provided blueprint and feedback. If performing a revision, incorporate the feedback on the previous plan.
+metadata:
+  title: "Blueprint To Flow Agent v1 Prompt (Detailed Context Dependencies)"
+  tags: ["planning", "blueprint_to_plan", "master_execution_plan", "autonomous_project_engine", "json_output", "traceability"]
+  owner: "meta_engineering_team"
+  created_date: "2025-05-21" # Date of refactor to new structure
+  last_modified: "2025-05-21"
+
+input_schema:
+  type: object
+  properties:
+    project_id:
+      type: string
+      description: "Identifier for the current project."
+    blueprint_doc_id:
+      type: string
+      description: "Document ID of the Project Blueprint."
+    blueprint_content:
+      type: string
+      description: "Markdown content of the Project Blueprint."
+    blueprint_reviewer_feedback_doc_id:
+      type: ["string", "null"]
+      description: "(Optional) Document ID of the Blueprint Reviewer Feedback report."
+    blueprint_reviewer_feedback_content:
+      type: ["string", "null"]
+      description: "(Optional) Markdown content of the Blueprint Reviewer Feedback."
+    previous_master_execution_plan_json_content: # For plan revisions
+      type: ["string", "null"]
+      description: "(Optional) JSON content of a previous MasterExecutionPlan if this is a revision task."
+    feedback_on_plan_md_content: # For plan revisions
+      type: ["string", "null"]
+      description: "(Optional) Markdown content of feedback received on a previous version of this plan."
+    current_datetime_iso: # Added as it was used in example output
+      type: string
+      description: "Current datetime in ISO 8601 format, e.g., for created_at/updated_at fields."
+  required:
+    - project_id
+    - blueprint_doc_id
+    - blueprint_content
+    - current_datetime_iso
+
+output_schema:
+  # The primary output is the MasterExecutionPlan JSON. Confidence is part of its description or a separate meta-field.
+  type: object # Represents the MasterExecutionPlan JSON itself
+  description: "A MasterExecutionPlan JSON object. Confidence about the plan is expected to be embedded in its description field or as a separate structured output if the system supports multi-part outputs."
+  # The detailed schema for MasterExecutionPlan and MasterStageSpec is provided in the system_prompt_template.
+
+model_settings:
+  model_name: "gpt-4-turbo-preview" # Model capable of complex JSON generation and logical decomposition
+  temperature: 0.15 # Low temperature for more deterministic and structured plan generation
+  max_tokens: 4000   # Allow for very large and detailed plans
+  # response_format: { "type": "json_object" } # Strongly recommended if model supports it reliably for complex nested JSON
+
+# system_prompt_template and user_prompt_template removed
