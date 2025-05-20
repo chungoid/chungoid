@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, Optional
+from pydantic import BaseModel, Field
 
-from chungoid.models import AgentID
+from chungoid.schemas.common import AgentID
 from chungoid.schemas.agent_mock_system_requirements_gathering import (
     MockSystemRequirementsGatheringAgentInput,
     MockSystemRequirementsGatheringAgentOutput,
@@ -11,6 +12,7 @@ from chungoid.schemas.agent_mock_system_requirements_gathering import (
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
+from chungoid.runtime.agents.agent_base import BaseAgent, InputSchema, OutputSchema
 
 logger = logging.getLogger(__name__)
 

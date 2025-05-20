@@ -12,6 +12,8 @@ class MetricEventType(str, Enum):
     FLOW_END = "FLOW_END"
     STAGE_START = "STAGE_START"
     STAGE_END = "STAGE_END" # Covers success, failure, skip, etc. status is in data.
+    MASTER_STAGE_START = "MASTER_STAGE_START" # ADDED
+    MASTER_STAGE_END = "MASTER_STAGE_END" # ADDED
     AGENT_INVOCATION_START = "AGENT_INVOCATION_START"
     AGENT_INVOCATION_END = "AGENT_INVOCATION_END"
     AGENT_REPORTED_METRIC = "AGENT_REPORTED_METRIC" # For custom metrics like token usage, cost
@@ -21,6 +23,9 @@ class MetricEventType(str, Enum):
     PLAN_MODIFIED = "PLAN_MODIFIED" # ADDED for when the execution plan is changed by the reviewer
     FLOW_ERROR = "FLOW_ERROR" # ADDED for critical flow errors like MaxHops
     # Add more specific event types as needed
+    AGENT_CALL_START = "AGENT_CALL_START" # ADDED
+    AGENT_CALL_END = "AGENT_CALL_END" # ADDED
+    ORCHESTRATOR_ERROR = "ORCHESTRATOR_ERROR" # ADDED
 
 
 class MetricEvent(BaseModel):

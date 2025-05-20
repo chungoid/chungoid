@@ -6,8 +6,10 @@ from enum import Enum
 class StageStatus(Enum):
     """Represents the completion status of a stage in a workflow."""
 
-    SUCCESS = "PASS"
-    FAILURE = "FAIL"
+    COMPLETED_SUCCESS = "COMPLETED_SUCCESS"
+    COMPLETED_FAILURE = "COMPLETED_FAILURE"
+    SUCCESS = "COMPLETED_SUCCESS"  # Was "PASS"
+    FAILURE = "COMPLETED_FAILURE"  # Was "FAIL"
     RUNNING = "RUNNING" # Added for orchestrator to indicate active stage
     PENDING = "PENDING" # Added for initializing stage status
     ERROR = "ERROR"   # Added for fatal errors during execution
@@ -48,3 +50,19 @@ class OnFailureAction(str, Enum):
     PAUSE_FOR_INTERVENTION = "PAUSE_FOR_INTERVENTION"
     INVOKE_REVIEWER = "INVOKE_REVIEWER"  # This is used by orchestrator as default
     RETRY_STAGE = "RETRY_STAGE"          # This is also used by orchestrator 
+
+class HumanReviewDecision(str, Enum):
+    """Defines the possible decisions a human can make during a project review."""
+    PROCEED_TO_NEXT_AUTONOMOUS_PHASE = "PROCEED_TO_NEXT_AUTONOMOUS_PHASE"
+    INITIATE_REFINEMENT_CYCLE = "INITIATE_REFINEMENT_CYCLE"
+    MODIFY_PROJECT_GOAL = "MODIFY_PROJECT_GOAL"
+    PAUSE_PROJECT = "PAUSE_PROJECT"
+    ARCHIVE_PROJECT_SUCCESS = "ARCHIVE_PROJECT_SUCCESS"
+    ARCHIVE_PROJECT_FAILURE = "ARCHIVE_PROJECT_FAILURE"
+
+__all__ = [
+    "StageStatus", 
+    "FlowPauseStatus", 
+    "OnFailureAction",
+    "HumanReviewDecision" # Add new enum to __all__
+] 

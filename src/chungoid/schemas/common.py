@@ -5,6 +5,7 @@ from typing import NewType, Optional, Literal, List, Dict, Any, Union
 
 # Type alias for dot-notation context paths
 InputOutputContextPathStr = NewType('InputOutputContextPathStr', str)
+AgentID = NewType('AgentID', str)
 
 class ArbitraryModel(BaseModel):
     """A Pydantic model that allows arbitrary extra fields."""
@@ -23,6 +24,7 @@ class LLMResponseErrorDetails(BaseModel):
 
 __all__ = [
     "InputOutputContextPathStr",
+    "AgentID",
     "ArbitraryModel",
     "ConfidenceScore"
 ] 

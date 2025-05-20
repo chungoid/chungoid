@@ -5,7 +5,29 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 # Assuming CommonStatus from common_enums.py or similar
-# from .common_enums import StageStatus # If StageStatus is appropriate, or define a new OverallProjectStatus enum
+from .common_enums import StageStatus # Added import for StageStatus
+
+class StageRecord(BaseModel):
+    stage_id: str = Field(..., description="Identifier of the stage within the run.")
+    agent_id: str = Field(..., description="Agent ID used for this stage.")
+    start_time: datetime = Field(default_factory=datetime.now, description="Timestamp when the stage started.")
+    end_time: Optional[datetime] = Field(None, description="Timestamp when the stage ended.")
+    status: StageStatus = Field(..., description="Final status of the stage.")
+    outputs_summary: Optional[str] = Field(None, description="A brief summary or reference to the stage outputs. Full outputs might be too large to store here directly.") # Avoid storing large outputs
+    error_details: Optional[Dict[str, Any]] = Field(None, description="Details of any error that occurred during the stage.")
+
+
+class RunRecord(BaseModel):
+    run_id: str = Field(..., description="Unique identifier for this execution run.")
+    flow_id: str = Field(..., description="Identifier of the flow/plan being executed.")
+    start_time: datetime = Field(default_factory=datetime.now, description="Timestamp when the run started.")
+    end_time: Optional[datetime] = Field(None, description="Timestamp when the run ended.")
+    status: StageStatus = Field(..., description="Final status of the run.")
+    initial_context_summary: Optional[Dict[str, Any]] = Field(None, description="Summary of the initial context provided for the run.")
+    final_outputs_summary: Optional[Dict[str, Any]] = Field(None, description="Summary of the final outputs of the run.") # Avoid storing large outputs
+    error_message: Optional[str] = Field(None, description="Overall error message if the run failed.")
+    stages: List[StageRecord] = Field(default_factory=list, description="Chronological record of stages executed in this run.")
+
 
 class CycleHistoryItem(BaseModel):
     cycle_id: str = Field(..., description="Unique identifier for this cycle.")
@@ -24,6 +46,7 @@ class CycleHistoryItem(BaseModel):
 
 class ProjectStateV2(BaseModel):
     project_id: str = Field(..., description="Globally unique identifier for this project instance.")
+    project_name: Optional[str] = Field(None, description="User-defined name for the project.")
     # Consider defining an Enum for overall_project_status if specific states are known
     # e.g., class OverallProjectStatus(str, Enum): INITIALIZING = "initializing"; CYCLE_IN_PROGRESS = "cycle_in_progress"; ...
     overall_project_status: str = Field(..., description="Overall status of the project (e.g., initializing, cycle_in_progress, pending_human_review, project_complete).")
@@ -32,6 +55,8 @@ class ProjectStateV2(BaseModel):
     
     cycle_history: List[CycleHistoryItem] = Field(default_factory=list, description="A list of all completed and the current in-progress cycle.")
     
+    run_history: Dict[str, RunRecord] = Field(default_factory=dict, description="A dictionary of all execution runs, keyed by run_id.") # Added run_history
+
     master_loprd_id: Optional[str] = Field(None, description="ChromaDB ID of the latest master/approved LOPRD for the project.")
     master_blueprint_id: Optional[str] = Field(None, description="ChromaDB ID of the latest master/approved Project Blueprint.")
     master_execution_plan_id: Optional[str] = Field(None, description="ChromaDB ID of the latest master/approved Master Execution Plan.")
@@ -95,4 +120,4 @@ class ProjectStateV2(BaseModel):
         }
 
 # It's good practice to add __all__ if this file grows
-__all__ = ["CycleHistoryItem", "ProjectStateV2"] 
+__all__ = ["CycleHistoryItem", "ProjectStateV2", "RunRecord", "StageRecord"] # Added new models 

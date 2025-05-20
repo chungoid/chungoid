@@ -21,8 +21,9 @@ import json # Add for JSONDecodeError
 from pydantic import ValidationError # Add for Pydantic validation error
 
 # NEW IMPORTS for ProjectStateV2
-from ..schemas.project_state import ProjectStateV2, CycleHistoryItem
+from ..schemas.project_state import ProjectStateV2, CycleHistoryItem, RunRecord, StageRecord # ENSURE RunRecord and StageRecord are also imported if they come from here
 from ..constants import STATE_FILE_NAME # Using constant for state file name
+from ..schemas.project_status_schema import ProjectOverallStatus # ADDED ProjectOverallStatus import
 
 # from chungoid.schemas.common_enums import FileStatus, ProjectStatus # Removed unused
 from chungoid.schemas.master_flow import MasterExecutionPlan # Added import
@@ -35,7 +36,8 @@ from pydantic import BaseModel, Field
 # from chungoid.schemas.agent_errors import AgentErrorDetails # Not directly used, context
 
 from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactInput, RetrieveArtifactOutput # Import from new location
-from chungoid.schemas.project_status_schema import CycleInfo, ProjectStateV2, CycleStatus, ProjectOverallStatus, ArtifactLink, KeyDecision, HumanReviewRecord # Restored project_status_schema imports
+# REMOVED ProjectStateV2 from this import, kept others
+from chungoid.schemas.project_status_schema import CycleInfo, CycleStatus, ProjectOverallStatus, ArtifactLink, KeyDecision, HumanReviewRecord
 
 
 class StatusFileError(Exception):
@@ -215,46 +217,94 @@ class StateManager:
             project_id=project_id,
             project_name=project_name,
             initial_user_goal_summary=initial_user_goal_summary,
-            schema_version="2.0.0", # Ensure this matches the literal in ProjectStateV2
-            created_at_utc=now,
-            last_updated_utc=now,
-            overall_status=ProjectOverallStatus.NOT_STARTED,
-            # Other fields will use their defaults from Pydantic model
+            overall_project_status=ProjectOverallStatus.NOT_STARTED.value,
+            schema_version="2.0.0", 
+            # created_at_utc=now, # REMOVED - field does not exist in target ProjectStateV2
+            last_updated=now, # CHANGED from last_updated_utc
+            run_history={}
         )
 
     def _load_or_initialize_project_state(self) -> None:
         """Loads project state from file or initializes a new one if not found or invalid."""
-        self.logger.info("UNIQUE_LOG_MARKER_V3: Entering _load_or_initialize_project_state") # <<< UNIQUE MARKER
-        try:
-            with self._get_lock(): # Lock ensures atomicity if multiple threads/processes were to access this (unlikely for typical StateManager use)
-                if self.status_file_path.exists():
-                    self.logger.debug(f"Attempting to read existing status file: {self.status_file_path}")
-                    self._project_state = self._read_status_file()
-                    self.logger.info(f"Successfully loaded project state for {self._project_state.project_id} from {self.status_file_path}")
-                    # Attempt to load current cycle info if one was active
-                    if self._project_state.current_cycle_id:
-                        found_cycle = next((c for c in self._project_state.historical_cycles if c.cycle_id == self._project_state.current_cycle_id and c.status == CycleStatus.IN_PROGRESS), None)
-                        if found_cycle:
-                            self._current_cycle_info = found_cycle
-                            self.logger.info(f"Loaded active cycle {self._project_state.current_cycle_id} from historical records.")
-                else:
-                    # File does not exist, so create a placeholder in memory.
-                    # initialize_project() will be responsible for creating and writing the actual initial file.
-                    self.logger.warning(f"Status file not found at {self.status_file_path}. Project is not yet initialized. Using in-memory placeholder. Call initialize_project() to create the project file.")
-                    self._project_state = self._create_placeholder_project_state() # Placeholder has a dummy ID
-                    self._current_cycle_info = None
+        self.logger.info(f"UNIQUE_LOG_MARKER_V3: Entering _load_or_initialize_project_state")
+        loaded_successfully = False
+        if self.status_file_path.exists() and self.status_file_path.stat().st_size > 0:
+            try:
+                with open(self.status_file_path, "r") as f:
+                    data = json.load(f)
+                
+                # Ensure 'run_history' key exists in the loaded data before creating the model instance.
+                # This is crucial because if it's missing, Pydantic V2 might not consider it a valid field
+                # for direct assignment later, even if the class schema has it.
+                if 'run_history' not in data or data['run_history'] is None:
+                    self.logger.warning(
+                        f"Loaded data from {self.status_file_path} is missing 'run_history' or it is None. "
+                        "Adding an empty 'run_history': {} before Pydantic validation."
+                    )
+                    data['run_history'] = {}
 
-        except StatusFileError as e: # Covers issues from _read_status_file like bad JSON, validation errors, or empty file
-            self.logger.error(f"Failed to read or parse existing status file: {e}. Using in-memory placeholder. The file might be corrupted or of an incompatible version.")
-            self._project_state = self._create_placeholder_project_state()
-            self._current_cycle_info = None
-            # DO NOT WRITE a new default file here if the existing one is corrupt.
-        except Exception as e: # Catch-all for unexpected errors during load
-            self.logger.critical(f"CRITICAL: Unexpected error loading/initializing project state: {e}", exc_info=True)
-            # Use a placeholder and re-raise to signal a severe issue.
-            self._project_state = self._create_placeholder_project_state()
-            self._current_cycle_info = None
-            raise StatusFileError(f"Unexpected critical error during state loading/initialization: {e}") from e
+                # Attempt to parse with ProjectStateV2 using the (potentially modified) data dict
+                self._project_state = ProjectStateV2(**data)
+                self.logger.info(f"Successfully loaded and validated project state for {self._project_state.project_id} from {self.status_file_path}")
+                loaded_successfully = True
+
+            except (json.JSONDecodeError, ValidationError, TypeError) as e:
+                self.logger.warning(
+                    f"Failed to load or validate existing status file at {self.status_file_path} (Error: {e}). "
+                    "Backing up and creating a new default state.",
+                    exc_info=True
+                )
+                self._backup_existing_status_file()
+                # new_project_id = f"proj_{uuid.uuid4().hex[:12]}" # Project ID should ideally be stable or re-used if backup has it
+                # Try to get project ID from backup if possible, else generate new
+                new_project_id = data.get("project_id", f"proj_{uuid.uuid4().hex[:12]}") if 'data' in locals() and isinstance(data, dict) else f"proj_{uuid.uuid4().hex[:12]}"
+                project_name = data.get("project_name") if 'data' in locals() and isinstance(data, dict) else None
+
+                self._project_state = self._create_default_project_state_v2(
+                    project_id=new_project_id,
+                    project_name=project_name
+                )
+                # Ensure run_history is present even in this newly created default state
+                if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
+                    self._project_state.run_history = {}
+                self._write_status_file(self._project_state)
+                loaded_successfully = True # Technically successful as a new valid state is now in memory and saved
+        
+        if not loaded_successfully: # If file didn't exist, was empty, or initial load failed and wasn't recovered above
+            self.logger.info(f"No existing status file found at {self.status_file_path}, file was empty, or initial load failed. Creating a new default state.")
+            # Generate a new project ID if one couldn't be salvaged from a failed load.
+            # This path is usually for a completely fresh setup.
+            new_project_id = f"proj_{uuid.uuid4().hex[:12]}"
+            self._project_state = self._create_default_project_state_v2(project_id=new_project_id)
+            # Ensure run_history is present in this brand new default state
+            #if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
+            #     self._project_state.run_history = {}
+            self._write_status_file(self._project_state)
+
+        # Final check to ensure _project_state itself is not None and has run_history
+        if not hasattr(self, '_project_state') or not self._project_state:
+            self.logger.critical(f"CRITICAL: _project_state is None after _load_or_initialize_project_state. Forcing placeholder.")
+            self._project_state = self._create_placeholder_project_state() 
+            if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
+                self._project_state.run_history = {}
+            self._write_status_file(self._project_state)
+        elif not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
+            # This case means _project_state exists but somehow run_history is still not there (e.g. placeholder didn't get it)
+            # This should be very rare if _create_default_project_state_v2 and _create_placeholder_project_state ensure it.
+            self.logger.warning(
+                f"Post-load/init: _project_state for {self._project_state.project_id} still missing 'run_history'. "
+                "Attempting to forcefully re-create the model with run_history."
+            )
+            try:
+                current_data = self._project_state.model_dump()
+                current_data['run_history'] = {} # Ensure it's there
+                self._project_state = ProjectStateV2(**current_data)
+                self.logger.info(f"Forcefully re-created ProjectStateV2 for {self._project_state.project_id} to include run_history.")
+                self._save_project_state() 
+            except Exception as e_force_assign:
+                self.logger.error(f"Failed to forcefully re-create _project_state with run_history: {e_force_assign}. ", exc_info=True)
+                                  
+        self.logger.info(f"StateManager._project_state initialized for project: {self._project_state.project_id}, Name: {self._project_state.project_name}")
 
     def _create_placeholder_project_state(self) -> ProjectStateV2:
         """Creates a minimal, temporary ProjectStateV2 object when actual state cannot be loaded."""
@@ -304,7 +354,7 @@ class StateManager:
     def _write_status_file(self, project_state: ProjectStateV2) -> None:
         """Writes the ProjectStateV2 object to the status file in JSON format."""
         try:
-            project_state.last_updated_utc = datetime.now(timezone.utc) # Ensure last_updated is fresh
+            project_state.last_updated = datetime.now(timezone.utc) # CHANGED from last_updated_utc
             # model_dump_json handles datetime serialization correctly by default with Pydantic v2
             json_data = project_state.model_dump_json(indent=2)
             self.status_file_path.write_text(json_data, encoding="utf-8")
@@ -406,9 +456,21 @@ class StateManager:
             # For now, the save is implicit when the cycle completes.
             # A save might be desired here for resilience.
             # Let's try saving the whole state for now, assuming ProjectStateV2 might be extended or this is good practice.
-            self._project_state.last_updated_utc = datetime.now(timezone.utc) # Mark update
+            self._project_state.last_updated = datetime.now(timezone.utc) # Mark update
             self._save_project_state()
 
+    def _backup_existing_status_file(self) -> None:
+        """Backs up the existing status file by renaming it with a .bak extension and timestamp."""
+        if self.status_file_path.exists():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file_path = self.status_file_path.with_suffix(f".{timestamp}.bak")
+            try:
+                self.status_file_path.rename(backup_file_path)
+                self.logger.info(f"Backed up existing status file to: {backup_file_path}")
+            except OSError as e:
+                self.logger.error(f"Failed to backup status file from {self.status_file_path} to {backup_file_path}: {e}", exc_info=True)
+        else:
+            self.logger.info(f"No status file found at {self.status_file_path} to back up.")
 
     def add_key_decision_to_current_cycle(self, decision: KeyDecision) -> None:
         """Adds a key decision to the current active cycle."""
@@ -419,7 +481,7 @@ class StateManager:
         with self._get_lock():
             self._current_cycle_info.key_decisions_in_cycle.append(decision)
             self.logger.info(f"Added key decision {decision.decision_id} to cycle {self._current_cycle_info.cycle_id}")
-            self._project_state.last_updated_utc = datetime.now(timezone.utc)
+            self._project_state.last_updated = datetime.now(timezone.utc)
             self._save_project_state() # Save for resilience
 
     def complete_current_cycle(
@@ -1347,9 +1409,6 @@ async def get_chungoid_project_status(ide_services):
             await ide_services.show_information_message(f"Chungoid Project Status:\n{pretty_status}", use_modal=True)
         except:
             await ide_services.show_information_message(f"Chungoid Project Status:\n{status_text}", use_modal=True)
-    else:
-        error_message = response.get('error', {}).get('message', "Failed to retrieve status.")
-        await ide_services.show_error_message(f"Error getting project status: {error_message}")
 """
             with open(rule_file_path, "w", encoding="utf-8") as f:
                 f.write(rule_content)
@@ -1712,6 +1771,162 @@ async def get_chungoid_project_status(ide_services):
             self._project_state.latest_project_readme_doc_id = doc_id
             self._save_project_state()
             self.logger.info(f"Updated latest_project_readme_doc_id to {doc_id}")
+
+    # <<< ADDED FLOW AND STAGE RECORDING METHODS >>>
+
+    def record_flow_start(
+        self, 
+        run_id: str, 
+        flow_id: str, 
+        initial_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Records the start of a flow execution."""
+        with self._get_lock():
+            if not hasattr(self, '_project_state'):
+                self.logger.error("Cannot record flow start: Project state not initialized.")
+                return
+
+            # --- DEBUGGING: Log type and attributes of _project_state --- #
+            self.logger.info(f"DEBUG: Type of self._project_state in record_flow_start: {type(self._project_state)}")
+            try:
+                self.logger.info(f"DEBUG: dir(self._project_state) in record_flow_start: {dir(self._project_state)}")
+                self.logger.info(f"DEBUG: self._project_state.model_fields.keys(): {self._project_state.model_fields.keys()}")
+            except Exception as e_debug:
+                self.logger.error(f"DEBUG: Error inspecting self._project_state: {e_debug}")
+            # --- END DEBUGGING --- #
+
+            now = datetime.now(timezone.utc)
+            # Ensure run_history exists
+            if self._project_state.run_history is None: # THIS IS THE LINE CAUSING AttributeError
+                self._project_state.run_history = {}
+            
+            # Overwrite if exists, or add new
+            self._project_state.run_history[run_id] = {
+                "flow_id": flow_id,
+                "status": "RUNNING", # Using string representation
+                "start_time_utc": now.isoformat(), # Field in RunRecord is start_time
+                "end_time_utc": None, # Field in RunRecord is end_time
+                "initial_context_summary": {k: str(type(v)) for k, v in initial_context.items()} if initial_context else {},
+                "stages": {},
+                "final_outputs_summary": None,
+                "error_message": None,
+            }
+            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            self._save_project_state()
+            self.logger.info(f"Flow run {run_id} (flow: {flow_id}) started.")
+
+    def record_flow_end(
+        self, 
+        run_id: str, 
+        flow_id: str, # flow_id added for consistency, though run_id is primary key
+        final_status: str, # e.g., "COMPLETED_SUCCESS", "COMPLETED_FAILURE" from StageStatus enum .value
+        error_message: Optional[str] = None,
+        final_outputs: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Records the end of a flow execution."""
+        with self._get_lock():
+            # Defensive check and potential re-initialization of run_history
+            if not hasattr(self, '_project_state') or not self._project_state: # Ensure _project_state itself exists
+                self.logger.error(f"Project state not loaded. Cannot record flow end for run_id {run_id}.")
+                # Attempt to load/init to prevent further errors, though this particular call might still fail to find the run.
+                self._load_or_initialize_project_state() # Ensure _project_state is loaded
+                if not hasattr(self, '_project_state') or not self._project_state: # Still not there?
+                     self.logger.critical(f"CRITICAL: _project_state is None even after _load_or_initialize_project_state in record_flow_end for {run_id}.")
+                     return # Cannot proceed
+
+            if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
+                self.logger.warning(f"_project_state.run_history is missing or None for run_id {run_id} during record_flow_end. Initializing to empty dict.")
+                self._project_state.run_history = {} # Initialize if missing
+
+            if run_id not in self._project_state.run_history:
+                self.logger.error(f"Cannot record flow end for run_id {run_id}: Run ID not found in run_history. State might be inconsistent.")
+                # Optionally, create a placeholder if truly critical to record something,
+                # but this usually indicates a deeper issue (e.g., record_flow_start failed silently or was never called for this run_id)
+                # For now, just log and return to avoid further errors with a potentially new/empty run_record.
+                return
+            
+            now = datetime.now(timezone.utc)
+            run_record = self._project_state.run_history[run_id]
+            run_record["status"] = final_status
+            run_record["end_time_utc"] = now.isoformat() # Field in RunRecord is end_time
+            run_record["error_message"] = error_message
+            run_record["final_outputs_summary"] = {k: str(type(v)) for k, v in final_outputs.items()} if final_outputs else {}
+            
+            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            self._save_project_state()
+            self.logger.info(f"Flow run {run_id} (flow: {flow_id}) ended with status: {final_status}.")
+
+    def record_stage_start(
+        self, 
+        run_id: str, 
+        flow_id: str, # For context
+        stage_id: str, 
+        agent_id: str
+    ) -> None:
+        """Records the start of a stage execution within a flow run."""
+        with self._get_lock():
+            if not hasattr(self, '_project_state') or self._project_state.run_history is None or run_id not in self._project_state.run_history:
+                self.logger.error(f"Cannot record stage start for run_id {run_id}, stage {stage_id}: Flow run not found.")
+                return
+
+            now = datetime.now(timezone.utc)
+            run_record = self._project_state.run_history[run_id]
+            if "stages" not in run_record or run_record["stages"] is None: # Ensure stages dict exists
+                 run_record["stages"] = {}
+
+            run_record["stages"][stage_id] = {
+                "agent_id": agent_id,
+                "status": "RUNNING", # Using string representation
+                "start_time_utc": now.isoformat(), # Field in StageRecord is start_time
+                "end_time_utc": None, # Field in StageRecord is end_time
+                "outputs_summary": None,
+                "error_details": None, # For AgentErrorDetails
+                "attempt_count": run_record["stages"].get(stage_id, {}).get("attempt_count", 0) + 1 # Increment attempt count
+            }
+            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            self._save_project_state()
+            self.logger.info(f"Stage {stage_id} (agent: {agent_id}) started for run {run_id}.")
+
+    def record_stage_end(
+        self,
+        run_id: str,
+        flow_id: str, # For context
+        stage_id: str,
+        status: str, # e.g., "COMPLETED_SUCCESS", "COMPLETED_FAILURE" from StageStatus enum .value
+        outputs: Optional[Any] = None,
+        error_details: Optional[Dict[str, Any]] = None # From AgentErrorDetails.model_dump()
+    ) -> None:
+        """Records the end of a stage execution."""
+        with self._get_lock():
+            if not hasattr(self, '_project_state') or \
+               self._project_state.run_history is None or \
+               run_id not in self._project_state.run_history or \
+               "stages" not in self._project_state.run_history[run_id] or \
+               stage_id not in self._project_state.run_history[run_id]["stages"]:
+                self.logger.error(f"Cannot record stage end for run_id {run_id}, stage {stage_id}: Stage or flow run not found/started.")
+                return
+
+            now = datetime.now(timezone.utc)
+            stage_record = self._project_state.run_history[run_id]["stages"][stage_id]
+            
+            stage_record["status"] = status
+            stage_record["end_time_utc"] = now.isoformat() # Field in StageRecord is end_time
+            if outputs is not None:
+                 stage_record["outputs_summary"] = {"type": str(type(outputs)), "value_preview": str(outputs)[:200]}
+            stage_record["error_details"] = error_details
+            
+            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            self._save_project_state()
+            self.logger.info(f"Stage {stage_id} for run {run_id} ended with status: {status}.")
+
+    def update_run_context(self, run_id: str, current_context_outputs: Dict[str, Any], current_artifact_references: Dict[str, List[str]]) -> None:
+        """Updates the persisted context snapshot for an ongoing run."""
+        # This is a placeholder for more sophisticated context snapshotting.
+        # For now, it might not write to ProjectStateV2 directly unless specific fields are added.
+        # It could write to a separate run-specific file or log.
+        self.logger.debug(f"Run context update for {run_id}: {len(current_context_outputs)} output keys, {len(current_artifact_references)} artifact stages.")
+        # If ProjectStateV2.run_history[run_id] is to store the full context, it needs a field for it.
+        # For now, this method serves as a hook.
 
 # Example usage (for testing or demonstration)
 if __name__ == "__main__":

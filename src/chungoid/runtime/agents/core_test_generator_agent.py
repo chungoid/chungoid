@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, ClassVar
 from enum import Enum
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
@@ -90,12 +90,12 @@ PROMPT_SUB_DIR = "autonomous_engine"
 # TEST_GENERATION_USER_PROMPT_TEMPLATE = ...
 
 class CoreTestGeneratorAgent_v1(BaseAgent[TestGeneratorAgentInput, TestGeneratorAgentOutput]):
-    AGENT_ID = "CoreTestGeneratorAgent_v1"
-    AGENT_NAME = "Core Test Generator Agent"
-    VERSION = "0.2.0"
-    DESCRIPTION = "Generates test code for given source code, using a specified test framework and optional context from related files."
-    CATEGORY = AgentCategory.TEST_GENERATION
-    VISIBILITY = AgentVisibility.PUBLIC
+    AGENT_ID: ClassVar[str] = "CoreTestGeneratorAgent_v1"
+    AGENT_NAME: ClassVar[str] = "Core Test Generator Agent"
+    VERSION: ClassVar[str] = "0.2.0"
+    DESCRIPTION: ClassVar[str] = "Generates test code for given source code, using a specified test framework and optional context from related files."
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.TEST_GENERATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
     _llm_provider: LLMProvider
     _prompt_manager: PromptManager

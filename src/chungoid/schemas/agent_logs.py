@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ARCALogEntry(BaseModel):
@@ -42,7 +42,7 @@ class ARCALogEntry(BaseModel):
         # Example for event_details based on event_type (for documentation/validation if needed later)
         # This is more for conceptual clarity, direct validation of event_details based on event_type
         # within Pydantic v2 would require more complex logic (e.g. discriminated unions or validators)
-        schema_extra = {
+        json_schema_extra = {
             "examples": [
                 {
                     "log_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
@@ -231,5 +231,18 @@ class QualityAssuranceLogEntry(BaseModel):
     confidence_in_assessment: Optional[float] = Field(None, description="Confidence in this QA assessment itself (0.0 to 1.0), if applicable.")
     action_taken_or_recommended: Optional[str] = Field(None, description="Brief description of any action taken as a result of this QA event (e.g., 'Triggered refinement cycle') or recommended next steps.")
 
-    class Config:
-        use_enum_values = True # Ensures enum values are used in serialization 
+    # Corrected and combined for Pydantic V2 using model_config
+    model_config = ConfigDict(
+        use_enum_values = True, # Added from old Config class
+        extra='allow',  # Added from the first model_config assignment
+        json_schema_extra = {
+            "example": {
+                "log_level": "INFO",
+                "message": "Agent processing completed.",
+                "timestamp_utc": "2023-10-26T10:30:00Z",
+                "agent_id": "content_generator_agent_v1",
+                "stage_id": "generate_blog_post",
+                "task_id": "task_12345"
+            }
+        }
+    ) 

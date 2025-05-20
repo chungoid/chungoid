@@ -1,12 +1,13 @@
 import logging
-from typing import Optional, Dict, Any, List, Literal, Union, NewType, Annotated, ClassVar
+from typing import Optional, Dict, Any, List, Literal, Union, NewType, Annotated, ClassVar, TypeVar, Generic
 from pathlib import Path
 from enum import Enum
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator, ConfigDict, FilePath, DirectoryPath
 import asyncio
 import time
 import os
 import json
+import uuid
 
 from chungoid.schemas.common import ArbitraryModel, InputOutputContextPathStr # Assuming this exists and is correct
 from chungoid.schemas.common_enums import StageStatus # For mock context
@@ -14,9 +15,11 @@ from chungoid.utils.agent_registry_meta import AgentCategory # AgentCategory is 
 from chungoid.utils.agent_registry import AgentCard # AgentCard for get_agent_card_static
 from chungoid.schemas.errors import AgentErrorDetails # CORRECTED IMPORT
 
+# Corrected import path
+from chungoid.runtime.agents.agent_base import BaseAgent, InputSchema, OutputSchema 
+
 logger = logging.getLogger(__name__)
 
-from chungoid.models.agent_base import BaseAgent, InputSchema, OutputSchema # This was created
 from chungoid.utils.agent_registry_meta import AgentCategory # This was fixed - REMOVED AgentProfile
 
 # region Mock Agent Input/Output Schemas
@@ -418,6 +421,7 @@ class MockAlternativeAgentV1(BaseAgent[MockAlternativeAgentV1Input, MockAlternat
 
 # --- ADD IMPORT FOR THE MISSING MOCK AGENT ---
 from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import MockSystemRequirementsGatheringAgent
+from chungoid.runtime.agents.mocks.mock_human_input_agent import MockHumanInputAgent # ADDED IMPORT
 # --- END ADD IMPORT ---
 
 # Helper list for registration script
@@ -427,7 +431,8 @@ ALL_MOCK_TESTING_AGENTS = [
     MockVerifyAgentV1,
     MockClarificationAgentV1, # Added new agent
     MockAlternativeAgentV1,
-    MockSystemRequirementsGatheringAgent # <<< ADDED THE AGENT HERE
+    MockSystemRequirementsGatheringAgent, # <<< ADDED THE AGENT HERE
+    MockHumanInputAgent # ADDED MockHumanInputAgent to the list
 ]
 
 def get_all_mock_testing_agent_cards() -> List[AgentCard]:

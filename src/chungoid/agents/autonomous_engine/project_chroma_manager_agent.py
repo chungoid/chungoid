@@ -209,6 +209,7 @@ class ProjectChromaManagerAgent_v1(BaseModel):
     Manages project-specific ChromaDB collections for the Autonomous Project Engine.
     Provides an API for other agents to store and retrieve project artifacts.
     """
+    AGENT_ID: ClassVar[str] = "chungoid.agents.autonomous_engine.project_chroma_manager_agent.ProjectChromaManagerAgent_v1"
     project_id: str = Field(..., description="Unique identifier for the project.")
     # project_root_workspace_path: Path = Field(..., description="The root directory of the chungoid-mcp workspace.")
     # This will be handled by __init__ for now due to potential circular dependencies or complex init logic if directly a field

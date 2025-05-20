@@ -85,6 +85,7 @@ class MasterStageSpec(BaseModel):
     next_stage_false: Optional[str] = Field(None, description="Next Master Flow stage if condition is false.")
     next_stage: Optional[str] = Field(None, description="Next Master Flow stage (if no condition).")
     number: Optional[float] = Field(None, description="Unique stage number for status tracking within the Master Flow.")
+    max_retries: Optional[int] = Field(None, description="Maximum number of retries for this stage if it fails and a retry mechanism is configured (e.g., via on_failure or reviewer action).")
     # on_error: Optional[Any] = Field(None, description="Error handling strategy for this master stage.") # For future?
     output_context_path: Optional[str] = Field(
         None, 

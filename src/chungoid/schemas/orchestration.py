@@ -5,6 +5,8 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
+from chungoid.schemas.common_enums import StageStatus
+
 class SharedContext(BaseModel):
     """
     A Pydantic model representing the shared context passed between agents/stages
@@ -13,9 +15,15 @@ class SharedContext(BaseModel):
     project_id: str = Field(..., description="The unique identifier for the current project.")
     project_root_path: str = Field(..., description="The absolute string path to the project's root directory.")
     
+    run_id: Optional[str] = Field(None, description="The unique identifier for the current execution run of a flow.")
+    flow_id: Optional[str] = Field(None, description="The unique identifier for the specific flow being executed.")
+
     current_cycle_id: Optional[str] = Field(None, description="Identifier for the current iteration or operational cycle.")
-    current_stage_name: Optional[str] = Field(None, description="Name of the currently executing stage in the workflow.")
-    
+    current_stage_id: Optional[str] = Field(None, description="ID of the currently executing stage in the workflow.")
+    current_stage_status: Optional[StageStatus] = Field(None, description="Status of the currently executing stage.")
+
+    initial_inputs: Dict[str, Any] = Field(default_factory=dict, description="The initial inputs provided to the flow run.")
+
     previous_stage_outputs: Dict[str, Any] = Field(
         default_factory=dict,
         description="Outputs from previously completed stages. Keys are stage names (or agent IDs), values are their outputs (e.g., artifact IDs, status messages)."

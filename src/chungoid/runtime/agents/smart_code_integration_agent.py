@@ -14,7 +14,7 @@ from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.schemas.errors import AgentErrorDetails
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LIVE_CODEBASE_COLLECTION, PLANNING_ARTIFACTS_COLLECTION
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LIVE_CODEBASE_COLLECTION
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,6 @@ class SmartCodeIntegrationAgent_v1:
                 "language_support": ["python"],
                 "pcma_collections_used": [
                     LIVE_CODEBASE_COLLECTION, 
-                    PLANNING_ARTIFACTS_COLLECTION
                 ]
             },
             input_schema=SmartCodeIntegrationInput.model_json_schema(),

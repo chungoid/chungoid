@@ -17,6 +17,7 @@ class AgentCategory(str, Enum):
     DOCUMENTATION_GENERATION = "DOCUMENTATION_GENERATION" # For ProjectDocumentationAgent
     DATA_ANALYSIS = "DATA_ANALYSIS"
     FILE_MANAGEMENT = "FILE_MANAGEMENT" # For SystemFileSystemAgent
+    AUTONOMOUS_PROJECT_ENGINE = "AUTONOMOUS_PROJECT_ENGINE" # For overarching project build/execution agents
     # Add more categories as needed
 
 class AgentVisibility(str, Enum):

@@ -5,7 +5,7 @@ import logging
 import subprocess
 import shlex
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, ClassVar
 import os
 import uuid # Added for task_id default
 
@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__) # Keep module-level logger for now, class w
 # AGENT_ID = "system_test_runner_agent" # Will be a class attribute
 
 class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestRunnerAgentOutput]):
-    AGENT_ID: str = "SystemTestRunnerAgent_v1"
-    AGENT_NAME: str = "System Test Runner Agent v1"
-    AGENT_DESCRIPTION: str = "Runs pytest tests and reports results."
-    AGENT_VERSION: str = "1.0.0"
-    CATEGORY: AgentCategory = AgentCategory.TEST_EXECUTION
-    VISIBILITY: AgentVisibility = AgentVisibility.PUBLIC
+    AGENT_ID: ClassVar[str] = "SystemTestRunnerAgent_v1"
+    AGENT_NAME: ClassVar[str] = "System Test Runner Agent v1"
+    AGENT_DESCRIPTION: ClassVar[str] = "Runs pytest tests and reports results."
+    AGENT_VERSION: ClassVar[str] = "1.0.0"
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.TEST_EXECUTION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
     def __init__(self, system_context: Optional[Dict[str, Any]] = None, **kwargs):
         super().__init__(system_context=system_context, **kwargs)

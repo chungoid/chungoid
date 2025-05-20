@@ -155,14 +155,29 @@ class RegistryAgentProvider:
         self,
         registry: "AgentRegistry",
         fallback: Optional[Dict[str, AgentCallable]] = None,
+        # MODIFIED: Add dependencies for agent instantiation
+        llm_provider: Optional[LLMProvider] = None,
+        prompt_manager: Optional[PromptManager] = None,
+        project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = None
     ) -> None:
         from .agent_registry import AgentRegistry as ConcreteAgentRegistry
+        # MODIFIED: Import dependencies
+        from chungoid.utils.llm_provider import LLMProvider # Assuming this is the correct path
+        from chungoid.utils.prompt_manager import PromptManager # Assuming this is the correct path
+        from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1 # Assuming this is the correct path
+
 
         if not isinstance(registry, ConcreteAgentRegistry):  # noqa: E501 – defensive
             raise TypeError("registry must be an AgentRegistry instance")
         self._registry = registry
         self._fallback: Dict[str, AgentCallable] = fallback or {}
         self._cache: Dict[str, AgentCallable] = {}
+        
+        # MODIFIED: Store dependencies
+        self._llm_provider = llm_provider
+        self._prompt_manager = prompt_manager
+        self._project_chroma_manager = project_chroma_manager
+
 
         # Lazy MCP client import to keep meta-layer optional in pure-core tests
         try:
@@ -223,9 +238,49 @@ class RegistryAgentProvider:
             if is_class_via_isinstance or is_class_via_inspect:
                 logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' identified as a class (isinstance: {is_class_via_isinstance}, inspect: {is_class_via_inspect}). Attempting instantiation.")
                 try:
-                    # Removed attempt to get agent_config_for_fallback via self._get_agent_config()
-                    logger.debug(f"RegistryAgentProvider: Instantiating fallback class '{identifier}' directly (no specific config from resolver).")
-                    agent_instance = potential_item() # Directly instantiate
+                    # MODIFIED: Special handling for MasterPlannerAgent instantiation
+                    if identifier == "SystemMasterPlannerAgent_v1" and inspect.isclass(potential_item):
+                        logger.info(f"RegistryAgentProvider: Special instantiation for MasterPlannerAgent.")
+                        if not self._llm_provider or not self._prompt_manager or not self._project_chroma_manager:
+                            logger.error("MasterPlannerAgent requires llm_provider, prompt_manager, and project_chroma_manager for instantiation in resolver.")
+                            raise ValueError("Missing dependencies for MasterPlannerAgent instantiation in RegistryAgentProvider.")
+                        try:
+                            # Explicitly import MasterPlannerAgent here to ensure we're using the right one
+                            from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
+                            if potential_item is MasterPlannerAgent: # Double check it's the correct class
+                                agent_instance = MasterPlannerAgent(
+                                    llm_provider=self._llm_provider,
+                                    prompt_manager=self._prompt_manager,
+                                    project_chroma_manager=self._project_chroma_manager
+                                )
+                            else: # Should not happen if identifier is SystemMasterPlannerAgent_v1
+                                logger.warning(f"Potential item for SystemMasterPlannerAgent_v1 is not MasterPlannerAgent class: {potential_item}. Falling back to default instantiation.")
+                                agent_instance = potential_item() # Fallback to no-arg instantiation
+                        except Exception as e_mpa_inst:
+                            logger.error(f"Error during special instantiation of MasterPlannerAgent: {e_mpa_inst}", exc_info=True)
+                            # Fall through to let the error propagate or be handled by subsequent logic
+                            raise
+                    elif identifier == "SystemMasterPlannerReviewerAgent_v1" and inspect.isclass(potential_item):
+                        logger.info(f"RegistryAgentProvider: Special instantiation for MasterPlannerReviewerAgent.")
+                        if not self._llm_provider or not self._prompt_manager:
+                            logger.error("MasterPlannerReviewerAgent requires llm_provider and prompt_manager for instantiation in resolver.")
+                            raise ValueError("Missing dependencies for MasterPlannerReviewerAgent instantiation in RegistryAgentProvider.")
+                        try:
+                            from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
+                            if potential_item is MasterPlannerReviewerAgent:
+                                 agent_instance = MasterPlannerReviewerAgent(
+                                    llm_provider=self._llm_provider,
+                                    prompt_manager=self._prompt_manager
+                                    # project_chroma_manager is not needed for reviewer
+                                )
+                            else:
+                                logger.warning(f"Potential item for SystemMasterPlannerReviewerAgent_v1 is not MasterPlannerReviewerAgent class: {potential_item}. Falling back to default instantiation.")
+                                agent_instance = potential_item() 
+                        except Exception as e_mpra_inst:
+                            logger.error(f"Error during special instantiation of MasterPlannerReviewerAgent: {e_mpra_inst}", exc_info=True)
+                            raise
+                    else:
+                        agent_instance = potential_item() # Default no-arg instantiation for other classes
                     
                     logger.info(f"RegistryAgentProvider: Successfully instantiated fallback class for '{identifier}' to: {agent_instance} (type: {type(agent_instance)})")
 
@@ -360,11 +415,19 @@ class RegistryAgentProvider:
 
         # Card exists, not in fallback, not an MCP tool, and not resolved as a known local mock.
         # Return the stub as the last resort.
-        logger.warning(f"RegistryAgentProvider: Agent '{identifier}' resolved via card but no MCP tool and not a recognized local Python agent. Reason for no local resolution: {_resolution_issue_reason if '_resolution_issue_reason' in locals() else 'Unknown (fell through fallback and local mock checks)'}. Returning synchronous stub.")
-        def _stub(stage: StageDict, full_context: Optional[Dict[str, Any]] = None) -> Dict[str, object]:  # type: ignore[override]
-            logger.debug(f"RegistryAgentProvider: Executing STUB for '{identifier}'.")
-            return {"agent_id": identifier, "stage_inputs": stage.get("inputs", {}), "message": "Agent is a stub (card found, no tool/fallback)."}
-
+        logger.warning(
+            f"RegistryAgentProvider: Agent '{identifier}' has no fallback, no tool mapping, and no direct callable. "
+            f"Returning a placeholder stub that will raise NotImplementedError."
+        )
+        # This stub should match the expected signature of an agent callable
+        def _stub(input_data: Any, **kwargs) -> Dict[str, object]: # MODIFIED STUB SIGNATURE
+            logger.error(
+                f"Stub for agent '{identifier}' called with input: {str(input_data)[:200]} and kwargs: {kwargs}. "
+                f"This agent is not fully implemented or configured."
+            )
+            raise NotImplementedError(
+                f"Agent '{identifier}' is not implemented or no tool is mapped."
+            )
         self._cache[identifier] = _stub
         logger.debug(f"RegistryAgentProvider: Caching and returning STUB for '{identifier}'.")
         return _stub

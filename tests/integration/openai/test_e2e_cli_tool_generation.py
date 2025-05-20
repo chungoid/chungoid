@@ -410,6 +410,11 @@ async def test_e2e_generate_line_counter_cli(
                 f.write(generated_code_str)
             logger.info(f"Manually saved generated code to {cli_tool_path}")
         
+        # Make the script executable
+        current_permissions = cli_tool_path.stat().st_mode
+        cli_tool_path.chmod(current_permissions | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        logger.info(f"Made CLI tool {cli_tool_path} executable.")
+
         assert cli_tool_path.exists(), f"CLI tool {cli_tool_path} was not created."
         assert cli_tool_path.is_file()
 
@@ -424,10 +429,9 @@ async def test_e2e_generate_line_counter_cli(
             f.write(dummy_file_content)
 
         try:
-            # Run the generated CLI tool
-            # Ensure the CLI tool is executable (subprocess might not need it if python is called directly)
+            # Run the generated CLI tool directly
             process = subprocess.run(
-                ["python", str(cli_tool_path), str(dummy_file_path)], 
+                [str(cli_tool_path), str(dummy_file_path)], 
                 capture_output=True, text=True, check=False, timeout=30
             )
             output = process.stdout.strip()

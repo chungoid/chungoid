@@ -2,6 +2,9 @@ from __future__ import annotations
 import json
 from chungoid.utils.config_loader import get_config
 import click
+import typer
+import yaml
+import uuid # ADDED FOR PROJECT ID GENERATION
 
 """Command-line interface for Chungoid-core.
 
@@ -33,7 +36,7 @@ from rich.logging import RichHandler
 import chungoid
 from chungoid.constants import (DEFAULT_MASTER_FLOWS_DIR, DEFAULT_SERVER_STAGES_DIR, MIN_PYTHON_VERSION,
                               PROJECT_CHUNGOID_DIR, STATE_FILE_NAME)
-from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus
+from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus, HumanReviewDecision
 from chungoid.core_utils import get_project_root_or_raise, init_project_structure
 from chungoid.schemas.master_flow import MasterExecutionPlan
 from chungoid.schemas.metrics import MetricEventType
@@ -170,20 +173,21 @@ from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent impo
 from chungoid.schemas.agent_master_planner import MasterPlannerInput # <<< ADD THIS IMPORT
 
 # Import for CoreCodeGeneratorAgent
-from chungoid.runtime.agents.core_code_generator_agent import CodeGeneratorAgent, get_agent_card_static as get_code_generator_agent_card
+from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
 # Import for CoreTestGeneratorAgent
-from chungoid.runtime.agents.core_test_generator_agent import TestGeneratorAgent, get_agent_card_static as get_test_generator_agent_card
-# Import for CoreCodeIntegrationAgentV1
-from chungoid.runtime.agents.core_code_integration_agent import CoreCodeIntegrationAgentV1, get_agent_card_static as get_code_integration_agent_card
+from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent
+# Import for CodeIntegrationAgent - UPDATED
+from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
 
 # New imports for MockTestGenerationAgentV1
 from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGenerationAgentV1, get_agent_card_static as get_mock_test_generation_agent_v1_card
 
 # Import the new system_test_runner_agent
-from chungoid.runtime.agents import system_test_runner_agent # ADDED
+# from chungoid.runtime.agents import system_test_runner_agent # ADDED # OLD IMPORT
+from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent # NEW IMPORT
 
 # Ensure AgentID type is available if used for keys, though strings are fine for dict keys.
-from chungoid.models import AgentID
+from chungoid.schemas.common import AgentID # CORRECTED IMPORT
 # from chungoid.runtime.agents.base import AgentBase # For type hinting if needed # REMOVED
 
 # --- ADDED IMPORTS FOR MOCK SETUP AGENT ---
@@ -532,10 +536,11 @@ def flow_run(ctx: click.Context,
     agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
     agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True) # Alias for MockTestGenerationAgentV1 for now
     agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
-    agent_registry.add(get_code_generator_agent_card(), overwrite=True)
-    agent_registry.add(get_test_generator_agent_card(), overwrite=True)
-    agent_registry.add(get_code_integration_agent_card(), overwrite=True)
+    agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
+    agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
+    agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
     agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
+    agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
 
     # For simplicity in RegistryAgentProvider, we provide one merged map. Let's ensure system agents are there.
     
@@ -546,8 +551,8 @@ def flow_run(ctx: click.Context,
         MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
         CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # MVP uses its mocked output
         TestGeneratorAgent.AGENT_ID: TestGeneratorAgent, # MVP uses its mocked output
-        CoreCodeIntegrationAgentV1.AGENT_ID: CoreCodeIntegrationAgentV1, # Handles actual file edits
-        system_test_runner_agent.AGENT_ID: system_test_runner_agent.invoke_async # Use the AGENT_ID and invoke_async function for functional agents
+        SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1, # Handles actual file edits
+        SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent # Use the AGENT_ID and invoke_async function for functional agents
         # Add other essential system agents here if their local Python class should be directly invokable via fallback
     }
     
@@ -579,6 +584,31 @@ def flow_run(ctx: click.Context,
     metrics_store_root = Path(project_config["project_root_dir"]) # Ensure this is a Path for MetricsStore
     metrics_store = MetricsStore(project_root=metrics_store_root)
     
+    # --- Initialize Project State --- 
+    try:
+        # Generate a project ID if one isn't already in the config or determined
+        # For a new build, we usually generate one.
+        new_project_id = project_config.get('project_id') or f"proj_{uuid.uuid4().hex[:12]}"
+        
+        initialized_project_state = state_manager.initialize_project(
+            project_id=new_project_id, # ADDED project_id
+            project_name=project_path.name, 
+            initial_user_goal_summary=goal
+        )
+        current_project_id = initialized_project_state.project_id # Use the ID from the initialized state
+        logger.info(f"Project initialized/loaded with ID: {current_project_id} and state file written/verified.")
+        
+        # Ensure config object has project_id and project_root_path for AsyncOrchestrator
+        project_config['project_id'] = current_project_id
+        project_config['project_root_path'] = str(project_path) # project_root is already a Path
+        project_config['project_root'] = str(project_path) # Also ensure 'project_root' key for other potential uses
+
+    except Exception as e_init_proj:
+        logger.error(f"Failed to initialize project state: {e_init_proj}", exc_info=True)
+        click.echo(f"Error initializing project state: {e_init_proj}", err=True)
+        sys.exit(1)
+    # --- End Initialize Project State ---
+
     orchestrator = AsyncOrchestrator(
         config=project_config,
         agent_provider=agent_provider,
@@ -695,9 +725,9 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
         agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
         agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
         agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
-        agent_registry.add(get_code_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_test_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_code_integration_agent_card(), overwrite=True)
+        agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
+        agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
+        agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
 
 
         fallback_agents_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map()
@@ -1220,7 +1250,7 @@ def project_review(
              # If StateManager strictly needs it, this command might fail here.
              # For review submission, StateManager primarily needs project_status.json.
 
-        state_manager = StateManager(str(project_root), str(server_stages_dir_path))
+        state_manager = StateManager(target_directory=str(project_root), server_stages_dir=str(server_stages_dir_path))
 
         review_record = HumanReviewRecord(
             reviewer_id=reviewer_id,
@@ -1259,3 +1289,254 @@ def project_review(
         click.secho(f"An unexpected error occurred: {e}", fg="red")
         logger.error("Unexpected error in project review CLI command:", exc_info=True)
         sys.exit(1)
+
+# Import for ProjectChromaManagerAgent_v1, needed by the 'build' command
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+# CORRECTED IMPORT for HumanReviewRecord
+from chungoid.schemas.project_status_schema import HumanReviewRecord 
+
+# NEW BUILD COMMAND
+@cli.command("build", help="Build a project from a goal file.")
+@click.option("--goal-file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path), required=True, help="Path to the file containing the user goal.")
+@click.option("--project-dir", "project_dir_opt", type=click.Path(file_okay=False, dir_okay=True, path_type=Path), default=".", help="Target project directory. Defaults to current directory. Will be created if it doesn't exist.")
+@click.option("--run-id", "run_id_override_opt", type=str, default=None, help="Specify a custom run ID for this execution.")
+@click.option("--initial-context", type=str, default=None, help="JSON string containing initial context variables for the build.")
+@click.option("--tags", type=str, default=None, help="Comma-separated tags for this build (e.g., 'dev,release').")
+@click.pass_context
+def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str]): # Corrected parameter name here
+    logger = logging.getLogger("chungoid.cli.build")
+    logger.info(f"CLI: build_from_goal_file invoked.")
+    logger.info(f"CLI: Raw --goal-file (goal_file): {goal_file}")
+    logger.info(f"CLI: Raw --project-dir (project_dir_opt): {project_dir_opt} (type: {type(project_dir_opt)})")
+    
+    project_root = project_dir_opt.resolve()
+    logger.info(f"CLI: Resolved project_root: {project_root} (type: {type(project_root)})")
+
+    if not project_root.exists():
+        logger.error(f"Project directory '{project_dir_opt}' does not exist.")
+        click.echo(f"Error: Project directory '{project_dir_opt}' does not exist.", err=True)
+        sys.exit(1)
+
+    try:
+        user_goal = goal_file.read_text().strip()
+        if not user_goal:
+            raise click.UsageError(f"Goal file '{goal_file}' is empty.")
+    except Exception as e:
+        raise click.BadParameter(f"Could not read goal from file '{goal_file}': {e}")
+
+    logger.debug(f"Goal from file '{goal_file}': \"{user_goal}\", Project Dir: {project_dir_opt}")
+
+    parsed_initial_context: Optional[Dict[str, Any]] = None
+    if initial_context:
+        try:
+            parsed_initial_context = py_json.loads(initial_context)
+            if not isinstance(parsed_initial_context, dict):
+                raise ValueError("Initial context must be a JSON object.")
+        except py_json.JSONDecodeError as e:
+            raise click.BadParameter(f"Invalid JSON in --initial-context: {e}")
+        except ValueError as e:
+            raise click.BadParameter(str(e))
+
+    parsed_tags: Optional[List[str]] = [t.strip() for t in tags.split(',')] if tags else None
+
+    # This is largely a copy of do_run() from flow_run.
+    # Consider refactoring do_run to be more generic if this pattern repeats.
+    async def do_build():
+        project_root_for_init = project_dir_opt.resolve() # Use the resolved path for internal logic
+        
+        # Ensure project directory structure exists
+        init_project_structure(project_root_for_init)
+
+        try:
+            user_goal = goal_file.read_text().strip()
+        except Exception as e_read_goal:
+            logger.error(f"Failed to read goal file '{goal_file}': {e_read_goal}")
+            click.echo(f"Error reading goal file: {e_read_goal}", err=True)
+            sys.exit(1)
+        
+        if not user_goal:
+            logger.error("Goal file is empty.")
+            click.echo("Error: Goal file is empty.", err=True)
+            sys.exit(1)
+
+        logger.info(f"User goal from file '{goal_file}': {user_goal[:100]}...")
+
+        config = load_config(project_root_for_init) 
+
+        agent_registry_config_dict = config.get('agent_registry_config', {})
+        registry_chroma_mode = agent_registry_config_dict.get('chroma_mode', 'persistent')
+        registry_project_root = project_root_for_init
+
+        agent_registry = AgentRegistry(
+            project_root=registry_project_root,
+            chroma_mode=registry_chroma_mode,
+        )
+        
+        agent_registry.add(core_stage_executor_card, overwrite=True)
+        agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
+        agent_registry.add(get_master_planner_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
+        agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
+        agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
+        agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
+        agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
+        agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
+
+        llm_provider = MockLLMProvider()
+        # Check if llm_providers is configured and is a list
+        llm_providers_list = config.get("llm_providers")
+        if llm_providers_list and isinstance(llm_providers_list, list) and len(llm_providers_list) > 0:
+            primary_provider_config_dict = llm_providers_list[0] # Assuming it's a dict
+            if isinstance(primary_provider_config_dict, dict):
+                provider_name = primary_provider_config_dict.get("provider_name")
+                default_model = primary_provider_config_dict.get("default_model")
+                
+                if provider_name == "openai":
+                    from chungoid.utils.llm_provider import OpenAILLMProvider
+                    llm_provider = OpenAILLMProvider(
+                        api_key=os.environ.get("OPENAI_API_KEY"),
+                        default_model=default_model or "gpt-4-turbo-preview"
+                    )
+                logger.info(f"Using LLM provider: {provider_name}")
+            else:
+                logger.warning("Primary LLM provider configuration is not a dictionary. Using MockLLMProvider.")
+        else:
+            logger.warning("No LLM providers configured or configuration is empty/invalid. Using MockLLMProvider.")
+
+        # Determine server_prompts_dir robustly relative to this CLI file
+        cli_file_path = Path(__file__).resolve() # chungoid-core/src/chungoid/cli.py
+        # Path to chungoid-core/server_prompts/
+        server_prompts_dir = cli_file_path.parent.parent.parent / "server_prompts"
+        if not server_prompts_dir.is_dir():
+            logger.warning(f"Calculated server_prompts_dir not found at {server_prompts_dir}. Falling back to project relative 'server_prompts'.")
+            server_prompts_dir = project_root_for_init / "server_prompts"
+            if not server_prompts_dir.is_dir():
+                logger.error(f"Fallback server_prompts_dir also not found at {server_prompts_dir}. PromptManager and StateManager might fail.")
+                # As a last resort, you might point to a global default or raise an error.
+                # For now, we'll let it proceed and potentially fail later if this path is critical and missing.
+
+        logger.info(f"Using server_prompts_dir: {server_prompts_dir}")
+
+        prompt_manager = chungoid.utils.prompt_manager.PromptManager(prompt_directory_paths=[str(server_prompts_dir)])
+        state_manager = StateManager(target_directory=str(project_root_for_init), server_stages_dir=str(server_prompts_dir))
+        metrics_store = MetricsStore(project_root=project_root_for_init)
+        
+        # --- Determine Project ID ---
+        existing_project_id: Optional[str] = config.get('project_id')
+        if not existing_project_id:
+            # Try to load from existing state file if it exists
+            potential_state_file = project_root_for_init / PROJECT_CHUNGOID_DIR / STATE_FILE_NAME
+            if potential_state_file.exists():
+                try:
+                    # Minimal load just to get project_id, avoid full StateManager init here if it causes issues
+                    with open(potential_state_file, 'r') as f_state:
+                        state_data_raw = py_json.load(f_state)
+                        existing_project_id = state_data_raw.get('project_id')
+                        if existing_project_id:
+                            logger.info(f"Found existing project_id '{existing_project_id}' in state file.")
+                except Exception as e_load_existing_id:
+                    logger.warning(f"Could not read project_id from existing state file {potential_state_file}: {e_load_existing_id}")
+
+        # --- Initialize Project State --- 
+        try:
+            # Use existing_project_id if found, otherwise generate new one
+            current_project_id_for_init = existing_project_id or f"proj_{uuid.uuid4().hex[:12]}"
+            
+            initialized_project_state = state_manager.initialize_project(
+                project_id=current_project_id_for_init, 
+                project_name=project_root_for_init.name, 
+                initial_user_goal_summary=user_goal
+            )
+            current_project_id = initialized_project_state.project_id # Use the ID from the initialized state
+            logger.info(f"Project initialized/loaded with ID: {current_project_id} and state file written/verified.")
+            
+            # Ensure config object has project_id and project_root_path for AsyncOrchestrator
+            config['project_id'] = current_project_id
+            config['project_root_path'] = str(project_root_for_init) 
+            config['project_root'] = str(project_root_for_init) 
+
+        except Exception as e_init_proj:
+            logger.error(f"Failed to initialize project state: {e_init_proj}", exc_info=True)
+            click.echo(f"Error initializing project state: {e_init_proj}", err=True)
+            sys.exit(1)
+        # --- End Initialize Project State ---
+
+        # MODIFIED: Instantiate ProjectChromaManagerAgent_v1 HERE
+        project_chroma_manager = ProjectChromaManagerAgent_v1(
+            project_root_workspace_path=project_root_for_init.parent, # Workspace root
+            project_id=current_project_id # The ID of the current project
+        )
+        logger.info(f"ProjectChromaManagerAgent_v1 instantiated for project {current_project_id} with workspace {project_root_for_init.parent}")
+
+
+        # Corrected access to config for agent_provider fallback
+        use_mock_fallback = config.get('use_mock_fallback_agents', False)
+
+        # MODIFIED: Construct comprehensive fallback map with CLASS (not instance) for MasterPlannerAgent
+        final_fallback_map: Dict[AgentID, AgentCallable] = {}
+        if use_mock_fallback:
+            # get_mock_agent_fallback_map() returns ID -> Class map for mocks
+            final_fallback_map.update(get_mock_agent_fallback_map()) 
+
+        # Add CORE SYSTEM AGENT CLASSES to the fallback map.
+        # The resolver will now attempt to instantiate them with dependencies.
+        core_system_agent_classes = {
+            MasterPlannerAgent.AGENT_ID: MasterPlannerAgent, # Provide class
+            MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent, # Provide class
+            ProjectChromaManagerAgent_v1.AGENT_ID: ProjectChromaManagerAgent_v1, # Provide class
+            # Add other core agent *classes* if they need dependency injection by the resolver
+            # CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent,
+            # TestGeneratorAgent.AGENT_ID: TestGeneratorAgent,
+            # SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
+            # SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,
+        }
+        final_fallback_map.update(core_system_agent_classes)
+
+        # ADD HumanInputAgent_v1 to the fallback map explicitly as the mock planner uses it.
+        # This ensures it's available even if use_mock_fallback_agents is false.
+        # The mock plan specifically requests "HumanInputAgent_v1".
+        human_input_agent_id_from_plan = "HumanInputAgent_v1"
+        if human_input_agent_id_from_plan not in final_fallback_map:
+            final_fallback_map[human_input_agent_id_from_plan] = MockHumanInputAgent
+            logger.info(f"Explicitly added '{human_input_agent_id_from_plan}' (maps to MockHumanInputAgent) to fallback map.")
+
+        agent_provider = RegistryAgentProvider(
+            registry=agent_registry,
+            fallback=final_fallback_map, 
+            # MODIFIED: Pass dependencies to RegistryAgentProvider
+            llm_provider=llm_provider,
+            prompt_manager=prompt_manager,
+            project_chroma_manager=project_chroma_manager # Instantiated above
+        )
+
+        orchestrator = AsyncOrchestrator(
+            config=config, 
+            agent_provider=agent_provider,
+            state_manager=state_manager,
+            metrics_store=metrics_store
+        )
+
+        current_run_id = run_id_override_opt or f"run_{uuid.uuid4().hex[:16]}" # MODIFIED: Use UUID for new run ID
+        logger.info(f"Build Run ID: {current_run_id}")
+
+        # Prepare combined initial context including tags
+        final_initial_context = parsed_initial_context or {}
+        if parsed_tags:
+            final_initial_context["_run_tags"] = parsed_tags
+
+        # Call the existing run method with the goal_str
+        try:
+            await orchestrator.run(
+                goal_str=user_goal, # Pass the goal string directly
+                run_id_override=current_run_id,
+                initial_context=final_initial_context # Pass combined context
+            )
+        except Exception as e_master_plan:
+            logger.error(f"Failed to execute master plan based on goal: {e_master_plan}", exc_info=True)
+            click.echo(f"Error executing master plan from goal: {e_master_plan}", err=True)
+            sys.exit(1)
+
+    asyncio.run(do_build())
