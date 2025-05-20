@@ -45,7 +45,7 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "Pydantic schemas.\n"
     "The output MUST be a single JSON object.\n\n"
     "Available Agents (use exact IDs):\n"
-    "- `CodeGeneratorAgent_v1`: Generates or modifies code.\n"
+    "- `SmartCodeGeneratorAgent_v1`: Generates or modifies code.\n"
     "- `TestGeneratorAgent_v1`: Generates unit tests.\n"
     "- `FileOperationAgent_v1`: Performs file system operations.\n"
     "- `HumanInputAgent_v1`: (Use Sparingly) Requests specific input "
@@ -298,13 +298,32 @@ class MasterPlannerAgent:
                 final_prompt_for_llm = f"{current_system_prompt}\n\n{current_user_prompt}"
             
             llm_response_str = await self.llm_client.generate(
-                prompt=final_prompt_for_llm,
+                prompt=final_prompt_for_llm
                 # model_id="gpt-4-turbo-preview", # Or from config
-                json_response=True # Crucial: ensure LLM is asked for JSON
+                # json_response=True # REMOVED: This was causing the TypeError. OpenAILLMProvider handles response_format.
             )
 
             # Step 2: Parse the string response as JSON.
             llm_generated_plan_dict = json.loads(llm_response_str)
+
+            # --- Inject stage IDs from dictionary keys --- 
+            # This mirrors the logic in MasterExecutionPlan.from_yaml for direct LLM output validation.
+            stages_from_llm = llm_generated_plan_dict.get("stages")
+            if isinstance(stages_from_llm, dict):
+                for stage_key, stage_spec_dict in stages_from_llm.items():
+                    if isinstance(stage_spec_dict, dict):
+                        stage_spec_dict["id"] = stage_key
+                        
+                        # Sanitize clarification_checkpoint: if present and not a dict, set to None
+                        if "clarification_checkpoint" in stage_spec_dict and not isinstance(stage_spec_dict["clarification_checkpoint"], dict):
+                            logger.warning(
+                                f"LLM provided a non-dictionary value for clarification_checkpoint in stage '{stage_key}'. "
+                                f"Received: {stage_spec_dict['clarification_checkpoint']}. Setting to None."
+                            )
+                            stage_spec_dict["clarification_checkpoint"] = None
+                            
+                llm_generated_plan_dict["stages"] = stages_from_llm
+            # --- End stage ID injection and sanitization ---
 
             # ADDED: Handle common LLM mistake of using 'initial_stage' instead of 'start_stage'
             if "initial_stage" in llm_generated_plan_dict and "start_stage" not in llm_generated_plan_dict:
@@ -335,6 +354,10 @@ class MasterPlannerAgent:
                     f"{user_goal_str}"
                 )
 
+            # Ensure project_id from input is added to the plan data if not present
+            if inputs.project_id and "project_id" not in llm_generated_plan_dict:
+                llm_generated_plan_dict["project_id"] = inputs.project_id
+
             # Parse the LLM's response (which is already a dict from the mock)
             # If llm_client.generate_json returned a string, we'd do:
             # parsed_llm_json = json.loads(llm_response_json_str)
@@ -343,10 +366,11 @@ class MasterPlannerAgent:
 
             if inputs.original_request:
                 plan.original_request = inputs.original_request
-            if inputs.project_id and not plan.project_id: # Add project_id if generating from blueprint and not set by LLM
-                plan.project_id = inputs.project_id
+            # project_id is now part of the model and should be set from llm_generated_plan_dict by model_validate
+            # if inputs.project_id and not plan.project_id: # Add project_id if generating from blueprint and not set by LLM
+            #     plan.project_id = inputs.project_id
 
-            logger.info(f"MasterPlannerAgent successfully generated plan: {plan.id}")
+            logger.info(f"MasterPlannerAgent successfully generated plan: {plan.id} for project {plan.project_id}")
 
             # --- Store generated plan to PCMA --- 
             generated_plan_artifact_id: Optional[str] = None
@@ -354,18 +378,21 @@ class MasterPlannerAgent:
 
             if inputs.project_id: # Only store if project_id is available
                 try:
+                    # Prepare metadata, ensuring no None values are passed directly for string fields
+                    plan_metadata = {
+                        "artifact_type": "MasterExecutionPlan",
+                        "plan_name": plan.name or "", # Convert None to empty string
+                        "plan_version": plan.version if hasattr(plan, 'version') else "1.0",
+                        "generated_by_agent": self.AGENT_ID,
+                        "user_goal": inputs.user_goal or "", # Convert None to empty string (though user_goal is usually str)
+                        "source_blueprint_id": inputs.blueprint_doc_id or "", # Convert None to empty string
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+
                     store_input = StoreArtifactInput(
                         base_collection_name=EXECUTION_PLANS_COLLECTION,
                         artifact_content=plan.model_dump_json(indent=2), # Store the JSON string
-                        metadata={
-                            "artifact_type": "MasterExecutionPlan",
-                            "plan_name": plan.name,
-                            "plan_version": plan.version if hasattr(plan, 'version') else "1.0", # Assuming version exists
-                            "generated_by_agent": self.AGENT_ID,
-                            "user_goal": inputs.user_goal, # If available
-                            "source_blueprint_id": inputs.blueprint_doc_id, # If from blueprint
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        },
+                        metadata=plan_metadata, # Use the sanitized metadata
                         project_id=inputs.project_id,
                         document_id=plan.id, # Use plan's own ID
                         cycle_id=inputs.current_context.get("cycle_id") if inputs.current_context else None

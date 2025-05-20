@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 # from chungoid.schemas.orchestration import PausedRunDetails # Not directly used here, but for context
 # from chungoid.schemas.agent_errors import AgentErrorDetails # Not directly used, context
 
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import StoreArtifactInput, RetrieveArtifactOutput # Corrected import path
+from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactInput, RetrieveArtifactOutput # Import from new location
 from chungoid.schemas.project_status_schema import CycleInfo, ProjectStateV2, CycleStatus, ProjectOverallStatus, ArtifactLink, KeyDecision, HumanReviewRecord # Restored project_status_schema imports
 
 

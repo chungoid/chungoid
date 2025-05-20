@@ -12,21 +12,20 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactInput, StoreArtifactOutput, RetrieveArtifactOutput
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     ProjectChromaManagerAgent_v1,
     LOPRD_ARTIFACTS_COLLECTION,
     BLUEPRINT_ARTIFACTS_COLLECTION,
     GENERATED_CODE_ARTIFACTS_COLLECTION,
-    DOCUMENTS_COLLECTION,
-    LIVE_CODEBASE_COLLECTION,
-    StoreArtifactInput,
-    StoreArtifactOutput,
-    RetrieveArtifactOutput
+    PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+    LIVE_CODEBASE_COLLECTION
 )
 
 logger = logging.getLogger(__name__)
 
-PROMPT_NAME = "smart_code_generator_agent_v1_prompt.yaml"
+PROMPT_ID = "smart_code_generator_agent_v1_prompt"
+PROMPT_VERSION = "0.2.0"
 PROMPT_SUB_DIR = "autonomous_engine"
 
 class CoreCodeGeneratorAgent_v1:
@@ -85,7 +84,7 @@ class CoreCodeGeneratorAgent_v1:
             # Fetch code specification
             if parsed_inputs.code_specification_doc_id:
                 retrieved_spec: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
-                    collection_name=DOCUMENTS_COLLECTION,
+                    base_collection_name=PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
                     document_id=parsed_inputs.code_specification_doc_id
                 )
                 if retrieved_spec and retrieved_spec.status == "SUCCESS" and retrieved_spec.content:
@@ -97,7 +96,7 @@ class CoreCodeGeneratorAgent_v1:
             # Fetch existing code if modifying
             if parsed_inputs.existing_code_doc_id:
                 retrieved_existing_code: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
-                    collection_name=LIVE_CODEBASE_COLLECTION,
+                    base_collection_name=GENERATED_CODE_ARTIFACTS_COLLECTION,
                     document_id=parsed_inputs.existing_code_doc_id
                 )
                 if retrieved_existing_code and retrieved_existing_code.status == "SUCCESS" and retrieved_existing_code.content:
@@ -109,7 +108,7 @@ class CoreCodeGeneratorAgent_v1:
             # Fetch blueprint context
             if parsed_inputs.blueprint_context_doc_id:
                 retrieved_blueprint: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
-                    collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
+                    base_collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
                     document_id=parsed_inputs.blueprint_context_doc_id
                 )
                 if retrieved_blueprint and retrieved_blueprint.status == "SUCCESS" and retrieved_blueprint.content:
@@ -122,7 +121,7 @@ class CoreCodeGeneratorAgent_v1:
             if parsed_inputs.loprd_requirements_doc_ids:
                 for doc_id in parsed_inputs.loprd_requirements_doc_ids:
                     retrieved_loprd: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
-                        collection_name=LOPRD_ARTIFACTS_COLLECTION,
+                        base_collection_name=LOPRD_ARTIFACTS_COLLECTION,
                         document_id=doc_id
                     )
                     if retrieved_loprd and retrieved_loprd.status == "SUCCESS" and retrieved_loprd.content:
@@ -151,7 +150,7 @@ class CoreCodeGeneratorAgent_v1:
             "programming_language": parsed_inputs.programming_language,
             "existing_code_content": existing_code_content or "No existing code provided. Assume new file creation.",
             "blueprint_context_content": blueprint_context_content or "No blueprint context provided.",
-            "loprd_requirements_content_str": "\\n\\n---\\n\\n".join(loprd_requirements_list_content) if loprd_requirements_list_content else "No LOPRD requirements provided.",
+            "loprd_requirements_content_list": loprd_requirements_list_content if loprd_requirements_list_content else [],
             "additional_instructions": parsed_inputs.additional_instructions or "Follow standard coding best practices."
         }
 
@@ -163,42 +162,63 @@ class CoreCodeGeneratorAgent_v1:
         try:
             logger_instance.debug(f"Attempting to generate code via LLM for: {parsed_inputs.target_file_path}.")
             
-            llm_response_str = await self._llm_provider.generate_text_async_with_prompt_manager(
-                prompt_name=PROMPT_NAME,
-                prompt_sub_dir=PROMPT_SUB_DIR,
-                prompt_render_data=prompt_render_data,
-                expected_response_type="json_string" 
+            # Step 1: Get the prompt definition to access model settings
+            prompt_def = self._prompt_manager.get_prompt_definition(
+                prompt_name=PROMPT_ID, 
+                prompt_version=PROMPT_VERSION, 
+                sub_path=PROMPT_SUB_DIR
+            )
+
+            # Step 2: Render the system and user prompts using PromptManager
+            rendered_system_prompt, rendered_user_prompt = await self._prompt_manager.get_rendered_system_and_user_prompts(
+                prompt_name=PROMPT_ID, 
+                prompt_version=PROMPT_VERSION, 
+                prompt_sub_path=PROMPT_SUB_DIR,
+                prompt_render_data=prompt_render_data
+            )
+
+            if not rendered_user_prompt:
+                raise PromptRenderError("PromptManager did not return a user_prompt after rendering.")
+
+            # Step 3: Call the LLMProvider with the rendered prompts and model settings from definition
+            llm_full_response_str = await self._llm_provider.generate(
+                prompt=rendered_user_prompt,
+                system_prompt=rendered_system_prompt, 
+                model_id=prompt_def.model_settings.model_name, 
+                temperature=prompt_def.model_settings.temperature,
+                max_tokens=prompt_def.model_settings.max_tokens
+                # OpenAILLMProvider.generate already sets response_format={\"type\": \"json_object\"}
             )
             
-            if not llm_response_str:
+            if not llm_full_response_str:
                 raise ValueError("LLM returned an empty response.")
 
-            parsed_llm_output = json.loads(llm_response_str)
-            generated_code_str = parsed_llm_output.get("generated_code_string")
+            # We expect the LLM to return a JSON string that matches SmartCodeGeneratorAgentOutput's structure, 
+            # or at least contains the key fields like 'generated_code_string'
+            llm_response_data = json.loads(llm_full_response_str)
             
-            if "confidence_score_obj" in parsed_llm_output and parsed_llm_output["confidence_score_obj"]:
-                try:
-                    confidence_score_obj = ConfidenceScore(**parsed_llm_output["confidence_score_obj"])
-                except Exception as e_conf:
-                    logger_instance.warning(f"Failed to parse confidence_score_obj from LLM: {e_conf}. LLM output part: {parsed_llm_output.get('confidence_score_obj')}")
-            
-            usage_metadata_val = parsed_llm_output.get("usage_metadata")
+            # --- Extract core fields from LLM response based on the prompt's output_schema ---
+            generated_code_string = llm_response_data.get("generated_code") # Corrected field name
+            confidence_score_data = llm_response_data.get("confidence_score")
+            key_decision_rationale = llm_response_data.get("key_decision_rationale")
+            contextual_adherence_explanation = llm_response_data.get("contextual_adherence_explanation")
+            # --- End extraction ---
 
-            if not generated_code_str or not isinstance(generated_code_str, str):
-                logger_instance.error("LLM did not return a valid code string in 'generated_code_string' field.")
-                raise ValueError("LLM output missing 'generated_code_string'.")
-            
-            logger_instance.info(f"Successfully received generated code for {parsed_inputs.target_file_path}.")
+            if not generated_code_string or not isinstance(generated_code_string, str):
+                logger_instance.error(f"LLM did not return a valid code string in 'generated_code' field.") # Corrected field name in log
+                raise ValueError("LLM output missing 'generated_code'.") # Corrected field name in error
+
+            logger_instance.info(f"LLM successfully generated code content for {parsed_inputs.target_file_path}.")
 
         except PromptRenderError as e_prompt:
-            logger_instance.error(f"Prompt rendering failed for {PROMPT_NAME}: {e_prompt}", exc_info=True)
+            logger_instance.error(f"Prompt rendering failed for {PROMPT_ID}: {e_prompt}", exc_info=True)
             return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=f"Prompt rendering error: {e_prompt}", llm_full_response=llm_full_response_str)
         except json.JSONDecodeError as e_json:
-            logger_instance.error(f"Failed to decode LLM JSON response: {e_json}. Response: {llm_response_str[:500] if llm_response_str else 'N/A'}", exc_info=True)
-            return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=f"LLM response not valid JSON: {e_json}", llm_full_response=llm_response_str)
+            logger_instance.error(f"Failed to decode LLM JSON response: {e_json}. Response: {llm_full_response_str[:500] if llm_full_response_str else 'N/A'}", exc_info=True)
+            return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=f"LLM response not valid JSON: {e_json}", llm_full_response=llm_full_response_str)
         except ValueError as e_val:
-            logger_instance.error(f"Error processing LLM output: {e_val}. Response: {llm_response_str[:500] if llm_response_str else 'N/A'}", exc_info=True)
-            return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=str(e_val), llm_full_response=llm_response_str)
+            logger_instance.error(f"Error processing LLM output: {e_val}. Response: {llm_full_response_str[:500] if llm_full_response_str else 'N/A'}", exc_info=True)
+            return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=str(e_val), llm_full_response=llm_full_response_str)
         except Exception as e_gen:
             logger_instance.error(f"General error during LLM call or processing for {parsed_inputs.target_file_path}: {e_gen}", exc_info=True)
             return SmartCodeGeneratorAgentOutput(
@@ -212,24 +232,35 @@ class CoreCodeGeneratorAgent_v1:
         generated_code_artifact_doc_id: Optional[str] = None
         stored_in_collection_name: Optional[str] = None
 
-        if generated_code_str and parsed_inputs.project_id:
+        if generated_code_string and parsed_inputs.project_id:
             try:
+                # Prepare metadata, converting Nones to empty strings for Chroma compatibility
+                # and JSON-encoding lists.
+                
+                confidence_val_str = ""
+                if confidence_score_data and confidence_score_data.get("value") is not None:
+                    confidence_val_str = str(confidence_score_data.get("value"))
+
+                chroma_metadata = {
+                    "artifact_type": "GeneratedCodeModule",
+                    "target_file_path": parsed_inputs.target_file_path or "",
+                    "programming_language": parsed_inputs.programming_language or "",
+                    "source_specification_doc_id": parsed_inputs.code_specification_doc_id or "",
+                    "source_existing_code_doc_id": parsed_inputs.existing_code_doc_id or "",
+                    "source_blueprint_doc_id": parsed_inputs.blueprint_context_doc_id or "",
+                    "source_loprd_doc_ids": json.dumps(parsed_inputs.loprd_requirements_doc_ids if parsed_inputs.loprd_requirements_doc_ids else []),
+                    "task_id": parsed_inputs.task_id or "",
+                    "llm_confidence_value": confidence_val_str,
+                    "llm_confidence_explanation": (confidence_score_data.get("explanation") or "") if confidence_score_data else "",
+                    "key_decision_rationale": key_decision_rationale or "",
+                    "contextual_adherence_explanation": contextual_adherence_explanation or "",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+
                 store_input = StoreArtifactInput(
                     base_collection_name=GENERATED_CODE_ARTIFACTS_COLLECTION,
-                    artifact_content=generated_code_str,
-                    metadata={
-                        "artifact_type": "GeneratedCodeModule",
-                        "target_file_path": parsed_inputs.target_file_path,
-                        "programming_language": parsed_inputs.programming_language,
-                        "generated_by_agent": self.AGENT_ID,
-                        "source_specification_doc_id": parsed_inputs.code_specification_doc_id,
-                        "source_blueprint_doc_id": parsed_inputs.blueprint_context_doc_id,
-                        "source_loprd_doc_ids": parsed_inputs.loprd_requirements_doc_ids,
-                        "task_id": parsed_inputs.task_id,
-                        "llm_confidence_value": confidence_score_obj.value if confidence_score_obj else None,
-                        "llm_confidence_explanation": confidence_score_obj.explanation if confidence_score_obj else None,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    },
+                    artifact_content=generated_code_string,
+                    metadata=chroma_metadata,
                     project_id=parsed_inputs.project_id,
                 )
                 logger_instance.info(f"Storing generated code for {parsed_inputs.target_file_path} in PCMA collection {GENERATED_CODE_ARTIFACTS_COLLECTION}.")
@@ -246,8 +277,8 @@ class CoreCodeGeneratorAgent_v1:
                         task_id=parsed_inputs.task_id,
                         target_file_path=parsed_inputs.target_file_path,
                         status="FAILURE_OUTPUT_STORAGE",
-                        generated_code_string=generated_code_str,
-                        confidence_score=confidence_score_obj,
+                        generated_code_string=generated_code_string,
+                        confidence_score=ConfidenceScore(value=confidence_score_data.get("value") if confidence_score_data else None, explanation=confidence_score_data.get("explanation") if confidence_score_data else None),
                         llm_full_response=llm_full_response_str,
                         usage_metadata=usage_metadata_val,
                         error_message=f"PCMA storage failed: {store_output.message if store_output else 'Unknown PCMA error'}"
@@ -259,8 +290,8 @@ class CoreCodeGeneratorAgent_v1:
                     task_id=parsed_inputs.task_id,
                     target_file_path=parsed_inputs.target_file_path,
                     status="FAILURE_OUTPUT_STORAGE",
-                    generated_code_string=generated_code_str,
-                    confidence_score=confidence_score_obj,
+                    generated_code_string=generated_code_string,
+                    confidence_score=ConfidenceScore(value=confidence_score_data.get("value") if confidence_score_data else None, explanation=confidence_score_data.get("explanation") if confidence_score_data else None),
                     llm_full_response=llm_full_response_str,
                     usage_metadata=usage_metadata_val,
                     error_message=f"PCMA storage exception: {e_store}"
@@ -274,8 +305,8 @@ class CoreCodeGeneratorAgent_v1:
             status="SUCCESS",
             generated_code_artifact_doc_id=generated_code_artifact_doc_id,
             stored_in_collection=stored_in_collection_name,
-            generated_code_string=generated_code_str,
-            confidence_score=confidence_score_obj,
+            generated_code_string=generated_code_string,
+            confidence_score=ConfidenceScore(value=confidence_score_data.get("value") if confidence_score_data else None, explanation=confidence_score_data.get("explanation") if confidence_score_data else None),
             llm_full_response=llm_full_response_str,
             usage_metadata=usage_metadata_val
         )
@@ -334,7 +365,7 @@ class CoreCodeGeneratorAgent_v1:
                 "languages": ["python"],
             },
             metadata={
-                "prompt_name": PROMPT_NAME,
+                "prompt_name": PROMPT_ID,
                 "prompt_sub_dir": PROMPT_SUB_DIR,
                 "callable_fn_path": f"{CoreCodeGeneratorAgent_v1.__module__}.{CoreCodeGeneratorAgent_v1.__name__}"
             }

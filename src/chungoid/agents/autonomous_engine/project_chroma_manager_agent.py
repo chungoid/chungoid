@@ -114,18 +114,8 @@ ARTIFACT_TYPE_DEBUGGING_SESSION_LOG_JSON = "DebuggingSessionLog_JSON" # For DEBU
 
 # --- API Method Schemas (as Pydantic models) --- #
 
-class StoreArtifactOutput(BaseModel):
-    document_id: str = Field(..., description="The ID of the stored/updated document in ChromaDB.")
-    status: Literal["SUCCESS", "FAILURE"] = Field(..., description="Status of the store operation.")
-    message: Optional[str] = None
-    error_message: Optional[str] = None
-
-class RetrieveArtifactOutput(BaseModel):
-    document_id: str = Field(..., description="The ID of the retrieved document.")
-    content: Optional[Union[str, Dict[str, Any]]] = Field(None, description="The content of the artifact.")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata of the artifact.")
-    status: Literal["SUCCESS", "FAILURE", "NOT_FOUND"] = Field(..., description="Status of the retrieve operation.")
-    error_message: Optional[str] = None
+# StoreArtifactOutput, RetrieveArtifactOutput, and StoreArtifactInput are now in chroma_agent_io_schemas.py
+from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactOutput, RetrieveArtifactOutput, StoreArtifactInput
 
 # --- New Schemas for get_related_artifacts --- #
 
@@ -200,16 +190,7 @@ class GetArtifactGenealogyOutput(BaseModel):
 
 # --- Input Schema for store_artifact --- #
 
-class StoreArtifactInput(BaseModel):
-    base_collection_name: str = Field(..., description="Base name of the collection (e.g., PLANNING_ARTIFACTS_COLLECTION).")
-    artifact_content: Union[str, Dict[str, Any]] = Field(..., description="The content (string or dict for JSON).")
-    metadata: Dict[str, Any] = Field(..., description="Metadata to store with the artifact. Must include 'artifact_type'.")
-    document_id: Optional[str] = Field(None, description="Optional specific ID for the artifact. If None, a UUID will be generated.")
-    cycle_id: Optional[str] = Field(None, description="Optional cycle ID for lineage tracking.")
-    previous_version_artifact_id: Optional[str] = Field(None, description="Optional previous version artifact ID for lineage tracking.")
-    source_agent_id: Optional[str] = Field(None, description="Optional source agent ID for lineage tracking.")
-    source_task_id: Optional[str] = Field(None, description="Optional source task ID for lineage tracking.")
-    linked_relationships: Optional[Dict[str, str]] = Field(default_factory=dict, description="Key-value pairs representing custom relationships to other artifacts. Key is relationship type (e.g., 'DERIVED_FROM_BLUEPRINT'), value is target artifact ID.")
+# StoreArtifactInput is now in chroma_agent_io_schemas.py
 
 # --- Schemas for ARCA Logging --- #
 
@@ -251,7 +232,7 @@ class ProjectChromaManagerAgent_v1(BaseModel):
         # self.project_id = project_id # This is now handled by Pydantic field initialization
 
         self._logger = logging.getLogger(f"{self.__class__.__name__}.{self.project_id}") 
-        self._project_root_workspace_path = project_root_workspace_path # Initialize PrivateAttr
+        self._project_root_workspace_path = Path(project_root_workspace_path) # Ensure Path object
 
         # NEW: Define the actual project-specific workspace path
         # This is where project-specific subdirectories (like a subdirectory for its ChromaDB) will live.

@@ -102,6 +102,7 @@ class MasterStageSpec(BaseModel):
 class MasterExecutionPlan(BaseModel):
     """Validated, structured representation of a Master Flow YAML."""
     id: str = Field(..., description="Unique ID for this Master Execution Plan.")
+    project_id: Optional[str] = Field(None, description="The ID of the project this plan belongs to.")
     name: Optional[str] = Field(None, description="Human-readable name for the Master Flow.")
     description: Optional[str] = Field(None, description="Description of the Master Flow's purpose.")
     version: str = Field("1.0.0", description="Version of the Master Flow definition.")
