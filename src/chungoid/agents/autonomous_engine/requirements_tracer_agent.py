@@ -19,11 +19,15 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     TRACEABILITY_REPORTS_COLLECTION, 
     LOPRD_ARTIFACTS_COLLECTION, 
     BLUEPRINT_ARTIFACTS_COLLECTION,
-    EXECUTION_PLANS_COLLECTION
+    EXECUTION_PLANS_COLLECTION,
+    ARTIFACT_TYPE_TRACEABILITY_MATRIX_MD,
+    AGENT_REFLECTIONS_AND_LOGS_COLLECTION,
+    ARTIFACT_TYPE_AGENT_REFLECTION_JSON
 )
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
 from chungoid.runtime.agents.agent_base import AgentInputError # Removed AgentOutput, AgentOutputStatus
+from chungoid.schemas.agent_logs import GenericAgentReflection, LLMCallDetails, ToolCallDetails
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +227,112 @@ class RequirementsTracerAgent_v1(BaseAgent[RequirementsTracerInput, Requirements
             llm_confidence = ConfidenceScore(**assessment_confidence_data)
 
             logger_instance.info("Successfully received and parsed traceability report and confidence from LLM.")
+
+            # --- Store Traceability Report in ChromaDB (via PCMA) ---
+            trace_report_doc_id: Optional[str] = None
+            current_utc_time_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            try:
+                report_metadata = {
+                    "artifact_type": ARTIFACT_TYPE_TRACEABILITY_MATRIX_MD, # Ensure this is defined in PCMA
+                    "project_id": task_input.project_id,
+                    "source_artifact_doc_id": task_input.source_artifact_doc_id,
+                    "source_artifact_type": task_input.source_artifact_type,
+                    "target_artifact_doc_id": task_input.target_artifact_doc_id,
+                    "target_artifact_type": task_input.target_artifact_type,
+                    "assessment_confidence": assessment_confidence_data, # Store the dict form from LLM
+                    "source_agent_id": self.AGENT_ID,
+                    "source_task_id": task_input.task_id,
+                    "timestamp_utc": current_utc_time_iso
+                }
+                # Add cycle_id if available in task_input
+                cycle_id = getattr(task_input, 'cycle_id', None)
+                if cycle_id:
+                    report_metadata["cycle_id"] = cycle_id
+
+                store_report_input = StoreArtifactInput(
+                    base_collection_name=TRACEABILITY_REPORTS_COLLECTION,
+                    artifact_content=generated_trace_report_md,
+                    metadata=report_metadata,
+                    source_agent_id=self.AGENT_ID,
+                    source_task_id=task_input.task_id,
+                    cycle_id=cycle_id
+                )
+                report_store_output = await pcma_instance.store_artifact(store_report_input)
+                if report_store_output.status == "SUCCESS":
+                    trace_report_doc_id = report_store_output.document_id
+                    logger_instance.info(f"Stored Traceability Report with ID: {trace_report_doc_id}")
+                else:
+                    logger_instance.error(f"Failed to store Traceability Report: {report_store_output.message or report_store_output.error_message}")
+            except Exception as e_store_report:
+                logger_instance.error(f"Exception storing Traceability Report: {e_store_report}", exc_info=True)
+                # Optionally, you might want to change the overall status if storage fails
+
+            # Store GenericAgentReflection
+            try:
+                input_artifacts_used = [task_input.source_artifact_doc_id, task_input.target_artifact_doc_id]
+                output_artifacts_generated = [trace_report_doc_id] if trace_report_doc_id else []
+
+                llm_call_details = LLMCallDetails(
+                    model_name=llm_provider.model_id, # Assuming model_id is accessible
+                    prompt_template_id=RTA_PROMPT_NAME,
+                    # Add other llm details if available from llm_usage_metadata
+                )
+
+                reflection = GenericAgentReflection(
+                    project_id=task_input.project_id,
+                    cycle_id=cycle_id,
+                    agent_id=self.AGENT_ID,
+                    agent_version=self.VERSION,
+                    source_task_id=task_input.task_id,
+                    summary_of_activity=f"Generated traceability report from {task_input.source_artifact_type} ({task_input.source_artifact_doc_id}) to {task_input.target_artifact_type} ({task_input.target_artifact_doc_id})",
+                    input_artifact_ids_used=input_artifacts_used,
+                    output_artifact_ids_generated=output_artifacts_generated,
+                    decision_rationale="Traceability analysis based on LLM comparison of artifact contents.",
+                    process_confidence_score=llm_confidence.value if llm_confidence else None,
+                    llm_calls=[llm_call_details],
+                    tool_calls=[], # RTA currently doesn't use external tools via MCP
+                    contextual_adherence_explanation="Adherence to prompt for structured JSON output containing traceability report and assessment confidence.",
+                )
+
+                reflection_metadata = {
+                    "artifact_type": ARTIFACT_TYPE_AGENT_REFLECTION_JSON,
+                    "project_id": task_input.project_id,
+                    "reflected_agent_id": self.AGENT_ID,
+                    "reflected_task_id": task_input.task_id,
+                    "timestamp_utc": current_utc_time_iso
+                }
+                if cycle_id:
+                    reflection_metadata["cycle_id"] = cycle_id
+                
+                store_reflection_input = StoreArtifactInput(
+                    base_collection_name=AGENT_REFLECTIONS_AND_LOGS_COLLECTION,
+                    artifact_content=reflection.model_dump(mode='json'),
+                    metadata=reflection_metadata,
+                    source_agent_id=self.AGENT_ID,
+                    source_task_id=task_input.task_id,
+                    cycle_id=cycle_id
+                )
+                reflection_store_output = await pcma_instance.store_artifact(store_reflection_input)
+                if reflection_store_output.status == "SUCCESS":
+                    logger_instance.info(f"Stored GenericAgentReflection for RTA task {task_input.task_id} with ID: {reflection_store_output.document_id}")
+                else:
+                    logger_instance.error(f"Failed to store GenericAgentReflection for RTA: {reflection_store_output.message or reflection_store_output.error_message}")
+            except Exception as e_store_reflection:
+                logger_instance.error(f"Exception storing GenericAgentReflection for RTA: {e_store_reflection}", exc_info=True)
+
+            # Prepare final output
+            return RequirementsTracerOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
+                traceability_report_doc_id=trace_report_doc_id, # Pass the stored doc ID
+                status="SUCCESS", # Assuming success if LLM part worked, storage failures are logged
+                message="Successfully generated traceability report.",
+                agent_confidence_score=llm_confidence,
+                llm_full_response=llm_response_json_str,
+                usage_metadata=llm_usage_metadata
+            )
+
         except PromptRenderError as e_prompt:
             logger_instance.error(f"Prompt rendering failed for {RTA_PROMPT_NAME}: {e_prompt}", exc_info=True)
             return RequirementsTracerOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
@@ -246,79 +356,6 @@ class RequirementsTracerAgent_v1(BaseAgent[RequirementsTracerInput, Requirements
                 error_message=str(e_llm), 
                 llm_full_response=llm_response_json_str
             )
-
-        # --- Store Traceability Report in ChromaDB (via PCMA) ---
-        report_doc_id: Optional[str] = None
-        try:
-            report_metadata = {
-                "report_type": "traceability_matrix",
-                "source_artifact_id": task_input.source_artifact_doc_id,
-                "source_artifact_type": task_input.source_artifact_type,
-                "target_artifact_id": task_input.target_artifact_doc_id,
-                "target_artifact_type": task_input.target_artifact_type,
-                "generated_by_agent": self.AGENT_ID,
-                "task_id": task_input.task_id,
-                "timestamp": datetime.datetime.utcnow().isoformat(),
-                "confidence_value": llm_confidence.value,
-                "confidence_level": llm_confidence.level,
-                "confidence_explanation": llm_confidence.explanation,
-                "confidence_method": llm_confidence.method,
-                "project_id": task_input.project_id,
-            }
-            store_input_args = StoreArtifactInput(
-                base_collection_name=TRACEABILITY_REPORTS_COLLECTION,
-                artifact_content=generated_trace_report_md,
-                metadata=report_metadata,
-                # document_id can be omitted for PCMA to generate one, or set explicitly if needed.
-                # Assuming RTA doesn't pre-determine the ID for the report itself.
-                source_agent_id=self.AGENT_ID, # Added for lineage
-                source_task_id=task_input.task_id # Added for lineage
-            )
-            store_operation_result = await pcma_instance.store_artifact(args=store_input_args)
-            if store_operation_result.status == "SUCCESS" and store_operation_result.document_id:
-                report_doc_id = store_operation_result.document_id
-                logger_instance.info(f"Stored traceability report with doc_id: {report_doc_id}")
-            else:
-                error_msg_store = store_operation_result.error_message or "PCMA store_artifact failed without specific error."
-                logger_instance.error(f"Failed to store traceability report via PCMA: {error_msg_store}")
-                # Update output for storage failure, but keep generated report data
-                return RequirementsTracerOutput(
-                    task_id=task_input.task_id,
-                    project_id=task_input.project_id,
-                    traceability_report_doc_id=None,
-                    status="PARTIAL_SUCCESS_STORAGE_FAILED",
-                    message=f"Traceability report generated by LLM but failed to store: {error_msg_store}",
-                    agent_confidence_score=llm_confidence,
-                    llm_full_response=generated_trace_report_md,
-                    usage_metadata=llm_usage_metadata,
-                    error_message=error_msg_store
-                )
-            
-        except Exception as e_store: # This broad except might catch the specific store failure if not handled above
-            logger_instance.error(f"Failed to store traceability report via PCMA: {e_store}", exc_info=True)
-            # Non-fatal for now, but update status and don't return a doc_id if storage failed
-            return RequirementsTracerOutput(
-                task_id=task_input.task_id,
-                project_id=task_input.project_id,
-                traceability_report_doc_id=None,
-                status="PARTIAL_SUCCESS_STORAGE_FAILED",
-                message=f"Traceability report generated by LLM but failed to store: {e_store}",
-                agent_confidence_score=llm_confidence, # Use the parsed LLM confidence
-                llm_full_response=generated_trace_report_md, # Store only MD part for this field
-                usage_metadata=llm_usage_metadata,
-                error_message=str(e_store)
-            )
-
-        return RequirementsTracerOutput(
-            task_id=task_input.task_id,
-            project_id=task_input.project_id,
-            traceability_report_doc_id=report_doc_id,
-            status="SUCCESS" if report_doc_id else "PARTIAL_SUCCESS_STORAGE_FAILED",
-            message=f"Traceability report generated. Stored as doc_id: {report_doc_id}",
-            agent_confidence_score=llm_confidence, # Use parsed LLM confidence
-            llm_full_response=generated_trace_report_md, # Store only MD part for this field
-            usage_metadata=llm_usage_metadata
-        )
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
@@ -352,7 +389,8 @@ class RequirementsTracerAgent_v1(BaseAgent[RequirementsTracerInput, Requirements
                 BLUEPRINT_ARTIFACTS_COLLECTION, 
                 EXECUTION_PLANS_COLLECTION,
                 # Could also add LIVE_CODEBASE_COLLECTION if tracing to code becomes a feature
-                TRACEABILITY_REPORTS_COLLECTION 
+                TRACEABILITY_REPORTS_COLLECTION,
+                AGENT_REFLECTIONS_AND_LOGS_COLLECTION
             ],
             capability_profile={
                 "analyzes_artifacts": ["LOPRD", "Blueprint", "MasterExecutionPlan"],

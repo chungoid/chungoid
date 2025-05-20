@@ -37,6 +37,7 @@ class DebuggingTaskInput(BaseModel):
         description="(Optional) List of previous fixes attempted for this issue in the current cycle, to avoid loops and provide history to the LLM."
     )
     max_iterations_for_this_call: Optional[int] = Field(None, description="(Optional) A limit set by ARCA for this specific debugging invocation's internal reasoning if applicable.")
+    cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
 
 class DebuggingTaskOutput(BaseModel):
     proposed_solution_type: Literal["CODE_PATCH", "MODIFIED_SNIPPET", "NO_FIX_IDENTIFIED", "NEEDS_MORE_CONTEXT"] = Field(description="Type of solution being proposed.")

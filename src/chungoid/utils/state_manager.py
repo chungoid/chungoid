@@ -66,7 +66,8 @@ class StateManager:
 
     _CONTEXT_COLLECTION_NAME = "chungoid_context"
     _REFLECTIONS_COLLECTION_NAME = "chungoid_reflections"
-    _pending_reflection_text: Optional[str] = None # Added instance attribute for pending reflection
+    _project_state: ProjectStateV2 # Type hint for the main state object
+    _current_cycle_info: Optional[CycleInfo] = None # To hold details of the cycle currently in progress
 
     def __init__(self, target_directory: str, server_stages_dir: str, use_locking: bool = True):
         """Initializes the StateManager.
@@ -186,20 +187,23 @@ class StateManager:
             raise StatusFileError(f"Failed to create .chungoid directory: {e}") from e
 
         # Initial read of the status file
-        self._initialize_status_file_if_needed()
+        self._load_or_initialize_project_state()
         self.logger.info("StateManager initialized for file: %s", self.status_file_path)
 
         # Validate status file on init, but don't attempt ChromaDB connection here
         # This part will be heavily modified to use ProjectStateV2
         try:
-            self._status_data: ProjectStateV2 = self._read_status_file()
+            self._project_state = self._read_status_file()
             self.logger.debug("Initial status file read and parsed as ProjectStateV2 successful.")
         except StatusFileError as e:
             self.logger.error(f"Failed to read or parse status file as ProjectStateV2: {e}. Re-initializing with default V2 state.")
             # This will create a new V2 file if parsing failed or old format was detected by _read_status_file
-            self._status_data = self._create_default_project_state_v2()
+            self._project_state = self._create_default_project_state_v2(
+                project_id=f"default_proj_{uuid.uuid4().hex[:8]}",
+                initial_user_goal_summary="Project not yet initialized."
+            )
             try:
-                self._write_status_file(self._status_data) # Persist the new default V2 state
+                self._write_status_file(self._project_state) # Persist the new default V2 state
                 self.logger.info("Successfully re-initialized and wrote default ProjectStateV2.")
             except StatusFileError as write_e:
                 self.logger.critical(f"CRITICAL: Failed to write newly initialized ProjectStateV2: {write_e}")
@@ -209,147 +213,118 @@ class StateManager:
             self.logger.critical(f"CRITICAL: Unexpected error initializing StateManager with ProjectStateV2: {e}", exc_info=True)
             raise StatusFileError(f"Unexpected critical error during StateManager V2 init: {e}")
 
-        self._pending_reflection_text = None # Explicitly initialize in __init__
+        self._current_cycle_info = None # Explicitly initialize in __init__
 
-    def _create_default_project_state_v2(self) -> ProjectStateV2:
+    def _create_default_project_state_v2(self, project_id: str, project_name: Optional[str] = None, initial_user_goal_summary: str = "Default goal summary") -> ProjectStateV2:
         """Creates a default ProjectStateV2 object for a new project."""
-        project_id = f"proj_{uuid.uuid4()}"
         self.logger.info(f"Creating new ProjectStateV2 with project_id: {project_id}")
+        now = datetime.now(timezone.utc)
         return ProjectStateV2(
             project_id=project_id,
-            overall_project_status="initializing",
-            schema_version="2.0",
-            last_updated=datetime.now(timezone.utc)
+            project_name=project_name,
+            initial_user_goal_summary=initial_user_goal_summary,
+            schema_version="2.0.0", # Ensure this matches the literal in ProjectStateV2
+            created_at_utc=now,
+            last_updated_utc=now,
+            overall_status=ProjectOverallStatus.NOT_STARTED,
+            # Other fields will use their defaults from Pydantic model
         )
 
-    def _initialize_status_file_if_needed(self) -> None:
-        """Initializes the status file with ProjectStateV2 if it doesn't exist."""
-        with self._get_lock():
-            if not self.status_file_path.exists():
-                self.logger.info(
-                    "Status file not found at %s. Initializing with default ProjectStateV2.",
-                    self.status_file_path,
-                )
-                try:
-                    default_state = self._create_default_project_state_v2()
-                    # Directly use _write_status_file which now expects ProjectStateV2
-                    self._write_status_file(default_state)
-                    self.logger.info("Successfully initialized new status file with ProjectStateV2.")
-                except Exception as e:
-                    self.logger.error(
-                        "Failed to initialize status file with ProjectStateV2: %s", e, exc_info=True
-                    )
-                    raise StatusFileError(
-                        f"Failed to initialize status file: {e}"
-                    ) from e
-            else:
-                self.logger.debug("Status file already exists at %s.", self.status_file_path)
-
-    def _get_lock(self) -> Union[filelock.FileLock, DummyFileLock]:
-        """Returns the appropriate lock object based on configuration."""
-        return self._lock
-
-    def _read_status_file(self) -> Dict[str, Any]:
-        """Reads the status file content.
-
-        For V2, this attempts to parse into ProjectStateV2.
-
-        If parsing fails or file is not found, it returns a default V2 state.
-
-        """
-        with self._get_lock():
-            try:
-                if not self.status_file_path.exists():
-                    self.logger.warning(f"Status file {self.status_file_path} not found. Returning default V2 state.")
-                    return self._create_default_project_state_v2()
-
-                raw_data = self.status_file_path.read_text()
-                if not raw_data.strip():
-                    self.logger.warning(f"Status file {self.status_file_path} is empty. Returning default V2 state.")
-                    return self._create_default_project_state_v2()
-                
-                data = json.loads(raw_data)
-                # Attempt to parse into ProjectStateV2
-                # A simple check for schema_version can be a heuristic for V2
-                if isinstance(data, dict) and data.get("schema_version", "").startswith("2."):
-                    parsed_state = ProjectStateV2(**data)
-                    self.logger.debug(f"Successfully parsed {self.status_file_path} as ProjectStateV2.")
-                    return parsed_state
+    def _load_or_initialize_project_state(self) -> None:
+        """Loads project state from file or initializes a new one if not found or invalid."""
+        try:
+            with self._get_lock():
+                if self.status_file_path.exists():
+                    self.logger.debug(f"Attempting to read existing status file: {self.status_file_path}")
+                    self._project_state = self._read_status_file()
+                    # Attempt to load current cycle info if one was active
+                    if self._project_state.current_cycle_id:
+                        # Find the active cycle in historical_cycles if it was completed but not cleared from current_cycle_id
+                        # Or assume it's a fresh start and _current_cycle_info will be set by start_new_cycle
+                        found_cycle = next((c for c in self._project_state.historical_cycles if c.cycle_id == self._project_state.current_cycle_id and c.status == CycleStatus.IN_PROGRESS), None)
+                        if found_cycle:
+                            self._current_cycle_info = found_cycle
+                            self.logger.info(f"Loaded active cycle {self._project_state.current_cycle_id} from historical records (likely a recovery scenario).")
+                        # else:
+                            # If not found as IN_PROGRESS, it might have completed. start_new_cycle will handle creating a new one.
+                            # self._current_cycle_info = None # Ensure it's None if not actively in progress
                 else:
-                    self.logger.warning(
-                        f"Status file {self.status_file_path} does not appear to be ProjectStateV2 (missing/wrong schema_version). "
-                        f"Backing up and returning default V2 state. MANUAL REVIEW of backed up file is recommended."
-                    )
-                    backup_path = self.status_file_path.with_suffix(f".{datetime.now().strftime('%Y%m%d%H%M%S')}.backup")
-                    try:
-                        self.status_file_path.rename(backup_path)
-                        self.logger.info(f"Backed up old status file to {backup_path}")
-                    except Exception as backup_err:
-                        self.logger.error(f"Could not back up old status file {self.status_file_path}: {backup_err}")
-                    return self._create_default_project_state_v2()
+                    self.logger.warning(f"Status file not found at {self.status_file_path}. Project not initialized. Call initialize_project() first.")
+                    # Create a minimal valid in-memory state but log warning
+                    # This state should not be written to disk unless initialize_project is called.
+                    self._project_state = self._create_placeholder_project_state()
+                    self._current_cycle_info = None
 
-            except FileNotFoundError:
-                self.logger.warning(f"Status file {self.status_file_path} not found on read. Returning default V2 state.")
-                return self._create_default_project_state_v2()
-            except json.JSONDecodeError as e:
-                self.logger.error(
-                    f"Status file content in {self.status_file_path} is not a valid JSON object: {e}. "
-                    f"Backing up and returning default V2 state. MANUAL REVIEW of backed up file is recommended."
-                )
-                backup_path = self.status_file_path.with_suffix(f".{datetime.now().strftime('%Y%m%d%H%M%S')}.json_error.backup")
-                try:
-                    self.status_file_path.rename(backup_path)
-                    self.logger.info(f"Backed up corrupted JSON status file to {backup_path}")
-                except Exception as backup_err:
-                    self.logger.error(f"Could not back up corrupted JSON status file {self.status_file_path}: {backup_err}")
-                return self._create_default_project_state_v2()
-            except ValidationError as e:
-                self.logger.error(
-                    f"Status file content in {self.status_file_path} failed ProjectStateV2 validation: {e}. "
-                    f"Backing up and returning default V2 state. MANUAL REVIEW of backed up file is recommended."
-                )
-                # Similar backup logic as JSONDecodeError
-                backup_path = self.status_file_path.with_suffix(f".{datetime.now().strftime('%Y%m%d%H%M%S')}.validation_error.backup")
-                try:
-                    self.status_file_path.rename(backup_path)
-                    self.logger.info(f"Backed up invalid V2 status file to {backup_path}")
-                except Exception as backup_err:
-                    self.logger.error(f"Could not back up invalid V2 status file {self.status_file_path}: {backup_err}")
-                return self._create_default_project_state_v2()
+        except StatusFileError as e:
+            self.logger.error(f"Failed to read or parse status file: {e}. Creating placeholder state.")
+            self._project_state = self._create_placeholder_project_state()
+            self._current_cycle_info = None
+            # Do not attempt to write here, as the file might be corrupt or unwritable.
+        except Exception as e:
+            self.logger.critical(f"CRITICAL: Unexpected error loading/initializing project state: {e}", exc_info=True)
+            self._project_state = self._create_placeholder_project_state()
+            self._current_cycle_info = None
+            raise StatusFileError(f"Unexpected critical error during state loading/initialization: {e}") from e
 
-            except Exception as e:
-                self.logger.error(f"Unexpected error reading status file {self.status_file_path}: {e}", exc_info=True)
-                # For other unexpected errors, to be safe, also try to backup and return default.
-                # This might indicate deeper issues.
-                try:
-                    backup_path = self.status_file_path.with_suffix(f".{datetime.now().strftime('%Y%m%d%H%M%S')}.unknown_error.backup")
-                    self.status_file_path.rename(backup_path)
-                    self.logger.info(f"Backed up status file due to unknown error to {backup_path}")
-                except Exception as backup_err:
-                    self.logger.error(f"Could not back up status file {self.status_file_path} during unknown error: {backup_err}")
-                raise StatusFileError(f"Failed to read status file due to unexpected error: {e}") from e
+    def _create_placeholder_project_state(self) -> ProjectStateV2:
+        """Creates a minimal, temporary ProjectStateV2 object when actual state cannot be loaded."""
+        return ProjectStateV2(
+            project_id=f"placeholder_proj_{uuid.uuid4().hex[:8]}",
+            initial_user_goal_summary="Project state could not be loaded or initialized.",
+            overall_status=ProjectOverallStatus.PROJECT_FAILED # Indicate an issue
+        )
 
-    def _write_status_file(self, data: ProjectStateV2): # Changed type hint
-        """Writes the ProjectStateV2 data to the status file."""
-        with self._get_lock():
-            try:
-                # Update last_updated timestamp before writing
-                data.last_updated = datetime.now(timezone.utc)
-                
-                # Pydantic V2 uses model_dump_json()
-                json_data = data.model_dump_json(indent=2)
-                self.status_file_path.write_text(json_data)
-                self.logger.debug("Successfully wrote ProjectStateV2 to status file: %s", self.status_file_path)
-            except Exception as e:
-                self.logger.error(
-                    "Failed to write ProjectStateV2 to status file %s: %s",
-                    self.status_file_path,
-                    e,
-                    exc_info=True
+    def _read_status_file(self) -> ProjectStateV2:
+        """Reads and validates the status file, returning a ProjectStateV2 object."""
+        if not self.status_file_path.exists():
+            self.logger.error(f"Status file does not exist at {self.status_file_path} during read attempt.")
+            raise StatusFileError(f"Status file not found: {self.status_file_path}")
+        try:
+            raw_content = self.status_file_path.read_text(encoding="utf-8")
+            if not raw_content.strip(): # Handle empty file
+                self.logger.warning(f"Status file is empty: {self.status_file_path}. Will attempt to re-initialize.")
+                raise StatusFileError(f"Status file is empty: {self.status_file_path}")
+            
+            data = json.loads(raw_content)
+            
+            # Basic check for V2 schema before full parsing
+            if data.get("schema_version", "").startswith("2."):
+                 # Attempt to parse as ProjectStateV2
+                return ProjectStateV2.model_validate(data)
+            else:
+                # Handle migration or error for older/unknown versions
+                self.logger.warning(
+                    f"Old or unknown schema version detected in {self.status_file_path}. "
+                    f"Schema version: {data.get('schema_version', 'Not specified')}. "
+                    "Attempting to create a new V2 state. Old data will be lost if not backed up."
                 )
-                raise StatusFileError(
-                    f"Failed to write ProjectStateV2 to status file: {e}"
-                ) from e
+                # This will lead to re-initialization by the calling function if StatusFileError is raised
+                raise StatusFileError("Old or incompatible schema version detected.")
+
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Invalid JSON in status file {self.status_file_path}: {e}", exc_info=True)
+            raise StatusFileError(f"Invalid JSON in status file: {e}") from e
+        except ValidationError as e:
+            self.logger.error(f"Schema validation error for ProjectStateV2 in {self.status_file_path}: {e}", exc_info=True)
+            raise StatusFileError(f"ProjectStateV2 schema validation error: {e}") from e
+        except Exception as e:
+            self.logger.error(f"Unexpected error reading status file {self.status_file_path}: {e}", exc_info=True)
+            raise StatusFileError(f"Unexpected error reading status file: {e}") from e
+
+    def _write_status_file(self, project_state: ProjectStateV2) -> None:
+        """Writes the ProjectStateV2 object to the status file in JSON format."""
+        try:
+            project_state.last_updated_utc = datetime.now(timezone.utc) # Ensure last_updated is fresh
+            # model_dump_json handles datetime serialization correctly by default with Pydantic v2
+            json_data = project_state.model_dump_json(indent=2)
+            self.status_file_path.write_text(json_data, encoding="utf-8")
+            self.logger.debug(f"Successfully wrote ProjectStateV2 to {self.status_file_path}")
+        except TypeError as e: # Catch issues if model_dump_json fails for some reason
+            self.logger.error(f"Serialization error writing ProjectStateV2 to {self.status_file_path}: {e}", exc_info=True)
+            raise StatusFileError(f"Serialization error: {e}") from e
+        except Exception as e:
+            self.logger.error(f"Failed to write status file {self.status_file_path}: {e}", exc_info=True)
+            raise StatusFileError(f"Failed to write status file: {e}") from e
 
     # Custom JSON Encoder for datetime objects (if not using Pydantic's built-in serialization fully)
     # Pydantic v2 model_dump_json should handle datetime correctly.
@@ -365,37 +340,148 @@ class StateManager:
         return obj
 
     def get_project_state(self) -> ProjectStateV2:
-        """Returns the current full project state V2."""
-        # self._status_data is already ProjectStateV2 due to __init__
-        return self._status_data
+        """Returns the current project state."""
+        with self._get_lock(): # Ensure read is also consistent if needed, though usually for writes
+            # Re-read from disk to ensure freshness if multiple StateManager instances could exist (unlikely for typical CLI use)
+            # For now, assume self._project_state is the single source of truth in this instance.
+            # If strict consistency across processes is needed, every access might need a read.
+            # However, typical use involves one orchestrator with one StateManager.
+            return self._project_state.model_copy(deep=True) # Return a copy to prevent external modification
 
     def _save_project_state(self) -> None:
-        """Saves the current in-memory ProjectStateV2 to disk."""
-        self._write_status_file(self._status_data)
+        """Saves the current in-memory project state to the file with locking."""
+        if not hasattr(self, '_project_state'):
+            self.logger.error("Attempted to save project state, but StateManager is not properly initialized.")
+            raise StatusFileError("StateManager not properly initialized for saving.")
+        with self._get_lock():
+            self._write_status_file(self._project_state)
+            self.logger.debug(f"Project state for {self._project_state.project_id} saved successfully.")
 
-    def start_new_cycle(self, goal_for_cycle: Optional[str] = None) -> str:
+    def start_new_cycle(self, cycle_objective: str) -> str:
         """
-        Starts a new cycle in the project.
-        Creates a new CycleHistoryItem, sets it as current, and updates overall status.
+        Starts a new autonomous cycle.
+        Updates project state with new cycle information and persists it.
         Returns the ID of the newly started cycle.
         """
+        if not hasattr(self, '_project_state') or self._project_state.overall_status == ProjectOverallStatus.PROJECT_FAILED:
+            self.logger.error("Cannot start new cycle: Project state not loaded or project failed.")
+            raise StatusFileError("Project state not loaded or project failed, cannot start new cycle.")
+        
+        if self._current_cycle_info is not None and self._current_cycle_info.status == CycleStatus.IN_PROGRESS:
+            self.logger.warning(f"Cannot start new cycle: Cycle {self._current_cycle_info.cycle_id} is already in progress.")
+            # Or raise an error, depending on desired behavior. For now, let\'s prevent starting a new one.
+            raise StatusFileError(f"A cycle ({self._current_cycle_info.cycle_id}) is already in progress.")
+
         with self._get_lock():
-            new_cycle_id = f"cycle_{uuid.uuid4()}"
-            self.logger.info(f"Starting new cycle: {new_cycle_id} for project {self._status_data.project_id}")
-            
-            new_cycle = CycleHistoryItem(
+            self._project_state.current_cycle_number += 1
+            new_cycle_id = f"cycle_{self._project_state.project_id}_{self._project_state.current_cycle_number}_{uuid.uuid4().hex[:8]}"
+            self._project_state.current_cycle_id = new_cycle_id
+
+            self._current_cycle_info = CycleInfo(
                 cycle_id=new_cycle_id,
-                start_time=datetime.now(timezone.utc),
-                goal_for_cycle=goal_for_cycle
+                cycle_number=self._project_state.current_cycle_number,
+                cycle_objective=cycle_objective,
+                status=CycleStatus.IN_PROGRESS,
+                start_time_utc=datetime.now(timezone.utc)
+                # cycle_produced_artifacts and key_decisions_in_cycle will be populated as the cycle progresses
             )
             
-            self._status_data.cycle_history.append(new_cycle)
-            self._status_data.current_cycle_id = new_cycle_id
-            self._status_data.overall_project_status = "cycle_in_progress"
+            if self._project_state.current_cycle_number == 1: # Assuming first user-facing cycle is 1
+                 self._project_state.overall_status = ProjectOverallStatus.ANALYZING_GOAL # Or more specific initial phase
+            else:
+                self._project_state.overall_status = ProjectOverallStatus.REFINEMENT_CYCLE_IN_PROGRESS
+            
+            self.logger.info(f"Starting new cycle: {new_cycle_id} (Objective: {cycle_objective}) for project {self._project_state.project_id}")
+            self._save_project_state()
+            return new_cycle_id
+
+    def add_artifact_to_current_cycle(self, artifact_link: ArtifactLink) -> None:
+        """Adds a produced artifact to the current active cycle."""
+        if self._current_cycle_info is None or self._current_cycle_info.status != CycleStatus.IN_PROGRESS:
+            self.logger.error("Cannot add artifact: No cycle is currently in progress.")
+            raise StatusFileError("No cycle in progress to add artifact to.")
+        
+        with self._get_lock():
+            self._current_cycle_info.cycle_produced_artifacts.append(artifact_link)
+            self.logger.info(f"Added artifact {artifact_link.artifact_doc_id} (type: {artifact_link.artifact_type}) to cycle {self._current_cycle_info.cycle_id}")
+            # Project state itself (current_cycle_id etc.) doesn\'t change here, but cycle content does.
+            # We need to decide if _current_cycle_info is directly part of _project_state or if we persist it separately
+            # For now, assume _save_project_state will handle persisting _project_state which might include current cycle details
+            # For more robust saving of ongoing cycle details, _current_cycle_info would need to be regularly synced or part of _project_state
+            # The ProjectStateV2 schema itself doesn't have a 'current_cycle_details' field, only historical_cycles.
+            # This implies that _current_cycle_info is managed in memory by StateManager and added to historical_cycles upon completion.
+            # So, just updating _current_cycle_info is enough for now. It gets saved when the cycle completes.
+            # However, for recovery, it's better if _current_cycle_info's state is also persisted somehow if it represents the "active" part of project_state.
+            # Let's update a temporary field in _project_state or a specific mechanism.
+            # For now, the save is implicit when the cycle completes.
+            # A save might be desired here for resilience.
+            # Let's try saving the whole state for now, assuming ProjectStateV2 might be extended or this is good practice.
+            self._project_state.last_updated_utc = datetime.now(timezone.utc) # Mark update
+            self._save_project_state()
+
+
+    def add_key_decision_to_current_cycle(self, decision: KeyDecision) -> None:
+        """Adds a key decision to the current active cycle."""
+        if self._current_cycle_info is None or self._current_cycle_info.status != CycleStatus.IN_PROGRESS:
+            self.logger.error("Cannot add key decision: No cycle is currently in progress.")
+            raise StatusFileError("No cycle in progress to add key decision to.")
+
+        with self._get_lock():
+            self._current_cycle_info.key_decisions_in_cycle.append(decision)
+            self.logger.info(f"Added key decision {decision.decision_id} to cycle {self._current_cycle_info.cycle_id}")
+            self._project_state.last_updated_utc = datetime.now(timezone.utc)
+            self._save_project_state() # Save for resilience
+
+    def complete_current_cycle(
+        self, 
+        final_status: CycleStatus, 
+        arca_summary_doc_id: Optional[str] = None, 
+        arca_decision: Optional[str] = None,
+        issues_flagged_by_arca: Optional[List[str]] = None
+    ) -> None:
+        """
+        Completes the current cycle, updates its status and details,
+        moves it to historical_cycles, and updates the overall project status.
+        """
+        if self._current_cycle_info is None:
+            self.logger.error("Cannot complete cycle: No cycle is currently active.")
+            raise StatusFileError("No active cycle to complete.")
+        
+        if self._project_state.current_cycle_id != self._current_cycle_info.cycle_id:
+            self.logger.error(f"Mismatch! current_cycle_id in project_state ({self._project_state.current_cycle_id}) != active _current_cycle_info.cycle_id ({self._current_cycle_info.cycle_id})")
+            # This indicates a potential state inconsistency.
+            # For now, we'll trust _current_cycle_info as the one being completed.
+            # This scenario should ideally not happen with proper locking and state flow.
+
+        with self._get_lock():
+            cycle_to_complete = self._current_cycle_info
+            cycle_to_complete.status = final_status
+            cycle_to_complete.end_time_utc = datetime.now(timezone.utc)
+            cycle_to_complete.arca_cycle_summary_doc_id = arca_summary_doc_id
+            cycle_to_complete.arca_decision_at_cycle_end = arca_decision
+            cycle_to_complete.issues_flagged_by_arca_in_cycle = issues_flagged_by_arca
+
+            self._project_state.historical_cycles.append(cycle_to_complete.model_copy(deep=True))
+            
+            self.logger.info(f"Completed cycle {cycle_to_complete.cycle_id} with status {final_status}.")
+
+            # Update overall project status based on cycle outcome
+            if final_status == CycleStatus.COMPLETED_SUCCESS:
+                self._project_state.overall_status = ProjectOverallStatus.CYCLE_COMPLETED_PENDING_REVIEW
+                self._project_state.next_action_determined_by = "AUTONOMOUS_AGENT" # ARCA finished
+            elif final_status == CycleStatus.COMPLETED_WITH_ISSUES_FOR_REVIEW:
+                self._project_state.overall_status = ProjectOverallStatus.CYCLE_COMPLETED_PENDING_REVIEW
+                self._project_state.next_action_determined_by = "AUTONOMOUS_AGENT" # ARCA finished, but with flags
+            elif final_status in [CycleStatus.FAILED_INTERNAL_ERROR, CycleStatus.FAILED_UNRESOLVABLE_ISSUES]:
+                self._project_state.overall_status = ProjectOverallStatus.PROJECT_FAILED # Or a more specific "CYCLE_FAILED_NEEDS_REVIEW"
+                # Error details should be captured elsewhere, e.g., in ARCA logs or cycle summary
+            elif final_status == CycleStatus.TERMINATED_BY_USER:
+                 self._project_state.overall_status = ProjectOverallStatus.PROJECT_PAUSED_BY_USER # Or specific terminated status
+
+            self._project_state.current_cycle_id = None
+            self._current_cycle_info = None
             
             self._save_project_state()
-            self.logger.info(f"New cycle {new_cycle_id} started and state saved.")
-            return new_cycle_id
 
     def update_master_artifact_ids(
         self,
@@ -408,19 +494,19 @@ class StateManager:
         with self._get_lock():
             updated = False
             if loprd_id is not None:
-                self._status_data.master_loprd_id = loprd_id
+                self._project_state.master_loprd_id = loprd_id
                 self.logger.debug(f"Updated master_loprd_id to {loprd_id}")
                 updated = True
             if blueprint_id is not None:
-                self._status_data.master_blueprint_id = blueprint_id
+                self._project_state.master_blueprint_id = blueprint_id
                 self.logger.debug(f"Updated master_blueprint_id to {blueprint_id}")
                 updated = True
             if plan_id is not None:
-                self._status_data.master_execution_plan_id = plan_id
+                self._project_state.master_execution_plan_id = plan_id
                 self.logger.debug(f"Updated master_execution_plan_id to {plan_id}")
                 updated = True
             if codebase_snapshot_link is not None:
-                self._status_data.link_to_live_codebase_collection_snapshot = codebase_snapshot_link
+                self._project_state.link_to_live_codebase_collection_snapshot = codebase_snapshot_link
                 self.logger.debug(f"Updated link_to_live_codebase_collection_snapshot to {codebase_snapshot_link}")
                 updated = True
             
@@ -446,16 +532,16 @@ class StateManager:
         self.logger.warning("get_last_status() is based on the old 'runs' structure and may not be compatible with ProjectStateV2 as is.")
         # Assuming 'runs' might be reintroduced or this logic moved elsewhere.
         # This is a placeholder for the old logic:
-        # if hasattr(self._status_data, 'runs') and self._status_data.runs:
-        #     latest_run = self._status_data.runs[-1]
+        # if hasattr(self._project_state, 'runs') and self._project_state.runs:
+        #     latest_run = self._project_state.runs[-1]
         #     if latest_run.get("stages"):
         #         return latest_run["stages"][-1]
         # return None
-        if self._status_data.cycle_history:
-            last_cycle = self._status_data.cycle_history[-1]
+        if self._project_state.cycle_history:
+            last_cycle = self._project_state.cycle_history[-1]
             return {
                 "cycle_id": last_cycle.cycle_id,
-                "status": self._status_data.overall_project_status, # Or a more specific cycle status if added
+                "status": self._project_state.overall_project_status, # Or a more specific cycle status if added
                 "summary": last_cycle.arca_summary_of_cycle_outcome,
                 "end_time": last_cycle.end_time
             }
@@ -467,17 +553,17 @@ class StateManager:
         plus the project_directory. Other counts might need to be derived from V2 fields.
         """
         self.logger.debug("get_full_status: Reading entire ProjectStateV2 structure.")
-        # data = self._read_status_file() # _status_data is now ProjectStateV2
-        data_dict = self._status_data.model_dump(mode='json') # Serialize to dict, handling datetime
+        # data = self._read_status_file() # _project_state is now ProjectStateV2
+        data_dict = self._project_state.model_dump(mode='json') # Serialize to dict, handling datetime
         
         # Add project_directory to the returned data
         data_dict["project_directory"] = str(self.target_dir_path)
         # Add total_master_plans - this concept needs to be re-evaluated for V2.
         # For now, returning 0 or count if master_execution_plan_id exists.
-        data_dict["total_master_plans"] = 1 if self._status_data.master_execution_plan_id else 0
+        data_dict["total_master_plans"] = 1 if self._project_state.master_execution_plan_id else 0
         
         # Add total_runs - this concept maps to total_cycles in V2.
-        data_dict["total_runs"] = len(self._status_data.cycle_history) # Or "total_cycles"
+        data_dict["total_runs"] = len(self._project_state.cycle_history) # Or "total_cycles"
         
         self.logger.debug("get_full_status: Returning V2 data: %s", data_dict)
         return data_dict
@@ -584,7 +670,7 @@ class StateManager:
             artifacts: A list of relative paths to generated artifacts.
             reason: Optional reason, e.g., for FAIL status.
             reflection_text: Optional reflection text for this stage update. If None,
-                             will try to use and clear _pending_reflection_text.
+                             will try to use and clear _current_cycle_info.
             error_details: Optional structured details about an agent error. # <<< Updated docstring
 
         Returns:
@@ -598,19 +684,19 @@ class StateManager:
 
         # Determine the reflection text to use
         final_reflection_text = reflection_text
-        if final_reflection_text is None and self._pending_reflection_text is not None:
-            final_reflection_text = self._pending_reflection_text
+        if final_reflection_text is None and self._current_cycle_info is not None:
+            final_reflection_text = self._current_cycle_info.arca_summary_of_cycle_outcome
             self.logger.info(f"Using pending reflection text for stage {stage} update.")
-            self._pending_reflection_text = None # Clear after use
+            self._current_cycle_info = None # Clear after use
             self.logger.info("Cleared pending reflection text after incorporating into status update.")
-        elif self._pending_reflection_text is not None and reflection_text is not None:
+        elif self._current_cycle_info is not None and reflection_text is not None:
             self.logger.warning(
                 f"Both a direct reflection_text and a pending_reflection_text were present for stage {stage}. "
                 f"Prioritizing the directly passed reflection_text. Pending reflection was NOT cleared."
             )
             # In this case, we prioritize the explicitly passed `reflection_text`.
-            # The `_pending_reflection_text` remains uncleared, which might be unexpected.
-            # Consider if _pending_reflection_text should be cleared anyway or if this state is an error.
+            # The `_current_cycle_info` remains uncleared, which might be unexpected.
+            # Consider if _current_cycle_info should be cleared anyway or if this state is an error.
             # For now, it persists if a direct one is also provided.
 
         # Create the new status entry
@@ -1109,48 +1195,67 @@ class StateManager:
                 f"Failed to get all reflections from collection '{self._REFLECTIONS_COLLECTION_NAME}'"
             ) from e
 
-    def initialize_project(self) -> None:
+    def initialize_project(self, project_id: str, project_name: Optional[str], initial_user_goal_summary: str, initial_user_goal_doc_id: Optional[str] = None) -> ProjectStateV2:
         """
-        Ensures the project is initialized from the StateManager's perspective.
-        This primarily means ensuring the status file and its directory exist.
-        This is typically handled by __init__, but this method can be called
-        to explicitly confirm or re-trigger the checks if necessary.
+        Initializes a new project. Creates project_status.json if it doesn't exist,
+        or errors if it exists and is already a V2 project.
         """
-        # Ensure the .chungoid directory exists (idempotent)
-        self.chungoid_dir.mkdir(parents=True, exist_ok=True)
+        with self._get_lock():
+            if self.status_file_path.exists():
+                try:
+                    # Try to read to see if it's a V2 project already
+                    existing_state = self._read_status_file()
+                    if existing_state.project_id == project_id:
+                        self.logger.warning(f"Project {project_id} already initialized at {self.status_file_path}. Loading existing state.")
+                        self._project_state = existing_state
+                        # Try to set current_cycle_info if a cycle was in progress
+                        if self._project_state.current_cycle_id:
+                             found_cycle = next((c for c in self._project_state.historical_cycles if c.cycle_id == self._project_state.current_cycle_id and c.status == CycleStatus.IN_PROGRESS), None)
+                             if found_cycle: self._current_cycle_info = found_cycle
+                        return self._project_state
+                    else:
+                        self.logger.error(f"Status file {self.status_file_path} exists but for a different project_id ({existing_state.project_id}). Cannot initialize {project_id}.")
+                        raise StatusFileError(f"Status file exists for a different project: {existing_state.project_id}")
+                except StatusFileError: 
+                    # File exists but is not a valid V2 schema or unreadable, potentially allow overwrite if forced.
+                    # For now, error out.
+                    self.logger.error(f"Status file {self.status_file_path} exists but is invalid. Cannot initialize. Please backup/remove manually.")
+                    raise StatusFileError(f"Existing invalid status file at {self.status_file_path}. Manual intervention required.")
 
-        # Ensure the status file is read/created (idempotent via _read_status_file's logic)
-        # _read_status_file returns the content, also creates if missing.
-        current_status_data = self._read_status_file()
+            # Create new project state
+            self.logger.info(f"Initializing new project with ID: {project_id} at {self.target_dir_path}")
+            now = datetime.now(timezone.utc)
+            self._project_state = ProjectStateV2(
+                project_id=project_id,
+                project_name=project_name,
+                initial_user_goal_summary=initial_user_goal_summary,
+                initial_user_goal_doc_id=initial_user_goal_doc_id,
+                schema_version="2.0.0",
+                created_at_utc=now,
+                last_updated_utc=now,
+                overall_status=ProjectOverallStatus.NOT_STARTED
+            )
+            self._current_cycle_info = None # No active cycle yet
+            self._write_status_file(self._project_state)
+            self.logger.info(f"Project {project_id} initialized successfully. Status file: {self.status_file_path}")
+            return self._project_state.model_copy(deep=True)
 
-        # If, for some reason, _read_status_file didn't create it (e.g., if it only returned default
-        # without writing), or if we want to ensure it's physically present after this call:
-        if not self.status_file_path.exists():
-            # Ensure current_status_data is suitable for writing, especially if _read_status_file
-            # might return something not directly writable (though it should return a dict).
-            # The default from _read_status_file when file is missing is {'runs': []}
-            self._write_status_file(current_status_data)
-
-        self.logger.info(
-            f"Project state file confirmed/initialized by StateManager at {self.status_file_path}"
-        )
-
-    def _acquire_lock(self) -> filelock.FileLock | contextlib.nullcontext:
+    def _get_lock(self) -> Union[filelock.FileLock, DummyFileLock]:
         """Returns the appropriate lock object based on configuration."""
         return self._lock
 
-    def set_pending_reflection_text(self, reflection_text: str) -> None:
-        """Stores reflection text temporarily before it's committed with a status update."""
-        self._pending_reflection_text = reflection_text
-        self.logger.info(f"Pending reflection text set. Length: {len(reflection_text)}")
+    def set_current_cycle_info(self, cycle_info: CycleInfo) -> None:
+        """Stores the current cycle information."""
+        self._current_cycle_info = cycle_info
+        self.logger.info(f"Current cycle info set. Cycle ID: {cycle_info.cycle_id}")
 
-    def get_pending_reflection_text(self) -> Optional[str]:
-        """Retrieves the currently set pending reflection text."""
-        if self._pending_reflection_text is not None:
-            self.logger.info(f"Retrieved pending reflection text. Length: {len(self._pending_reflection_text)}")
+    def get_current_cycle_info(self) -> Optional[CycleInfo]:
+        """Retrieves the current cycle information."""
+        if self._current_cycle_info is not None:
+            self.logger.info(f"Retrieved current cycle info. Cycle ID: {self._current_cycle_info.cycle_id}")
         else:
-            self.logger.info("No pending reflection text to retrieve.")
-        return self._pending_reflection_text
+            self.logger.info("No current cycle info to retrieve.")
+        return self._current_cycle_info
 
     def export_cursor_rule(self) -> Optional[str]:
         """Exports the chungoid.mdc rule to ~/.cursor/rules/chungoid.mdc.
@@ -1482,7 +1587,7 @@ async def get_chungoid_project_status(ide_services):
             True if feedback was recorded and state saved, False otherwise.
         """
         with self._get_lock():
-            project_state = self._status_data # self._status_data is ProjectStateV2
+            project_state = self._project_state # self._project_state is ProjectStateV2
             
             cycle_to_update = next((c for c in project_state.cycle_history if c.cycle_id == cycle_id_to_update), None)
 
@@ -1507,6 +1612,116 @@ async def get_chungoid_project_status(ide_services):
             self._save_project_state()
             self.logger.info(f"Human feedback recorded for cycle '{cycle_id_to_update}'. Project status set to '{next_cycle_status}'.")
             return True
+
+    def update_project_state_after_arca_review(
+        self,
+        arca_best_state_summary_doc_id: Optional[str],
+        arca_overall_confidence: Optional[float], # Should be 0.0 to 1.0
+        arca_issues_pending_review: List[Dict[str, Any]]
+    ) -> None:
+        """Updates project state with ARCA's end-of-cycle assessment before human review."""
+        if not hasattr(self, '_project_state'):
+            raise StatusFileError("Project state not initialized.")
+
+        with self._get_lock():
+            self._project_state.arca_best_state_summary_doc_id = arca_best_state_summary_doc_id
+            if arca_overall_confidence is not None:
+                if not (0.0 <= arca_overall_confidence <= 1.0):
+                    self.logger.warning(f"ARCA overall confidence {arca_overall_confidence} out of range [0,1]. Clamping.")
+                    arca_overall_confidence = max(0.0, min(1.0, arca_overall_confidence))
+                self._project_state.arca_overall_confidence_in_best_state = arca_overall_confidence
+            else:
+                self._project_state.arca_overall_confidence_in_best_state = None # Explicitly set if None
+
+            self._project_state.arca_issues_pending_human_review = arca_issues_pending_review
+            
+            self.logger.info(f"Project state updated after ARCA review for project {self._project_state.project_id}.")
+            self._save_project_state()
+
+    def record_human_review(self, review_record: HumanReviewRecord) -> None:
+        """
+        Records human review feedback and updates the project state accordingly.
+        This method directly uses the logic defined in ProjectStateV2.record_human_review if available,
+        or implements similar logic.
+        """
+        if not hasattr(self, '_project_state'):
+            raise StatusFileError("Project state not initialized.")
+
+        with self._get_lock():
+            # Use the method from ProjectStateV2 instance if it exists and is robust
+            # For now, let's replicate the logic here for clarity on StateManager's role
+            
+            self._project_state.last_human_review = review_record
+            # Initial status during review
+            # self._project_state.overall_status = ProjectOverallStatus.HUMAN_REVIEW_IN_PROGRESS 
+            # This is handled by the calling orchestrator potentially. Let's set final status based on decision.
+
+            decision = review_record.decision_for_next_step
+            if decision == "PROCEED_TO_NEXT_AUTONOMOUS_PHASE":
+                # This implies the current main phase (e.g. LOPRD gen) is done, and we move to next (e.g. Architecting)
+                # The orchestrator will need to determine what "next phase" means and potentially call start_new_cycle with new objective
+                self._project_state.overall_status = ProjectOverallStatus.AWAITING_NEXT_CYCLE_START 
+            elif decision == "INITIATE_REFINEMENT_CYCLE":
+                self._project_state.overall_status = ProjectOverallStatus.AWAITING_NEXT_CYCLE_START
+                if review_record.next_cycle_objective_override:
+                    self.logger.info(f"Next cycle objective overridden by human: {review_record.next_cycle_objective_override}")
+                    # This objective will be used by the orchestrator when calling start_new_cycle
+            elif decision == "MODIFY_PROJECT_GOAL":
+                self._project_state.overall_status = ProjectOverallStatus.ANALYZING_GOAL # Or similar, needs re-analysis
+                # This implies a significant reset. Orchestrator needs to handle this.
+            elif decision == "PAUSE_PROJECT":
+                self._project_state.overall_status = ProjectOverallStatus.PROJECT_PAUSED_BY_USER
+            elif decision == "ARCHIVE_PROJECT_SUCCESS":
+                self._project_state.overall_status = ProjectOverallStatus.PROJECT_COMPLETED_SUCCESSFULLY
+            elif decision == "ARCHIVE_PROJECT_FAILURE":
+                self._project_state.overall_status = ProjectOverallStatus.PROJECT_FAILED # Or a specific "ARCHIVED_FAILURE"
+
+            self._project_state.next_action_determined_by = "HUMAN_REVIEWER"
+            
+            # Update accepted artifacts if implied by review (e.g. "LOPRD v2 approved")
+            # This logic needs to be more sophisticated, potentially part of HumanReviewRecord
+            # or handled by the orchestrator based on review content.
+            # For example, if review_record.decision_for_next_step == "PROCEED..." and it refers to a specific LOPRD version.
+
+            self.logger.info(f"Human review {review_record.review_id} recorded for project {self._project_state.project_id}. Decision: {decision}")
+            self._save_project_state()
+
+    # --- Utility methods to update latest accepted artifacts ---
+    def update_latest_accepted_loprd(self, doc_id: str) -> None:
+        with self._get_lock():
+            self._project_state.latest_accepted_loprd_doc_id = doc_id
+            self._save_project_state()
+            self.logger.info(f"Updated latest_accepted_loprd_doc_id to {doc_id}")
+
+    def update_latest_accepted_blueprint(self, doc_id: str) -> None:
+        with self._get_lock():
+            self._project_state.latest_accepted_blueprint_doc_id = doc_id
+            self._save_project_state()
+            self.logger.info(f"Updated latest_accepted_blueprint_doc_id to {doc_id}")
+
+    def update_latest_accepted_master_plan(self, doc_id: str) -> None:
+        with self._get_lock():
+            self._project_state.latest_accepted_master_plan_doc_id = doc_id
+            self._save_project_state()
+            self.logger.info(f"Updated latest_accepted_master_plan_doc_id to {doc_id}")
+
+    def update_latest_accepted_code_snapshot(self, snapshot_id: str) -> None:
+        with self._get_lock():
+            self._project_state.latest_accepted_code_snapshot_id = snapshot_id
+            self._save_project_state()
+            self.logger.info(f"Updated latest_accepted_code_snapshot_id to {snapshot_id}")
+            
+    def update_latest_test_report_summary(self, doc_id: str) -> None:
+        with self._get_lock():
+            self._project_state.latest_test_report_summary_doc_id = doc_id
+            self._save_project_state()
+            self.logger.info(f"Updated latest_test_report_summary_doc_id to {doc_id}")
+
+    def update_latest_project_readme(self, doc_id: str) -> None:
+        with self._get_lock():
+            self._project_state.latest_project_readme_doc_id = doc_id
+            self._save_project_state()
+            self.logger.info(f"Updated latest_project_readme_doc_id to {doc_id}")
 
 # Example usage (for testing or demonstration)
 if __name__ == "__main__":

@@ -13,7 +13,13 @@ from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 # Assuming ProjectChromaManagerAgent will provide methods to get/store artifacts
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1 # MODIFIED: Actual import
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+    ProjectChromaManagerAgent_v1, # MODIFIED: Actual import
+    RetrieveArtifactOutput, # Added
+    PROJECT_GOALS_COLLECTION, # Added
+    LOPRD_ARTIFACTS_COLLECTION, # For storing LOPRD
+    AGENT_REFLECTIONS_AND_LOGS_COLLECTION # Added for ARCA feedback
+)
 from chungoid.schemas.common import ConfidenceScore # Assuming a common schema exists
 from chungoid.schemas.orchestration import SharedContext # ADDED SharedContext IMPORT
 from chungoid.schemas.autonomous_engine.loprd_schema import LOPRD # MODIFIED: Import the actual LOPRD Pydantic model
@@ -32,6 +38,7 @@ class ProductAnalystAgentInput(BaseModel):
     # Potentially add context from ARCA if this is a refinement loop
     arca_feedback_doc_id: Optional[str] = Field(None, description="Document ID of feedback from ARCA if this is a refinement run.")
     shared_context: Optional[SharedContext] = Field(None, description="The shared context from the orchestrator, providing broader project and workflow information.")
+    cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
 
 class ProductAnalystAgentOutput(BaseModel):
     loprd_doc_id: str = Field(..., description="Document ID of the generated LOPRD JSON artifact in Chroma.")
@@ -111,32 +118,41 @@ class ProductAnalystAgent_v1(BaseAgent[ProductAnalystAgentInput, ProductAnalystA
         
         try:
             # Actual PCMA call for refined_user_goal_doc_id
-            doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.refined_user_goal_doc_id)
-            if not doc or not doc.document_content:
-                raise ValueError(f"Refined user goal document {task_input.refined_user_goal_doc_id} not found or content empty.")
-            refined_goal_content = doc.document_content
+            doc_output: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                base_collection_name=PROJECT_GOALS_COLLECTION, 
+                document_id=task_input.refined_user_goal_doc_id
+            )
+            if not (doc_output and doc_output.status == "SUCCESS" and doc_output.content):
+                raise ValueError(f"Refined user goal document {task_input.refined_user_goal_doc_id} not found, content empty, or retrieval failed. Status: {doc_output.status if doc_output else 'N/A'}")
+            refined_goal_content = str(doc_output.content)
             self._logger_instance.debug(f"Retrieved refined_user_goal_doc_id: {task_input.refined_user_goal_doc_id}")
 
             # Actual PCMA call for assumptions_and_ambiguities_doc_id (optional)
             if task_input.assumptions_and_ambiguities_doc_id:
-                doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.assumptions_and_ambiguities_doc_id)
-                if doc and doc.document_content:
-                    assumptions_content = doc.document_content
+                doc_output: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                    base_collection_name=PROJECT_GOALS_COLLECTION, # Assuming assumptions are stored with goals
+                    document_id=task_input.assumptions_and_ambiguities_doc_id
+                )
+                if doc_output and doc_output.status == "SUCCESS" and doc_output.content:
+                    assumptions_content = str(doc_output.content)
                     self._logger_instance.debug(f"Retrieved assumptions_and_ambiguities_doc_id: {task_input.assumptions_and_ambiguities_doc_id}")
                 else:
-                    self._logger_instance.warning(f"Optional assumptions_and_ambiguities_doc_id {task_input.assumptions_and_ambiguities_doc_id} not found or content empty.")
+                    self._logger_instance.warning(f"Optional assumptions_and_ambiguities_doc_id {task_input.assumptions_and_ambiguities_doc_id} not found or content empty. Status: {doc_output.status if doc_output else 'N/A'}")
                     assumptions_content = "Not provided or content empty." # Default if optional and not found
             else:
                 assumptions_content = "Not provided."
         
             # Actual PCMA call for arca_feedback_doc_id (optional)
             if task_input.arca_feedback_doc_id:
-                doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.arca_feedback_doc_id)
-                if doc and doc.document_content:
-                    arca_feedback_content = doc.document_content
+                doc_output: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                    base_collection_name=AGENT_REFLECTIONS_AND_LOGS_COLLECTION, # Assuming ARCA feedback is in agent logs/reflections
+                    document_id=task_input.arca_feedback_doc_id
+                )
+                if doc_output and doc_output.status == "SUCCESS" and doc_output.content:
+                    arca_feedback_content = str(doc_output.content)
                     self._logger_instance.debug(f"Retrieved arca_feedback_doc_id: {task_input.arca_feedback_doc_id}")
                 else:
-                    self._logger_instance.warning(f"Optional arca_feedback_doc_id {task_input.arca_feedback_doc_id} not found or content empty.")
+                    self._logger_instance.warning(f"Optional arca_feedback_doc_id {task_input.arca_feedback_doc_id} not found or content empty. Status: {doc_output.status if doc_output else 'N/A'}")
                     arca_feedback_content = "No specific feedback from ARCA for this iteration or content empty." # Default if optional
             else:
                 arca_feedback_content = "No specific feedback from ARCA for this iteration."

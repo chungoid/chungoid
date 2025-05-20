@@ -1,0 +1,144 @@
+prompt_id: "arca_optimization_evaluator_v1"
+version: "1.0.0"
+description: "Instructs an LLM to evaluate optimization suggestions from PRAA and Blueprint Reviewer reports, and to provide actionable incorporation instructions for ARCA."
+prompt_type: "INSTRUCTION" # Or "CHAT" if a conversational style is better, but instruction seems apt.
+
+input_variables:
+  - name: "artifact_type"
+    description: "The type of the primary artifact ARCA is currently evaluating (e.g., 'LOPRD', 'ProjectBlueprint')."
+    type: "string"
+    is_required: true
+  - name: "artifact_content_summary"
+    description: "A summary or key excerpts of the artifact being evaluated, providing context for the optimizations."
+    type: "string"
+    is_required: true
+  - name: "praa_optimization_report"
+    description: "The content of the Proactive Risk Assessor Agent's optimization suggestions report. May be null if not available."
+    type: "string"
+    is_required: false
+  - name: "blueprint_reviewer_optimization_report"
+    description: "The content of the Blueprint Reviewer Agent's optimization suggestions report. May be null if not applicable or not available."
+    type: "string"
+    is_required: false
+  - name: "current_project_goal_summary"
+    description: "(Optional) A brief summary of the overall project goal to provide broader context for evaluating optimizations."
+    type: "string"
+    is_required: false
+
+output_format:
+  type: "JSON_OBJECT"
+  description: "A JSON object containing a list of evaluated optimization suggestions and an overall summary."
+  json_schema:
+    type: "object"
+    properties:
+      evaluated_optimizations:
+        type: "array"
+        description: "A list of detailed evaluations for each identified optimization suggestion."
+        items:
+          type: "object"
+          properties:
+            optimization_id:
+              type: "string"
+              description: "A unique identifier generated for this optimization suggestion (e.g., 'opt_praa_001', 'opt_reviewer_001')."
+            source_report:
+              type: "string"
+              description: "Indicates the source of the suggestion (e.g., 'PRAA_Optimization_Report', 'Blueprint_Reviewer_Report')."
+            original_suggestion_summary:
+              type: "string"
+              description: "A concise summary of the original optimization suggestion from the report."
+            is_actionable_and_relevant:
+              type: "boolean"
+              description: "True if the suggestion is considered actionable and relevant to the current artifact and project goal, False otherwise."
+            assessment_rationale:
+              type: "string"
+              description: "Your detailed reasoning for why this optimization is (or isn't) actionable and relevant, considering the artifact_content_summary and project_goal_summary."
+            potential_impact_assessment:
+              type: "string"
+              description: "Describe the potential positive and negative impacts on the artifact and project if this optimization were applied."
+            recommendation:
+              type: "string"
+              enum: ["INCORPORATE", "DO_NOT_INCORPORATE", "NEEDS_FURTHER_CLARIFICATION"]
+              description: "Your recommendation for this specific optimization."
+            incorporation_instructions_for_next_agent:
+              type: "string"
+              description: "If 'INCORPORATE', provide clear, specific, and actionable instructions for the *next agent* (e.g., ProductAnalystAgent, ArchitectAgent) on *how* to modify the artifact to implement this optimization. Be precise about what changes are needed. If not 'INCORPORATE', this can be null or explain why no instructions are provided."
+            confidence_in_recommendation:
+              type: "number"
+              minimum: 0.0
+              maximum: 1.0
+              description: "Your confidence (0.0 to 1.0) in this specific recommendation and incorporation_instructions."
+          required:
+            - "optimization_id"
+            - "source_report"
+            - "original_suggestion_summary"
+            - "is_actionable_and_relevant"
+            - "assessment_rationale"
+            - "potential_impact_assessment"
+            - "recommendation"
+            - "confidence_in_recommendation"
+      overall_summary_of_actions:
+        type: "string"
+        description: "A brief overall summary of the recommended actions for ARCA based on your evaluation of all optimizations. E.g., 'Proceed with incorporating 2 high-impact optimizations for the LOPRD via ProductAnalystAgent.' or 'No critical optimizations found requiring immediate action.'"
+    required:
+      - "evaluated_optimizations"
+      - "overall_summary_of_actions"
+
+prompt_template: |
+  You are an AI assistant helping the Automated Refinement Coordinator Agent (ARCA) to evaluate optimization suggestions for a software project.
+  Your task is to meticulously analyze optimization reports and provide structured advice on how to proceed.
+
+  **Context:**
+  1.  **Project Goal Summary (Optional):** {{current_project_goal_summary}}
+  2.  **Artifact Type Under Review:** {{artifact_type}}
+  3.  **Artifact Content Summary:**
+      ```
+      {{artifact_content_summary}}
+      ```
+  4.  **Proactive Risk Assessor (PRAA) Optimization Report (if provided):**
+      ```
+      {{praa_optimization_report if praa_optimization_report is not none else "No PRAA optimization report provided."}}
+      ```
+  5.  **Blueprint Reviewer Optimization Report (if provided):**
+      ```
+      {{blueprint_reviewer_optimization_report if blueprint_reviewer_optimization_report is not none else "No Blueprint Reviewer optimization report provided."}}
+      ```
+
+  **Your Task:**
+
+  Carefully review the provided optimization reports. For each distinct optimization suggestion you identify:
+  1.  Generate a unique `optimization_id` (e.g., "opt_praa_001" for the first PRAA suggestion, "opt_reviewer_001" for the first reviewer suggestion).
+  2.  Note the `source_report`.
+  3.  Provide a concise `original_suggestion_summary`.
+  4.  Determine if the suggestion is `is_actionable_and_relevant` to the current `artifact_type`, its `artifact_content_summary`, and the `current_project_goal_summary`.
+  5.  Write a clear `assessment_rationale` explaining your reasoning.
+  6.  Describe the `potential_impact_assessment` (both positive and potentially negative consequences).
+  7.  Make a `recommendation`: "INCORPORATE", "DO_NOT_INCORPORATE", or "NEEDS_FURTHER_CLARIFICATION".
+  8.  **Crucially**: If your `recommendation` is "INCORPORATE", provide detailed and actionable `incorporation_instructions_for_next_agent`. These instructions should tell the *next specialized agent* (e.g., ProductAnalystAgent if `artifact_type` is LOPRD, or ArchitectAgent if `artifact_type` is ProjectBlueprint) precisely what changes to make to the artifact.
+      *   Example for LOPRD: "Instruct ProductAnalystAgent to: Update User Story US-005 to include a non-functional requirement for sub-second response times for the search feature. Add a new Acceptance Criterion AC-US-005.3: 'Search results must appear within 800ms.'"
+      *   Example for ProjectBlueprint: "Instruct ArchitectAgent to: Revise Section 4.2 (Data Model) of the ProjectBlueprint. Change the 'User' entity to include a 'last_login_ip' attribute. Justify this change by referencing the new security optimization."
+  9.  Provide your `confidence_in_recommendation` (0.0-1.0).
+
+  After evaluating all suggestions, provide an `overall_summary_of_actions` for ARCA.
+
+  **Output Format:**
+  Respond with a single JSON object adhering to the schema defined in the `output_format.json_schema` section of this prompt definition. Ensure all required fields are present.
+
+  ```json
+  {
+    "evaluated_optimizations": [
+      {
+        "optimization_id": "example_opt_001",
+        "source_report": "PRAA_Optimization_Report",
+        "original_suggestion_summary": "Example: Consider using a caching layer for frequently accessed data.",
+        "is_actionable_and_relevant": true,
+        "assessment_rationale": "This is relevant as the artifact is a LOPRD for a high-traffic web application, and caching can improve performance and reduce database load, aligning with the project goal of scalability.",
+        "potential_impact_assessment": "Positive: Improved response times, reduced server load. Negative: Increased complexity, potential for stale data if not managed correctly.",
+        "recommendation": "INCORPORATE",
+        "incorporation_instructions_for_next_agent": "Instruct ProductAnalystAgent to: Add a new Non-Functional Requirement (NFR) to the LOPRD: 'NFR-CACHE-01: The system should implement a caching mechanism for read-heavy operations on product data to ensure average API response times remain below 500ms under peak load.' Also, add a corresponding section in the LOPRD's technical considerations detailing the need for a cache invalidation strategy.",
+        "confidence_in_recommendation": 0.9
+      }
+      // ... potentially more evaluated optimizations
+    ],
+    "overall_summary_of_actions": "Recommend incorporating the caching optimization into the LOPRD via ProductAnalystAgent due to its high relevance and potential performance benefits. No other actionable optimizations were identified from the provided reports for the current artifact."
+  }
+  ``` 

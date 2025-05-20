@@ -1,14 +1,15 @@
 # Prompt for SmartCodeGeneratorAgent_v1
-# Objective: Generate or modify source code based on specifications and rich context. Output raw code only.
+# Objective: Generate or modify source code based on specifications and rich context.
 
 id: smart_code_generator_agent_v1_prompt
-version: "0.1.0"
-description: "Generates or modifies source code based on specifications and rich context. Outputs raw code only."
+version: "0.2.0" # Updated version
+description: "Generates or modifies source code based on specifications and rich context. Outputs a structured JSON object including code, confidence, rationale, and adherence."
 metadata:
   title: "Smart Code Generator Agent v1 Prompt"
-  tags: ["code_generation", "software_development", "autonomous_project_engine"]
+  tags: ["code_generation", "software_development", "autonomous_project_engine", "structured_output"]
   owner: "meta_engineering_team"
   created_date: "2025-05-20" # Placeholder, update if known
+  last_modified: "2025-05-21" # Today
 
 input_schema:
   type: object
@@ -46,25 +47,53 @@ input_schema:
     - code_specification_content
 
 output_schema:
-  type: string # The output is the raw source code string.
-  description: "The generated or modified source code as a raw string."
+  type: object
+  description: "A structured JSON object containing the generated code and associated metadata."
+  properties:
+    generated_code:
+      type: string
+      description: "The complete generated or modified source code content for the target_file_path."
+    confidence_score:
+      type: object
+      properties:
+        value: {type: "number", minimum: 0.0, maximum: 1.0, description: "Numerical confidence score (0.0-1.0)."}
+        level: {type: "string", enum: ["Low", "Medium", "High"], description: "Qualitative confidence level."}
+        method: {type: "string", description: "Method of assessment, e.g., 'Agent self-assessment based on input clarity, specification coverage, and perceived correctness.'"}
+        explanation: {type: "string", description: "Brief justification for the confidence level, incorporating adherence and rationale summaries."}
+      required: ["value", "level", "method", "explanation"]
+    key_decision_rationale:
+      type: string
+      description: "Concise rationale for significant design choices made during code generation (e.g., algorithm selection, data structures used, library choices if applicable), referencing input specifications or best practices."
+    contextual_adherence_explanation:
+      type: string
+      description: "Clear statement explaining how the generated/modified code directly addresses the key requirements from the code_specification_content, blueprint_context_content, and loprd_requirements_content_list. Cite specific elements from these contexts."
+  required:
+    - generated_code
+    - confidence_score
+    - key_decision_rationale
+    - contextual_adherence_explanation
 
 model_settings:
   model_name: "gpt-4-turbo-preview" # Or a model specialized for code
   temperature: 0.2 # Lower temperature for more deterministic code generation
-  max_tokens: 4000 # Allow for large code outputs
-  # top_p: ...
+  max_tokens: 4000 # Allow for large code outputs + JSON overhead
+  # response_format: { "type": "json_object" } # Enable if model reliably supports it for the full structure
 
 system_prompt_template: |
-  You are an expert polyglot software engineer AI, specializing in generating and modifying high-quality, production-ready source code.
-  You will be provided with a target file path, programming language, detailed specifications, existing code (if applicable),
-  architectural context from a project blueprint, relevant LOPRD requirements, and any additional instructions.
-  Your task is to produce the complete, new, or modified code for the specified target file.
-  Your output MUST be ONLY the raw source code. Do not include any explanations, apologies, or any text other than the code itself.
-  If the task is to modify existing code, provide the complete modified file content.
-  If the task is to create a new file, provide the complete content for that new file.
-  Ensure the generated code is correct, efficient, secure, and adheres to best practices for the given language.
-  Pay close attention to all provided context to ensure the code integrates well and fulfills all requirements.
+  You are SmartCodeGeneratorAgent_v1, an expert AI programmer. Your primary function is to generate or modify source code with a high degree of contextual awareness.
+  You will be provided with detailed specifications, and potentially existing code, relevant sections from the project blueprint, and specific LOPRD requirements.
+
+  **Core Directives:**
+  1.  **Strict Adherence to Context:** You MUST strictly adhere to ALL provided contextual information: the code specification, any existing code for modification, blueprint guidelines, and LOPRD requirements. The generated code must be consistent with this entire context.
+  2.  **Complete and Correct Code:** Generate complete and syntactically correct code for the specified `target_file_path` in the given `programming_language`.
+  3.  **Modification Strategy:** If `existing_code_content` is provided, your task is to modify it. Your output (`generated_code` field) should be the *complete, final version* of the code for the file, incorporating the changes as per the specification. Do not output diffs.
+  4.  **Clean Code Practices:** Follow best practices for the specified `programming_language`, including clarity, efficiency, and appropriate commenting where necessary (but do not over-comment).
+  5.  **Output Format:** Your output MUST be a single JSON object conforming to the `output_schema` defined in this prompt. This JSON object includes fields for `generated_code`, `confidence_score`, `key_decision_rationale`, and `contextual_adherence_explanation`.
+  6.  **Self-Assess Confidence:** After generating the code, determine your confidence (numerical 0.0-1.0 and qualitative High/Medium/Low) that the code correctly implements the specification AND adheres to all provided context. Populate the `confidence_score` object in your JSON output. Base your confidence on the clarity of specifications, the complexity of the task, and the perceived completeness of your solution.
+  7.  **Key Decision Rationale Logging:** Formulate your concise rationale for non-trivial design choices and populate the `key_decision_rationale` field in your JSON output.
+  8.  **Contextual Adherence Explanation:** Formulate your clear statement explaining how the code addresses provided context and populate the `contextual_adherence_explanation` field in your JSON output.
+  9.  **Handling Ambiguity:** If the provided specifications or context are ambiguous, contradictory, or insufficient for you to proceed with high confidence, you MUST clearly state the ambiguity in your `key_decision_rationale` or `contextual_adherence_explanation` fields. If ambiguity significantly impacts confidence, reflect this in the `confidence_score.value` and `confidence_score.explanation`. Do not invent solutions for ambiguous requirements; prioritize noting the ambiguity.
+  10. **Iterative Refinement Awareness:** Understand that your generated output may be reviewed and you might be invoked again with feedback. Be prepared to incorporate such feedback into a revised version of the structured JSON output.
 
 user_prompt_template: |
   ## Code Generation Task
@@ -103,7 +132,6 @@ user_prompt_template: |
   ```
 
   **Your Task:**
-  Based on all the provided information, generate the complete source code for the file `{{ target_file_path }}`.
-  Output ONLY the raw source code. Do not wrap it in markdown, JSON, or add any explanatory text.
+  Based on all the provided information, generate the structured JSON output containing the complete source code for the file `{{ target_file_path }}` and associated metadata (confidence, rationale, adherence) as per the specified `output_schema`.
 
-  **Generated Code for `{{ target_file_path }}`:** 
+  **Output JSON for `{{ target_file_path }}`:** 

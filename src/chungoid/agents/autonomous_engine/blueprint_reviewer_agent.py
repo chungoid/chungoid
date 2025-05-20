@@ -11,7 +11,14 @@ from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+    ProjectChromaManagerAgent_v1,
+    StoreArtifactInput,
+    BLUEPRINT_ARTIFACTS_COLLECTION,
+    REVIEW_REPORTS_COLLECTION,
+    ARTIFACT_TYPE_BLUEPRINT_REVIEW_REPORT_MD,
+    RetrieveArtifactOutput
+)
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 
@@ -121,22 +128,28 @@ class BlueprintReviewerAgent_v1(BaseAgent[BlueprintReviewerInput, BlueprintRevie
 
         try:
             # Actual PCMA call for Blueprint:
-            doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.blueprint_doc_id)
-            if doc and doc.document_content:
-                blueprint_md_content = doc.document_content
+            doc_output: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                base_collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
+                document_id=task_input.blueprint_doc_id
+            )
+            if doc_output and doc_output.status == "SUCCESS" and doc_output.content:
+                blueprint_md_content = str(doc_output.content)
                 logger_instance.debug(f"Retrieved blueprint_doc_id: {task_input.blueprint_doc_id}")
             else:
-                raise ValueError(f"Blueprint document with ID {task_input.blueprint_doc_id} not found or content empty.")
+                raise ValueError(f"Blueprint document with ID {task_input.blueprint_doc_id} not found, content empty, or retrieval failed. Status: {doc_output.status if doc_output else 'N/A'}")
 
             if task_input.previous_review_doc_ids:
                 for rev_id in task_input.previous_review_doc_ids:
                     # Actual PCMA call for previous review:
-                    doc = await pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=rev_id)
-                    if doc and doc.document_content:
-                        previous_reviews_content_list.append(doc.document_content)
+                    review_doc_output: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                        base_collection_name=REVIEW_REPORTS_COLLECTION, # Previous reviews are in REVIEW_REPORTS_COLLECTION
+                        document_id=rev_id
+                    )
+                    if review_doc_output and review_doc_output.status == "SUCCESS" and review_doc_output.content:
+                        previous_reviews_content_list.append(str(review_doc_output.content))
                         logger_instance.debug(f"Retrieved previous_review_doc_id: {rev_id}")
                     else:
-                        logger_instance.warning(f"Previous review with ID {rev_id} not found or content empty for project {task_input.project_id}.")
+                        logger_instance.warning(f"Previous review with ID {rev_id} from {REVIEW_REPORTS_COLLECTION} not found or content empty for project {task_input.project_id}. Status: {review_doc_output.status if review_doc_output else 'N/A'}")
             
         except Exception as e_pcma_fetch:
             msg = f"Failed to retrieve input artifacts via PCMA: {e_pcma_fetch}"
@@ -187,53 +200,62 @@ class BlueprintReviewerAgent_v1(BaseAgent[BlueprintReviewerInput, BlueprintRevie
 
         # --- Store Review Report in ChromaDB (via PCMA) ---
         report_doc_id: Optional[str] = None
+        storage_success = True
+        storage_error_message = None
+        
         try:
             review_metadata = {
-                "document_type": "blueprint_review_report.md",
+                "artifact_type": ARTIFACT_TYPE_BLUEPRINT_REVIEW_REPORT_MD,
                 "source_blueprint_doc_id": task_input.blueprint_doc_id,
                 "related_previous_review_ids": task_input.previous_review_doc_ids or [],
                 "focus_areas_input": task_input.specific_focus_areas or [],
                 "generated_by_agent": self.AGENT_ID,
                 "project_id": task_input.project_id,
                 "task_id": task_input.task_id,
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
+            # If LLM provides a confidence score for the review itself, it should be parsed and added here.
+            # For now, the agent_output_confidence is separate.
 
-            report_doc_id = await pcma_agent.store_document_content(
-                project_id=task_input.project_id,
-                collection_name="review_reports_collection", # Example, ensure this collection exists/is standard
-                document_content=generated_review_report_md,
-                metadata=review_metadata
-                # document_relative_path could be f"reviews/blueprint_{task_input.blueprint_doc_id}_review_{uuid.uuid4().hex[:8]}.md"
+            store_input_review = StoreArtifactInput(
+                base_collection_name=REVIEW_REPORTS_COLLECTION,
+                artifact_content=generated_review_report_md,
+                metadata=review_metadata,
+                source_agent_id=self.AGENT_ID,
+                source_task_id=task_input.task_id,
+                cycle_id=full_context.get("cycle_id") if full_context else None
             )
+            store_result = await pcma_agent.store_artifact(args=store_input_review)
 
-            if not report_doc_id:
-                raise ValueError("PCMA failed to return a document ID for the stored review report.")
+            if store_result.status == "SUCCESS" and store_result.document_id:
+                report_doc_id = store_result.document_id
+                logger_instance.info(f"Blueprint review report stored with doc_id: {report_doc_id}")
+            else:
+                storage_success = False
+                storage_error_message = store_result.error_message or f"Failed to store {ARTIFACT_TYPE_BLUEPRINT_REVIEW_REPORT_MD}"
+                logger_instance.error(f"PCMA review report storage failed: {storage_error_message}")
             
-            logger_instance.info(f"Blueprint review report stored with doc_id: {report_doc_id}. Content length: {len(generated_review_report_md)}")
-
         except Exception as e_pcma_store:
-            logger_instance.error(f"Conceptual PCMA review report storage failed: {e_pcma_store}", exc_info=True)
-            return BlueprintReviewerOutput(
-                task_id=task_input.task_id,
-                project_id=task_input.project_id,
-                review_report_doc_id=None, 
-                status="FAILURE_ARTIFACT_STORAGE",
-                message=f"Failed to store generated review report: {e_pcma_store}",
-                error_message=str(e_pcma_store),
-                llm_full_response=generated_review_report_md 
-            )
+            storage_success = False
+            storage_error_message = str(e_pcma_store)
+            logger_instance.error(f"Exception during PCMA review report storage: {e_pcma_store}", exc_info=True)
 
-        confidence = ConfidenceScore(value=0.70, level="MediumHigh", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint review generated by LLM. Quality depends on LLM's insight and prompt adherence.")
+        final_status = "SUCCESS" if storage_success and report_doc_id else "FAILURE_ARTIFACT_STORAGE"
+        final_message = f"Blueprint review report generated. Stored as doc_id: {report_doc_id}" if storage_success and report_doc_id else f"Failed to store generated review report: {storage_error_message}"
+
+        agent_output_confidence = ConfidenceScore(value=0.70, level="MediumHigh", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint review generated by LLM. Quality depends on LLM's insight and prompt adherence.")
+        if not storage_success: agent_output_confidence.value = 0.3 # Lower if storage failed
 
         return BlueprintReviewerOutput(
             task_id=task_input.task_id,
             project_id=task_input.project_id,
             review_report_doc_id=report_doc_id,
-            status="SUCCESS",
-            message=f"Blueprint review report generated. Stored as doc_id: {report_doc_id}",
-            confidence_score=confidence,
-            llm_full_response=generated_review_report_md
+            status=final_status,
+            message=final_message,
+            confidence_score=agent_output_confidence,
+            llm_full_response=generated_review_report_md,
+            usage_metadata=llm_usage_metadata,
+            error_message=storage_error_message if not storage_success else None
         )
 
     @staticmethod

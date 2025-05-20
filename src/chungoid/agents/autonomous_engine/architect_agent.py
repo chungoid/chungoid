@@ -12,7 +12,15 @@ from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+    ProjectChromaManagerAgent_v1,
+    StoreArtifactInput,
+    LOPRD_ARTIFACTS_COLLECTION,
+    BLUEPRINT_ARTIFACTS_COLLECTION,
+    ARTIFACT_TYPE_PROJECT_BLUEPRINT_MD,
+    ARTIFACT_TYPE_LOPRD_JSON,
+    RetrieveArtifactOutput
+)
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
 
@@ -28,6 +36,7 @@ class ArchitectAgentInput(BaseModel):
     loprd_doc_id: str = Field(..., description="ChromaDB ID of the LOPRD (JSON artifact) to be used as input.")
     existing_blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of an existing Blueprint to refine, if any.")
     refinement_instructions: Optional[str] = Field(None, description="Specific instructions for refining an existing Blueprint.")
+    cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
     # target_technologies: Optional[List[str]] = Field(None, description="Preferred technologies or constraints for the architecture.")
 
 class ArchitectAgentOutput(BaseModel):
@@ -107,38 +116,27 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
             return ArchitectAgentOutput(task_id=_task_id, project_id=_project_id, status="FAILURE_CONFIGURATION", message=err_msg, error_message=err_msg)
 
         try:
-            # parsed_inputs = ArchitectAgentInput(**inputs) # Removed this line
-            pass # Placeholder
-        except Exception as e:
-            logger_instance.error(f"Input parsing failed: {e}", exc_info=True)
-            _task_id = getattr(task_input, 'task_id', "parse_err")
-            _project_id = getattr(task_input, 'project_id', "parse_err")
-            return ArchitectAgentOutput(task_id=_task_id, project_id=_project_id, status="FAILURE_INPUT_VALIDATION", message=str(e), error_message=str(e))
-
-        logger_instance.info(f"{self.AGENT_ID} invoked for task {task_input.task_id}, LOPRD ID {task_input.loprd_doc_id} in project {task_input.project_id}")
-
-        # --- Retrieve LOPRD content & existing Blueprint (if any) from PCMA ---
-        loprd_json_content_str: Optional[str] = None
-        existing_blueprint_md_str: Optional[str] = None
-
-        try:
-            # Conceptual PCMA call for LOPRD:
-            # loprd_artifact = await pcma_agent.get_document_content_by_id(project_id=task_input.project_id, doc_id=task_input.loprd_doc_id, collection_name="loprds_collection") # Example
-            # if loprd_artifact:
-            #     loprd_json_content_str = loprd_artifact # Assuming content is already stringified JSON
-            # else:
-            #     raise ValueError(f"LOPRD document with ID {task_input.loprd_doc_id} not found.")
-            loprd_json_content_str = f'{{"mock_loprd_for_architect": true, "loprd_id": "{task_input.loprd_doc_id}", "requirements": ["req1", "req2"], "description": "This is a conceptual LOPRD content that would be fetched by PCMA."}}'
-            logger_instance.info(f"Conceptual fetch for loprd_doc_id: {task_input.loprd_doc_id}")
+            # Retrieve LOPRD content
+            loprd_doc: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                base_collection_name=LOPRD_ARTIFACTS_COLLECTION,
+                document_id=task_input.loprd_doc_id
+            )
+            if loprd_doc and loprd_doc.status == "SUCCESS" and loprd_doc.content:
+                loprd_json_content_str = str(loprd_doc.content) # Assuming content is JSON string or can be stringified
+                logger_instance.info(f"Retrieved LOPRD content for doc_id: {task_input.loprd_doc_id}")
+            else:
+                raise ValueError(f"LOPRD document with ID {task_input.loprd_doc_id} not found, content empty or retrieval failed. Status: {loprd_doc.status if loprd_doc else 'N/A'}")
 
             if task_input.existing_blueprint_doc_id:
-                # existing_blueprint_artifact = await pcma_agent.get_document_content_by_id(project_id=task_input.project_id, doc_id=task_input.existing_blueprint_doc_id, collection_name="blueprints_collection") # Example
-                # if existing_blueprint_artifact:
-                #     existing_blueprint_md_str = existing_blueprint_artifact
-                # else:
-                #     logger_instance.warning(f"Existing blueprint with ID {task_input.existing_blueprint_doc_id} not found, proceeding with new generation.")
-                existing_blueprint_md_str = f"### Mock Existing Blueprint for {task_input.existing_blueprint_doc_id}\nThis is conceptual existing blueprint content that would be fetched by PCMA. Details to be refined by LLM."
-                logger_instance.info(f"Conceptual fetch for existing_blueprint_doc_id: {task_input.existing_blueprint_doc_id}")
+                blueprint_doc: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
+                    base_collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
+                    document_id=task_input.existing_blueprint_doc_id
+                )
+                if blueprint_doc and blueprint_doc.status == "SUCCESS" and blueprint_doc.content:
+                    existing_blueprint_md_str = str(blueprint_doc.content)
+                    logger_instance.info(f"Retrieved existing blueprint for doc_id: {task_input.existing_blueprint_doc_id}")
+                else:
+                    logger_instance.warning(f"Existing blueprint with ID {task_input.existing_blueprint_doc_id} not found, content empty, or retrieval failed. Status: {blueprint_doc.status if blueprint_doc else 'N/A'}. Proceeding with new generation.")
 
         except Exception as e_pcma_fetch:
             msg = f"Failed to retrieve input artifacts via PCMA: {e_pcma_fetch}"
@@ -194,47 +192,65 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
 
         # --- Store Blueprint in ChromaDB (via PCMA) ---
         blueprint_doc_id: Optional[str] = None
+        storage_success = True
+        storage_error_message = None
+
         try:
-            # Conceptual PCMA call:
-            # stored_artifact_response = await pcma_agent.store_text_artifact(
-            #     project_id=task_input.project_id,
-            #     artifact_content=generated_blueprint_md,
-            #     artifact_name=f"project_blueprint_{task_input.project_id}_{uuid.uuid4().hex[:8]}.md",
-            #     collection_name="blueprints_collection", # Example
-            #     metadata={"loprd_source_doc_id": task_input.loprd_doc_id, "agent_id": self.AGENT_ID}
-            # )
-            # if stored_artifact_response and stored_artifact_response.doc_id:
-            #     blueprint_doc_id = stored_artifact_response.doc_id
-            #     logger_instance.info(f"Blueprint artifact (conceptual) stored with doc_id: {blueprint_doc_id}")
-            # else:
-            #     raise ValueError("PCMA failed to return a document ID for the stored blueprint.")
-            blueprint_doc_id = f"blueprint_md_{task_input.project_id}_{uuid.uuid4().hex[:8]}.md_doc_id"
-            logger_instance.info(f"Blueprint artifact (conceptual) stored with doc_id: {blueprint_doc_id}. Content length: {len(generated_blueprint_md)}")
+            blueprint_metadata = {
+                "artifact_type": ARTIFACT_TYPE_PROJECT_BLUEPRINT_MD,
+                "loprd_source_doc_id": task_input.loprd_doc_id,
+                "generated_by_agent": self.AGENT_ID,
+                "task_id": task_input.task_id,
+                "project_id": task_input.project_id,
+                "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            }
+            # Assuming 'generated_blueprint_md' contains the LLM's confidence score as part of its output,
+            # or we get it separately. For now, let's assume a heuristic confidence for the output object.
+            # If LLM provides confidence for the blueprint itself, it should be added to blueprint_metadata here.
+            
+            store_input_blueprint = StoreArtifactInput(
+                base_collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
+                artifact_content=generated_blueprint_md, # This is the markdown string
+                metadata=blueprint_metadata,
+                source_agent_id=self.AGENT_ID,
+                source_task_id=task_input.task_id,
+                cycle_id=full_context.get("cycle_id") if full_context else None,
+                # If refining, link to previous version
+                previous_version_artifact_id=task_input.existing_blueprint_doc_id if task_input.existing_blueprint_doc_id else None
+            )
+            store_result = await pcma_agent.store_artifact(args=store_input_blueprint)
+
+            if store_result.status == "SUCCESS" and store_result.document_id:
+                blueprint_doc_id = store_result.document_id
+                logger_instance.info(f"Blueprint artifact stored with doc_id: {blueprint_doc_id}")
+            else:
+                storage_success = False
+                storage_error_message = store_result.error_message or f"Failed to store {ARTIFACT_TYPE_PROJECT_BLUEPRINT_MD}"
+                logger_instance.error(f"PCMA Blueprint storage failed: {storage_error_message}")
 
         except Exception as e_pcma_store:
-            logger_instance.error(f"Conceptual PCMA Blueprint storage failed: {e_pcma_store}", exc_info=True)
-            return ArchitectAgentOutput(
-                task_id=task_input.task_id,
-                project_id=task_input.project_id,
-                blueprint_document_id=None, # Storage failed
-                status="FAILURE_ARTIFACT_STORAGE",
-                message=f"Failed to store generated Blueprint: {e_pcma_store}",
-                error_message=str(e_pcma_store),
-                llm_full_response=generated_blueprint_md # Still return the content if generated
-            )
+            storage_success = False
+            storage_error_message = str(e_pcma_store)
+            logger_instance.error(f"Exception during PCMA Blueprint storage: {e_pcma_store}", exc_info=True)
+        
+        final_status = "SUCCESS" if storage_success and blueprint_doc_id else "FAILURE_ARTIFACT_STORAGE"
+        final_message = f"Project Blueprint generated/refined. Stored as doc_id: {blueprint_doc_id}" if storage_success and blueprint_doc_id else f"Failed to store generated Blueprint: {storage_error_message}"
 
-        confidence = ConfidenceScore(value=0.65, level="Medium", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint generated by LLM from LOPRD. Further review and validation recommended.")
-        if task_input.existing_blueprint_doc_id: confidence.value = 0.7 # Slightly higher if refined
+        # Heuristic confidence for the agent's output, not necessarily the blueprint's intrinsic quality
+        agent_output_confidence = ConfidenceScore(value=0.65, level="Medium", method="LLMGeneration_MVPHeuristic", reasoning="Blueprint generated by LLM from LOPRD. Further review and validation recommended.")
+        if task_input.existing_blueprint_doc_id: agent_output_confidence.value = 0.7 # Slightly higher if refined
+        if not storage_success : agent_output_confidence.value = 0.3 # Lower if storage failed
 
         return ArchitectAgentOutput(
             task_id=task_input.task_id,
             project_id=task_input.project_id,
             blueprint_document_id=blueprint_doc_id,
-            status="SUCCESS",
-            message=f"Project Blueprint generated/refined. Stored as doc_id: {blueprint_doc_id}",
-            confidence_score=confidence,
-            llm_full_response=generated_blueprint_md, # Store the generated markdown for debugging
-            usage_metadata=llm_usage_metadata # Store LLM usage if available
+            status=final_status,
+            message=final_message,
+            confidence_score=agent_output_confidence, # This is the agent's confidence in its output processing
+            llm_full_response=generated_blueprint_md, 
+            usage_metadata=llm_usage_metadata,
+            error_message=storage_error_message if not storage_success else None
         )
 
     @staticmethod

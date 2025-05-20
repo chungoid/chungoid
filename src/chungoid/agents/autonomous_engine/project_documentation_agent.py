@@ -13,7 +13,16 @@ from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+    ProjectChromaManagerAgent_v1,
+    StoreArtifactInput,
+    PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+    ARTIFACT_TYPE_PROJECT_README_MD,
+    ARTIFACT_TYPE_DOCS_DIRECTORY_MANIFEST_JSON,
+    ARTIFACT_TYPE_DEPENDENCY_AUDIT_MD,
+    ARTIFACT_TYPE_RELEASE_NOTES_MD,
+    RetrieveArtifactOutput
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +48,7 @@ class ProjectDocumentationAgentInput(BaseModel):
     
     # For ARCA feedback loop if any (not used in initial MVP generation, but schema-ready)
     # arca_feedback_doc_id: Optional[str] = Field(None, description="Document ID for feedback from ARCA for refinement.")
+    cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
     
     # Optional: Specific documents or sections to focus on or regenerate
     # focus_sections: Optional[List[str]] = Field(None, description="Specific document sections to focus on or regenerate.")
@@ -113,31 +123,46 @@ class ProjectDocumentationAgent_v1(BaseAgent[ProjectDocumentationAgentInput, Pro
         test_summary_content: Optional[str] = None
 
         try:
-            doc = await self._pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.refined_user_goal_doc_id)
-            if not doc or not doc.document_content:
-                raise ValueError(f"Refined user goal document {task_input.refined_user_goal_doc_id} not found or content empty.")
-            refined_goal_content = doc.document_content
+            # Refined user goal
+            doc_output: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
+                base_collection_name=PROJECT_GOALS_COLLECTION, # Assuming goals are in a general project_goals collection
+                document_id=task_input.refined_user_goal_doc_id
+            )
+            if not (doc_output and doc_output.status == "SUCCESS" and doc_output.content):
+                raise ValueError(f"Refined user goal document {task_input.refined_user_goal_doc_id} not found, content empty, or retrieval failed. Status: {doc_output.status if doc_output else 'N/A'}")
+            refined_goal_content = str(doc_output.content)
             logger_instance.debug(f"Retrieved refined_user_goal_doc_id: {task_input.refined_user_goal_doc_id}")
 
-            doc = await self._pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.project_blueprint_doc_id)
-            if not doc or not doc.document_content:
-                raise ValueError(f"Project blueprint document {task_input.project_blueprint_doc_id} not found or content empty.")
-            blueprint_content = doc.document_content
+            # Project blueprint
+            doc_output: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
+                base_collection_name=BLUEPRINT_ARTIFACTS_COLLECTION, # Assuming blueprints are in BLUEPRINT_ARTIFACTS_COLLECTION
+                document_id=task_input.project_blueprint_doc_id
+            )
+            if not (doc_output and doc_output.status == "SUCCESS" and doc_output.content):
+                raise ValueError(f"Project blueprint document {task_input.project_blueprint_doc_id} not found, content empty, or retrieval failed. Status: {doc_output.status if doc_output else 'N/A'}")
+            blueprint_content = str(doc_output.content)
             logger_instance.debug(f"Retrieved project_blueprint_doc_id: {task_input.project_blueprint_doc_id}")
 
-            doc = await self._pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.master_execution_plan_doc_id)
-            if not doc or not doc.document_content:
-                raise ValueError(f"Master execution plan document {task_input.master_execution_plan_doc_id} not found or content empty.")
-            plan_content = doc.document_content
+            # Master execution plan
+            doc_output: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
+                base_collection_name=EXECUTION_PLANS_COLLECTION, # Assuming plans are in EXECUTION_PLANS_COLLECTION
+                document_id=task_input.master_execution_plan_doc_id
+            )
+            if not (doc_output and doc_output.status == "SUCCESS" and doc_output.content):
+                raise ValueError(f"Master execution plan document {task_input.master_execution_plan_doc_id} not found, content empty, or retrieval failed. Status: {doc_output.status if doc_output else 'N/A'}")
+            plan_content = str(doc_output.content)
             logger_instance.debug(f"Retrieved master_execution_plan_doc_id: {task_input.master_execution_plan_doc_id}")
             
             if task_input.test_summary_doc_id:
-                doc = await self._pcma_agent.get_document_by_id(project_id=task_input.project_id, doc_id=task_input.test_summary_doc_id)
-                if doc and doc.document_content: # It's optional, so don't error if not found/empty, just log
-                    test_summary_content = doc.document_content
+                doc_output: RetrieveArtifactOutput = await self._pcma_agent.retrieve_artifact(
+                    base_collection_name=TEST_REPORTS_COLLECTION, # Assuming test summaries are in TEST_REPORTS_COLLECTION
+                    document_id=task_input.test_summary_doc_id
+                )
+                if doc_output and doc_output.status == "SUCCESS" and doc_output.content: # It's optional
+                    test_summary_content = str(doc_output.content)
                     logger_instance.debug(f"Retrieved test_summary_doc_id: {task_input.test_summary_doc_id}")
                 else:
-                    logger_instance.warning(f"Optional test_summary_doc_id {task_input.test_summary_doc_id} not found or content empty.")
+                    logger_instance.warning(f"Optional test_summary_doc_id {task_input.test_summary_doc_id} not found or content empty. Status: {doc_output.status if doc_output else 'N/A'}")
             
         except Exception as e:
             logger_instance.error(f"Failed to retrieve input documents via PCMA: {e}", exc_info=True)
@@ -232,97 +257,167 @@ class ProjectDocumentationAgent_v1(BaseAgent[ProjectDocumentationAgentInput, Pro
             docs_dir_id: Optional[str] = None
             dep_audit_id: Optional[str] = None
             release_notes_id: Optional[str] = None
+            storage_success = True
+            storage_error_message = ""
 
             if readme_content:
-                readme_doc_id = await self._pcma_agent.store_document_content(
-                    project_id=task_input.project_id,
-                    collection_name="project_documentation_artifacts", # Example collection
-                    document_content=readme_content,
-                    metadata={
-                        "document_type": "README.md",
+                try:
+                    readme_metadata = {
+                        "artifact_type": ARTIFACT_TYPE_PROJECT_README_MD,
                         "source_task_id": task_input.task_id,
                         "generated_by_agent": self.AGENT_ID,
-                        "timestamp": datetime.datetime.utcnow().isoformat()
+                        "project_id": task_input.project_id,
+                        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     }
-                )
-                logger_instance.info(f"Stored README.md with doc_id: {readme_doc_id}")
+                    if confidence_score_value is not None and confidence_score_level is not None:
+                        readme_metadata["confidence_value"] = float(confidence_score_value)
+                        readme_metadata["confidence_level"] = str(confidence_score_level)
+                    
+                    store_input_readme = StoreArtifactInput(
+                        base_collection_name=PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+                        artifact_content=readme_content,
+                        metadata=readme_metadata,
+                        source_agent_id=self.AGENT_ID,
+                        source_task_id=task_input.task_id,
+                        cycle_id=full_context.get("cycle_id") if full_context else None
+                    )
+                    store_result = await self._pcma_agent.store_artifact(args=store_input_readme)
+                    if store_result.status == "SUCCESS" and store_result.document_id:
+                        readme_doc_id = store_result.document_id
+                        logger_instance.info(f"Stored README.md with doc_id: {readme_doc_id}")
+                    else:
+                        storage_success = False
+                        err = store_result.error_message or f"Failed to store {ARTIFACT_TYPE_PROJECT_README_MD}"
+                        storage_error_message += f" {err};"
+                        logger_instance.error(f"Failed to store README.md: {err}")
+                except Exception as e_store_readme:
+                    storage_success = False
+                    storage_error_message += f" Error storing README: {str(e_store_readme)};"
+                    logger_instance.error(f"Exception storing README.md: {e_store_readme}", exc_info=True)
+
 
             if docs_directory_content_map and isinstance(docs_directory_content_map, dict):
-                # For docs_directory_content_map, store as a single JSON manifest for now.
-                # Alternatively, could iterate and store each file if PCMA supports path-like keys.
-                import json # Ensure json is imported
-                docs_manifest_content = json.dumps(docs_directory_content_map, indent=2)
-                docs_dir_id = await self._pcma_agent.store_document_content(
-                    project_id=task_input.project_id,
-                    collection_name="project_documentation_artifacts",
-                    document_content=docs_manifest_content,
-                    metadata={
-                        "document_type": "docs_directory_manifest.json",
+                try:
+                    docs_manifest_content = json.dumps(docs_directory_content_map, indent=2)
+                    manifest_metadata = {
+                        "artifact_type": ARTIFACT_TYPE_DOCS_DIRECTORY_MANIFEST_JSON,
                         "source_task_id": task_input.task_id,
                         "generated_by_agent": self.AGENT_ID,
-                        "timestamp": datetime.datetime.utcnow().isoformat()
+                        "project_id": task_input.project_id,
+                        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     }
-                )
-                logger_instance.info(f"Stored docs directory manifest with doc_id: {docs_dir_id}")
+                    if confidence_score_value is not None and confidence_score_level is not None:
+                        manifest_metadata["confidence_value"] = float(confidence_score_value)
+                        manifest_metadata["confidence_level"] = str(confidence_score_level)
+
+                    store_input_manifest = StoreArtifactInput(
+                        base_collection_name=PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+                        artifact_content=docs_manifest_content,
+                        metadata=manifest_metadata,
+                        source_agent_id=self.AGENT_ID,
+                        source_task_id=task_input.task_id,
+                        cycle_id=full_context.get("cycle_id") if full_context else None
+                    )
+                    store_result = await self._pcma_agent.store_artifact(args=store_input_manifest)
+                    if store_result.status == "SUCCESS" and store_result.document_id:
+                        docs_dir_id = store_result.document_id
+                        logger_instance.info(f"Stored docs directory manifest with doc_id: {docs_dir_id}")
+                    else:
+                        storage_success = False
+                        err = store_result.error_message or f"Failed to store {ARTIFACT_TYPE_DOCS_DIRECTORY_MANIFEST_JSON}"
+                        storage_error_message += f" {err};"
+                        logger_instance.error(f"Failed to store docs directory manifest: {err}")
+                except Exception as e_store_manifest:
+                    storage_success = False
+                    storage_error_message += f" Error storing docs manifest: {str(e_store_manifest)};"
+                    logger_instance.error(f"Exception storing docs directory manifest: {e_store_manifest}", exc_info=True)
             
             if codebase_dependency_audit_content:
-                dep_audit_id = await self._pcma_agent.store_document_content(
-                    project_id=task_input.project_id,
-                    collection_name="project_documentation_artifacts",
-                    document_content=codebase_dependency_audit_content,
-                    metadata={
-                        "document_type": "codebase_dependency_audit.md",
+                try:
+                    audit_metadata = {
+                        "artifact_type": ARTIFACT_TYPE_DEPENDENCY_AUDIT_MD,
                         "source_task_id": task_input.task_id,
                         "generated_by_agent": self.AGENT_ID,
-                        "timestamp": datetime.datetime.utcnow().isoformat()
+                        "project_id": task_input.project_id,
+                        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     }
-                )
-                logger_instance.info(f"Stored codebase dependency audit with doc_id: {dep_audit_id}")
-            
+                    if confidence_score_value is not None and confidence_score_level is not None:
+                        audit_metadata["confidence_value"] = float(confidence_score_value)
+                        audit_metadata["confidence_level"] = str(confidence_score_level)
+
+                    store_input_audit = StoreArtifactInput(
+                        base_collection_name=PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+                        artifact_content=codebase_dependency_audit_content,
+                        metadata=audit_metadata,
+                        source_agent_id=self.AGENT_ID,
+                        source_task_id=task_input.task_id,
+                        cycle_id=full_context.get("cycle_id") if full_context else None
+                    )
+                    store_result = await self._pcma_agent.store_artifact(args=store_input_audit)
+                    if store_result.status == "SUCCESS" and store_result.document_id:
+                        dep_audit_id = store_result.document_id
+                        logger_instance.info(f"Stored codebase dependency audit with doc_id: {dep_audit_id}")
+                    else:
+                        storage_success = False
+                        err = store_result.error_message or f"Failed to store {ARTIFACT_TYPE_DEPENDENCY_AUDIT_MD}"
+                        storage_error_message += f" {err};"
+                        logger_instance.error(f"Failed to store codebase dependency audit: {err}")
+                except Exception as e_store_audit:
+                    storage_success = False
+                    storage_error_message += f" Error storing dependency audit: {str(e_store_audit)};"
+                    logger_instance.error(f"Exception storing codebase dependency audit: {e_store_audit}", exc_info=True)
+
             if release_notes_content:
-                release_notes_id = await self._pcma_agent.store_document_content(
-                    project_id=task_input.project_id,
-                    collection_name="project_documentation_artifacts",
-                    document_content=release_notes_content,
-                    metadata={
-                        "document_type": "RELEASE_NOTES.md",
+                try:
+                    notes_metadata = {
+                        "artifact_type": ARTIFACT_TYPE_RELEASE_NOTES_MD,
                         "source_task_id": task_input.task_id,
                         "generated_by_agent": self.AGENT_ID,
-                        "timestamp": datetime.datetime.utcnow().isoformat()
+                        "project_id": task_input.project_id,
+                        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     }
-                )
-                logger_instance.info(f"Stored release notes with doc_id: {release_notes_id}")
+                    if confidence_score_value is not None and confidence_score_level is not None:
+                        notes_metadata["confidence_value"] = float(confidence_score_value)
+                        notes_metadata["confidence_level"] = str(confidence_score_level)
+                    
+                    store_input_notes = StoreArtifactInput(
+                        base_collection_name=PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION,
+                        artifact_content=release_notes_content,
+                        metadata=notes_metadata,
+                        source_agent_id=self.AGENT_ID,
+                        source_task_id=task_input.task_id,
+                        cycle_id=full_context.get("cycle_id") if full_context else None
+                    )
+                    store_result = await self._pcma_agent.store_artifact(args=store_input_notes)
+                    if store_result.status == "SUCCESS" and store_result.document_id:
+                        release_notes_id = store_result.document_id
+                        logger_instance.info(f"Stored release notes with doc_id: {release_notes_id}")
+                    else:
+                        storage_success = False
+                        err = store_result.error_message or f"Failed to store {ARTIFACT_TYPE_RELEASE_NOTES_MD}"
+                        storage_error_message += f" {err};"
+                        logger_instance.error(f"Failed to store release notes: {err}")
+                except Exception as e_store_notes:
+                    storage_success = False
+                    storage_error_message += f" Error storing release notes: {str(e_store_notes)};"
+                    logger_instance.error(f"Exception storing release notes: {e_store_notes}", exc_info=True)
         
-        except Exception as e:
-            logger_instance.error(f"Failed to store output documents via PCMA: {e}", exc_info=True)
+        except Exception as e_overall_store: # Should ideally be caught by individual try-excepts
+            logger_instance.error(f"Overall error during document storage via PCMA: {e_overall_store}", exc_info=True)
+            storage_success = False
+            storage_error_message = str(e_overall_store)
             # Output what was successfully stored, but reflect the error in status
-            return ProjectDocumentationAgentOutput(
-                task_id=task_input.task_id, 
-                project_id=task_input.project_id, 
-                readme_doc_id=readme_doc_id, # May be None or have a value
-                docs_directory_doc_id=docs_dir_id, # May be None or have a value
-                codebase_dependency_audit_doc_id=dep_audit_id, # May be None or have a value
-                release_notes_doc_id=release_notes_id, # May be None or have a value
-                status="FAILURE_OUTPUT_STORAGE", 
-                message=f"Error storing output documents: {e}",
-                error_message=str(e),
-                llm_full_response=llm_full_response_str # From earlier successful LLM call
-            )
+
+        final_status = "SUCCESS"
+        final_message = "Documentation generated and all artifacts stored successfully."
+        if not storage_success:
+            final_status = "PARTIAL_SUCCESS_STORAGE_FAILED"
+            final_message = f"Documentation generated, but one or more artifacts failed to store: {storage_error_message.strip()}"
+            # If all critical docs failed, might consider it a FAILURE_OUTPUT_STORAGE
+            if not readme_doc_id: # Example: README is critical
+                final_status = "FAILURE_OUTPUT_STORAGE"
 
         # --- 5. Construct Final Output --- 
-        final_status = "SUCCESS"
-        final_message = "Documentation generated and stored successfully."
-        # Check if all expected outputs were actually stored
-        if not readme_doc_id or not docs_dir_id or not dep_audit_id:
-            final_status = "PARTIAL_SUCCESS_STORAGE_INCOMPLETE"
-            final_message = "Documentation generated, but one or more outputs failed to store or were not generated."
-            if not release_notes_content and not release_notes_id : # if optional was not generated, it's not an error
-                 pass # This is fine
-            elif release_notes_content and not release_notes_id: # if it was generated but not stored.
-                 final_status = "PARTIAL_SUCCESS_STORAGE_INCOMPLETE"
-                 final_message = "Documentation generated, but one or more outputs failed to store or were not generated (including optional release notes)."
-
-
         agent_confidence = None
         if confidence_score_value is not None and confidence_score_level is not None:
             agent_confidence = ConfidenceScore(
@@ -333,15 +428,16 @@ class ProjectDocumentationAgent_v1(BaseAgent[ProjectDocumentationAgentInput, Pro
             )
         
         return ProjectDocumentationAgentOutput(
-            task_id=task_input.task_id,
-            project_id=task_input.project_id,
+            task_id=task_input.task_id, 
+            project_id=task_input.project_id, 
             readme_doc_id=readme_doc_id,
             docs_directory_doc_id=docs_dir_id,
             codebase_dependency_audit_doc_id=dep_audit_id,
             release_notes_doc_id=release_notes_id,
-            status=final_status,
+            status=final_status, 
             message=final_message,
             agent_confidence_score=agent_confidence,
+            error_message=storage_error_message.strip() if not storage_success else None,
             llm_full_response=llm_full_response_str
         )
 

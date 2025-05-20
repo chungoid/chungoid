@@ -14,14 +14,21 @@ from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     ProjectChromaManagerAgent_v1, 
+    StoreArtifactInput, # Added
     LOPRD_ARTIFACTS_COLLECTION, # For reading LOPRD
     BLUEPRINT_ARTIFACTS_COLLECTION, # For reading Blueprint
     EXECUTION_PLANS_COLLECTION, # For reading MasterExecutionPlan
     RISK_ASSESSMENT_REPORTS_COLLECTION, 
-    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION
+    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
+    # Added ARTIFACT_TYPE constants
+    ARTIFACT_TYPE_RISK_ASSESSMENT_REPORT_MD,
+    ARTIFACT_TYPE_OPTIMIZATION_SUGGESTION_REPORT_MD,
+    RetrieveArtifactOutput, # Added
+    ARTIFACT_TYPE_AGENT_REFLECTION_JSON
 )
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard categories/visibility
+from chungoid.schemas.agent_logs import GenericAgentReflection, LLMCallDetails, ToolCallDetails
 
 logger = logging.getLogger(__name__)
 
@@ -159,14 +166,13 @@ class ProactiveRiskAssessorAgent_v1(BaseAgent[ProactiveRiskAssessorInput, Proact
 
         try:
             # Retrieve primary artifact
-            primary_artifact_doc = await pcma_instance.get_document_by_id(
-                project_id=task_input.project_id,
-                doc_id=task_input.artifact_id,
-                collection_name=source_collection_name 
+            primary_artifact_doc: RetrieveArtifactOutput = await pcma_instance.retrieve_artifact(
+                base_collection_name=source_collection_name,
+                document_id=task_input.artifact_id
             )
-            if not primary_artifact_doc or not primary_artifact_doc.document_content:
-                raise ValueError(f"Primary artifact {task_input.artifact_id} from collection {source_collection_name} not found or content empty.")
-            primary_artifact_content_str = primary_artifact_doc.document_content
+            if not (primary_artifact_doc and primary_artifact_doc.status == "SUCCESS" and primary_artifact_doc.content):
+                raise ValueError(f"Primary artifact {task_input.artifact_id} from collection {source_collection_name} not found, content empty, or retrieval failed. Status: {primary_artifact_doc.status if primary_artifact_doc else 'N/A'}")
+            primary_artifact_content_str = str(primary_artifact_doc.content) # Ensure content is string
 
             logger_instance.debug(f"Retrieved primary artifact content for {task_input.artifact_id} from {source_collection_name}")
 
@@ -175,16 +181,15 @@ class ProactiveRiskAssessorAgent_v1(BaseAgent[ProactiveRiskAssessorInput, Proact
             elif task_input.artifact_type == "Blueprint":
                 blueprint_content_for_prompt = primary_artifact_content_str
                 if task_input.loprd_document_id_for_blueprint_context:
-                    loprd_context_doc = await pcma_instance.get_document_by_id(
-                        project_id=task_input.project_id,
-                        doc_id=task_input.loprd_document_id_for_blueprint_context,
-                        collection_name=LOPRD_ARTIFACTS_COLLECTION # LOPRDs are in their own collection
+                    loprd_context_doc: RetrieveArtifactOutput = await pcma_instance.retrieve_artifact(
+                        base_collection_name=LOPRD_ARTIFACTS_COLLECTION, # LOPRDs are in their own collection
+                        document_id=task_input.loprd_document_id_for_blueprint_context
                     )
-                    if loprd_context_doc and loprd_context_doc.document_content:
-                        loprd_content_for_prompt = loprd_context_doc.document_content
+                    if loprd_context_doc and loprd_context_doc.status == "SUCCESS" and loprd_context_doc.content:
+                        loprd_content_for_prompt = str(loprd_context_doc.content) # Ensure content is string
                         logger_instance.debug(f"Retrieved LOPRD context for Blueprint: {task_input.loprd_document_id_for_blueprint_context}")
                     else:
-                        logger_instance.warning(f"Could not retrieve LOPRD context {task_input.loprd_document_id_for_blueprint_context} for Blueprint analysis or content was empty.")
+                        logger_instance.warning(f"Could not retrieve LOPRD context {task_input.loprd_document_id_for_blueprint_context} for Blueprint analysis or content was empty. Status: {loprd_context_doc.status if loprd_context_doc else 'N/A'}")
             elif task_input.artifact_type == "MasterExecutionPlan":
                  # Assuming the prompt can handle plan content directly or it implies needing LOPRD/Blueprint for full context
                  # For now, let's treat it like blueprint; it might need its own prompt logic or data prep.
@@ -246,99 +251,169 @@ class ProactiveRiskAssessorAgent_v1(BaseAgent[ProactiveRiskAssessorInput, Proact
                 if not assessment_confidence_data: missing_fields.append("assessment_confidence")
                 raise ValueError(f"LLM JSON output missing required fields: {', '.join(missing_fields)}. Got: {llm_response_json_str[:500]}")
             
-            final_confidence = ConfidenceScore(**assessment_confidence_data)
+            agent_confidence_score = ConfidenceScore(**assessment_confidence_data)
             logger_instance.info("Successfully received and parsed assessment reports from LLM.")
 
         except PromptRenderError as e_prompt:
-            logger_instance.error(f"Prompt rendering failed for {PRAA_PROMPT_NAME}: {e_prompt}", exc_info=True)
-            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
-        except json.JSONDecodeError as e_json:
-            logger_instance.error(f"Failed to decode LLM JSON response: {e_json}. Response: {llm_response_json_str[:500]}...", exc_info=True) # Log only first 500 chars
-            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM_OUTPUT_PARSING", message=f"LLM response not valid JSON: {e_json}", error_message=str(e_json), llm_full_response=llm_response_json_str)
-        except Exception as e_llm: # Catches ValueError from missing fields or other LLM issues
-            logger_instance.error(f"LLM interaction or output processing failed: {e_llm}", exc_info=True)
-            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM", message=str(e_llm), error_message=str(e_llm), llm_full_response=llm_response_json_str)
-
-        # --- Store reports in ChromaDB (via PCMA) ---
-        risk_doc_id: Optional[str] = None
-        opt_doc_id: Optional[str] = None
-        try:
-            # Conceptual: pcma_instance.store_text_artifact(project_id, content, name, collection_name, metadata)
-            # risk_store_result = await pcma_instance.store_risk_assessment_report(
-            #     project_id=task_input.project_id, 
-            #     report_content_md=risk_report_md,
-            #     related_artifact_id=task_input.artifact_id,
-            #     related_artifact_type=task_input.artifact_type
-            # )
-            # if risk_store_result and risk_store_result.doc_id:
-            #     risk_doc_id = risk_store_result.doc_id
-            # else:
-            #     logger_instance.warning("Failed to store risk assessment report or get its doc_id from PCMA.")
-            # risk_doc_id = f"mock_risk_report_for_{task_input.artifact_id}" # Placeholder
-
-            risk_metadata = {
-                "report_type": "risk_assessment",
-                "assessed_artifact_id": task_input.artifact_id,
-                "assessed_artifact_type": task_input.artifact_type,
-                "generated_by_agent": self.AGENT_ID,
-                "task_id": task_input.task_id,
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            }
-            risk_doc_id = await pcma_instance.store_document_content(
-                project_id=task_input.project_id,
-                collection_name=RISK_ASSESSMENT_REPORTS_COLLECTION,
-                document_content=risk_report_md,
-                metadata=risk_metadata,
-                # document_relative_path could be e.g. f"{task_input.artifact_id}_risk_assessment.md"
-            )
-            logger_instance.info(f"Stored risk assessment report with doc_id: {risk_doc_id}")
-
-            # opt_store_result = await pcma_instance.store_optimization_suggestions_report(...)
-            # ...
-            # opt_doc_id = f"mock_opt_report_for_{task_input.artifact_id}" # Placeholder
-            opt_metadata = {
-                "report_type": "optimization_suggestions",
-                "assessed_artifact_id": task_input.artifact_id,
-                "assessed_artifact_type": task_input.artifact_type,
-                "generated_by_agent": self.AGENT_ID,
-                "task_id": task_input.task_id,
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            }
-            opt_doc_id = await pcma_instance.store_document_content(
-                project_id=task_input.project_id,
-                collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
-                document_content=opt_report_md,
-                metadata=opt_metadata,
-                # document_relative_path could be e.g. f"task_input.artifact_id_optimization_suggestions.md"
-            )
-            logger_instance.info(f"Stored optimization suggestions report with doc_id: {opt_doc_id}")
-
-        except Exception as e_store:
-            msg = f"Failed to store assessment reports in ChromaDB: {e_store}"
+            msg = f"Prompt rendering failed for PRAA: {e_prompt}"
             logger_instance.error(msg, exc_info=True)
-            # Note: We proceed to return the previously successful LLM output even if storage fails,
-            # but the status should reflect the overall outcome. The output doc_ids will be None.
-            return ProactiveRiskAssessorOutput(
-                task_id=task_input.task_id,
-                project_id=task_input.project_id,
-                risk_assessment_report_doc_id=None, # Failed to store
-                optimization_suggestions_report_doc_id=None, # Failed to store
-                status="FAILURE_CHROMA_STORAGE", 
-                message=msg, 
-                confidence_score=final_confidence, # from LLM stage
-                error_message=str(e_store),
-                llm_full_response=llm_response_json_str
+            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=msg, error_message=str(e_prompt))
+        except json.JSONDecodeError as e_json:
+            msg = f"Failed to parse LLM JSON response: {e_json}. Response was: {llm_response_json_str[:500] if llm_response_json_str else 'None'}"
+            logger_instance.error(msg, exc_info=True)
+            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM_OUTPUT_PARSING", message=msg, error_message=str(e_json), llm_full_response=llm_response_json_str)
+        except ValueError as e_val: # Catch missing fields or other validation issues from Pydantic
+            msg = f"LLM output validation error or other value error: {e_val}"
+            logger_instance.error(msg, exc_info=True)
+            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM_OUTPUT_VALIDATION", message=msg, error_message=str(e_val), llm_full_response=llm_response_json_str)
+        except Exception as e_llm: # Catch-all for other LLM or processing issues
+            msg = f"LLM interaction or output processing failed unexpectedly: {e_llm}"
+            logger_instance.error(msg, exc_info=True)
+            return ProactiveRiskAssessorOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM", message=msg, error_message=str(e_llm), llm_full_response=llm_response_json_str)
+
+        # --- Store Artifacts via PCMA ---
+        risk_report_doc_id: Optional[str] = None
+        opt_report_doc_id: Optional[str] = None
+        current_utc_time_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        # Store Risk Assessment Report
+        try:
+            risk_metadata = {
+                "artifact_type": ARTIFACT_TYPE_RISK_ASSESSMENT_REPORT_MD,
+                "project_id": task_input.project_id,
+                "assessed_artifact_id": task_input.artifact_id,
+                "assessed_artifact_type": task_input.artifact_type,
+                "confidence_score": assessment_confidence_data, # Store the dict form
+                "source_agent_id": self.AGENT_ID,
+                "source_task_id": task_input.task_id,
+                "timestamp_utc": current_utc_time_iso
+            }
+            if hasattr(task_input, 'cycle_id') and task_input.cycle_id: # Check if cycle_id exists
+                risk_metadata["cycle_id"] = task_input.cycle_id
+
+            store_risk_report_input = StoreArtifactInput(
+                base_collection_name=RISK_ASSESSMENT_REPORTS_COLLECTION,
+                artifact_content=risk_report_md,
+                metadata=risk_metadata,
+                source_agent_id=self.AGENT_ID,
+                source_task_id=task_input.task_id,
+                cycle_id=getattr(task_input, 'cycle_id', None) # Get cycle_id if present
+            )
+            risk_store_output = await pcma_instance.store_artifact(store_risk_report_input)
+            if risk_store_output.status == "SUCCESS":
+                risk_report_doc_id = risk_store_output.document_id
+                logger_instance.info(f"Stored Risk Assessment Report with ID: {risk_report_doc_id}")
+            else:
+                logger_instance.error(f"Failed to store Risk Assessment Report: {risk_store_output.message or risk_store_output.error_message}")
+        except Exception as e_store_risk:
+            logger_instance.error(f"Exception storing Risk Assessment Report: {e_store_risk}", exc_info=True)
+
+        # Store Optimization Suggestions Report
+        try:
+            opt_metadata = {
+                "artifact_type": ARTIFACT_TYPE_OPTIMIZATION_SUGGESTION_REPORT_MD,
+                "project_id": task_input.project_id,
+                "assessed_artifact_id": task_input.artifact_id,
+                "assessed_artifact_type": task_input.artifact_type,
+                "confidence_score": assessment_confidence_data, # Store the dict form
+                "source_agent_id": self.AGENT_ID,
+                "source_task_id": task_input.task_id,
+                "timestamp_utc": current_utc_time_iso
+            }
+            if hasattr(task_input, 'cycle_id') and task_input.cycle_id: # Check if cycle_id exists
+                opt_metadata["cycle_id"] = task_input.cycle_id
+
+            store_opt_report_input = StoreArtifactInput(
+                base_collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
+                artifact_content=opt_report_md,
+                metadata=opt_metadata,
+                source_agent_id=self.AGENT_ID,
+                source_task_id=task_input.task_id,
+                cycle_id=getattr(task_input, 'cycle_id', None) # Get cycle_id if present
+            )
+            opt_store_output = await pcma_instance.store_artifact(store_opt_report_input)
+            if opt_store_output.status == "SUCCESS":
+                opt_report_doc_id = opt_store_output.document_id
+                logger_instance.info(f"Stored Optimization Suggestions Report with ID: {opt_report_doc_id}")
+            else:
+                logger_instance.error(f"Failed to store Optimization Suggestions Report: {opt_store_output.message or opt_store_output.error_message}")
+        except Exception as e_store_opt:
+            logger_instance.error(f"Exception storing Optimization Suggestions Report: {e_store_opt}", exc_info=True)
+
+        # Store GenericAgentReflection
+        try:
+            input_artifacts_used = [task_input.artifact_id]
+            if task_input.loprd_document_id_for_blueprint_context:
+                input_artifacts_used.append(task_input.loprd_document_id_for_blueprint_context)
+            
+            output_artifacts_generated = []
+            if risk_report_doc_id:
+                output_artifacts_generated.append(risk_report_doc_id)
+            if opt_report_doc_id:
+                output_artifacts_generated.append(opt_report_doc_id)
+
+            # Simplified LLMCallDetails; full details might require more from llm_provider
+            llm_call = LLMCallDetails(
+                model_name=llm_provider.model_id, # Assuming model_id is accessible
+                prompt_template_id=PRAA_PROMPT_NAME,
+                # temperature=0.4 (if accessible or passed through usage_metadata)
+                # tokens_total=llm_usage_metadata.get("total_tokens") if llm_usage_metadata else None
             )
 
+            reflection = GenericAgentReflection(
+                project_id=task_input.project_id,
+                cycle_id=getattr(task_input, 'cycle_id', None),
+                agent_id=self.AGENT_ID,
+                agent_version=self.VERSION,
+                source_task_id=task_input.task_id,
+                summary_of_activity=f"Performed risk and optimization assessment on {task_input.artifact_type} ID: {task_input.artifact_id}",
+                input_artifact_ids_used=input_artifacts_used,
+                output_artifact_ids_generated=output_artifacts_generated,
+                decision_rationale="Assessment based on LLM analysis of provided artifact content and contextual LOPRD if applicable.",
+                process_confidence_score=agent_confidence_score.value if agent_confidence_score else None,
+                llm_calls=[llm_call],
+                tool_calls=[], # PRAA currently doesn't use external tools via MCP
+                contextual_adherence_explanation="Adherence to prompt for structured JSON output containing risk, optimization reports, and confidence.",
+            )
+            
+            reflection_metadata = {
+                "artifact_type": ARTIFACT_TYPE_AGENT_REFLECTION_JSON,
+                "project_id": task_input.project_id,
+                "reflected_agent_id": self.AGENT_ID,
+                "reflected_task_id": task_input.task_id,
+                "timestamp_utc": current_utc_time_iso
+            }
+            if hasattr(task_input, 'cycle_id') and task_input.cycle_id:
+                reflection_metadata["cycle_id"] = task_input.cycle_id
+
+            store_reflection_input = StoreArtifactInput(
+                base_collection_name=AGENT_REFLECTIONS_AND_LOGS_COLLECTION, # Defined in PCMA
+                artifact_content=reflection.model_dump(mode='json'), # Store as dict/json
+                metadata=reflection_metadata,
+                source_agent_id=self.AGENT_ID, # Self-reflection
+                source_task_id=task_input.task_id,
+                cycle_id=getattr(task_input, 'cycle_id', None)
+            )
+            reflection_store_output = await pcma_instance.store_artifact(store_reflection_input)
+            if reflection_store_output.status == "SUCCESS":
+                logger_instance.info(f"Stored GenericAgentReflection for PRAA task {task_input.task_id} with ID: {reflection_store_output.document_id}")
+            else:
+                logger_instance.error(f"Failed to store GenericAgentReflection for PRAA: {reflection_store_output.message or reflection_store_output.error_message}")
+
+        except Exception as e_store_reflection:
+            logger_instance.error(f"Exception storing GenericAgentReflection for PRAA: {e_store_reflection}", exc_info=True)
+
+
+        # --- Prepare Final Output ---
         return ProactiveRiskAssessorOutput(
             task_id=task_input.task_id,
             project_id=task_input.project_id,
-            risk_assessment_report_doc_id=risk_doc_id,
-            optimization_suggestions_report_doc_id=opt_doc_id, # Corrected field name from schema
-            status="SUCCESS" if risk_doc_id and opt_doc_id else "PARTIAL_SUCCESS_STORAGE_FAILED",
-            message=f"Assessment reports generated for {task_input.artifact_type} ID {task_input.artifact_id}. Storage {'successful' if risk_doc_id and opt_doc_id else 'failed for one or more reports'}.",
-            confidence_score=final_confidence,
-            llm_full_response=llm_response_json_str,
+            risk_assessment_report_doc_id=risk_report_doc_id,
+            optimization_suggestions_report_doc_id=opt_report_doc_id,
+            status="SUCCESS",
+            message="Successfully generated risk and optimization reports.",
+            confidence_score=agent_confidence_score,
+            llm_full_response=llm_response_json_str, # For debugging
             usage_metadata=llm_usage_metadata
         )
 

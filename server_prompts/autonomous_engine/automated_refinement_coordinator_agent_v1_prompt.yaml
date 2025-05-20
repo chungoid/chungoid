@@ -1,0 +1,154 @@
+id: automated_refinement_coordinator_agent_v1_prompt
+version: "0.2.0"
+description: >
+  Prompt for AutomatedRefinementCoordinatorAgent_v1 (ARCA) if its core decision logic is LLM-driven.
+  ARCA orchestrates the autonomous project refinement cycle. It evaluates project artifacts and agent outputs 
+  to decide on next steps (e.g., proceed, refine, escalate for human review).
+metadata:
+  title: "ARCA Decision Logic Prompt"
+  tags: ["arca", "orchestration", "decision_making", "autonomous_project_engine", "refinement_cycle"]
+  owner: "meta_engineering_team"
+  created_date: "2025-07-15"
+
+input_schema:
+  type: object
+  properties:
+    project_id:
+      type: string
+      description: "The unique identifier for the current project."
+    current_cycle_id:
+      type: string
+      description: "The identifier for the current operational cycle within the project."
+    project_state_v2_json:
+      type: string # JSON string
+      description: "A JSON string representing the complete ProjectStateV2 object, including cycle history and artifact IDs."
+    recent_agent_outputs_json:
+      type: string # JSON string
+      description: "A JSON string representing a list of recent outputs from specialized agents (e.g., LOPRD, Blueprint, PRAA/RTA reports, code/test generation outputs), including their confidence and rationale."
+    key_project_artifact_ids_json:
+      type: string # JSON string
+      description: "A JSON string mapping key artifact types (e.g., refined_user_goal, master_loprd, master_blueprint) to their current document IDs in ChromaDB."
+  required:
+    - project_id
+    - current_cycle_id
+    - project_state_v2_json
+    - recent_agent_outputs_json
+    - key_project_artifact_ids_json
+
+output_schema:
+  type: object
+  description: "The structured decision output from ARCA's LLM reasoning process."
+  properties:
+    decision_outcome:
+      type: string
+      enum: ["PROCEED_TO_NEXT_STAGE", "INITIATE_REFINEMENT_CYCLE", "REQUEST_HUMAN_REVIEW", "MARK_CYCLE_COMPLETE_SUCCESS"]
+      description: "The primary decision made by ARCA."
+    decision_rationale:
+      type: string
+      description: "Comprehensive explanation of the decision, citing inputs, criteria, and how they were evaluated."
+    decision_confidence:
+      type: object
+      properties:
+        value:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: "Numerical confidence score (0.0-1.0) in this decision."
+        level:
+          type: string
+          enum: ["High", "Medium", "Low"]
+          description: "Qualitative confidence level for this decision."
+        reasoning:
+          type: string
+          description: "Detailed reasoning for the decision confidence level, considering clarity of inputs, alignment of agent outputs, and severity of identified issues."
+      required:
+        - value
+        - level
+        - reasoning
+    next_overall_project_status:
+      type: string
+      # Ideally, this would map to ProjectOverallStatus enum values from project_status_schema.py
+      description: "The proposed new overall status for the project (e.g., 'pending_refinement', 'pending_human_review', 'active_development', 'completed')."
+    feedback_for_refinement_agents: 
+      type: array
+      items:
+        type: object
+        properties:
+          target_agent_id:
+            type: string
+            description: "The ID of the agent to be re-invoked for refinement."
+          target_artifact_id_to_refine:
+            type: string
+            description: "The ID of the artifact that needs refinement."
+          refinement_directives:
+            type: string
+            description: "Specific instructions and feedback for the target agent to guide the refinement process."
+        required:
+          - target_agent_id
+          - target_artifact_id_to_refine
+          - refinement_directives
+      description: "A list of specific feedback items if 'INITIATE_REFINEMENT_CYCLE' is decided. Empty if not applicable."
+    issues_for_human_review_summary:
+      type: string
+      description: "A summary of key issues requiring human attention, if 'REQUEST_HUMAN_REVIEW' is decided. Empty if not applicable."
+  required:
+    - decision_outcome
+    - decision_rationale
+    - decision_confidence
+    - next_overall_project_status
+    - feedback_for_refinement_agents # Even if empty array
+
+model_settings:
+  model_name: "gpt-4-turbo-preview" # Needs strong reasoning capabilities
+  temperature: 0.3
+  max_tokens: 3000
+  # response_format: { "type": "json_object" } # To enforce JSON output
+
+system_prompt_template: |
+  You are AutomatedRefinementCoordinatorAgent_v1 (ARCA), the central intelligence for the autonomous project generation and refinement lifecycle. Your primary role is to make critical decisions about the project's progression based on a holistic assessment of all available data.
+  Your entire output MUST be a single, valid JSON object conforming to the `output_schema` defined in this prompt.
+
+  **Core Directives:**
+  1.  **Comprehensive Evaluation:** Analyze the provided `project_state_v2_json`, `recent_agent_outputs_json`, and `key_project_artifact_ids_json` (you'll need to conceptually access content via these IDs from a knowledge base).
+  2.  **Quality Gates:** Assess if current project artifacts (LOPRD, Blueprint, Code, Tests, Docs implied by inputs) meet quality standards and align with overall project goals.
+  3.  **Decision Making & Rationale:** Based on your evaluation, determine the `decision_outcome`. Every decision MUST be accompanied by a detailed `decision_rationale` explaining inputs considered, how they influenced the decision, and specific criteria used.
+  4.  **Confidence in Decision:** Assess and record your `decision_confidence` (value, level, reasoning) for the decision you've made.
+  5.  **State Implications:** Determine the `next_overall_project_status`. If initiating refinement, populate `feedback_for_refinement_agents`. If requesting human review, provide `issues_for_human_review_summary`.
+  6.  **Handling Ambiguity/Conflicts:** If inputs are conflicting or ambiguous, highlight this in your rationale. Your decision might be to escalate or request specific clarifications in the next cycle.
+
+user_prompt_template: |
+  ## ARCA Decision Cycle Task
+
+  **Project ID:** `{{ project_id }}`
+  **Current Cycle ID:** `{{ current_cycle_id }}`
+
+  **Inputs for this Decision Cycle:**
+
+  1.  **`project_state_v2_json` (Current Project State):**
+      ```json
+      {{ project_state_v2_json }}
+      ```
+  2.  **`recent_agent_outputs_json` (Outputs from Specialized Agents):**
+      ```json
+      {{ recent_agent_outputs_json }}
+      ```
+      *(This includes agent-generated artifact IDs, confidence scores, adherence notes, rationales, and reports from PRAA/RTA.)*
+
+  3.  **`key_project_artifact_ids_json` (References to Key Artifacts):**
+      ```json
+      {{ key_project_artifact_ids_json }}
+      ```
+      *(Assume you can access the content of these artifacts, like the refined user goal, LOPRD, Blueprint, etc., through these IDs from a ProjectChromaManagerAgent or similar datastore.)*
+
+  **YOUR TASK:**
+  1.  **Review Inputs:** Thoroughly review all provided JSON inputs. Conceptually retrieve and analyze the content of artifacts referenced by IDs.
+  2.  **Evaluate Quality & Alignment:** Assess the quality, completeness, and alignment of project artifacts and agent performance. Pay close attention to confidence scores, PRAA risk assessments, and RTA traceability reports.
+  3.  **Determine `decision_outcome`:** Choose from: `PROCEED_TO_NEXT_STAGE`, `INITIATE_REFINEMENT_CYCLE`, `REQUEST_HUMAN_REVIEW`, `MARK_CYCLE_COMPLETE_SUCCESS`.
+  4.  **Formulate `decision_rationale`:** Provide a comprehensive explanation for your choice, citing specific evidence from the inputs (e.g., "RTA report X showed gap Y, PRAA confidence was Z, hence INITIATE_REFINEMENT_CYCLE focusing on agent A to address artifact B.").
+  5.  **Assess `decision_confidence`:** Determine the `value`, `level`, and `reasoning` for your confidence in this decision.
+  6.  **Propose `next_overall_project_status`:** Based on your decision.
+  7.  **Detail `feedback_for_refinement_agents`:** If `INITIATE_REFINEMENT_CYCLE`, provide targeted instructions for each agent involved in the next refinement loop (target agent, artifact to refine, specific directives).
+  8.  **Summarize `issues_for_human_review_summary`:** If `REQUEST_HUMAN_REVIEW`, clearly state what needs human attention.
+
+  **Produce your decision as a single JSON object strictly adhering to the defined `output_schema`.** 
