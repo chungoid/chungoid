@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 from chungoid.utils.agent_registry_meta import AgentCategory # This was fixed - REMOVED AgentProfile
 
+# --- Agent Class Imports needed for Fallback Map ---
+# Import the renamed class
+from chungoid.runtime.agents.mocks.mock_system_intervention_agent import MockSystemInterventionAgent # RENAMED
+# Other mock agent classes used in fallback map
+from chungoid.runtime.agents.mocks.mock_code_generator_agent import MockCodeGeneratorAgent
+from chungoid.runtime.agents.mocks.mock_test_generator_agent import MockTestGeneratorAgent
+from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import MockSystemRequirementsGatheringAgent
+
 # region Mock Agent Input/Output Schemas
 
 # --- MockSetupAgentV1 ---
@@ -421,7 +429,7 @@ class MockAlternativeAgentV1(BaseAgent[MockAlternativeAgentV1Input, MockAlternat
 
 # --- ADD IMPORT FOR THE MISSING MOCK AGENT ---
 from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import MockSystemRequirementsGatheringAgent
-from chungoid.runtime.agents.mocks.mock_human_input_agent import MockHumanInputAgent # ADDED IMPORT
+# from chungoid.runtime.agents.mocks.mock_human_input_agent import MockHumanInputAgent # REMOVED THIS LINE
 # --- END ADD IMPORT ---
 
 # Helper list for registration script
@@ -432,18 +440,54 @@ ALL_MOCK_TESTING_AGENTS = [
     MockClarificationAgentV1, # Added new agent
     MockAlternativeAgentV1,
     MockSystemRequirementsGatheringAgent, # <<< ADDED THE AGENT HERE
-    MockHumanInputAgent # ADDED MockHumanInputAgent to the list
 ]
 
 def get_all_mock_testing_agent_cards() -> List[AgentCard]:
-    return [agent().get_agent_card() for agent in ALL_MOCK_TESTING_AGENTS]
+    """Returns AgentCards for all mock agents defined in this file."""
+    return [
+        MockSetupAgentV1().get_agent_card(),
+        MockFailPointAgentV1().get_agent_card(),
+        MockVerifyAgentV1().get_agent_card(),
+        MockClarificationAgentV1().get_agent_card(),
+        MockAlternativeAgentV1().get_agent_card(),
+        # Add other mock agent cards here if they have a get_agent_card method
+    ]
 
 def get_mock_agent_fallback_map() -> Dict[str, Any]: # Changed type hint for now, will be AgentCallable
-    """Returns a map of mock agent IDs to their classes for fallback registration."""
-    # For RegistryAgentProvider, we typically provide the class itself, 
-    # or a pre-configured instance, or a factory/bound method.
-    # Providing the class is simplest if the provider can instantiate it.
-    # Based on current RegistryAgentProvider logic, providing the class is fine.
-    # Or, if agents need specific default construction, an instance can be provided.
-    # Let's provide the class for now.
-    return {agent.AGENT_ID: agent for agent in ALL_MOCK_TESTING_AGENTS} 
+    """
+    Returns a dictionary mapping mock agent IDs to their respective class implementations.
+    This is used by the RegistryAgentProvider as a fallback if an agent ID isn't found
+    in the main AgentRegistry.
+    """
+    # Ensure all agents intended for fallback are included here with their correct AGENT_ID.
+    return {
+        MockSetupAgentV1.AGENT_ID: MockSetupAgentV1,
+        MockFailPointAgentV1.AGENT_ID: MockFailPointAgentV1,
+        MockVerifyAgentV1.AGENT_ID: MockVerifyAgentV1,
+        MockClarificationAgentV1.AGENT_ID: MockClarificationAgentV1,
+        MockAlternativeAgentV1.AGENT_ID: MockAlternativeAgentV1,
+
+        # Explicitly add the renamed HumanInputAgent (now SystemInterventionAgent) if it's used by mocks/tests
+        # The original error was: ImportError: cannot import name 'MockHumanInputAgent' from 'chungoid.runtime.agents.mocks.mock_human_input_agent'
+        # This means something *in this file* was trying to import MockHumanInputAgent.
+        # We need to ensure that if any code in this file (or that this file exports for others)
+        # refers to the concept of "HumanInputAgent" by an ID, it uses the new ID and class.
+
+        # The traceback points to line 424: from chungoid.runtime.agents.mocks.mock_human_input_agent import MockHumanInputAgent
+        # This import is NO LONGER NEEDED here if we use MockSystemInterventionAgent directly
+        # from its own file when populating the fallback map, or if it's not part of *this* file's direct exports.
+        # The AGENT_ID for MockSystemInterventionAgent is "SystemInterventionAgent_v1"
+
+        # If any mock plan or test setup explicitly refers to "HumanInputAgent_v1" (the old ID),
+        # we might need to map that OLD ID to the NEW class for backward compatibility in tests.
+        # However, the best practice is to update test plans to use the new ID "SystemInterventionAgent_v1".
+
+        # For now, let's assume the goal is to use the new agent if "SystemInterventionAgent_v1" is requested.
+        MockSystemInterventionAgent.AGENT_ID: MockSystemInterventionAgent,
+
+        # Add other general-purpose mock agents that might be used in core test flows
+        MockCodeGeneratorAgent.AGENT_ID: MockCodeGeneratorAgent,
+        MockTestGeneratorAgent.AGENT_ID: MockTestGeneratorAgent,
+        MockSystemRequirementsGatheringAgent.AGENT_ID: MockSystemRequirementsGatheringAgent,
+
+    } 

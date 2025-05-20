@@ -19,6 +19,8 @@ class StageStatus(Enum):
 class FlowPauseStatus(Enum):
     """Represents the reason or status of a paused flow."""
 
+    NOT_PAUSED = "NOT_PAUSED" # ADDED: Represents a non-paused state
+
     # General Pause Reasons
     PAUSED_FOR_INTERVENTION = "PAUSED_FOR_INTERVENTION" # Generic human intervention needed
     PAUSED_FOR_CHECKPOINT = "PAUSED_FOR_CHECKPOINT"   # Paused at a predefined review/checkpoint
@@ -43,6 +45,8 @@ class FlowPauseStatus(Enum):
     # Fallback/Unknown
     PAUSED_UNKNOWN = "PAUSED_UNKNOWN" 
 
+    CRITICAL_ERROR_REQUIRES_MANUAL_INTERVENTION = "CRITICAL_ERROR_REQUIRES_MANUAL_INTERVENTION" # ADDED
+
 class OnFailureAction(str, Enum):
     """Defines actions to take when a master stage encounters an error."""
     FAIL_MASTER_FLOW = "FAIL_MASTER_FLOW"
@@ -60,9 +64,18 @@ class HumanReviewDecision(str, Enum):
     ARCHIVE_PROJECT_SUCCESS = "ARCHIVE_PROJECT_SUCCESS"
     ARCHIVE_PROJECT_FAILURE = "ARCHIVE_PROJECT_FAILURE"
 
+class FlowStatus(Enum):
+    """Represents the overall status of a flow execution."""
+    RUNNING = "RUNNING"
+    COMPLETED_SUCCESS = "COMPLETED_SUCCESS"
+    COMPLETED_FAILURE = "COMPLETED_FAILURE"
+    PAUSED = "PAUSED"
+    PAUSED_CRITICAL = "PAUSED_CRITICAL" # For pauses that require intervention and might not be resumable without changes
+
 __all__ = [
     "StageStatus", 
     "FlowPauseStatus", 
     "OnFailureAction",
-    "HumanReviewDecision" # Add new enum to __all__
+    "HumanReviewDecision", # Add new enum to __all__
+    "FlowStatus" # Add FlowStatus to __all__
 ] 

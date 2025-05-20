@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import NewType, Optional, Literal, List, Dict, Any, Union
+from typing import NewType, Optional, Literal, List, Dict, Any, Union, Callable
 
 # Type alias for dot-notation context paths
 InputOutputContextPathStr = NewType('InputOutputContextPathStr', str)
 AgentID = NewType('AgentID', str)
+AgentCallable = Callable[..., Any]
 
 class ArbitraryModel(BaseModel):
     """A Pydantic model that allows arbitrary extra fields."""
@@ -26,5 +27,6 @@ __all__ = [
     "InputOutputContextPathStr",
     "AgentID",
     "ArbitraryModel",
-    "ConfidenceScore"
+    "ConfidenceScore",
+    "AgentCallable"
 ] 

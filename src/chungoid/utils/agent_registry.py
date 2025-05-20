@@ -22,6 +22,13 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("chromadb required for AgentRegistry") from exc
 
 
+class AgentToolSpec(BaseModel):
+    name: str = Field(..., description="Name of the tool.")
+    description: Optional[str] = Field(default=None, description="Description of what the tool does.")
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the tool's input.")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for the tool's output.")
+
+
 class AgentCard(BaseModel):
     agent_id: str = Field(..., description="Unique slug/uuid")
     name: str
@@ -32,6 +39,7 @@ class AgentCard(BaseModel):
     priority: Optional[int] = Field(default=0, description="Default priority for selection within a category (higher wins).")
     visibility: Optional[AgentVisibility] = None
     stage_focus: Optional[str] = None
+    tools: Optional[List[AgentToolSpec]] = Field(default_factory=list, description="List of tools this agent provides/exposes.")
     capabilities: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     tool_names: List[str] = Field(default_factory=list)

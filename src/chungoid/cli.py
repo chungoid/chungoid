@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from chungoid.utils.config_loader import get_config
+from chungoid.utils.config_loader import get_config, ConfigError, load_config
 import click
 import typer
 import yaml
@@ -27,7 +27,7 @@ from pathlib import Path
 import logging
 import sys
 import os
-from typing import Any, Optional, Dict, List, cast
+from typing import Any, Optional, Dict, List, cast, Union, Type
 
 import click
 import rich.traceback
@@ -49,7 +49,8 @@ from chungoid.schemas.metrics import MetricEvent # For type hint
 from chungoid.utils.agent_registry import AgentRegistry # Corrected: AGENT_REGISTRY is not exported or used
 from chungoid.utils.state_manager import StateManager
 from chungoid.utils.metrics_store import MetricsStore # for metrics CLI
-from chungoid.utils.llm_provider import MockLLMProvider # <<< ADD THIS IMPORT
+from chungoid.utils.prompt_manager import PromptManager # ADDED THIS IMPORT
+from chungoid.utils.llm_provider import MockLLMProvider, OpenAILLMProvider, LLMManager # MODIFIED: Added LLMManager
 # from chungoid.config import ProjectConfig # REMOVED - This was incorrect and caused ModuleNotFoundError / SyntaxError
 
 # Other existing imports ...
@@ -61,7 +62,7 @@ from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card
 #     get_mock_code_generator_agent_card,
 #     get_mock_test_generator_agent_card
 # )
-from chungoid.runtime.agents.mocks.mock_human_input_agent import get_agent_card_static as get_mock_human_input_agent_card
+from chungoid.runtime.agents.mocks.mock_system_intervention_agent import get_agent_card_static as get_mock_system_intervention_agent_card
 from chungoid.runtime.agents.mocks.mock_code_generator_agent import get_agent_card_static as get_mock_code_generator_agent_card
 from chungoid.runtime.agents.mocks.mock_test_generator_agent import get_agent_card_static as get_mock_test_generator_agent_card
 from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import get_agent_card_static as get_mock_system_requirements_gathering_agent_card
@@ -71,7 +72,7 @@ from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_age
 
 # For Agent Classes (used in the fallback_agents_map and direct instantiation)
 # from chungoid.runtime.agents.core_stage_executor import CoreStageExecutorAgent # Removed - it's a function, not a class
-from chungoid.runtime.agents.mocks.mock_human_input_agent import MockHumanInputAgent
+from chungoid.runtime.agents.mocks.mock_system_intervention_agent import MockSystemInterventionAgent # MODIFIED
 from chungoid.runtime.agents.mocks.mock_code_generator_agent import MockCodeGeneratorAgent
 from chungoid.runtime.agents.mocks.mock_test_generator_agent import MockTestGeneratorAgent
 from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import MockSystemRequirementsGatheringAgent
@@ -164,7 +165,7 @@ from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterP
 from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent, get_agent_card_static as get_master_planner_agent_card
 
 # Imports for Mock Agents (P2.6 MVP)
-from chungoid.runtime.agents.mocks.mock_human_input_agent import get_agent_card_static as get_mock_human_input_agent_card
+from chungoid.runtime.agents.mocks.mock_system_intervention_agent import get_agent_card_static as get_mock_system_intervention_agent_card
 from chungoid.runtime.agents.mocks.mock_code_generator_agent import get_agent_card_static as get_mock_code_generator_agent_card
 from chungoid.runtime.agents.mocks.mock_test_generator_agent import get_agent_card_static as get_mock_test_generator_agent_card
 from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import get_agent_card_static as get_mock_system_requirements_gathering_agent_card
@@ -178,6 +179,7 @@ from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorA
 from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent
 # Import for CodeIntegrationAgent - UPDATED
 from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
+from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 
 # New imports for MockTestGenerationAgentV1
 from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGenerationAgentV1, get_agent_card_static as get_mock_test_generation_agent_v1_card
@@ -185,6 +187,7 @@ from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGen
 # Import the new system_test_runner_agent
 # from chungoid.runtime.agents import system_test_runner_agent # ADDED # OLD IMPORT
 from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent # NEW IMPORT
+from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1 # ADDED IMPORT
 
 # Ensure AgentID type is available if used for keys, though strings are fine for dict keys.
 from chungoid.schemas.common import AgentID # CORRECTED IMPORT
@@ -532,7 +535,7 @@ def flow_run(ctx: click.Context,
     # For CLI, ensuring they are available for the run:
     agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
     agent_registry.add(get_master_planner_agent_card(), overwrite=True)
-    agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
+    agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True)
     agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
     agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True) # Alias for MockTestGenerationAgentV1 for now
     agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
@@ -721,7 +724,7 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
         agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
         agent_registry.add(get_master_planner_agent_card(), overwrite=True)
         # ... (add other necessary agents as in flow_run)
-        agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
+        agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True)
         agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
         agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
         agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
@@ -1302,241 +1305,367 @@ from chungoid.schemas.project_status_schema import HumanReviewRecord
 @click.option("--run-id", "run_id_override_opt", type=str, default=None, help="Specify a custom run ID for this execution.")
 @click.option("--initial-context", type=str, default=None, help="JSON string containing initial context variables for the build.")
 @click.option("--tags", type=str, default=None, help="Comma-separated tags for this build (e.g., 'dev,release').")
+@click.option("--use-mock-llm-provider/--no-use-mock-llm-provider", default=False, help="Use mock LLM provider instead of a real one. Defaults to False (uses real LLM).") # ADDED FLAG
 @click.pass_context
-def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str]): # Corrected parameter name here
-    logger = logging.getLogger("chungoid.cli.build")
-    logger.info(f"CLI: build_from_goal_file invoked.")
-    logger.info(f"CLI: Raw --goal-file (goal_file): {goal_file}")
-    logger.info(f"CLI: Raw --project-dir (project_dir_opt): {project_dir_opt} (type: {type(project_dir_opt)})")
-    
-    project_root = project_dir_opt.resolve()
-    logger.info(f"CLI: Resolved project_root: {project_root} (type: {type(project_root)})")
+def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str], use_mock_llm_provider: bool): # Corrected parameter name here, ADDED use_mock_llm_provider
+    """Initiates a project build from a user goal specified in a file."""
+    logger.info(f"Starting build from goal file: {goal_file} for project directory: {project_dir_opt}")
+    log_level = ctx.obj.get("log_level", "INFO") # Get log_level from context
 
-    if not project_root.exists():
-        logger.error(f"Project directory '{project_dir_opt}' does not exist.")
-        click.echo(f"Error: Project directory '{project_dir_opt}' does not exist.", err=True)
-        sys.exit(1)
+    # Ensure project directory exists
+    project_dir_opt.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Ensured project directory exists: {project_dir_opt.resolve()}")
 
     try:
         user_goal = goal_file.read_text().strip()
         if not user_goal:
-            raise click.UsageError(f"Goal file '{goal_file}' is empty.")
+            logger.error("Goal file is empty.")
+            click.echo("Error: Goal file is empty.", err=True)
+            raise click.Abort()
+        logger.info(f"User goal loaded: '{user_goal[:100]}...'")
     except Exception as e:
-        raise click.BadParameter(f"Could not read goal from file '{goal_file}': {e}")
+        logger.error(f"Error reading goal file {goal_file}: {e}")
+        click.echo(f"Error: Could not read goal file {goal_file}. Reason: {e}", err=True)
+        raise click.Abort()
 
-    logger.debug(f"Goal from file '{goal_file}': \"{user_goal}\", Project Dir: {project_dir_opt}")
+    # Convert project_dir_opt to absolute path for consistency
+    abs_project_dir = project_dir_opt.resolve()
+    logger.info(f"Absolute project directory: {abs_project_dir}")
 
-    parsed_initial_context: Optional[Dict[str, Any]] = None
+    # Initial context parsing
+    parsed_initial_context = {}
     if initial_context:
         try:
             parsed_initial_context = py_json.loads(initial_context)
             if not isinstance(parsed_initial_context, dict):
-                raise ValueError("Initial context must be a JSON object.")
+                raise ValueError("Initial context must be a JSON object (dict).")
+            logger.info(f"Parsed initial context: {parsed_initial_context}")
         except py_json.JSONDecodeError as e:
-            raise click.BadParameter(f"Invalid JSON in --initial-context: {e}")
+            logger.error(f"Invalid JSON in --initial-context: {e}")
+            click.echo(f"Error: Invalid JSON provided for --initial-context. Details: {e}", err=True)
+            raise click.Abort()
         except ValueError as e:
-            raise click.BadParameter(str(e))
+            logger.error(f"Error with initial context structure: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.Abort()
 
-    parsed_tags: Optional[List[str]] = [t.strip() for t in tags.split(',')] if tags else None
+    # ADDED: Merge tags into parsed_initial_context
+    if tags:
+        parsed_initial_context["_run_tags"] = [tag.strip() for tag in tags.split(',')]
+        logger.info(f"Added tags to initial context: {parsed_initial_context['_run_tags']}")
 
-    # This is largely a copy of do_run() from flow_run.
-    # Consider refactoring do_run to be more generic if this pattern repeats.
     async def do_build():
-        project_root_for_init = project_dir_opt.resolve() # Use the resolved path for internal logic
-        
-        # Ensure project directory structure exists
-        init_project_structure(project_root_for_init)
-
+        nonlocal user_goal # Allow access to user_goal from outer scope
         try:
-            user_goal = goal_file.read_text().strip()
-        except Exception as e_read_goal:
-            logger.error(f"Failed to read goal file '{goal_file}': {e_read_goal}")
-            click.echo(f"Error reading goal file: {e_read_goal}", err=True)
-            sys.exit(1)
-        
-        if not user_goal:
-            logger.error("Goal file is empty.")
-            click.echo("Error: Goal file is empty.", err=True)
-            sys.exit(1)
-
-        logger.info(f"User goal from file '{goal_file}': {user_goal[:100]}...")
-
-        config = load_config(project_root_for_init) 
-
-        agent_registry_config_dict = config.get('agent_registry_config', {})
-        registry_chroma_mode = agent_registry_config_dict.get('chroma_mode', 'persistent')
-        registry_project_root = project_root_for_init
-
-        agent_registry = AgentRegistry(
-            project_root=registry_project_root,
-            chroma_mode=registry_chroma_mode,
-        )
-        
-        agent_registry.add(core_stage_executor_card, overwrite=True)
-        agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
-        agent_registry.add(get_master_planner_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_human_input_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
-        agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
-        agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
-        agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
-        agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
-        agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
-
-        llm_provider = MockLLMProvider()
-        # Check if llm_providers is configured and is a list
-        llm_providers_list = config.get("llm_providers")
-        if llm_providers_list and isinstance(llm_providers_list, list) and len(llm_providers_list) > 0:
-            primary_provider_config_dict = llm_providers_list[0] # Assuming it's a dict
-            if isinstance(primary_provider_config_dict, dict):
-                provider_name = primary_provider_config_dict.get("provider_name")
-                default_model = primary_provider_config_dict.get("default_model")
-                
-                if provider_name == "openai":
-                    from chungoid.utils.llm_provider import OpenAILLMProvider
-                    llm_provider = OpenAILLMProvider(
-                        api_key=os.environ.get("OPENAI_API_KEY"),
-                        default_model=default_model or "gpt-4-turbo-preview"
-                    )
-                logger.info(f"Using LLM provider: {provider_name}")
-            else:
-                logger.warning("Primary LLM provider configuration is not a dictionary. Using MockLLMProvider.")
-        else:
-            logger.warning("No LLM providers configured or configuration is empty/invalid. Using MockLLMProvider.")
-
-        # Determine server_prompts_dir robustly relative to this CLI file
-        cli_file_path = Path(__file__).resolve() # chungoid-core/src/chungoid/cli.py
-        # Path to chungoid-core/server_prompts/
-        server_prompts_dir = cli_file_path.parent.parent.parent / "server_prompts"
-        if not server_prompts_dir.is_dir():
-            logger.warning(f"Calculated server_prompts_dir not found at {server_prompts_dir}. Falling back to project relative 'server_prompts'.")
-            server_prompts_dir = project_root_for_init / "server_prompts"
-            if not server_prompts_dir.is_dir():
-                logger.error(f"Fallback server_prompts_dir also not found at {server_prompts_dir}. PromptManager and StateManager might fail.")
-                # As a last resort, you might point to a global default or raise an error.
-                # For now, we'll let it proceed and potentially fail later if this path is critical and missing.
-
-        logger.info(f"Using server_prompts_dir: {server_prompts_dir}")
-
-        prompt_manager = chungoid.utils.prompt_manager.PromptManager(prompt_directory_paths=[str(server_prompts_dir)])
-        state_manager = StateManager(target_directory=str(project_root_for_init), server_stages_dir=str(server_prompts_dir))
-        metrics_store = MetricsStore(project_root=project_root_for_init)
-        
-        # --- Determine Project ID ---
-        existing_project_id: Optional[str] = config.get('project_id')
-        if not existing_project_id:
-            # Try to load from existing state file if it exists
-            potential_state_file = project_root_for_init / PROJECT_CHUNGOID_DIR / STATE_FILE_NAME
-            if potential_state_file.exists():
-                try:
-                    # Minimal load just to get project_id, avoid full StateManager init here if it causes issues
-                    with open(potential_state_file, 'r') as f_state:
-                        state_data_raw = py_json.load(f_state)
-                        existing_project_id = state_data_raw.get('project_id')
-                        if existing_project_id:
-                            logger.info(f"Found existing project_id '{existing_project_id}' in state file.")
-                except Exception as e_load_existing_id:
-                    logger.warning(f"Could not read project_id from existing state file {potential_state_file}: {e_load_existing_id}")
-
-        # --- Initialize Project State --- 
-        try:
-            # Use existing_project_id if found, otherwise generate new one
-            current_project_id_for_init = existing_project_id or f"proj_{uuid.uuid4().hex[:12]}"
+            # Configuration loading
+            logger.info(f"Attempting to load configuration for project: {abs_project_dir}")
             
+            project_specific_config_path = abs_project_dir / PROJECT_CHUNGOID_DIR / "project_config.yaml"
+            if project_specific_config_path.is_file(): # Check if it's a file
+                logger.info(f"Found project-specific config file at: {project_specific_config_path}")
+                try:
+                    config = load_config(str(project_specific_config_path))
+                    logger.info(f"Successfully loaded project-specific configuration. Project ID from config: {config.get('project_id', 'Not set')}")
+                except ConfigError as e: # Catch specific ConfigError from load_config
+                    logger.warning(f"ConfigError loading {project_specific_config_path}: {e}. Falling back to default config.")
+                    config = get_config() # Use default config from load_config() without path
+                    logger.info("Using default configuration due to ConfigError in project-specific file.")
+            else:
+                logger.info(f"Project-specific config file not found at {project_specific_config_path}. Attempting to load default/global config.")
+                try:
+                    config = get_config() # load_config() without path, uses its internal default logic
+                    logger.info("Successfully loaded default/global configuration.")
+                    # If using default, ensure project_root related paths are set based on abs_project_dir
+                    config['project_root_dir'] = str(abs_project_dir) # Store the actual project root
+                    config['project_root_path'] = str(abs_project_dir) # ADDED for AsyncOrchestrator
+                    config['project_root'] = str(abs_project_dir)      # ADDED for consistency/other uses
+                    config['dot_chungoid_path'] = str(abs_project_dir / PROJECT_CHUNGOID_DIR)
+                except ConfigError as e:
+                    logger.error(f"Critical ConfigError during default config load: {e}. Cannot proceed.")
+                    click.echo(f"Error: Critical configuration error: {e}", err=True)
+                    raise ValueError(f"Critical configuration error: {e}") # Re-raise as ValueError to be caught by outer
+            
+            # Ensure 'project_id' is in the config or generate one
+            # Also ensure project_root_path is set before StateManager might need it indirectly,
+            # or before Orchestrator needs it.
+            if 'project_root_path' not in config or not config['project_root_path']:
+                 config['project_root_path'] = str(abs_project_dir)
+                 config['project_root'] = str(abs_project_dir) # Keep consistent
+                 logger.info(f"Ensured project_root_path is set in config: {config['project_root_path']}")
+            
+            if "project_id" not in config or not config["project_id"]:
+                # Try to load from state manager first if it exists
+                # script_dir, core_root_dir, server_prompts_dir are defined below, 
+                # ensure they are defined before this block or pass a sensible default to StateManager here.
+                # For now, this instantiation was moved down after server_prompts_dir is defined.
+                # temp_state_manager_for_pid = StateManager(target_directory=abs_project_dir)
+                # existing_project_id = temp_state_manager_for_pid.get_project_id_from_status()
+                # This block is being moved after server_prompts_dir is defined.
+                pass # Placeholder, actual logic moved down.
+            
+            # current_project_id = config["project_id"] # This is also moved down
+
+            # Prompt Manager Setup
+            # Determine prompt directories relative to the script or a known structure
+            # This assumes cli.py is at <some_root>/chungoid-core/src/chungoid/cli.py
+            # And server_prompts are at <some_root>/chungoid-core/server_prompts/
+            script_dir = Path(__file__).parent.resolve() # chungoid-core/src/chungoid/
+            core_root_dir = script_dir.parent.parent # chungoid-core/
+            server_prompts_dir = core_root_dir / "server_prompts"
+            
+            prompt_manager = PromptManager(prompt_directory_paths=[server_prompts_dir])
+            logger.info(f"PromptManager initialized with directory: {server_prompts_dir}")
+
+            # State Manager must be initialized to potentially load an existing project_id
+            # from its state file before we decide if we need to generate a new one.
+            state_manager = StateManager(
+                target_directory=abs_project_dir,
+                server_stages_dir=server_prompts_dir # Use the defined server_prompts_dir
+            )
+            logger.info(f"StateManager initialized for project directory: {abs_project_dir} (pre-project_id check)")
+
+            # Now that server_prompts_dir is defined, handle project_id loading/generation
+            if "project_id" not in config or not config["project_id"]:
+                try:
+                    # Attempt to get project_id from the loaded state within StateManager
+                    # _project_state should be populated by StateManager's __init__
+                    # via _load_or_initialize_project_state
+                    if hasattr(state_manager, '_project_state') and state_manager._project_state and state_manager._project_state.project_id:
+                        existing_project_id = state_manager._project_state.project_id
+                        config["project_id"] = existing_project_id
+                        logger.info(f"Using existing project_id from StateManager's loaded state: {existing_project_id}")
+                    else:
+                        # This case means StateManager initialized a new (default/placeholder) state
+                        # or the existing file was truly empty/corrupt regarding project_id.
+                        # So, we generate a new one and it will be set in the config.
+                        # The subsequent call to state_manager.initialize_project will then use this new ID
+                        # and if it was a fresh default state, it will get updated, or it might
+                        # still raise an error if a *different* valid ID was already there, which initialize_project handles.
+                        new_project_id = str(uuid.uuid4())
+                        config["project_id"] = new_project_id
+                        logger.info(f"Generated new project_id: {new_project_id} (as it was not in config or initial StateManager state) and added to config.")
+                except Exception as e_sm_init_for_id:
+                    logger.warning(f"Could not reliably get existing project_id from StateManager: {e_sm_init_for_id}. Generating new project_id.")
+                    new_project_id = str(uuid.uuid4())
+                    config["project_id"] = new_project_id
+                    logger.info(f"Generated new project_id due to StateManager access issue: {new_project_id} and added to config.")
+            
+            current_project_id = config.get("project_id") 
+            if not current_project_id: 
+                logger.error("Critical error: project_id is still not set in config after attempted load/generation. Aborting.")
+                raise ValueError("project_id could not be determined or generated.")
+            logger.info(f"Confirmed current_project_id to be used: {current_project_id}")
+
+
+            # LLM Provider Setup
+            llm_provider_instance: Union[OpenAILLMProvider, MockLLMProvider]
+            if use_mock_llm_provider:
+                logger.info("Using MockLLMProvider as requested by flag.")
+                llm_provider_instance = MockLLMProvider()
+            else:
+                logger.info("Attempting to use OpenAILLMProvider.")
+                openai_api_key = os.getenv("OPENAI_API_KEY")
+                if not openai_api_key:
+                    logger.error("OPENAI_API_KEY environment variable not set. Cannot use OpenAILLMProvider.")
+                    click.echo("Error: OPENAI_API_KEY environment variable is required when not using --use-mock-llm-provider.", err=True)
+                    # Instead of click.Abort(), raise a specific error that can be caught by the outer try/except
+                    raise ValueError("OPENAI_API_KEY not set for OpenAILLMProvider")
+                
+                # You might want to fetch a default_model from config or use a hardcoded one
+                default_openai_model = config.get("llm_config", {}).get("default_openai_model", "gpt-3.5-turbo")
+                logger.info(f"Initializing OpenAILLMProvider with default model: {default_openai_model}")
+                llm_provider_instance = OpenAILLMProvider(api_key=openai_api_key, default_model=default_openai_model)
+
+            llm_manager = LLMManager(
+                llm_provider_instance=llm_provider_instance, 
+                prompt_manager=prompt_manager
+            )
+            logger.info(f"LLMManager initialized with {type(llm_provider_instance).__name__}.")
+
+            # State Manager Setup (already initialized above to get project_id, ensure it's the same instance)
+            # Re-initializing would be problematic. We just ensure the config has the right ID now.
+            # The state_manager instance created before the project_id logic block is the one we use.
+            # project_internal_dir = abs_project_dir / PROJECT_CHUNGOID_DIR # Already defined
+            # state_manager = StateManager( # DO NOT RE-INITIALIZE HERE
+            #     target_directory=abs_project_dir, 
+            #     server_stages_dir=server_prompts_dir 
+            # )
+            # logger.info(f"StateManager initialized for project directory: {abs_project_dir}") # Already logged
+            
+            # Initialize project state and get/confirm project_id
+            # This will create .chungoid/chungoid_status.json if it doesn't exist
+            # And ensure the project_id in the config matches or is set from state.
+            logger.info(f"Calling state_manager.initialize_project with project_id: {current_project_id}, project_name: {abs_project_dir.name}, goal: {user_goal[:50]}...") # Log goal snippet
+            # initialize_project returns a ProjectStateV2 object; extract the authoritative project_id from it
             initialized_project_state = state_manager.initialize_project(
-                project_id=current_project_id_for_init, 
-                project_name=project_root_for_init.name, 
+                project_id=current_project_id,
+                project_name=abs_project_dir.name,
                 initial_user_goal_summary=user_goal
             )
-            current_project_id = initialized_project_state.project_id # Use the ID from the initialized state
-            logger.info(f"Project initialized/loaded with ID: {current_project_id} and state file written/verified.")
+
+            authoritative_project_id: str = initialized_project_state.project_id
+
+            if authoritative_project_id != current_project_id:
+                logger.warning(
+                    f"Project ID mismatch or update: Config had {current_project_id}, StateManager initialized with {authoritative_project_id}. Using {authoritative_project_id}."
+                )
+                config["project_id"] = authoritative_project_id  # Update config with the authoritative ID
+                current_project_id = authoritative_project_id
+
+
+            # Agent Registry Setup
+            agent_registry = AgentRegistry(project_root=abs_project_dir) # MODIFIED: Added project_root
+            # Register essential system agents (example, adapt as needed)
+            agent_registry.add(core_stage_executor_card, overwrite=True) # MODIFIED: Added overwrite=True
+            # agent_registry.add_agent_card(get_master_planner_agent_card()) # Removed for now, to be added via fallback or other mechanism
+            # agent_registry.add_agent_card(get_master_planner_reviewer_agent_card())
+
+            # Add mock agents for testing if needed (or make this conditional)
+            # agent_registry.add_agent_card(get_mock_system_intervention_agent_card())
+            # agent_registry.add_agent_card(get_mock_code_generator_agent_card())
+            # agent_registry.add_agent_card(get_mock_test_generator_agent_card())
+            # agent_registry.add_agent_card(get_mock_system_requirements_gathering_agent_card())
+
+            # Fallback agents map - these are classes, not cards.
+            # RegistryAgentProvider will instantiate them if they are not in the AgentRegistry (cards).
             
-            # Ensure config object has project_id and project_root_path for AsyncOrchestrator
-            config['project_id'] = current_project_id
-            config['project_root_path'] = str(project_root_for_init) 
-            config['project_root'] = str(project_root_for_init) 
-
-        except Exception as e_init_proj:
-            logger.error(f"Failed to initialize project state: {e_init_proj}", exc_info=True)
-            click.echo(f"Error initializing project state: {e_init_proj}", err=True)
-            sys.exit(1)
-        # --- End Initialize Project State ---
-
-        # MODIFIED: Instantiate ProjectChromaManagerAgent_v1 HERE
-        project_chroma_manager = ProjectChromaManagerAgent_v1(
-            project_root_workspace_path=project_root_for_init.parent, # Workspace root
-            project_id=current_project_id # The ID of the current project
-        )
-        logger.info(f"ProjectChromaManagerAgent_v1 instantiated for project {current_project_id} with workspace {project_root_for_init.parent}")
-
-
-        # Corrected access to config for agent_provider fallback
-        use_mock_fallback = config.get('use_mock_fallback_agents', False)
-
-        # MODIFIED: Construct comprehensive fallback map with CLASS (not instance) for MasterPlannerAgent
-        final_fallback_map: Dict[AgentID, AgentCallable] = {}
-        if use_mock_fallback:
-            # get_mock_agent_fallback_map() returns ID -> Class map for mocks
-            final_fallback_map.update(get_mock_agent_fallback_map()) 
-
-        # Add CORE SYSTEM AGENT CLASSES to the fallback map.
-        # The resolver will now attempt to instantiate them with dependencies.
-        core_system_agent_classes = {
-            MasterPlannerAgent.AGENT_ID: MasterPlannerAgent, # Provide class
-            MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent, # Provide class
-            ProjectChromaManagerAgent_v1.AGENT_ID: ProjectChromaManagerAgent_v1, # Provide class
-            # Add other core agent *classes* if they need dependency injection by the resolver
-            # CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent,
-            # TestGeneratorAgent.AGENT_ID: TestGeneratorAgent,
-            # SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
-            # SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,
-        }
-        final_fallback_map.update(core_system_agent_classes)
-
-        # ADD HumanInputAgent_v1 to the fallback map explicitly as the mock planner uses it.
-        # This ensures it's available even if use_mock_fallback_agents is false.
-        # The mock plan specifically requests "HumanInputAgent_v1".
-        human_input_agent_id_from_plan = "HumanInputAgent_v1"
-        if human_input_agent_id_from_plan not in final_fallback_map:
-            final_fallback_map[human_input_agent_id_from_plan] = MockHumanInputAgent
-            logger.info(f"Explicitly added '{human_input_agent_id_from_plan}' (maps to MockHumanInputAgent) to fallback map.")
-
-        agent_provider = RegistryAgentProvider(
-            registry=agent_registry,
-            fallback=final_fallback_map, 
-            # MODIFIED: Pass dependencies to RegistryAgentProvider
-            llm_provider=llm_provider,
-            prompt_manager=prompt_manager,
-            project_chroma_manager=project_chroma_manager # Instantiated above
-        )
-
-        orchestrator = AsyncOrchestrator(
-            config=config, 
-            agent_provider=agent_provider,
-            state_manager=state_manager,
-            metrics_store=metrics_store
-        )
-
-        current_run_id = run_id_override_opt or f"run_{uuid.uuid4().hex[:16]}" # MODIFIED: Use UUID for new run ID
-        logger.info(f"Build Run ID: {current_run_id}")
-
-        # Prepare combined initial context including tags
-        final_initial_context = parsed_initial_context or {}
-        if parsed_tags:
-            final_initial_context["_run_tags"] = parsed_tags
-
-        # Call the existing run method with the goal_str
-        try:
-            await orchestrator.run(
-                goal_str=user_goal, # Pass the goal string directly
-                run_id_override=current_run_id,
-                initial_context=final_initial_context # Pass combined context
+            # Project Chroma Manager - needed for many core flows if not using mocks for it
+            project_chroma_manager = ProjectChromaManagerAgent_v1(
+                project_root_workspace_path=str(abs_project_dir), # MODIFIED: Renamed project_root_path and ensured it's a string
+                project_id=current_project_id # ADDED: Pass the project_id
+                # llm_provider=llm_provider_instance, # If it needs LLM
+                # prompt_manager=prompt_manager    # If it needs prompts
             )
-        except Exception as e_master_plan:
-            logger.error(f"Failed to execute master plan based on goal: {e_master_plan}", exc_info=True)
-            click.echo(f"Error executing master plan from goal: {e_master_plan}", err=True)
-            sys.exit(1)
+            # No card needed if we are directly instantiating and passing,
+            # but if plan references by ID, it MUST be in fallback or registry.
+            
+            core_system_agent_classes = {
+                # "SystemMasterPlannerAgent_v1": MasterPlannerAgent, # Provided directly by Orchestrator if not in registry/fallback
+                # "SystemMasterPlannerReviewerAgent_v1": MasterPlannerReviewerAgent,
+                SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,
+                ProjectChromaManagerAgent_v1.AGENT_ID: project_chroma_manager, # Pass the instance
+            }
 
-    asyncio.run(do_build())
+            # Determine final fallback map
+            final_fallback_map: Dict[AgentID, Union[Type[AgentBase], AgentBase]] = {}
+            
+            # Option 1: Always use mock fallback map if `use_mock_fallback_agents` is true (add this flag if needed)
+            # For build, let's be more explicit or rely on a slim set of core agents.
+            # if config.get("developer_settings", {}).get("use_mock_fallback_agents", False): # Example flag
+            #    logger.info("Using mock agent fallback map from testing_mock_agents.")
+            #    final_fallback_map.update(get_mock_agent_fallback_map()) # This returns a map of ID to CLASS
+
+            # Option 2: Selective fallback for core agents
+            # These are agent CLASSES that the provider will instantiate if needed
+            # The orchestrator primarily needs the MasterPlannerAgent. Others are plan-dependent.
+            final_fallback_map.update({
+                MasterPlannerAgent.AGENT_ID: MasterPlannerAgent, # ADDED: Ensure MasterPlannerAgent is in fallback
+                ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
+                CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Original CoreCodeGeneratorAgent_v1
+                TestGeneratorAgent.AGENT_ID: TestGeneratorAgent, # Original CoreTestGeneratorAgent_v1
+                SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
+                "FileOperationAgent_v1": SystemFileSystemAgent_v1, # ADDED: Map FileOperationAgent_v1 to SystemFileSystemAgent_v1
+            })
+            final_fallback_map.update(core_system_agent_classes)
+
+            # ADD HumanInputAgent_v1 to the fallback map explicitly as the mock planner uses it.
+            # This ensures it's available even if use_mock_fallback_agents is false.
+            # The mock plan specifically requests "HumanInputAgent_v1".
+            # human_input_agent_id_from_plan = "HumanInputAgent_v1" # AGENT_ID of MockHumanInputAgent
+            # if human_input_agent_id_from_plan not in final_fallback_map:
+            #     final_fallback_map[human_input_agent_id_from_plan] = MockSystemInterventionAgent # The class # CORRECTED
+            #     logger.info(f"Explicitly added '{human_input_agent_id_from_plan}' (maps to MockSystemInterventionAgent class) to fallback map.")
+
+
+            agent_provider = RegistryAgentProvider(
+                registry=agent_registry,
+                fallback=final_fallback_map, # MODIFIED: Changed fallback_agents_map to fallback
+                # Pass dependencies required by agents that might be instantiated from classes by the provider
+                llm_provider=llm_provider_instance, 
+                prompt_manager=prompt_manager,
+                project_chroma_manager=project_chroma_manager, # ADDED project_chroma_manager
+                # We might also need to pass the global `config` or `state_manager` if agents need them
+                # during their construction by the RegistryAgentProvider.
+                # For now, assuming they get project_root or necessary params via their own input schemas.
+            )
+            logger.info("RegistryAgentProvider initialized.")
+
+            # Orchestrator Setup
+            # The orchestrator will now use the goal string to generate a plan via the LLMManager
+            
+            # --- Metrics Store Setup --- ADDED THIS BLOCK
+            metrics_store_root = abs_project_dir # Use the absolute project directory path
+            metrics_store = MetricsStore(project_root=metrics_store_root)
+            logger.info(f"MetricsStore initialized for project root: {metrics_store_root}")
+            # --- End Metrics Store Setup ---
+
+            orchestrator = AsyncOrchestrator(
+                config=config, # Pass the dict
+                state_manager=state_manager,
+                agent_provider=agent_provider,
+                metrics_store=metrics_store, # ADDED metrics_store
+                # llm_provider and prompt_manager are now accessed via agent_provider if agents need them,
+                # or directly by orchestrator if it's doing its own LLM calls (e.g. for plan generation).
+                # For plan generation from a goal, the orchestrator will use its own LLMManager.
+                # llm_manager=llm_manager, # REMOVED: This was causing the TypeError
+                # master_flow_registry=master_flow_registry # Not strictly needed if generating from goal or loading single file
+            )
+            logger.info("AsyncOrchestrator initialized.")
+
+            # Generate a unique run ID
+            run_id = run_id_override_opt or f"build_run_{uuid.uuid4()}"
+            logger.info(f"Build Run ID: {run_id}")
+
+            # Run the orchestrator with the user goal
+            # The orchestrator's `run` method should handle plan generation if goal_str is provided
+            logger.info(f"Executing orchestrator with user goal: {user_goal[:100]}...")
+            final_context: Dict[str, Any] = await orchestrator.run(
+                goal_str=user_goal, 
+                initial_context=parsed_initial_context, 
+                run_id_override=run_id
+            )
+
+            # Extract results from the final_context dictionary
+            # These keys are assumptions based on typical orchestrator output structures.
+            # final_status_val = final_context.get("status", "UNKNOWN") # OLD KEY
+            # final_output = final_context.get("outputs", {})
+            # metrics_summary_dict = final_context.get("metrics_summary", {})
+
+            final_status_val = final_context.get("_orchestrator_final_status", "ERROR_STATUS_NOT_FOUND") # NEW KEY
+            final_output_val = final_context.get("_orchestrator_final_output", {}) # Assuming a general output key if needed
+            final_error_details_val = final_context.get("_orchestrator_flow_error_details", None)
+
+            logger.info(f"Orchestrator finished. Final Status: {final_status_val}")
+            if final_error_details_val:
+                logger.error(f"Build Error Details: {final_error_details_val}")
+
+            # Example of how to print some output if needed
+            # if final_output_val:
+            #     logger.info(f"Final output from build: {py_json.dumps(final_output_val, indent=2)}")
+
+            # Print a concluding message
+            click.echo(f"Build process completed with status: {final_status_val}")
+
+        except Exception as e:
+            logger.error(f"An error occurred during the build process: {e}", exc_info=True)
+            # rich.traceback.Console().print_exception() # Already logged with exc_info
+            click.echo(f"An unexpected error occurred: {e}", err=True)
+            # No sys.exit(1) here
+            raise # Re-raise
+        finally:
+            # Ensure LLM client (if any) is closed, e.g., if OpenAILLMProvider was used
+            if 'llm_manager' in locals() and llm_manager._llm_provider is not None:
+                 logger.info(f"Attempting to close LLM provider client of type: {type(llm_manager._llm_provider).__name__}")
+                 await llm_manager.close_client() # LLMManager now has a close_client method
+
+    try:
+        asyncio.run(do_build())
+        # Successful completion, exit code 0 is implicit
+    except Exception:
+         # Errors are logged within do_build. We re-raise them to allow a non-zero exit code.
+         # click.echo("Build failed. See logs for details.", err=True) # Already echoed
+         sys.exit(1) # Ensure non-zero exit code on any exception from do_build
+
+# Ensure the main CLI entry point is correct
+if __name__ == "__main__":
+    cli()

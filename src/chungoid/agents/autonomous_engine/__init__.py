@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Type
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.runtime.agents.agent_base import BaseAgent
-from chungoid.utils.agent_resolver import AgentCallable
+from chungoid.schemas.common import AgentCallable
 
 # Import agent classes
 from .product_analyst_agent import ProductAnalystAgent_v1

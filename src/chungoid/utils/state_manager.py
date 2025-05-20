@@ -17,6 +17,7 @@ import filelock  # Ensure filelock is installed
 from . import chroma_utils
 from ..schemas.errors import AgentErrorDetails # Correct relative import
 from ..schemas.flows import PausedRunDetails # <<< Import PausedRunDetails
+from ..schemas.common_enums import StageStatus # ADDED
 import json # Add for JSONDecodeError
 from pydantic import ValidationError # Add for Pydantic validation error
 
@@ -1800,18 +1801,18 @@ async def get_chungoid_project_status(ide_services):
             if self._project_state.run_history is None: # THIS IS THE LINE CAUSING AttributeError
                 self._project_state.run_history = {}
             
-            # Overwrite if exists, or add new
-            self._project_state.run_history[run_id] = {
-                "flow_id": flow_id,
-                "status": "RUNNING", # Using string representation
-                "start_time_utc": now.isoformat(), # Field in RunRecord is start_time
-                "end_time_utc": None, # Field in RunRecord is end_time
-                "initial_context_summary": {k: str(type(v)) for k, v in initial_context.items()} if initial_context else {},
-                "stages": {},
-                "final_outputs_summary": None,
-                "error_message": None,
-            }
-            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            # Create a RunRecord instance
+            new_run_record = RunRecord(
+                run_id=run_id,
+                flow_id=flow_id,
+                start_time=now,
+                status=StageStatus.RUNNING, # Use the enum member
+                initial_context_summary={k: str(type(v)) for k, v in initial_context.items()} if initial_context else {},
+                stages=[] # Initialize with an empty list of StageRecord
+            )
+            
+            self._project_state.run_history[run_id] = new_run_record # Assign the model instance
+            self._project_state.last_updated = now
             self._save_project_state()
             self.logger.info(f"Flow run {run_id} (flow: {flow_id}) started.")
 
@@ -1838,21 +1839,27 @@ async def get_chungoid_project_status(ide_services):
                 self.logger.warning(f"_project_state.run_history is missing or None for run_id {run_id} during record_flow_end. Initializing to empty dict.")
                 self._project_state.run_history = {} # Initialize if missing
 
-            if run_id not in self._project_state.run_history:
+            run_record_obj = self._project_state.run_history.get(run_id)
+            if not run_record_obj:
                 self.logger.error(f"Cannot record flow end for run_id {run_id}: Run ID not found in run_history. State might be inconsistent.")
-                # Optionally, create a placeholder if truly critical to record something,
-                # but this usually indicates a deeper issue (e.g., record_flow_start failed silently or was never called for this run_id)
-                # For now, just log and return to avoid further errors with a potentially new/empty run_record.
                 return
             
-            now = datetime.now(timezone.utc)
-            run_record = self._project_state.run_history[run_id]
-            run_record["status"] = final_status
-            run_record["end_time_utc"] = now.isoformat() # Field in RunRecord is end_time
-            run_record["error_message"] = error_message
-            run_record["final_outputs_summary"] = {k: str(type(v)) for k, v in final_outputs.items()} if final_outputs else {}
+            # Ensure run_record_obj is a RunRecord instance
+            if not isinstance(run_record_obj, RunRecord):
+                self.logger.warning(f"Run record for {run_id} is not a RunRecord instance (type: {type(run_record_obj)}). Attempting to re-validate.")
+                try:
+                    run_record_obj = RunRecord(**run_record_obj) # If it was a dict, try to convert
+                except Exception as e_revalidate:
+                    self.logger.error(f"Failed to re-validate run record {run_id} to RunRecord: {e_revalidate}")
+                    return
             
-            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            now = datetime.now(timezone.utc)
+            run_record_obj.status = StageStatus(final_status) # Convert string to StageStatus enum
+            run_record_obj.end_time = now
+            run_record_obj.error_message = error_message
+            run_record_obj.final_outputs_summary = {k: str(type(v)) for k, v in final_outputs.items()} if final_outputs else {}
+            
+            self._project_state.last_updated = now
             self._save_project_state()
             self.logger.info(f"Flow run {run_id} (flow: {flow_id}) ended with status: {final_status}.")
 
@@ -1865,25 +1872,49 @@ async def get_chungoid_project_status(ide_services):
     ) -> None:
         """Records the start of a stage execution within a flow run."""
         with self._get_lock():
-            if not hasattr(self, '_project_state') or self._project_state.run_history is None or run_id not in self._project_state.run_history:
+            run_record_obj = self._project_state.run_history.get(run_id) if hasattr(self, '_project_state') and self._project_state.run_history else None
+            if not run_record_obj:
                 self.logger.error(f"Cannot record stage start for run_id {run_id}, stage {stage_id}: Flow run not found.")
                 return
+            
+            if not isinstance(run_record_obj, RunRecord):
+                self.logger.warning(f"Run record for {run_id} is not a RunRecord instance (type: {type(run_record_obj)}) when recording stage start. Attempting re-validation.")
+                try:
+                    run_record_obj = RunRecord(**run_record_obj)
+                    self._project_state.run_history[run_id] = run_record_obj # Update with validated model
+                except Exception as e_revalidate:
+                    self.logger.error(f"Failed to re-validate run record {run_id} to RunRecord for stage start: {e_revalidate}")
+                    return
 
             now = datetime.now(timezone.utc)
-            run_record = self._project_state.run_history[run_id]
-            if "stages" not in run_record or run_record["stages"] is None: # Ensure stages dict exists
-                 run_record["stages"] = {}
+            
+            # Find if stage already exists (for retries, we update, otherwise append)
+            existing_stage_index = -1
+            for i, sr in enumerate(run_record_obj.stages):
+                if sr.stage_id == stage_id:
+                    existing_stage_index = i
+                    break
+            
+            if existing_stage_index != -1:
+                # This is likely a retry, update existing stage record
+                stage_to_update = run_record_obj.stages[existing_stage_index]
+                stage_to_update.status = StageStatus.RUNNING
+                stage_to_update.start_time = now # Update start time for the retry
+                stage_to_update.end_time = None
+                stage_to_update.error_details = None
+                # stage_to_update.attempt_count +=1 # attempt_count is not in StageRecord, was in old dict structure
+                self.logger.info(f"Updating existing stage record for {stage_id} (retry) in run {run_id}.")
+            else:
+                # New stage execution
+                new_stage_record = StageRecord(
+                    stage_id=stage_id,
+                    agent_id=agent_id,
+                    start_time=now,
+                    status=StageStatus.RUNNING
+                )
+                run_record_obj.stages.append(new_stage_record)
 
-            run_record["stages"][stage_id] = {
-                "agent_id": agent_id,
-                "status": "RUNNING", # Using string representation
-                "start_time_utc": now.isoformat(), # Field in StageRecord is start_time
-                "end_time_utc": None, # Field in StageRecord is end_time
-                "outputs_summary": None,
-                "error_details": None, # For AgentErrorDetails
-                "attempt_count": run_record["stages"].get(stage_id, {}).get("attempt_count", 0) + 1 # Increment attempt count
-            }
-            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            self._project_state.last_updated = now
             self._save_project_state()
             self.logger.info(f"Stage {stage_id} (agent: {agent_id}) started for run {run_id}.")
 
@@ -1898,24 +1929,42 @@ async def get_chungoid_project_status(ide_services):
     ) -> None:
         """Records the end of a stage execution."""
         with self._get_lock():
-            if not hasattr(self, '_project_state') or \
-               self._project_state.run_history is None or \
-               run_id not in self._project_state.run_history or \
-               "stages" not in self._project_state.run_history[run_id] or \
-               stage_id not in self._project_state.run_history[run_id]["stages"]:
-                self.logger.error(f"Cannot record stage end for run_id {run_id}, stage {stage_id}: Stage or flow run not found/started.")
+            run_record_obj = self._project_state.run_history.get(run_id) if hasattr(self, '_project_state') and self._project_state.run_history else None
+
+            if not run_record_obj: # Check if run_record_obj is None first
+                self.logger.error(f"Cannot record stage end for run_id {run_id}, stage {stage_id}: Flow run not found.")
+                return
+
+            # Ensure it is a RunRecord instance
+            if not isinstance(run_record_obj, RunRecord):
+                self.logger.warning(f"Run record for {run_id} is not a RunRecord instance (type: {type(run_record_obj)}) when recording stage end. Attempting re-validation.")
+                try:
+                    run_record_obj = RunRecord(**run_record_obj) # Try to convert if it's a dict
+                    self._project_state.run_history[run_id] = run_record_obj # Update with validated model
+                except Exception as e_revalidate:
+                    self.logger.error(f"Failed to re-validate run record {run_id} to RunRecord for stage end: {e_revalidate}")
+                    return
+
+            # Find the stage record in the list
+            target_stage_record: Optional[StageRecord] = None
+            for sr in run_record_obj.stages:
+                if sr.stage_id == stage_id:
+                    target_stage_record = sr
+                    break
+            
+            if not target_stage_record:
+                self.logger.error(f"Cannot record stage end for run_id {run_id}, stage {stage_id}: Stage not found in run's stage list.")
                 return
 
             now = datetime.now(timezone.utc)
-            stage_record = self._project_state.run_history[run_id]["stages"][stage_id]
             
-            stage_record["status"] = status
-            stage_record["end_time_utc"] = now.isoformat() # Field in StageRecord is end_time
+            target_stage_record.status = StageStatus(status) # Convert string to StageStatus enum
+            target_stage_record.end_time = now
             if outputs is not None:
-                 stage_record["outputs_summary"] = {"type": str(type(outputs)), "value_preview": str(outputs)[:200]}
-            stage_record["error_details"] = error_details
+                 target_stage_record.outputs_summary = {"type": str(type(outputs)), "value_preview": str(outputs)[:200]}
+            target_stage_record.error_details = error_details # This is already a Dict[str, Any]
             
-            self._project_state.last_updated = now # CHANGED from last_updated_utc
+            self._project_state.last_updated = now
             self._save_project_state()
             self.logger.info(f"Stage {stage_id} for run {run_id} ended with status: {status}.")
 

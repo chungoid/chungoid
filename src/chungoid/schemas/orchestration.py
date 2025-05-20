@@ -82,6 +82,17 @@ class SharedContext(BaseModel):
         """Gets data from the scratchpad."""
         return self.scratchpad.get(key)
 
+class SystemContext(BaseModel):
+    """Context providing system-level utilities and information to agents."""
+    project_root: Path = Field(..., description="The absolute root path of the project workspace.")
+    logger: Any = Field(..., description="A logger instance for agents to use.") # Can be more specific if a base logger type exists
+    run_id: Optional[str] = Field(None, description="The unique identifier for the current execution run.")
+
+    class Config:
+        arbitrary_types_allowed = True # For Path and logger objects
+
+__all__ = ["SharedContext", "SystemContext"] # Add SystemContext to __all__
+
 # Example of how it might be initialized or used by the orchestrator:
 # context = SharedContext(project_id="proj_123", project_root_path="/path/to/project")
 # context.current_cycle_id = "cycle_001"

@@ -5,29 +5,43 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, ClassVar
 import logging
+import traceback # For detailed error logging
 
 from pydantic import BaseModel, Field
 
-from chungoid.runtime.agents.agent_base import AgentBase
-from chungoid.schemas.agent_registry import AgentCard, AgentToolSpec
+from chungoid.runtime.agents.agent_base import BaseAgent # MODIFIED: Changed AgentBase to BaseAgent
+from chungoid.utils.agent_registry import AgentCard, AgentToolSpec # MODIFIED: Changed import path
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
-from chungoid.utils.async_utils import run_in_executor_wrapper
+# from chungoid.utils.security import is_safe_path # For path safety checks # REMOVED
+from chungoid.schemas.errors import AgentErrorDetails # For structured errors
+from chungoid.schemas.orchestration import SharedContext # ADDED
+
+# ADDED: Import for ProjectChromaManagerAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, GENERATED_CODE_ARTIFACTS_COLLECTION
 
 logger = logging.getLogger(__name__)
 
-class SystemFileSystemAgent_v1(AgentBase):
+# MOVED TO MODULE LEVEL
+class WriteArtifactToFileInput(BaseModel):
+    """Input for writing a ChromaDB artifact's content to a file."""
+    artifact_doc_id: str = Field(description="Document ID of the artifact in ChromaDB.")
+    collection_name: str = Field(description="Name of the ChromaDB collection where the artifact is stored.")
+    target_file_path: str = Field(description="Target file path relative to project root.")
+    overwrite: bool = Field(default=False, description="Whether to overwrite the file if it already exists.")
+
+class SystemFileSystemAgent_v1(BaseAgent):
     """
     An agent that provides tools for interacting with the file system.
     """
 
-    AGENT_ID = "SystemFileSystemAgent_v1"
-    AGENT_NAME = "System File System Agent v1"
-    AGENT_DESCRIPTION = "Performs file system operations like creating/modifying directories and files."
-    AGENT_VERSION = "1.0.0"
-    CATEGORY: AgentCategory = AgentCategory.SYSTEM_OPERATIONS
-    VISIBILITY: AgentVisibility = AgentVisibility.PUBLIC
+    AGENT_ID: ClassVar[str] = "SystemFileSystemAgent_v1"
+    AGENT_NAME: ClassVar[str] = "System File System Agent v1"
+    AGENT_DESCRIPTION: ClassVar[str] = "Performs file system operations like creating/modifying directories and files."
+    AGENT_VERSION: ClassVar[str] = "1.0.0"
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.FILE_MANAGEMENT
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
     # --- Pydantic Schemas for Agent Tools ---
 
@@ -71,7 +85,6 @@ class SystemFileSystemAgent_v1(AgentBase):
         dest_path: str = Field(description="Destination path relative to project root.")
         overwrite: bool = Field(default=False, description="Whether to overwrite the destination if it exists.")
 
-
     class FileSystemOutput(BaseModel):
         """Standard output for file system operations."""
         success: bool
@@ -81,11 +94,23 @@ class SystemFileSystemAgent_v1(AgentBase):
         content: Optional[Union[str, List[str]]] = Field(default=None, description="Content read from a file or list of directory items.")
         exists: Optional[bool] = Field(default=None, description="Result of a path_exists check.")
 
-    def __init__(self, system_context: Optional[Dict[str, Any]] = None, **kwargs):
-        super().__init__(system_context=system_context, **kwargs)
-        if not hasattr(self, 'logger') or self.logger is None:
-            self.logger = system_context.get("logger", logger) if system_context else logger
-        self.logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
+    _logger: Any # Declare _logger as an instance variable, not a Pydantic field
+    _pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None # ADDED: PCMA agent instance
+
+    def __init__(self, pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None, **data: Any): # MODIFIED: Added pcma_agent, made it optional for now to avoid breaking CLI immediately
+        super().__init__(**data)
+        # BaseAgent's __init__ will store 'system_context' in self._system_context_internal if passed
+        # Initialize _logger from system_context (via _system_context_internal) or use module logger
+        current_logger = None
+        if self._system_context_internal and "logger" in self._system_context_internal:
+            current_logger = self._system_context_internal.get("logger")
+        
+        self._logger = current_logger if current_logger else logger # MODIFIED: use self._logger
+        self._pcma_agent = pcma_agent # Store PCMA agent
+        if not self._pcma_agent:
+            self._logger.warning(f"{self.AGENT_ID} initialized WITHOUT a ProjectChromaManagerAgent. Artifact-related tools will fail.")
+
+        self._logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
     def _resolve_and_sandbox_path(self, relative_path: str, project_root: Path) -> Path:
         """
@@ -104,41 +129,60 @@ class SystemFileSystemAgent_v1(AgentBase):
 
     async def invoke_async(
         self,
-        tool_name: str,
-        tool_input: Dict[str, Any],
-        project_root: Path,
+        tool_name: Optional[str] = None,
+        tool_input: Optional[Dict[str, Any]] = None,
+        project_root: Optional[Path] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        full_context: Optional[SharedContext] = None,
+        inputs: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Invoke a file system operation.
+        Adapts to different invocation patterns from the orchestrator.
         """
-        # Resolve the actual file path against the project_root
-        # This is a crucial security and sandboxing measure.
-        # All paths provided in tool_input should be relative to the project_root.
+        actual_tool_name: Optional[str] = tool_name
+        actual_tool_input: Optional[Dict[str, Any]] = tool_input
+        actual_project_root: Optional[Path] = project_root
 
-        # Path sandboxing and resolution will be handled within each tool method
-        # as they know which arguments are paths.
+        if inputs is not None:
+            if not actual_tool_name and "tool_name" in inputs:
+                actual_tool_name = inputs["tool_name"]
+            if actual_tool_input is None and "tool_input" in inputs:
+                actual_tool_input = inputs["tool_input"]
 
-        if not hasattr(self, tool_name):
-            return {"success": False, "error": f"Tool '{tool_name}' not found on {self.AGENT_NAME}."}
+        if not actual_project_root and full_context and full_context.project_root_path:
+            actual_project_root = Path(full_context.project_root_path)
+            self._logger.debug(f"Retrieved project_root from full_context: {actual_project_root}")
 
-        method = getattr(self, tool_name)
+        if not actual_tool_name:
+            return {"success": False, "error": f"'tool_name' is required but was not provided directly or in 'inputs' for {self.AGENT_NAME}."}
+        if actual_tool_input is None:
+            actual_tool_input = {}
+            self._logger.debug(f"tool_input was None for tool '{actual_tool_name}', defaulting to {{}}.")
+        elif not isinstance(actual_tool_input, dict):
+            return {"success": False, "error": f"'tool_input' must be a dictionary for {self.AGENT_NAME}, got {type(actual_tool_input)}."}
+
+        if not actual_project_root:
+            return {"success": False, "error": f"'project_root' is required but was not provided and could not be retrieved from context for {self.AGENT_NAME}."}
+
+        if not hasattr(self, actual_tool_name):
+            return {"success": False, "error": f"Tool '{actual_tool_name}' not found on {self.AGENT_NAME}."}
+
+        method = getattr(self, actual_tool_name)
         
-        # Most file system operations are blocking, so run them in an executor
         try:
-            # Pass project_root to methods that need it for sandboxing/validation
-            if "project_root" in method.__code__.co_varnames: # Check if method expects project_root
-                 result = await run_in_executor_wrapper(method, **tool_input, project_root=project_root)
+            if "project_root" in method.__code__.co_varnames:
+                 result = await asyncio.to_thread(method, **actual_tool_input, project_root=actual_project_root)
             else:
-                 result = await run_in_executor_wrapper(method, **tool_input)
-            # Ensure result is a dictionary before returning, to match expected type
-            if isinstance(result, BaseModel): # Assuming methods return Pydantic models like FileSystemOutput
+                 result = await asyncio.to_thread(method, **actual_tool_input)
+            
+            if isinstance(result, BaseModel):
                 return result.model_dump()
             return result
         except Exception as e:
-            self.logger.error(f"Error executing tool {tool_name} for agent {self.AGENT_ID}: {e}", exc_info=True)
+            self._logger.error(f"Error executing tool {actual_tool_name} for agent {self.AGENT_ID}: {e}", exc_info=True)
             return {"success": False, "error": str(e), "details": f"Exception type: {type(e).__name__}"}
 
     @staticmethod
@@ -205,6 +249,13 @@ class SystemFileSystemAgent_v1(AgentBase):
                 name="copy_path",
                 description="Copies a file or directory. Overwrites destination if overwrite is True. Input paths are relative to project root.",
                 input_schema=SystemFileSystemAgent_v1.MoveCopyPathInput.model_json_schema(),
+                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
+            ),
+            # ADDED: AgentToolSpec for the new tool
+            AgentToolSpec(
+                name="write_artifact_to_file_tool",
+                description="Retrieves an artifact from ChromaDB and writes its content to a specified file. Input path is relative to project root.",
+                input_schema=WriteArtifactToFileInput.model_json_schema(),
                 output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
         ]
@@ -518,6 +569,71 @@ class SystemFileSystemAgent_v1(AgentBase):
             return FileSystemOutput(success=False, error=str(ve)).model_dump()
         except Exception as e:
             return FileSystemOutput(success=False, error=f"Failed to copy path: {str(e)}").model_dump()
+
+    # ADDED: New method to write artifact content to file
+    async def write_artifact_to_file_tool(
+        self, 
+        artifact_doc_id: str, 
+        collection_name: str,
+        target_file_path: str, 
+        project_root: Path, 
+        overwrite: bool = False
+    ) -> Dict[str, Any]:
+        """Retrieves an artifact from ChromaDB and writes its content to a file."""
+        if not self._pcma_agent:
+            error_msg = "ProjectChromaManagerAgent not available to SystemFileSystemAgent. Cannot retrieve artifact."
+            self._logger.error(error_msg)
+            return FileSystemOutput(success=False, error=error_msg).model_dump()
+
+        self._logger.info(f"Attempting to retrieve artifact '{artifact_doc_id}' from collection '{collection_name}'.")
+        try:
+            retrieved_artifact = await self._pcma_agent.retrieve_artifact(
+                base_collection_name=collection_name,
+                document_id=artifact_doc_id
+            )
+
+            if not retrieved_artifact or retrieved_artifact.status != "SUCCESS" or not retrieved_artifact.content:
+                error_msg = f"Failed to retrieve artifact '{artifact_doc_id}' from collection '{collection_name}'. Status: {retrieved_artifact.status if retrieved_artifact else 'N/A'}, Content Empty: {not retrieved_artifact.content if retrieved_artifact else 'N/A'}"
+                self._logger.error(error_msg)
+                return FileSystemOutput(success=False, error=error_msg).model_dump()
+            
+            content_to_write = str(retrieved_artifact.content)
+            self._logger.info(f"Artifact '{artifact_doc_id}' retrieved. Content length: {len(content_to_write)}. Target file: {target_file_path}")
+
+            # Now use existing file writing logic (similar to create_file or write_to_file)
+            sandboxed_target_path = self._resolve_and_sandbox_path(target_file_path, project_root)
+
+            if sandboxed_target_path.exists() and not overwrite:
+                return FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_target_path), 
+                    error=f"File '{target_file_path}' already exists and overwrite is False."
+                ).model_dump()
+
+            if sandboxed_target_path.is_dir():
+                 return FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_target_path), 
+                    error=f"Target path '{target_file_path}' is a directory, cannot write file content."
+                ).model_dump()
+
+            sandboxed_target_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(sandboxed_target_path, "w", encoding="utf-8") as f:
+                f.write(content_to_write)
+            
+            self._logger.info(f"Successfully wrote artifact '{artifact_doc_id}' to '{sandboxed_target_path}'.")
+            return FileSystemOutput(
+                success=True, 
+                path=str(sandboxed_target_path), 
+                message=f"Artifact '{artifact_doc_id}' successfully written to '{target_file_path}'."
+            ).model_dump()
+
+        except ValueError as ve: # Catch path resolution errors
+            self._logger.error(f"Path validation error for '{target_file_path}': {ve}", exc_info=True)
+            return FileSystemOutput(success=False, error=f"Path validation error: {ve}").model_dump()
+        except Exception as e:
+            self._logger.error(f"Error in write_artifact_to_file_tool for artifact '{artifact_doc_id}' to '{target_file_path}': {e}", exc_info=True)
+            return FileSystemOutput(success=False, error=f"Failed to write artifact to file: {e}", details=traceback.format_exc()).model_dump()
 
     # --------------------------------------------------------------------------
 
