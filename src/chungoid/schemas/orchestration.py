@@ -29,6 +29,11 @@ class SharedContext(BaseModel):
 
     initial_inputs: Dict[str, Any] = Field(default_factory=dict, description="The initial inputs provided to the flow run.")
 
+    outputs: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Outputs from stages, keyed by a path derived from the stage's output_context_path (e.g., 'goal_analysis_and_requirements_gathering.refined_requirements_document_id'). Values are the Pydantic model dump of the stage's output."
+    )
+
     previous_stage_outputs: Dict[str, Any] = Field(
         default_factory=dict,
         description="Outputs from previously completed stages. Keys are stage names (or agent IDs), values are their outputs (e.g., artifact IDs, status messages)."

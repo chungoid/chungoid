@@ -112,12 +112,12 @@ user_prompt: |
   {{ loprd_json_content }}
   ```
 
-  {{#if previous_blueprint_feedback_md}}
+  {% if previous_blueprint_feedback_md %}
   **2. Feedback on Previous Blueprint Version (Markdown):**
   ```markdown
   {{ previous_blueprint_feedback_md }}
   ```
-  {{/if}}
+  {% endif %}
 
   **Instructions:**
   Based on the provided LOPRD and any feedback on a previous version, generate a comprehensive Project Blueprint in Markdown format. Also, provide your confidence assessment.

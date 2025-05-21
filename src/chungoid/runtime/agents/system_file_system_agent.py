@@ -99,11 +99,11 @@ class SystemFileSystemAgent_v1(BaseAgent):
 
     def __init__(self, pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None, **data: Any): # MODIFIED: Added pcma_agent, made it optional for now to avoid breaking CLI immediately
         super().__init__(**data)
-        # BaseAgent's __init__ will store 'system_context' in self._system_context_internal if passed
-        # Initialize _logger from system_context (via _system_context_internal) or use module logger
+        # BaseAgent's __init__ will store 'system_context' in self.system_context if passed via **data
+        # Initialize _logger from self.system_context
         current_logger = None
-        if self._system_context_internal and "logger" in self._system_context_internal:
-            current_logger = self._system_context_internal.get("logger")
+        if self.system_context and "logger" in self.system_context:
+            current_logger = self.system_context.get("logger")
         
         self._logger = current_logger if current_logger else logger # MODIFIED: use self._logger
         self._pcma_agent = pcma_agent # Store PCMA agent

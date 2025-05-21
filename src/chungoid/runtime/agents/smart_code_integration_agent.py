@@ -2,12 +2,16 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, Any, Optional, Literal
+from typing import Dict, Any, Optional, Literal, ClassVar
 import logging
 import hashlib
 import uuid
 import tempfile
 import datetime
+
+# ADDED Imports for BaseAgent dependencies
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager
 
 from chungoid.schemas.agent_code_integration import SmartCodeIntegrationInput, SmartCodeIntegrationOutput
 from chungoid.schemas.common import ConfidenceScore
@@ -15,60 +19,60 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LIVE_CODEBASE_COLLECTION
+from chungoid.runtime.agents.agent_base import BaseAgent, InputSchema, OutputSchema
 
 logger = logging.getLogger(__name__)
 
-class SmartCodeIntegrationAgent_v1:
+class SmartCodeIntegrationAgent_v1(BaseAgent[SmartCodeIntegrationInput, SmartCodeIntegrationOutput]):
     """    Smart Code Integration Agent (Version 1).
 
     Fetches code from ChromaDB (or direct input), integrates it into files using various edit actions,
     and updates the live codebase representation in ChromaDB.
     """
 
-    AGENT_ID = "SmartCodeIntegrationAgent_v1"
-    AGENT_NAME = "Smart Code Integration Agent V1"
-    AGENT_DESCRIPTION = "Integrates code (sourced from ChromaDB or direct input) into files and updates live codebase in ChromaDB."
-    CATEGORY = AgentCategory.CODE_EDITING
-    VISIBILITY = AgentVisibility.PUBLIC
-    VERSION = "0.2.1"
-
-    _pcma_agent: ProjectChromaManagerAgent_v1
+    AGENT_ID: ClassVar[str] = "SmartCodeIntegrationAgent_v1"
+    AGENT_NAME: ClassVar[str] = "Smart Code Integration Agent V1"
+    AGENT_DESCRIPTION: ClassVar[str] = "Integrates code (sourced from ChromaDB or direct input) into files and updates live codebase in ChromaDB."
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_EDITING
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    VERSION: ClassVar[str] = "0.2.1"
+    INPUT_SCHEMA: ClassVar[type[InputSchema]] = SmartCodeIntegrationInput
+    OUTPUT_SCHEMA: ClassVar[type[OutputSchema]] = SmartCodeIntegrationOutput
 
     def __init__(self,
-                 pcma_agent: ProjectChromaManagerAgent_v1,
+                 project_chroma_manager: ProjectChromaManagerAgent_v1,
+                 llm_provider: Optional[LLMProvider] = None,
+                 prompt_manager: Optional[PromptManager] = None,
                  config: Optional[Dict[str, Any]] = None,
                  system_context: Optional[Dict[str, Any]] = None
                 ):
-        if not pcma_agent:
+        if not project_chroma_manager:
             raise ValueError("ProjectChromaManagerAgent_v1 is required for SmartCodeIntegrationAgent_v1")
-        self._pcma_agent = pcma_agent
-        self.config = config if config else {}
-        self.system_context = system_context or {}
+        
+        super().__init__(
+            project_chroma_manager=project_chroma_manager,
+            llm_provider=llm_provider,
+            prompt_manager=prompt_manager,
+            config=config,
+            system_context=system_context
+        )
+        
         self._logger_instance = self.system_context.get("logger", logger)
         self._logger_instance.info(f"{self.AGENT_NAME} initialized.")
 
-    async def invoke_async(self, inputs: Dict[str, Any], full_context: Optional[Dict[str, Any]] = None) -> SmartCodeIntegrationOutput:
-        task_id_from_input = inputs.get("task_id", str(uuid.uuid4()))
-        try:
-            parsed_inputs = SmartCodeIntegrationInput(**inputs)
-        except Exception as e:
-            self._logger_instance.error(f"Failed to parse inputs for {self.AGENT_ID}: {e}")
-            return SmartCodeIntegrationOutput(
-                task_id=task_id_from_input,
-                status="FAILURE", 
-                message=f"Input parsing failed: {e}",
-                modified_file_path=inputs.get("target_file_path"),
-                error_message=f"Input parsing failed: {e}"
-            )
+    async def invoke_async(self, task_input: SmartCodeIntegrationInput, full_context: Optional[Dict[str, Any]] = None) -> SmartCodeIntegrationOutput:
+        parsed_inputs = task_input
         
-        self._logger_instance.info(f"{self.AGENT_NAME} invoked with action \'{parsed_inputs.edit_action}\' for target: {parsed_inputs.target_file_path} in project {parsed_inputs.project_id}")
+        self._logger_instance.info(f"{self.AGENT_NAME} invoked with action '{parsed_inputs.edit_action}' for target: {parsed_inputs.target_file_path} in project {parsed_inputs.project_id}")
         self._logger_instance.debug(f"{self.AGENT_NAME} parsed_inputs: {parsed_inputs}")
 
         code_to_integrate_str: Optional[str] = None
         if parsed_inputs.generated_code_artifact_doc_id:
             self._logger_instance.info(f"Fetching code from ChromaDB artifact ID: {parsed_inputs.generated_code_artifact_doc_id}")
             try:
-                code_doc = await self._pcma_agent.get_document_by_id(
+                if not self.project_chroma_manager:
+                    raise ValueError("ProjectChromaManager not available on agent instance.")
+                code_doc = await self.project_chroma_manager.get_document_by_id(
                     doc_id=parsed_inputs.generated_code_artifact_doc_id,
                     project_id=parsed_inputs.project_id 
                 )
@@ -210,7 +214,7 @@ class SmartCodeIntegrationAgent_v1:
                 if parsed_inputs.generated_code_artifact_doc_id:
                     doc_metadata["derived_from_doc_id"] = parsed_inputs.generated_code_artifact_doc_id
 
-                updated_doc_id = await self._pcma_agent.store_document_content(
+                updated_doc_id = await self.project_chroma_manager.store_document_content(
                     project_id=parsed_inputs.project_id,
                     collection_name=LIVE_CODEBASE_COLLECTION,
                     document_content=final_content,
@@ -280,7 +284,7 @@ async def main_test_integration():
     mock_project_id = "test_smart_integration_proj_001"
 
     agent = SmartCodeIntegrationAgent_v1(
-        pcma_agent=ProjectChromaManagerAgent_v1(project_root=project_root, project_id=mock_project_id),
+        project_chroma_manager=ProjectChromaManagerAgent_v1(project_root=project_root, project_id=mock_project_id),
         config={"project_root_dir_for_pcma_init": str(project_root)}
     )
 

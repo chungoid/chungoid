@@ -26,7 +26,7 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # 
 
 logger = logging.getLogger(__name__)
 
-ARCHITECT_AGENT_PROMPT_NAME = "architect_agent_v1.yaml" # In server_prompts/autonomous_engine/
+ARCHITECT_AGENT_PROMPT_NAME = "architect_agent_v1_prompt.yaml" # In server_prompts/autonomous_engine/
 
 # --- Input and Output Schemas for the Agent --- #
 
@@ -54,7 +54,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
     AGENT_ID: ClassVar[str] = "ArchitectAgent_v1"
     AGENT_NAME: ClassVar[str] = "Architect Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Generates a technical blueprint based on an LOPRD and project context."
-    PROMPT_TEMPLATE_NAME: ClassVar[str] = "architect_agent_v1.yaml"
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "architect_agent_v1_prompt.yaml"
     VERSION: ClassVar[str] = "0.1.0"
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.PLANNING_AND_DESIGN # MODIFIED
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
@@ -139,6 +139,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
             else:
                 raise ValueError(f"LOPRD document with ID {task_input.loprd_doc_id} not found, content empty or retrieval failed. Status: {loprd_doc.status if loprd_doc else 'N/A'}")
 
+            existing_blueprint_md_str: Optional[str] = None # Initialize here
             if task_input.existing_blueprint_doc_id:
                 blueprint_doc: RetrieveArtifactOutput = await pcma_agent.retrieve_artifact(
                     base_collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
@@ -157,18 +158,24 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
         
         # --- Prompt Rendering ---
         prompt_render_data = {
-            "loprd_json_string": loprd_json_content_str,
+            "loprd_json_content": loprd_json_content_str,
             "existing_blueprint_markdown_string": existing_blueprint_md_str,
-            "refinement_instructions_string": task_input.refinement_instructions
+            "previous_blueprint_feedback_md": task_input.refinement_instructions,
+            "project_name": task_input.project_id,
+            "current_date_iso": datetime.datetime.utcnow().isoformat()
         }
         try:
-            rendered_prompts = prompt_manager.render_prompt_template(ARCHITECT_AGENT_PROMPT_NAME, prompt_render_data, sub_dir="autonomous_engine")
-            system_prompt = rendered_prompts.get("system_prompt")
-            main_prompt = rendered_prompts.get("prompt_details") # Or user_prompt
+            system_prompt, main_prompt = await prompt_manager.get_rendered_system_and_user_prompts(
+                prompt_name=self.PROMPT_TEMPLATE_NAME.replace(".yaml", ""), # Pass the base name
+                prompt_version=self.VERSION, # ADDED: Pass the agent's version as the prompt_version
+                prompt_render_data=prompt_render_data,
+                prompt_sub_path="autonomous_engine" # Ensure this matches how prompts are keyed
+            )
+            
             if not system_prompt or not main_prompt:
                 raise PromptRenderError("Missing system or main prompt content after rendering for ArchitectAgent.")
         except PromptRenderError as e_prompt:
-            logger_instance.error(f"Prompt rendering failed for {ARCHITECT_AGENT_PROMPT_NAME}: {e_prompt}", exc_info=True)
+            logger_instance.error(f"Prompt rendering failed for {self.PROMPT_TEMPLATE_NAME}: {e_prompt}", exc_info=True)
             return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
 
         # --- LLM Interaction using generate_text_async_with_prompt_manager ---
@@ -176,17 +183,16 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
         llm_usage_metadata: Optional[Dict[str, Any]] = None # To store potential usage data from LLM call
 
         try:
-            logger_instance.info(f"Sending request to LLM via PromptManager for Blueprint generation/refinement (prompt: {ARCHITECT_AGENT_PROMPT_NAME})...")
+            logger_instance.info(f"Sending request to LLM via PromptManager for Blueprint generation/refinement (prompt: {self.PROMPT_TEMPLATE_NAME})...")
             
             # Assuming generate_text_async_with_prompt_manager can return a more detailed response object
             # or we adapt it. For now, let's assume it returns the text directly.
-            llm_response_text = await llm_provider.generate_text_async_with_prompt_manager(
-                prompt_manager=prompt_manager,
-                prompt_name=ARCHITECT_AGENT_PROMPT_NAME,
-                prompt_data=prompt_render_data,
-                sub_dir="autonomous_engine",
+            # It needs to be adapted to use the separately rendered system_prompt and main_prompt (user_prompt)
+            llm_response_text = await llm_provider.generate( # Changed to use the base 'generate' method
+                system_prompt=system_prompt,
+                prompt=main_prompt, # This is the main user-facing prompt content
+                model_id=None, # TODO: Get from prompt_definition.model_settings.model_name if available
                 temperature=0.5, # Higher temp for creative architecture
-                # model_id="gpt-4-turbo-preview" # Or from config/LLMProvider default
             )
 
             # TODO: If generate_text_async_with_prompt_manager returns a richer object with usage, capture it:
@@ -226,7 +232,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
                 metadata=blueprint_metadata,
                 source_agent_id=self.AGENT_ID,
                 source_task_id=task_input.task_id,
-                cycle_id=full_context.get("cycle_id") if full_context else None,
+                cycle_id=full_context.current_cycle_id if full_context and hasattr(full_context, 'current_cycle_id') else None,
                 # If refining, link to previous version
                 previous_version_artifact_id=task_input.existing_blueprint_doc_id if task_input.existing_blueprint_doc_id else None
             )

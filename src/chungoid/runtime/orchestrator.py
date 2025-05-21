@@ -21,6 +21,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
 from typing import Any, Dict, List, Optional, Union, Callable, cast, ClassVar, Tuple
+import re
 
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider, NoAgentFoundForCategoryError, AmbiguousAgentCategoryError
 from chungoid.utils.state_manager import StateManager
@@ -1099,44 +1100,43 @@ class AsyncOrchestrator(BaseOrchestrator):
                     if not project_id_for_architect:
                         raise ValueError("project_id is not set in shared_context for ArchitectAgent_v1.")
 
-                    # loprd_doc_id comes from the output of the 'goal_analysis' stage
-                    # This assumes 'goal_analysis' stage ran and its output structure.
-                    goal_analysis_output = self.shared_context.previous_stage_outputs.get("goal_analysis")
-                    loprd_doc_id_for_architect = None
-                    if isinstance(goal_analysis_output, dict):
-                        loprd_doc_id_for_architect = goal_analysis_output.get("refined_requirements_document_id")
-                    elif hasattr(goal_analysis_output, "refined_requirements_document_id"): # If it's an object
-                        loprd_doc_id_for_architect = getattr(goal_analysis_output, "refined_requirements_document_id")
+                    # 'final_inputs_for_agent' should contain the resolved value for
+                    # 'refined_requirements_document_id' based on the plan's input mapping.
+                    # The ArchitectAgentInput model expects 'loprd_doc_id'.
                     
-                    if not loprd_doc_id_for_architect:
-                        # Fallback or error if loprd_doc_id is crucial and not found
-                        # For now, we'll proceed, but the agent might fail if it's required and missing.
-                        self.logger.warning(f"loprd_doc_id not found in 'goal_analysis' stage output for ArchitectAgent_v1. Inputs provided to Architect: {final_inputs_for_agent}")
-                        # If final_inputs_for_agent (from plan) contains loprd_doc_id, use that as a fallback
-                        loprd_doc_id_from_plan = final_inputs_for_agent.get("loprd_doc_id")
-                        if loprd_doc_id_from_plan:
-                            loprd_doc_id_for_architect = loprd_doc_id_from_plan
-                            self.logger.info(f"Using loprd_doc_id from plan inputs as fallback: {loprd_doc_id_for_architect}")
-                        else:
-                             # If it's absolutely required and not found, we might need to raise an error earlier or
-                             # the ArchitectAgent itself will fail. For now, pass None if not found.
-                             self.logger.error("Critical: loprd_doc_id could not be determined for ArchitectAgent_v1. The agent will likely fail.")
+                    # The key in final_inputs_for_agent will be what was in the plan's 'inputs' for this stage.
+                    # The plan for 'architectural_blueprinting' stage has:
+                    # "inputs": { "refined_requirements_document_id": "{context.outputs.goal_analysis_and_requirements_gathering.refined_requirements_document_id}" }
+                    # So, after _resolve_input_values, final_inputs_for_agent should have a key 'refined_requirements_document_id'
+                    # with the actual ID.
+
+                    loprd_doc_id_from_resolved_inputs = final_inputs_for_agent.get("refined_requirements_document_id")
+
+                    if not loprd_doc_id_from_resolved_inputs:
+                        self.logger.error(
+                            f"Critical: 'refined_requirements_document_id' was not resolved correctly from plan inputs "
+                            f"or was not present in resolved inputs: {final_inputs_for_agent}. "
+                            f"ArchitectAgent_v1 will likely fail."
+                        )
+                        # Set to None, Pydantic validation will catch it if it's a required field.
+                        loprd_doc_id_from_resolved_inputs = None
+                    else:
+                        self.logger.info(f"Successfully resolved 'refined_requirements_document_id': {loprd_doc_id_from_resolved_inputs} for ArchitectAgent_v1.")
 
 
                     # Create the ArchitectAgentInput object
                     # final_inputs_for_agent might contain other optional fields like existing_blueprint_doc_id
                     architect_task_input_data = {
                         "project_id": project_id_for_architect,
-                        "loprd_doc_id": loprd_doc_id_for_architect, # This might be None if not found
-                        **final_inputs_for_agent # Spread other inputs from plan (e.g., existing_blueprint_doc_id)
+                        "loprd_doc_id": loprd_doc_id_from_resolved_inputs, # Use the resolved value
+                        # Spread other inputs from final_inputs_for_agent,
+                        # but be careful not to overwrite project_id or loprd_doc_id
+                        **{k: v for k, v in final_inputs_for_agent.items() if k not in ["project_id", "loprd_doc_id", "refined_requirements_document_id"]}
                     }
                     # task_id has a default factory in ArchitectAgentInput
 
-                    # Remove None values if ArchitectAgentInput fields are not Optional and have no defaults
-                    # For ArchitectAgentInput, loprd_doc_id is mandatory.
+                    # Ensure loprd_doc_id is not None if it's a required field in ArchitectAgentInput
                     if architect_task_input_data.get("loprd_doc_id") is None:
-                        # This will cause a validation error if loprd_doc_id is not Optional in the Pydantic model
-                        # and is required. The agent's __init__ or invoke will fail.
                          self.logger.error("ArchitectAgentInput is being created with loprd_doc_id as None. This will likely fail validation if the field is not Optional.")
 
 
@@ -1776,7 +1776,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                                     
                                     fs_agent = SystemFileSystemAgent_v1(
                                         system_context=system_context_for_fs_dict, 
-                                        pcma_agent=pcma_agent_instance
+                                        pcma_agent=pcma_agent_instance,
+                                        llm_provider=self.agent_provider._llm_provider, # ADDED direct kwarg
+                                        prompt_manager=self.agent_provider._prompt_manager # ADDED direct kwarg
                                     )
                                     
                                     tool_call_input = WriteArtifactToFileInput(
@@ -1939,8 +1941,9 @@ class AsyncOrchestrator(BaseOrchestrator):
     def _resolve_input_values(self, inputs_spec: Dict[str, Any]) -> Dict[str, Any]:
         """
         Resolves input values based on the input specification.
-        This is a basic implementation and will need to be expanded.
-        It currently handles direct string passthrough and very simple context lookups.
+        This implementation handles direct string passthrough,
+        context lookups prefixed with '@', and context lookups
+        encapsulated in '{context...}'.
         """
         if not inputs_spec:
             return {}
@@ -1950,57 +1953,97 @@ class AsyncOrchestrator(BaseOrchestrator):
 
         for key, value_spec in inputs_spec.items():
             if isinstance(value_spec, str):
+                # Attempt to resolve dynamic context paths first (e.g., {context...})
+                # This regex will find patterns like {context.path.to.value}
+                match = re.fullmatch(r"\{context\.([^}]+)\}", value_spec)
+                if match:
+                    path_str = match.group(1)
+                    self.logger.debug(f"Found general context path string: '{value_spec}', extracted path: '{path_str}' for key '{key}'")
+                    current_val = self.shared_context
+                    resolved_successfully = True
+                    try:
+                        for part in path_str.split("."):
+                            if isinstance(current_val, dict): # Check if it's a dict (like shared_context.outputs)
+                                if part in current_val:
+                                    current_val = current_val[part]
+                                else:
+                                    # Try to see if it's an attribute on an object within a dict (e.g. a Pydantic model in outputs)
+                                    # This part is tricky if the dict value isn't a Pydantic model or similar
+                                    # For now, assume direct key access or direct attribute access on shared_context itself.
+                                    # A more robust solution might involve checking type(current_val)
+                                    self.logger.warning(f"Path part '{part}' not directly in dict for path '{path_str}' for key '{key}'. Current dict keys: {list(current_val.keys())}")
+                                    resolved_successfully = False
+                                    break
+                            elif hasattr(current_val, part): # Check if it's an attribute (like shared_context.project_id)
+                                current_val = getattr(current_val, part)
+                            else:
+                                self.logger.warning(f"Path part '{part}' not found on current object (type: {type(current_val)}) for path '{path_str}' for key '{key}'")
+                                resolved_successfully = False
+                                break
+                        
+                        if resolved_successfully:
+                            resolved_inputs[key] = current_val
+                            self.logger.info(f"Successfully resolved general context path '{value_spec}' for key '{key}' to: {current_val}")
+                        else:
+                            self.logger.warning(f"Could not fully resolve general context path '{value_spec}' for key '{key}'. Using original string or None.")
+                            resolved_inputs[key] = value_spec # Or None, depending on desired strictness
 
-                # --- ADDED: Handle specific known context path patterns via direct string replacement ---
-                # This should run before other prefix checks if those prefixes might be part of the replacement strings.
-                temp_value_spec = value_spec
+                    except Exception as e:
+                        self.logger.error(f"Error resolving general context path '{value_spec}' for key '{key}': {e}. Using original string or None.")
+                        resolved_inputs[key] = value_spec # Or None
+                    continue # Move to next key-value pair
+
+                # --- Handle specific known context path patterns via direct string replacement (legacy or specific cases) ---
+                temp_value_spec = value_spec # Start with original value_spec for these checks
                 replacement_made = False
 
-                # Pattern 1: {context.project_root_path}
                 if "{context.project_root_path}" in temp_value_spec and hasattr(self.shared_context, 'project_root_path') and self.shared_context.project_root_path:
                     temp_value_spec = temp_value_spec.replace("{context.project_root_path}", str(self.shared_context.project_root_path))
                     self.logger.debug(f"Replaced '{{context.project_root_path}}' in '{value_spec}' with '{self.shared_context.project_root_path}' -> '{temp_value_spec}'")
                     replacement_made = True
                 
-                # Pattern 2: {context.global_config.project_dir} (maps to project_root_path)
-                # This is based on how the MasterPlannerAgent seems to structure its `global_config` output.
-                # `global_config` in the plan often corresponds to `global_project_settings` in SharedContext,
-                # and `project_dir` within that is typically the main project root path.
                 if "{context.global_config.project_dir}" in temp_value_spec and hasattr(self.shared_context, 'project_root_path') and self.shared_context.project_root_path:
                     temp_value_spec = temp_value_spec.replace("{context.global_config.project_dir}", str(self.shared_context.project_root_path))
                     self.logger.debug(f"Replaced '{{context.global_config.project_dir}}' in '{value_spec}' with '{self.shared_context.project_root_path}' -> '{temp_value_spec}'")
                     replacement_made = True
                 
-                value_spec_after_replacement = temp_value_spec # Use the potentially modified string for subsequent checks
-                # --- END ADDED ---
+                value_spec_after_replacement = temp_value_spec
+
+                # --- End specific known context path patterns ---
 
                 if value_spec_after_replacement.startswith("@outputs."):
-                    # Attempt to resolve from previous stage outputs
                     path = value_spec_after_replacement[len("@outputs."):]
-                    current_val = self.shared_context.previous_stage_outputs
+                    current_val = self.shared_context.previous_stage_outputs # This should be self.shared_context.outputs
                     try:
+                        # Ensure current_val is a dictionary before trying to access parts
+                        if not isinstance(current_val, dict):
+                             # Try from self.shared_context.outputs as a fallback or primary
+                            self.logger.warning(f"@outputs path '{path}' requested, but self.shared_context.previous_stage_outputs is not a dict. Trying self.shared_context.outputs.")
+                            current_val = self.shared_context.outputs # Correct source for cross-stage outputs
+
+                        if not isinstance(current_val, dict):
+                            raise TypeError(f"Cannot resolve @outputs path, target context ('outputs' or 'previous_stage_outputs') is not a dictionary. Type: {type(current_val)}")
+
                         for part in path.split("."):
-                            if isinstance(current_val, dict):
+                            if isinstance(current_val, dict): # Must be a dict to proceed with key access
                                 current_val = current_val[part]
-                            elif hasattr(current_val, part): # For Pydantic models
-                                current_val = getattr(current_val, part)
-                            else:
-                                raise KeyError(f"Path part '{part}' not found in outputs context for '{path}'")
+                            # No need to check hasattr for Pydantic models here, as outputs are stored as dicts
+                            else: # Should not happen if outputs are always dicts
+                                raise KeyError(f"Path part '{part}' not found or context changed to non-dict for '@outputs.{path}'")
                         resolved_inputs[key] = current_val
                         self.logger.debug(f"Resolved input '{key}' from @outputs.{path} to: {current_val}")
                     except Exception as e:
                         self.logger.warning(f"Could not resolve @outputs.{path} for input '{key}': {e}. Using None.")
                         resolved_inputs[key] = None
-                elif value_spec_after_replacement.startswith("@context."): # placeholder for other context types
+                elif value_spec_after_replacement.startswith("@context."):
                     self.logger.warning(f"Resolution for context type other than @outputs (e.g., {value_spec_after_replacement}) not fully implemented for key '{key}'. Using None.")
-                    resolved_inputs[key] = None # Placeholder
+                    resolved_inputs[key] = None
                 elif value_spec_after_replacement.startswith("@artifact."):
                      self.logger.warning(f"Resolution for @artifact not implemented for key '{key}'. Using None.")
                      resolved_inputs[key] = None
                 elif value_spec_after_replacement.startswith("@config."):
-                    # Attempt to resolve from orchestrator's self.config or shared_context.global_project_settings
                     path = value_spec_after_replacement[len("@config."):]
-                    config_source = self.config # Default to orchestrator config
+                    config_source = self.config
                     if path.startswith("global_project_settings."):
                         config_source = self.shared_context.global_project_settings
                         path = path[len("global_project_settings."):]
@@ -2008,18 +2051,21 @@ class AsyncOrchestrator(BaseOrchestrator):
                     current_val = config_source
                     try:
                         for part in path.split("."):
-                            current_val = current_val[part] # Assume dict access
+                            current_val = current_val[part]
                         resolved_inputs[key] = current_val
                         self.logger.debug(f"Resolved input '{key}' from @config.{path} to: {current_val}")
                     except Exception as e:
                         self.logger.warning(f"Could not resolve @config.{path} for input '{key}': {e}. Using None.")
                         resolved_inputs[key] = None
-                else:
-                    # Assume it's a literal string value (after potential direct context replacements)
+                elif replacement_made: # If one of the direct string replacements occurred, use the result
                     resolved_inputs[key] = value_spec_after_replacement
-                    self.logger.debug(f"Input '{key}' is a literal string (after replacements): {value_spec_after_replacement}")
+                    self.logger.debug(f"Input '{key}' resolved via direct replacement to: {value_spec_after_replacement}")
+                else:
+                    # Assume it's a literal string value if no other pattern matched
+                    resolved_inputs[key] = value_spec_after_replacement
+                    self.logger.debug(f"Input '{key}' is a literal string (no context pattern matched): {value_spec_after_replacement}")
             else:
-                # If not a string, pass it through as is (e.g., bool, int, list, dict literals)
+                # If not a string, pass it through as is
                 resolved_inputs[key] = value_spec
                 self.logger.debug(f"Input '{key}' is a literal of type {type(value_spec)}: {value_spec}")
         

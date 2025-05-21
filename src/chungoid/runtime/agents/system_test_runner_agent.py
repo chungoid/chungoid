@@ -13,6 +13,7 @@ from chungoid.schemas.agent_system_test_runner import SystemTestRunnerAgentInput
 from chungoid.runtime.agents.agent_base import BaseAgent # Added
 from chungoid.utils.agent_registry import AgentCard # Added
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # Added
+from chungoid.schemas.orchestration import SharedContext # Was chungoid.schemas.shared_context
 
 logger = logging.getLogger(__name__) # Keep module-level logger for now, class will also have one
 
@@ -27,25 +28,35 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
     def __init__(self, system_context: Optional[Dict[str, Any]] = None, **kwargs):
-        super().__init__(system_context=system_context, **kwargs)
+        if system_context is not None:
+            super().__init__(system_context=system_context, **kwargs)
+        else:
+            super().__init__(**kwargs) # Pass other kwargs like llm_provider, etc.
         logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
     async def invoke_async(
         self,
-        inputs: Dict[str, Any], # Changed from task_input: SystemTestRunnerAgentInput
-        full_context: Optional[Dict[str, Any]] = None,
+        inputs: SystemTestRunnerAgentInput,
+        full_context: Optional[SharedContext] = None,
+        project_root: Optional[Path] = None,
+        run_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        **kwargs: Any
     ) -> SystemTestRunnerAgentOutput:
         # Parse the input dictionary into the SystemTestRunnerAgentInput model
-        try:
-            task_input = SystemTestRunnerAgentInput(**inputs)
-        except Exception as e:
-            logger.error(f"Failed to parse inputs for SystemTestRunnerAgent_v1: {e}", exc_info=True)
-            return SystemTestRunnerAgentOutput(
-                exit_code=-4, # Arbitrary new exit code for parsing failure
-                summary=f"Input parsing error: {e}",
-                status="FAILURE_INPUT_PARSING_ERROR",
-                stderr=str(e)
-            )
+        if isinstance(inputs, dict):
+            try:
+                task_input = SystemTestRunnerAgentInput(**inputs)
+            except Exception as e:
+                logger.error(f"Failed to parse inputs for SystemTestRunnerAgent_v1: {e}", exc_info=True)
+                return SystemTestRunnerAgentOutput(
+                    exit_code=-4, # Arbitrary new exit code for parsing failure
+                    summary=f"Input parsing error: {e}",
+                    status="FAILURE_INPUT_PARSING_ERROR",
+                    stderr=str(e)
+                )
+        else: # inputs is already SystemTestRunnerAgentInput
+            task_input = inputs
         
         logger.debug(f"{self.AGENT_ID} invoked with inputs: {task_input}")
 
@@ -56,10 +67,10 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
 
         # Determine CWD
         cwd_path: Optional[Path] = None
-        if task_input.project_root_path:
-            cwd_path = Path(task_input.project_root_path)
+        if project_root:
+            cwd_path = Path(project_root)
             if not cwd_path.is_dir():
-                logger.warning(f"Provided task_input.project_root_path '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
+                logger.warning(f"Provided project_root '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
                 cwd_path = None
         elif full_context and hasattr(full_context, 'project_root_path') and full_context.project_root_path:
             try:

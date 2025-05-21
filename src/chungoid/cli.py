@@ -207,6 +207,7 @@ PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] =
     CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Alias for CoreCodeGeneratorAgent_v1
     TestGeneratorAgent.AGENT_ID: TestGeneratorAgent,   # Alias for CoreTestGeneratorAgent_v1
     SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
+    "SmartCodeGeneratorAgent_v1": SmartCodeIntegrationAgent_v1, # ADDED ALIAS
     SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent, # This is SystemTestRunnerAgent_v1
     SystemFileSystemAgent_v1.AGENT_ID: SystemFileSystemAgent_v1, # Ensure this uses the class name
     SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,

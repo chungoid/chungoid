@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import json
 import uuid
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Type, ClassVar
 from datetime import datetime, timezone
 
+from chungoid.runtime.agents.agent_base import BaseAgent, InputSchema, OutputSchema
 from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput, SmartCodeGeneratorAgentOutput
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
@@ -28,13 +29,15 @@ PROMPT_ID = "smart_code_generator_agent_v1_prompt"
 PROMPT_VERSION = "0.2.0"
 PROMPT_SUB_DIR = "autonomous_engine"
 
-class CoreCodeGeneratorAgent_v1:
-    AGENT_ID = "SmartCodeGeneratorAgent_v1"
-    AGENT_NAME = "Smart Code Generator Agent"
-    VERSION = "0.2.0"
-    DESCRIPTION = "Generates or modifies code based on detailed specifications and contextual project artifacts, interacting with ChromaDB."
-    CATEGORY = AgentCategory.CODE_GENERATION
-    VISIBILITY = AgentVisibility.PUBLIC
+class CoreCodeGeneratorAgent_v1(BaseAgent[SmartCodeGeneratorAgentInput, SmartCodeGeneratorAgentOutput]):
+    AGENT_ID: ClassVar[str] = "SmartCodeGeneratorAgent_v1"
+    AGENT_NAME: ClassVar[str] = "Smart Code Generator Agent"
+    VERSION: ClassVar[str] = "0.2.0"
+    DESCRIPTION: ClassVar[str] = "Generates or modifies code based on detailed specifications and contextual project artifacts, interacting with ChromaDB."
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_GENERATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    INPUT_SCHEMA: ClassVar[Type[SmartCodeGeneratorAgentInput]] = SmartCodeGeneratorAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[SmartCodeGeneratorAgentOutput]] = SmartCodeGeneratorAgentOutput
 
     _llm_provider: LLMProvider
     _prompt_manager: PromptManager
@@ -46,6 +49,8 @@ class CoreCodeGeneratorAgent_v1:
                  prompt_manager: PromptManager, 
                  pcma_agent: ProjectChromaManagerAgent_v1,
                  system_context: Optional[Dict[str, Any]] = None,
+                 config: Optional[Dict[str, Any]] = None,
+                 agent_id: Optional[str] = None,
                  **kwargs):
         if not llm_provider:
             raise ValueError("LLMProvider is required for SmartCodeGeneratorAgent_v1")
@@ -53,6 +58,19 @@ class CoreCodeGeneratorAgent_v1:
             raise ValueError("PromptManager is required for SmartCodeGeneratorAgent_v1")
         if not pcma_agent:
             raise ValueError("ProjectChromaManagerAgent_v1 is required for SmartCodeGeneratorAgent_v1")
+
+        super_kwargs = {
+            "llm_provider": llm_provider,
+            "prompt_manager": prompt_manager,
+            "project_chroma_manager": pcma_agent,
+            "agent_id": agent_id or self.AGENT_ID
+        }
+        if system_context:
+            super_kwargs["system_context"] = system_context
+        if config:
+            super_kwargs["config"] = config
+        
+        super().__init__(**super_kwargs)
 
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
