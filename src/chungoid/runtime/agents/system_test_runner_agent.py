@@ -28,22 +28,26 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
 
     def __init__(self, system_context: Optional[Dict[str, Any]] = None, **kwargs):
         super().__init__(system_context=system_context, **kwargs)
-        if not hasattr(self, 'logger') or self.logger is None:
-            self.logger = system_context.get("logger", logger) if system_context else logger
-        self.logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
+        logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
     async def invoke_async(
         self,
-        task_input: SystemTestRunnerAgentInput, # Changed from inputs: Dict[str, Any]
+        inputs: Dict[str, Any], # Changed from task_input: SystemTestRunnerAgentInput
         full_context: Optional[Dict[str, Any]] = None,
     ) -> SystemTestRunnerAgentOutput:
-        # Input is already parsed by BaseAgent if type hint is correct
-        # parsed_inputs = task_input # No longer need this line if BaseAgent handles it
+        # Parse the input dictionary into the SystemTestRunnerAgentInput model
+        try:
+            task_input = SystemTestRunnerAgentInput(**inputs)
+        except Exception as e:
+            logger.error(f"Failed to parse inputs for SystemTestRunnerAgent_v1: {e}", exc_info=True)
+            return SystemTestRunnerAgentOutput(
+                exit_code=-4, # Arbitrary new exit code for parsing failure
+                summary=f"Input parsing error: {e}",
+                status="FAILURE_INPUT_PARSING_ERROR",
+                stderr=str(e)
+            )
         
-        # Use self.logger instead of module-level logger directly in methods
-        logger_instance = self.logger
-
-        logger_instance.debug(f"{self.AGENT_ID} invoked with inputs: {task_input}")
+        logger.debug(f"{self.AGENT_ID} invoked with inputs: {task_input}")
 
         command = ["pytest"]
         if task_input.pytest_options:
@@ -55,21 +59,36 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
         if task_input.project_root_path:
             cwd_path = Path(task_input.project_root_path)
             if not cwd_path.is_dir():
-                logger_instance.warning(f"Provided project_root_path '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
+                logger.warning(f"Provided task_input.project_root_path '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
                 cwd_path = None
-        elif full_context and isinstance(full_context.get('project_config'), dict) and full_context['project_config'].get('project_root'):
+        elif full_context and hasattr(full_context, 'project_root_path') and full_context.project_root_path:
             try:
-                cwd_path = Path(full_context['project_config']['project_root'])
+                cwd_path = Path(full_context.project_root_path)
                 if not cwd_path.is_dir():
-                    logger_instance.warning(f"project_config.project_root '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
+                    logger.warning(f"full_context.project_root_path '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
                     cwd_path = None
                 else:
-                    logger_instance.info(f"Using project_root '{cwd_path}' from full_context.project_config as CWD for pytest.")
+                    logger.info(f"Using project_root_path '{cwd_path}' from full_context as CWD for pytest.")
             except Exception as e:
-                logger_instance.warning(f"Error accessing project_root from full_context.project_config: {e}. Running pytest from default CWD.")
+                logger.warning(f"Error accessing project_root_path from full_context: {e}. Running pytest from default CWD.")
                 cwd_path = None
+        elif full_context and hasattr(full_context, 'global_project_settings') and isinstance(full_context.global_project_settings, dict):
+            project_root_from_global = full_context.global_project_settings.get('project_root')
+            if project_root_from_global:
+                try:
+                    cwd_path = Path(project_root_from_global)
+                    if not cwd_path.is_dir():
+                        logger.warning(f"full_context.global_project_settings['project_root'] '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
+                        cwd_path = None
+                    else:
+                        logger.info(f"Using project_root '{cwd_path}' from full_context.global_project_settings as CWD for pytest.")
+                except Exception as e:
+                    logger.warning(f"Error accessing project_root from full_context.global_project_settings: {e}. Running pytest from default CWD.")
+                    cwd_path = None
+            else:
+                logger.info("No 'project_root' key in full_context.global_project_settings. Running pytest from default CWD.")
         else:
-            logger_instance.info("No project_root_path provided and not found in context.project_config.project_root. Running pytest from default CWD.")
+            logger.info("No project_root_path provided in task_input or found in full_context. Running pytest from default CWD.")
 
         # Prepare environment for subprocess
         env = os.environ.copy()
@@ -79,12 +98,12 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
                 env['PYTHONPATH'] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
             else:
                 env['PYTHONPATH'] = str(src_path)
-            logger_instance.info(f"Modified PYTHONPATH for subprocess: {env['PYTHONPATH']}")
+            logger.info(f"Modified PYTHONPATH for subprocess: {env['PYTHONPATH']}")
         else:
-            logger_instance.info("CWD for pytest is not set, PYTHONPATH not modified for src.")
+            logger.info("CWD for pytest is not set, PYTHONPATH not modified for src.")
 
         try:
-            logger_instance.info(f"Running pytest command: {' '.join(command)} in CWD: {cwd_path if cwd_path else 'default'}")
+            logger.info(f"Running pytest command: {' '.join(command)} in CWD: {cwd_path if cwd_path else 'default'}")
             process = subprocess.run(command, capture_output=True, text=True, cwd=cwd_path, env=env, timeout=300)
             stdout = process.stdout
             stderr = process.stderr
@@ -106,18 +125,18 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
                         summary_line = summary_line.strip()
                         break
 
-            logger_instance.info(f"Pytest completed with exit code {exit_code}. Summary: {summary_line}")
+            logger.info(f"Pytest completed with exit code {exit_code}. Summary: {summary_line}")
             
             if exit_code != 0:
                 if stdout:
-                    logger_instance.info(f"Pytest stdout (exit code {exit_code}):\n{stdout}")
+                    logger.info(f"Pytest stdout (exit code {exit_code}):\n{stdout}")
                 if stderr:
-                    logger_instance.info(f"Pytest stderr (exit code {exit_code}):\n{stderr}")
+                    logger.info(f"Pytest stderr (exit code {exit_code}):\n{stderr}")
             else:
                 if stdout:
-                    logger_instance.debug(f"Pytest stdout:\n{stdout}")
+                    logger.debug(f"Pytest stdout:\n{stdout}")
                 if stderr:
-                    logger_instance.debug(f"Pytest stderr (exit code 0):\n{stderr}")
+                    logger.debug(f"Pytest stderr (exit code 0):\n{stderr}")
 
             return SystemTestRunnerAgentOutput(
                 exit_code=exit_code,
@@ -128,14 +147,14 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
             )
 
         except FileNotFoundError:
-            logger_instance.error("pytest command not found. Ensure pytest is installed and in PATH.")
+            logger.error("pytest command not found. Ensure pytest is installed and in PATH.")
             return SystemTestRunnerAgentOutput(
                 exit_code=-2,
                 summary="pytest command not found.",
                 status="FAILURE_PYTEST_NOT_FOUND",
             )
         except Exception as e:
-            logger_instance.error(f"Error running pytest: {e}", exc_info=True)
+            logger.error(f"Error running pytest: {e}", exc_info=True)
             return SystemTestRunnerAgentOutput(
                 exit_code=-3,
                 summary=f"Error during pytest execution: {e}",

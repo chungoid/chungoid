@@ -8,36 +8,39 @@ surface incrementally.
 
 from __future__ import annotations
 
+import os
 import asyncio
 import datetime
-from datetime import datetime, timezone # Ensure timezone is imported
+import yaml
+import copy
 import json
-import os # Added for path operations if needed, though pathlib is preferred
-from pathlib import Path # Ensure Path is imported
-from typing import Any, Dict, List, Optional, Union, Callable, cast, ClassVar, Tuple
 import uuid
+import logging
 import traceback
-import copy # For deep copying context for reviewer
-import logging # ADDED: Ensure logging is imported
-
+from pathlib import Path
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
+from typing import Any, Dict, List, Optional, Union, Callable, cast, ClassVar, Tuple
 
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider, NoAgentFoundForCategoryError, AmbiguousAgentCategoryError
 from chungoid.utils.state_manager import StateManager
-from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus, OnFailureAction # MODIFIED: Removed PauseStatus
+from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus, OnFailureAction
 from chungoid.schemas.errors import AgentErrorDetails, OrchestratorError
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec, ClarificationCheckpointSpec
-from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput # ADDED
-from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput # ADDED
+from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput
+from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput
 from chungoid.schemas.flows import PausedRunDetails
 from chungoid.schemas.orchestration import SharedContext, SystemContext
 from chungoid.schemas.metrics import MetricEvent, MetricEventType
 from chungoid.utils.metrics_store import MetricsStore
-
-# ADDED: Imports for automatic artifact materialization
 from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1, WriteArtifactToFileInput
-# ADDED: Import for MasterPlannerReviewerAgent
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import EXECUTION_PLANS_COLLECTION, ProjectChromaManagerAgent_v1
+from chungoid.schemas.project_state import ProjectStateV2, RunRecord, StageRecord
+from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 # For checking agent_id
+
+# ADDED: Import for the correct collection name
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import GENERATED_CODE_ARTIFACTS_COLLECTION
 
 # Constants for next_stage signals
 NEXT_STAGE_END_SUCCESS = "__END_SUCCESS__"
@@ -402,6 +405,7 @@ class AsyncOrchestrator(BaseOrchestrator):
     _last_successful_stage_output: Optional[Any] = None
     _current_flow_config: Optional[Dict[str, Any]] = None
     shared_context: SharedContext
+    initial_goal_str: Optional[str] = None # ADDED: To store the initial goal string for the run
 
     COMPARATOR_MAP: ClassVar[Dict[str, Callable[[Any, Any], bool]]] = {
         ">=": lambda x, y: x >= y,
@@ -776,6 +780,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             if not self._evaluate_criterion(criterion_str, stage_outputs, stage_name): 
                 self.logger.warning(f"Stage '{stage_name}' failed success criterion: {criterion_str}")
                 failed_criteria.append(criterion_str)
+                all_passed = False # <--- ADDED THIS LINE
 
         if not all_passed:
             self.logger.warning(
@@ -1004,12 +1009,32 @@ class AsyncOrchestrator(BaseOrchestrator):
         max_retries: int # This parameter might be unused if retries are handled elsewhere
     ) -> Any: # Returns agent_output or raises an error
         
-        self.logger.debug(f"_invoke_agent_for_stage: stage='{stage_name}', agent_id='{agent_id}', inputs_spec={inputs_spec}")
-        final_inputs = {}
-        if inputs_spec:
-            final_inputs = self._resolve_input_values(inputs_spec)
+        final_inputs_for_agent: Dict[str, Any] # Type hint for clarity
+
+        # ADDED: Inject initial_goal_str for the first stage if 'user_goal' is not defined
+        if self.current_plan and stage_name == self.current_plan.start_stage:
+            self.logger.debug(f"Stage '{stage_name}' is the start stage. Checking for 'user_goal' injection.")
+            current_inputs_spec = inputs_spec or {} # Ensure it's a dict
+            if 'user_goal' not in current_inputs_spec and self.shared_context.initial_goal_str:
+                self.logger.info(f"Injecting initial_goal_str as 'user_goal' for start stage '{stage_name}'.")
+                # Create a new dict to avoid modifying the original plan's stage_spec
+                final_inputs_for_agent = current_inputs_spec.copy() 
+                final_inputs_for_agent['user_goal'] = self.shared_context.initial_goal_str
+            else:
+                # If 'user_goal' is already there, or no initial_goal_str, resolve as usual
+                final_inputs_for_agent = self._resolve_input_values(current_inputs_spec)
+        else:
+            # For non-start stages, or if start stage already has user_goal specified (or no initial_goal_str)
+            final_inputs_for_agent = self._resolve_input_values(inputs_spec or {})
+        # --- END ADDED ---
+
+        # Original logic for resolving inputs_spec (now handled above with conditional injection)
+        # final_inputs_for_agent = self._resolve_input_values(inputs_spec or {})
+
+        self.logger.debug(f"_invoke_agent_for_stage: stage='{stage_name}', agent_id='{agent_id}', inputs_spec={final_inputs_for_agent}")
+        self._current_run_id = self._current_run_id or f"run_{uuid.uuid4().hex[:16]}"
         
-        self.logger.info(f"Run {self._current_run_id}: Invoking agent '{agent_id}' for stage '{stage_name}' with inputs: {final_inputs}")
+        self.logger.info(f"Run {self._current_run_id}: Invoking agent '{agent_id}' for stage '{stage_name}' with inputs: {final_inputs_for_agent}")
         
         try:
             agent_output: Any
@@ -1017,26 +1042,26 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self.logger.debug(f"Preparing SmartCodeGeneratorAgentInput for agent {agent_id}")
                 # project_id is needed by SmartCodeGeneratorAgentInput but might not be in final_inputs directly from plan
                 # It should be in the shared_context or potentially the full_context for the agent
-                if 'project_id' not in final_inputs and self.shared_context.project_id:
-                    final_inputs['project_id'] = self.shared_context.project_id
+                if 'project_id' not in final_inputs_for_agent and self.shared_context.project_id:
+                    final_inputs_for_agent['project_id'] = self.shared_context.project_id
                 
                 # task_id is also required. If not in inputs, generate one.
-                if 'task_id' not in final_inputs:
-                    final_inputs['task_id'] = f"{stage_name}_{uuid.uuid4()}"
+                if 'task_id' not in final_inputs_for_agent:
+                    final_inputs_for_agent['task_id'] = f"{stage_name}_{uuid.uuid4()}"
 
                 # Ensure all required fields for SmartCodeGeneratorAgentInput are present in final_inputs
                 # or can be derived. This might need more robust handling.
                 # For now, assume final_inputs can be spread into SmartCodeGeneratorAgentInput
                 try:
-                    task_input_model = SmartCodeGeneratorAgentInput(**final_inputs)
+                    task_input_model = SmartCodeGeneratorAgentInput(**final_inputs_for_agent)
                     agent_output = await agent_callable(task_input=task_input_model, full_context=self.shared_context)
                 except ValidationError as pydantic_error:
-                    self.logger.error(f"Pydantic validation error creating SmartCodeGeneratorAgentInput for stage '{stage_name}': {pydantic_error}. Inputs: {final_inputs}")
+                    self.logger.error(f"Pydantic validation error creating SmartCodeGeneratorAgentInput for stage '{stage_name}': {pydantic_error}. Inputs: {final_inputs_for_agent}")
                     raise # Re-raise the validation error to be caught by the broader try-except
             elif agent_id == "SystemFileSystemAgent_v1" or agent_id == "FileOperationAgent_v1":
                 self.logger.debug(f"Special invocation for {agent_id} (stage: {stage_name}).")
-                tool_name_val = final_inputs.get("tool_name")
-                tool_input_val = final_inputs.get("tool_input", {}) # Default to empty dict if not present
+                tool_name_val = final_inputs_for_agent.get("tool_name")
+                tool_input_val = final_inputs_for_agent.get("tool_input", {}) # Default to empty dict if not present
                 
                 if not tool_name_val:
                     raise ValueError(f"Agent {agent_id} was called for stage '{stage_name}' without 'tool_name' in inputs.")
@@ -1045,7 +1070,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 # and expects project_root to be passed if not in full_context.
                 # We ensure project_root is available.
                 invoke_kwargs = {
-                    "inputs": final_inputs, # Pass the resolved inputs
+                    "inputs": final_inputs_for_agent, # Pass the resolved inputs
                     "full_context": self.shared_context
                 }
                 if self.shared_context.project_root_path:
@@ -1054,7 +1079,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 agent_output = await agent_callable(**invoke_kwargs)
             else:
                 # Default invocation for other agents
-                agent_output = await agent_callable(inputs=final_inputs, full_context=self.shared_context)
+                agent_output = await agent_callable(inputs=final_inputs_for_agent, full_context=self.shared_context)
             
             self.logger.info(f"Run {self._current_run_id}: Agent '{agent_id}' for stage '{stage_name}' completed. Output type: {type(agent_output)}")
             self.logger.debug(f"Run {self._current_run_id}: Agent '{agent_id}' output for stage '{stage_name}': {str(agent_output)[:500]}...") # Log snippet
@@ -1096,6 +1121,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         self.shared_context.run_id = current_run_id
         self.shared_context.flow_id = None # Will be set after plan is loaded/generated
         self.shared_context.initial_inputs = initial_context or {}
+        self.shared_context.initial_goal_str = goal_str # ADDED: Store initial goal string
         self.shared_context.previous_stage_outputs = {"_initial_context_": self.shared_context.initial_inputs.copy()}
         self.shared_context.artifact_references = {}
         self.shared_context.scratchpad = {}
@@ -1276,6 +1302,10 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self._emit_metric(MetricEventType.ORCHESTRATOR_ERROR, self.shared_context.flow_id or "UNKNOWN_FLOW", current_run_id, data={"error": error_msg})
                 return {"_flow_error": error_msg}
 
+            # Validate the plan structure immediately after it's confirmed to be loaded.
+            # This ensures any auto-fixes (like assigning a plan ID if missing) are applied
+            # before the ID or other structure is used.
+            self._validate_master_plan_structure(loaded_plan)
 
             # If we've reached here, loaded_plan should be valid.
             # The original check 'if not loaded_plan or not self.shared_context.flow_id:' is still good.
@@ -1288,12 +1318,14 @@ class AsyncOrchestrator(BaseOrchestrator):
                      self.logger.info(f"Fallback: Set shared_context.flow_id to loaded_plan.id: {loaded_plan.id}")
                  else: # If plan has no ID, this is a critical issue with the plan itself
                      critical_error_msg = "Loaded plan has no ID, cannot proceed."
-                     self.logger.error(critical_error_msg)
+                     self.logger.error(critical_error_msg) # This error should now be less likely due to auto-fix
                      self._emit_metric(MetricEventType.ORCHESTRATOR_ERROR, "UNKNOWN_FLOW_NO_ID", current_run_id, data={"error": critical_error_msg})
                      return {"_flow_error": critical_error_msg}
 
 
             self.current_plan = loaded_plan
+            self.shared_context.current_master_plan = self.current_plan # ADDED: Ensure shared_context has the plan
+
             start_stage_name = self.current_plan.start_stage
 
             self._emit_metric(MetricEventType.FLOW_START, self.shared_context.flow_id, current_run_id, data={"plan_source": plan_source_description, "initial_context_keys": list(initial_context.keys()) if initial_context else []})
@@ -1477,7 +1509,6 @@ class AsyncOrchestrator(BaseOrchestrator):
             # The previous_stage_outputs should be returned as they are.
             return self.shared_context.previous_stage_outputs if self.shared_context.previous_stage_outputs else {}
 
-
     async def _execute_flow_loop(
         self,
         run_id: str,
@@ -1644,7 +1675,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                                     
                                     tool_call_input = WriteArtifactToFileInput(
                                         artifact_doc_id=artifact_doc_id,
-                                        collection_name="code_artifacts", # As per SmartCodeGeneratorAgent_v1
+                                        collection_name=GENERATED_CODE_ARTIFACTS_COLLECTION, # MODIFIED: Use the correct constant
                                         target_file_path=target_file_path_from_output,
                                         overwrite=True # Default to overwrite for generated code
                                     )
@@ -1813,9 +1844,33 @@ class AsyncOrchestrator(BaseOrchestrator):
 
         for key, value_spec in inputs_spec.items():
             if isinstance(value_spec, str):
-                if value_spec.startswith("@outputs."):
+
+                # --- ADDED: Handle specific known context path patterns via direct string replacement ---
+                # This should run before other prefix checks if those prefixes might be part of the replacement strings.
+                temp_value_spec = value_spec
+                replacement_made = False
+
+                # Pattern 1: {context.project_root_path}
+                if "{context.project_root_path}" in temp_value_spec and hasattr(self.shared_context, 'project_root_path') and self.shared_context.project_root_path:
+                    temp_value_spec = temp_value_spec.replace("{context.project_root_path}", str(self.shared_context.project_root_path))
+                    self.logger.debug(f"Replaced '{{context.project_root_path}}' in '{value_spec}' with '{self.shared_context.project_root_path}' -> '{temp_value_spec}'")
+                    replacement_made = True
+                
+                # Pattern 2: {context.global_config.project_dir} (maps to project_root_path)
+                # This is based on how the MasterPlannerAgent seems to structure its `global_config` output.
+                # `global_config` in the plan often corresponds to `global_project_settings` in SharedContext,
+                # and `project_dir` within that is typically the main project root path.
+                if "{context.global_config.project_dir}" in temp_value_spec and hasattr(self.shared_context, 'project_root_path') and self.shared_context.project_root_path:
+                    temp_value_spec = temp_value_spec.replace("{context.global_config.project_dir}", str(self.shared_context.project_root_path))
+                    self.logger.debug(f"Replaced '{{context.global_config.project_dir}}' in '{value_spec}' with '{self.shared_context.project_root_path}' -> '{temp_value_spec}'")
+                    replacement_made = True
+                
+                value_spec_after_replacement = temp_value_spec # Use the potentially modified string for subsequent checks
+                # --- END ADDED ---
+
+                if value_spec_after_replacement.startswith("@outputs."):
                     # Attempt to resolve from previous stage outputs
-                    path = value_spec[len("@outputs."):]
+                    path = value_spec_after_replacement[len("@outputs."):]
                     current_val = self.shared_context.previous_stage_outputs
                     try:
                         for part in path.split("."):
@@ -1830,15 +1885,15 @@ class AsyncOrchestrator(BaseOrchestrator):
                     except Exception as e:
                         self.logger.warning(f"Could not resolve @outputs.{path} for input '{key}': {e}. Using None.")
                         resolved_inputs[key] = None
-                elif value_spec.startswith("@context."): # placeholder for other context types
-                    self.logger.warning(f"Resolution for context type other than @outputs (e.g., {value_spec}) not fully implemented for key '{key}'. Using None.")
+                elif value_spec_after_replacement.startswith("@context."): # placeholder for other context types
+                    self.logger.warning(f"Resolution for context type other than @outputs (e.g., {value_spec_after_replacement}) not fully implemented for key '{key}'. Using None.")
                     resolved_inputs[key] = None # Placeholder
-                elif value_spec.startswith("@artifact."):
+                elif value_spec_after_replacement.startswith("@artifact."):
                      self.logger.warning(f"Resolution for @artifact not implemented for key '{key}'. Using None.")
                      resolved_inputs[key] = None
-                elif value_spec.startswith("@config."):
+                elif value_spec_after_replacement.startswith("@config."):
                     # Attempt to resolve from orchestrator's self.config or shared_context.global_project_settings
-                    path = value_spec[len("@config."):]
+                    path = value_spec_after_replacement[len("@config."):]
                     config_source = self.config # Default to orchestrator config
                     if path.startswith("global_project_settings."):
                         config_source = self.shared_context.global_project_settings
@@ -1854,9 +1909,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                         self.logger.warning(f"Could not resolve @config.{path} for input '{key}': {e}. Using None.")
                         resolved_inputs[key] = None
                 else:
-                    # Assume it's a literal string value
-                    resolved_inputs[key] = value_spec
-                    self.logger.debug(f"Input '{key}' is a literal string: {value_spec}")
+                    # Assume it's a literal string value (after potential direct context replacements)
+                    resolved_inputs[key] = value_spec_after_replacement
+                    self.logger.debug(f"Input '{key}' is a literal string (after replacements): {value_spec_after_replacement}")
             else:
                 # If not a string, pass it through as is (e.g., bool, int, list, dict literals)
                 resolved_inputs[key] = value_spec
@@ -1867,894 +1922,84 @@ class AsyncOrchestrator(BaseOrchestrator):
 
     def _validate_master_plan_structure(self, plan: MasterExecutionPlan):
         """
-        Validates the structural integrity of the plan, specifically agent inputs.
-        Raises OrchestratorError if validation fails.
+        Validates the basic structure of a MasterExecutionPlan.
+        Can perform some auto-fixing for common LLM generation omissions.
         """
-        self.logger.critical("CRITICAL_VALIDATION_LOG: ENTERING _validate_master_plan_structure") # AGGRESSIVE LOG
         self.logger.info(f"Validating structure of MasterExecutionPlan ID: {plan.id}")
+        if not plan.start_stage or plan.start_stage not in plan.stages:
+            msg = f"MasterExecutionPlan {plan.id} has an invalid or missing start_stage: '{plan.start_stage}'."
+            self.logger.error(msg)
+            raise ValueError(msg)
 
-        if not plan.id or not isinstance(plan.id, str) or not plan.id.strip():
-            self.logger.error(
-                f"CRITICAL_PLAN_VALIDATION_FAILURE: MasterExecutionPlan.id is missing, not a string, or empty. Got: '{plan.id}' (type: {type(plan.id)})."
-            )
-            # Attempt to auto-fix by assigning a new UUID if the ID is problematic, for now.
-            # This allows us to potentially proceed if the planner is just forgetting the ID but the rest of the plan is okay.
-            # However, this is a significant planner error.
-            original_problematic_id = plan.id
-            new_id = str(uuid.uuid4())
-            self.logger.warning(
-                f"AUTO-FIXING MasterExecutionPlan.id: Original was '{original_problematic_id}', assigned new UUID: '{new_id}'."
-            )
-            plan.id = new_id # Directly modify the plan object's ID
-            # Re-log the entry message with the new ID if it was fixed.
-            self.logger.info(f"RE-VALIDATING structure of MasterExecutionPlan with NEW ID: {plan.id}")
+        all_stage_names = set(plan.stages.keys())
+        referenced_next_stages = set()
 
-        if not plan.stages:
-            raise OrchestratorError(f"Plan {plan.id} has no stages defined.")
-
+        # First pass: basic validation and collection of next_stage references
         for stage_name, stage_spec in plan.stages.items():
             self.logger.debug(f"Validating stage: {stage_name} (Agent: {stage_spec.agent_id})")
-
-            # Auto-correct HumanInputAgent_v1 to SystemInterventionAgent_v1
-            if stage_spec.agent_id == "HumanInputAgent_v1":
-                self.logger.critical(
-                    f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' uses obsolete agent ID 'HumanInputAgent_v1'. "
-                    f"Changing to 'SystemInterventionAgent_v1'."
-                )
-                stage_spec.agent_id = "SystemInterventionAgent_v1"
-                # Log the change for this specific stage object to confirm it took effect
-                self.logger.info(f"AUTO-FIX APPLIED for agent ID correction. Stage '{stage_name}' now uses agent_id: {stage_spec.agent_id}")
-
-
-            # ADDED: Specific debug for initialize_project
-            if stage_name == "initialize_project":
-                self.logger.info(f"PLAN_VALIDATION_DEBUG: Stage 'initialize_project' has inputs: {stage_spec.inputs} (type: {type(stage_spec.inputs)})")
-
-            if stage_spec.agent_id == "SmartCodeGeneratorAgent_v1":
-                critical_error_logged = False # For SmartCodeGeneratorAgent_v1
-                if stage_spec.inputs is None:
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"is missing the required 'inputs' field. Injecting defaults."
-                    )
-                    stage_spec.inputs = {
-                        "task_description": f"AUTO-FIXED: Missing task_description for stage {stage_name}",
-                        "target_file_path": f"AUTO-FIXED/placeholder/{stage_name}_output.py"
-                    }
-                    critical_error_logged = True
-                
-                if not isinstance(stage_spec.inputs, dict):
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"'inputs' field is not a dictionary. Re-initializing with defaults. Original type: {type(stage_spec.inputs)}"
-                    )
-                    stage_spec.inputs = {
-                        "task_description": f"AUTO-FIXED: Corrupted inputs for stage {stage_name}",
-                        "target_file_path": f"AUTO-FIXED/placeholder/{stage_name}_corrupted_output.py"
-                    }
-                    critical_error_logged = True
-                else: # Inputs is a dict, check for required keys
-                    if "task_description" not in stage_spec.inputs or not stage_spec.inputs["task_description"]:
-                        self.logger.critical(
-                            f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                            f"is missing 'task_description' in 'inputs'. Injecting default."
-                        )
-                        stage_spec.inputs["task_description"] = f"AUTO-FIXED: Missing task_description for stage {stage_name}"
-                        critical_error_logged = True
-                    
-                    if "target_file_path" not in stage_spec.inputs or not stage_spec.inputs["target_file_path"]:
-                        self.logger.critical(
-                            f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                            f"is missing 'target_file_path' in 'inputs'. Injecting default."
-                        )
-                        stage_spec.inputs["target_file_path"] = f"AUTO-FIXED/placeholder/{stage_name}_missing_path.py"
-                        critical_error_logged = True
-
-                if critical_error_logged:
-                    self.logger.warning(f"AUTO-FIX APPLIED for SmartCodeGeneratorAgent_v1 stage '{stage_name}'. New inputs: {stage_spec.inputs}")
+            if stage_spec.next_stage:
+                referenced_next_stages.add(stage_spec.next_stage)
             
-            elif stage_spec.agent_id == "SystemInterventionAgent_v1": # ADDED VALIDATION FOR THIS AGENT
-                critical_error_logged_si = False
-                required_input_key = "prompt_message_for_user"
-                default_prompt = f"AUTO-FIXED: System intervention required for stage '{stage_name}'."
+            # AUTO-FIX: If SmartCodeGeneratorAgent_v1 is used and inputs are defined but target_file_path is missing.
+            if stage_spec.agent_id == "SmartCodeGeneratorAgent_v1" and stage_spec.inputs and "target_file_path" not in stage_spec.inputs:
+                self.logger.critical(f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) is missing 'target_file_path' in 'inputs'. Injecting default.")
+                stage_spec.inputs["target_file_path"] = f"AUTO-FIXED/placeholder/{stage_name}_missing_path.py"
+                self.logger.warning(f"AUTO-FIX APPLIED for {stage_spec.agent_id} stage '{stage_name}'. New inputs: {stage_spec.inputs}")
 
-                if stage_spec.inputs is None:
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"is missing the required 'inputs' field. Injecting default with '{required_input_key}'."
-                    )
-                    stage_spec.inputs = {required_input_key: default_prompt}
-                    critical_error_logged_si = True
-                elif not isinstance(stage_spec.inputs, dict):
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"'inputs' field is not a dictionary (type: {type(stage_spec.inputs)}). Re-initializing with default '{required_input_key}'."
-                    )
-                    stage_spec.inputs = {required_input_key: default_prompt}
-                    critical_error_logged_si = True
-                elif required_input_key not in stage_spec.inputs or not stage_spec.inputs[required_input_key]:
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"is missing or has an empty '{required_input_key}' in 'inputs'. Injecting default."
-                    )
-                    # Preserve other inputs if they exist, only override/add the required one
-                    stage_spec.inputs[required_input_key] = default_prompt 
-                    critical_error_logged_si = True
-                
-                if critical_error_logged_si:
-                    self.logger.warning(f"AUTO-FIX APPLIED for SystemInterventionAgent_v1 stage '{stage_name}'. New inputs: {stage_spec.inputs}")
+            # AUTO-FIX: If CoreTestGeneratorAgent_v1 is used and inputs are defined but test_file_path is missing
+            if stage_spec.agent_id == "CoreTestGeneratorAgent_v1" and stage_spec.inputs and "test_file_path" not in stage_spec.inputs:
+                self.logger.critical(f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) is missing 'test_file_path' in 'inputs'. Injecting default.")
+                stage_spec.inputs["test_file_path"] = f"AUTO-FIXED/placeholder/{stage_name}_missing_tests.py"
+                self.logger.warning(f"AUTO-FIX APPLIED for {stage_spec.agent_id} stage '{stage_name}'. New inputs: {stage_spec.inputs}")
 
-            elif stage_spec.agent_id == "FileOperationAgent_v1" or stage_spec.agent_id == "SystemFileSystemAgent_v1":
-                critical_error_logged = False
-                if stage_spec.inputs is None:
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"is missing the required 'inputs' field. Injecting default 'noop_placeholder'."
-                    )
-                    stage_spec.inputs = {"tool_name": "noop_placeholder", "tool_input": {}}
-                    critical_error_logged = True
-                
-                if not isinstance(stage_spec.inputs, dict):
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"'inputs' field must be a dictionary, got {type(stage_spec.inputs)}. Replacing with default 'noop_placeholder'."
-                    )
-                    stage_spec.inputs = {"tool_name": "noop_placeholder", "tool_input": {}}
-                    critical_error_logged = True
-                
-                # Now that stage_spec.inputs is guaranteed to be a dict (or we've replaced it)
-                if "tool_name" not in stage_spec.inputs or not isinstance(stage_spec.inputs.get("tool_name"), str):
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"is missing 'tool_name' or it's not a string (current: {stage_spec.inputs.get('tool_name')}). Injecting default 'noop_placeholder'."
-                    )
-                    # Preserve existing tool_input if possible, otherwise set to empty dict
-                    existing_tool_input = stage_spec.inputs.get("tool_input") if isinstance(stage_spec.inputs.get("tool_input"), dict) else {}
-                    stage_spec.inputs["tool_name"] = "noop_placeholder"
-                    stage_spec.inputs["tool_input"] = existing_tool_input # Or just {} if we want to be stricter
-                    critical_error_logged = True
 
-                if "tool_input" not in stage_spec.inputs or not isinstance(stage_spec.inputs.get("tool_input"), dict):
-                    self.logger.critical(
-                        f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) "
-                        f"is missing 'tool_input' or it's not a dict (current: {stage_spec.inputs.get('tool_input')}). Injecting default empty tool_input."
-                    )
-                    stage_spec.inputs["tool_input"] = {} # Set to empty dict
-                    critical_error_logged = True
-                
-                if critical_error_logged:
-                    self.logger.info(f"AUTO-FIX APPLIED: Stage '{stage_name}' ({stage_spec.agent_id}) inputs now: {stage_spec.inputs}")
-            # Add more agent-specific input validations here as needed
-            
-            # Validate next_stage linkage
-            if stage_spec.next_stage and stage_spec.next_stage != "FINAL_STEP":
-                if stage_spec.next_stage not in plan.stages:
-                    raise OrchestratorError(
-                        f"Plan Validation Error: Stage '{stage_name}' points to a non-existent next_stage '{stage_spec.next_stage}'."
-                    )
+        # Check if all referenced next_stages (that aren't FINAL_STEP) exist
+        for next_stage_ref in referenced_next_stages:
+            if next_stage_ref != "FINAL_STEP" and next_stage_ref not in all_stage_names:
+                msg = f"MasterExecutionPlan {plan.id}: Stage '{next_stage_ref}' is referenced as a next_stage but does not exist in the plan stages."
+                self.logger.error(msg)
+                # Potentially raise ValueError here, or allow auto-linking to attempt a fix if applicable
+                # For now, logging as an error. Stricter validation might be needed.
+
+        # Second pass: Auto-link stages if next_stage is missing, based on sequential numbers
+        # Sort stages by number to attempt sequential linking
+        sorted_stages_by_number = sorted(plan.stages.items(), key=lambda item: item[1].number if item[1].number is not None else float('inf'))
         
-        if plan.initial_stage not in plan.stages:
-            raise OrchestratorError(
-                f"Plan Validation Error: Plan's initial_stage '{plan.initial_stage}' does not exist in the defined stages."
-            )
+        for i, (stage_name, stage_spec) in enumerate(sorted_stages_by_number):
+            if not stage_spec.next_stage and stage_name != "FINAL_STEP": # Check if next_stage is None or empty
+                # Try to find the next stage by number
+                current_number = stage_spec.number
+                if current_number is not None:
+                    next_stage_candidate_name = None
+                    # Look for the stage with number + 1
+                    for next_s_name, next_s_spec in sorted_stages_by_number:
+                        if next_s_spec.number == current_number + 1:
+                            next_stage_candidate_name = next_s_name
+                            break
+                    
+                    if next_stage_candidate_name:
+                        self.logger.warning(
+                            f"AUTO-FIX APPLIED: Stage '{stage_name}' (Number: {current_number}) was missing 'next_stage'. "
+                            f"Automatically linking to stage '{next_stage_candidate_name}' (Number: {current_number + 1})."
+                        )
+                        stage_spec.next_stage = next_stage_candidate_name
+                    elif i + 1 < len(sorted_stages_by_number):
+                        # Fallback: if no direct number+1 match, link to the next in the sorted list if not FINAL_STEP
+                        potential_next_name = sorted_stages_by_number[i+1][0]
+                        if potential_next_name != "FINAL_STEP": # Avoid linking to FINAL_STEP unless it's truly the last
+                             self.logger.warning(
+                                f"AUTO-FIX APPLIED (Fallback): Stage '{stage_name}' (Number: {current_number}) was missing 'next_stage'. "
+                                f"Automatically linking to next stage in sorted list: '{potential_next_name}'."
+                            )
+                             stage_spec.next_stage = potential_next_name
+                        # If the next in list is FINAL_STEP, and we didn't find a number+1, we might be at the actual end.
+                        # Or, if it's the last stage in the list and next_stage is still missing, it might implicitly be FINAL_STEP
+                    elif i == len(sorted_stages_by_number) - 1: # Is it the last stage in the plan?
+                         self.logger.warning(
+                            f"AUTO-FIX APPLIED (Last Stage): Stage '{stage_name}' (Number: {current_number}) was missing 'next_stage' and is the last numbered stage. "
+                            f"Setting next_stage to 'FINAL_STEP'."
+                        )
+                         stage_spec.next_stage = "FINAL_STEP"
+
 
         self.logger.info(f"MasterExecutionPlan ID: {plan.id} structure validation successful.")
-
-
-    async def _invoke_agent_for_stage(
-        self,
-        stage_name: str,
-        agent_id: str, 
-        agent_callable: Callable, 
-        inputs_spec: Optional[Dict[str, Any]],
-        max_retries: int # This parameter might be unused if retries are handled elsewhere
-    ) -> Any: # Returns agent_output or raises an error
-        
-        self.logger.debug(f"_invoke_agent_for_stage: stage='{stage_name}', agent_id='{agent_id}', inputs_spec={inputs_spec}")
-        final_inputs = {}
-        if inputs_spec:
-            final_inputs = self._resolve_input_values(inputs_spec)
-        
-        self.logger.info(f"Run {self._current_run_id}: Invoking agent '{agent_id}' for stage '{stage_name}' with inputs: {final_inputs}")
-        
-        try:
-            agent_output: Any
-            if agent_id == "SmartCodeGeneratorAgent_v1": # Check for the specific agent
-                self.logger.debug(f"Preparing SmartCodeGeneratorAgentInput for agent {agent_id}")
-                # project_id is needed by SmartCodeGeneratorAgentInput but might not be in final_inputs directly from plan
-                # It should be in the shared_context or potentially the full_context for the agent
-                if 'project_id' not in final_inputs and self.shared_context.project_id:
-                    final_inputs['project_id'] = self.shared_context.project_id
-                
-                # task_id is also required. If not in inputs, generate one.
-                if 'task_id' not in final_inputs:
-                    final_inputs['task_id'] = f"{stage_name}_{uuid.uuid4()}"
-
-                # Ensure all required fields for SmartCodeGeneratorAgentInput are present in final_inputs
-                # or can be derived. This might need more robust handling.
-                # For now, assume final_inputs can be spread into SmartCodeGeneratorAgentInput
-                try:
-                    task_input_model = SmartCodeGeneratorAgentInput(**final_inputs)
-                    agent_output = await agent_callable(task_input=task_input_model, full_context=self.shared_context)
-                except ValidationError as pydantic_error:
-                    self.logger.error(f"Pydantic validation error creating SmartCodeGeneratorAgentInput for stage '{stage_name}': {pydantic_error}. Inputs: {final_inputs}")
-                    raise # Re-raise the validation error to be caught by the broader try-except
-            elif agent_id == "SystemFileSystemAgent_v1" or agent_id == "FileOperationAgent_v1":
-                self.logger.debug(f"Special invocation for {agent_id} (stage: {stage_name}).")
-                tool_name_val = final_inputs.get("tool_name")
-                tool_input_val = final_inputs.get("tool_input", {}) # Default to empty dict if not present
-                
-                if not tool_name_val:
-                    raise ValueError(f"Agent {agent_id} was called for stage '{stage_name}' without 'tool_name' in inputs.")
-
-                # The SystemFileSystemAgent_v1.invoke_async now handles 'inputs' dict directly
-                # and expects project_root to be passed if not in full_context.
-                # We ensure project_root is available.
-                invoke_kwargs = {
-                    "inputs": final_inputs, # Pass the resolved inputs
-                    "full_context": self.shared_context
-                }
-                if self.shared_context.project_root_path:
-                     invoke_kwargs["project_root"] = self.shared_context.project_root_path
-
-                agent_output = await agent_callable(**invoke_kwargs)
-            else:
-                # Default invocation for other agents
-                agent_output = await agent_callable(inputs=final_inputs, full_context=self.shared_context)
-            
-            self.logger.info(f"Run {self._current_run_id}: Agent '{agent_id}' for stage '{stage_name}' completed. Output type: {type(agent_output)}")
-            self.logger.debug(f"Run {self._current_run_id}: Agent '{agent_id}' output for stage '{stage_name}': {str(agent_output)[:500]}...") # Log snippet
-            return agent_output
-        except Exception as e:
-            self.logger.error(f"Run {self._current_run_id}: Error invoking agent '{agent_id}' for stage '{stage_name}': {e}", exc_info=True)
-            raise OrchestratorError(f"Agent invocation failed for stage '{stage_name}', agent '{agent_id}'. Original error: {type(e).__name__} - {e}") from e
-        
-        # REMOVED: The incomplete "... rest of _invoke_agent_for_stage method ..."
-        
-    async def resume_flow(
-        self,
-        run_id: str,
-        action: str,
-        action_data: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Resumes a paused MASTER flow based on the specified action."""
-        self.logger.info(f"Attempting to resume MASTER flow run_id: {run_id} with action: {action}")
-
-        try:
-            paused_details = self._state_manager.load_paused_flow_state(run_id)
-            if not paused_details:
-                self.logger.error(f"No paused run found for run_id: {run_id}")
-                return {"error": f"No paused run found for run_id: {run_id}"}
-            
-            plan_to_resume = self._state_manager.load_master_plan(paused_details.flow_id)
-            if not plan_to_resume:
-                self.logger.error(f"CRITICAL RESUME ERROR: Could not load MasterExecutionPlan ID '{paused_details.flow_id}' for resume.")
-                return {"error": f"Could not load plan for flow ID {paused_details.flow_id}"}
-            self.current_plan = plan_to_resume
-
-            if self.current_plan.id != paused_details.flow_id:
-                 self.logger.error(f"Orchestrator\\'s current plan ('{self.current_plan.id}') doesn\\'t match paused flow_id ('{paused_details.flow_id}'). Cannot resume safely.")
-                 return {"error": "Mismatched flow definition during resume attempt."}
-
-            context = paused_details.context_snapshot 
-            if not context:
-                self.logger.warning(f"Context snapshot in paused details is empty for run_id: {run_id}. Proceeding with empty context.")
-                context = {}
-
-        except Exception as e:
-            self.logger.exception(f"Error loading state for run_id {run_id}: {e}")
-            return {"error": f"Failed to load state for run_id: {run_id}, {e}"}
-
-        self.logger.debug(f"State loaded for run_id: {run_id}. Paused at MASTER stage: {paused_details.paused_at_stage_id}")
-        self.logger.debug(f"Resume action: {action}, Data: {action_data}")
-
-        start_stage_name: Optional[str] = None
-        action_data = action_data or {}
-
-        self.shared_context = SharedContext(**context) 
-        self.shared_context.run_id = run_id
-        self.shared_context.flow_id = paused_details.flow_id
-        project_id_from_config = self.config.get("project_id")
-        project_root_path_from_config = self.config.get("project_root_path")
-        if not self.shared_context.project_id and project_id_from_config:
-            self.shared_context.project_id = project_id_from_config
-        if not self.shared_context.project_root_path and project_root_path_from_config:
-            self.shared_context.project_root_path = str(project_root_path_from_config)
-        if self.shared_context.global_project_settings is None:
-            self.shared_context.global_project_settings = {}
-        if self.shared_context.project_root_path:
-            self.shared_context.global_project_settings["project_dir"] = str(self.shared_context.project_root_path)
-        
-        self._current_run_id = run_id
-
-        if action == "retry":
-            self.logger.info(f"[Resume] Action: Retry MASTER stage '{paused_details.paused_at_stage_id}'")
-            start_stage_name = paused_details.paused_at_stage_id
-
-        elif action == "retry_with_inputs":
-            self.logger.info(f"[Resume] Action: Retry MASTER stage '{paused_details.paused_at_stage_id}' with new inputs.")
-            start_stage_name = paused_details.paused_at_stage_id
-            new_inputs = action_data.get('inputs')
-            if isinstance(new_inputs, dict):
-                self.logger.debug(f"Applying new inputs to shared_context.initial_inputs: {new_inputs}")
-                if self.shared_context.initial_inputs:
-                    self.shared_context.initial_inputs.update(new_inputs) 
-                else:
-                    self.shared_context.initial_inputs = new_inputs
-            else:
-                self.logger.warning("Action \\'retry_with_inputs\\' called without valid \\'inputs\\' dictionary.")
-                return {"error": "Action \\'retry_with_inputs\\' requires a dictionary under the \\'inputs\\' key in action_data."}
-        
-        elif action == "skip_stage":
-            self.logger.info(f"[Resume] Action: Skip MASTER stage '{paused_details.paused_at_stage_id}'")
-            if not self.current_plan or self.current_plan.id != paused_details.flow_id:
-                 self.logger.error("CRITICAL RESUME SKIP ERROR: current_plan mismatch or not set.")
-                 return {"error": "Plan mismatch during skip action."}
-            
-            paused_stage_spec: Optional[MasterStageSpec] = self.current_plan.stages.get(paused_details.paused_at_stage_id)
-            if not paused_stage_spec:
-                 self.logger.error(f"Cannot determine next stage to skip to; paused MASTER stage '{paused_details.paused_at_stage_id}' not found in plan '{self.current_plan.id}'.")
-                 return {"error": f"Fatal: Paused stage '{paused_details.paused_at_stage_id}' not found in Master Flow definition."}
-            start_stage_name = self._get_next_stage(paused_details.paused_at_stage_id)
-
-            if start_stage_name and start_stage_name not in [NEXT_STAGE_END_SUCCESS, NEXT_STAGE_END_FAILURE]:
-                self.logger.info(f"Will attempt to resume MASTER execution from stage: '{start_stage_name}' after skipping.")
-            else: 
-                self.logger.info(f"Skipped MASTER stage '{paused_details.paused_at_stage_id}'. Flow considered complete or next stage is an end signal ('{start_stage_name}').")
-                try:
-                    delete_success = self._state_manager.delete_paused_flow_state(run_id)
-                    if not delete_success:
-                        self.logger.warning(f"Failed to delete paused state file for run_id {run_id} after determining skip leads to completion.")
-                except Exception as del_err:
-                    self.logger.error(f"Error deleting paused state file for run_id {run_id}: {del_err}")
-                return self.shared_context.previous_stage_outputs if self.shared_context.previous_stage_outputs else {}
-
-        elif action == "force_branch":
-            target_stage_id = action_data.get('target_stage_id')
-            self.logger.info(f"[Resume] Action: Force branch to MASTER stage '{target_stage_id}'")
-            if not self.current_plan or self.current_plan.id != paused_details.flow_id:
-                 self.logger.error("CRITICAL RESUME FORCE_BRANCH ERROR: current_plan mismatch or not set.")
-                 return {"error": "Plan mismatch during force_branch action."}
-
-            if target_stage_id and isinstance(target_stage_id, str) and target_stage_id in self.current_plan.stages:
-                start_stage_name = target_stage_id
-            else:
-                self.logger.error(f"Invalid or missing target_stage_id ('{target_stage_id}') for force_branch action. Must be a valid MASTER stage ID in plan '{self.current_plan.id}'.")
-                return {"error": f"Invalid target_stage_id for force_branch: '{target_stage_id}'. It must be a valid stage ID string present in the Master Flow."}
-        
-        elif action == "abort":
-            self.logger.info(f"[Resume] Action: Abort MASTER flow for run_id={run_id}")
-            try:
-                delete_success = self._state_manager.delete_paused_flow_state(run_id)
-                if not delete_success:
-                     self.logger.warning(f"Failed to delete paused state file for run_id {run_id} during abort action.")
-            except Exception as del_err:
-                self.logger.error(f"Error deleting paused state file for run_id {run_id} during abort: {del_err}")
-            
-            if self.shared_context.previous_stage_outputs is None: self.shared_context.previous_stage_outputs = {}
-            self.shared_context.previous_stage_outputs["_orchestrator_final_status"] = StageStatus.ABORTED_BY_USER.value
-            self.logger.info(f"Paused state cleared for run_id={run_id}. Master Flow aborted by user action.")
-            return self.shared_context.previous_stage_outputs
-
-        else:
-            self.logger.error(f"Unsupported resume action: '{action}'")
-            return {"error": f"Unsupported resume action: {action}"}
-        
-        if start_stage_name and start_stage_name not in [NEXT_STAGE_END_SUCCESS, NEXT_STAGE_END_FAILURE]:
-            try:
-                clear_success = self._state_manager.delete_paused_flow_state(run_id)
-                if not clear_success:
-                    self.logger.warning(f"Failed to clear paused state for run_id={run_id}. Proceeding with execution.")
-            except Exception as e:
-                self.logger.exception(f"Failed to clear paused state for run_id={run_id}. Aborting resume. Error: {e}")
-                return {"error": f"Failed to clear paused state for run_id={run_id}. Resume aborted."}
-            self.logger.info(f"Resuming MASTER execution loop for run_id '{run_id}' from stage '{start_stage_name}'")
-            
-            final_outputs = await self._execute_flow_loop(
-                run_id=run_id, 
-                flow_id=paused_details.flow_id, 
-                start_stage_name=start_stage_name
-            )
-            return final_outputs
-        elif start_stage_name == NEXT_STAGE_END_SUCCESS or start_stage_name == NEXT_STAGE_END_FAILURE :
-            self.logger.info(f"Resume action '{action}' determined flow should proceed to an end state: {start_stage_name}")
-            final_status_val = StageStatus.COMPLETED_SUCCESS if start_stage_name == NEXT_STAGE_END_SUCCESS else StageStatus.FAILURE
-            self._emit_metric(MetricEventType.FLOW_END, paused_details.flow_id, run_id, data={"status": final_status_val.value})
-            self.state_manager.record_flow_end(run_id, paused_details.flow_id, final_status_val, final_outputs=self.shared_context.previous_stage_outputs)
-            if self.shared_context.previous_stage_outputs is None: self.shared_context.previous_stage_outputs = {}
-            self.shared_context.previous_stage_outputs["_orchestrator_final_status"] = final_status_val.value
-            return self.shared_context.previous_stage_outputs
-        else: 
-            if action != "skip_stage": # If it was skip_stage and start_stage_name is None, it means it skipped to the end.
-                 self.logger.error(f"Resume logic for action '{action}' failed to determine a start stage or handle flow completion correctly. Start_stage_name is None.")
-                 return {"error": "Internal error: Failed to determine resume start stage or handle flow completion."}
-            # If it was skip_stage and resulted in no next stage, it means the flow completed.
-            # The previous_stage_outputs should be returned as they are.
-            return self.shared_context.previous_stage_outputs if self.shared_context.previous_stage_outputs else {}
-
-    async def _execute_flow_loop(
-        self,
-        run_id: str,
-        flow_id: str,
-        start_stage_name: str,
-        # initial_shared_context is now assumed to be populated on self.shared_context by the caller (run or resume_flow)
-    ) -> Dict[str, Any]:
-        current_stage_name: Optional[str] = start_stage_name
-        final_status: StageStatus = StageStatus.COMPLETED_SUCCESS # Default to success
-        flow_error_details: Optional[str] = None
-        hops = 0
-
-        self.logger.info(f"Entering _execute_flow_loop for run_id: {run_id}, flow_id: {flow_id}, start_stage: {start_stage_name}")
-
-        while current_stage_name and current_stage_name not in [NEXT_STAGE_END_SUCCESS, NEXT_STAGE_END_FAILURE] and hops < self.MAX_HOPS:
-            hops += 1
-            self.logger.info(f"Orchestrator loop hop: {hops}, current_stage_name: {current_stage_name}")
-
-            if current_stage_name == "FINAL_STEP": # ADDED: Handle FINAL_STEP explicitly
-                self.logger.info(f"Run {run_id}: Reached FINAL_STEP for flow '{flow_id}'. Signalling successful completion.")
-                current_stage_name = NEXT_STAGE_END_SUCCESS
-                break
-
-            if not self.current_plan:
-                self.logger.error(f"Run {run_id}: Orchestrator critical error - current_plan is not set during loop execution. Terminating.")
-                final_status = StageStatus.FAILURE
-                flow_error_details = "Orchestrator critical error: current_plan not set."
-                # The following line was a bug from a previous merge/edit, current_stage_name is not available here if current_plan is None.
-                # flow_error_details = f"Stage '{current_stage_name}' not found in plan."
-                break
-
-            # --- MOVED: stage_spec definition before its use ---
-            stage_spec = self.current_plan.stages.get(current_stage_name)
-            if not stage_spec:
-                self.logger.error(f"Stage '{current_stage_name}' not found in plan '{flow_id}' for run {run_id}. Terminating.")
-                final_status = StageStatus.FAILURE
-                flow_error_details = f"Stage '{current_stage_name}' not found in plan."
-                break
-            # --- END MOVED ---
-
-            self.shared_context.current_stage_id = current_stage_name
-            self.shared_context.current_stage_status = StageStatus.RUNNING # Update shared context
-
-            self.logger.info(f"Run {run_id}: Executing stage '{current_stage_name}' (Agent: {stage_spec.agent_id})")
-            self._emit_metric(MetricEventType.MASTER_STAGE_START, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=stage_spec.agent_id)
-            self.state_manager.record_stage_start(run_id, flow_id, current_stage_name, stage_spec.agent_id)
-
-            agent_id_to_invoke = stage_spec.agent_category or stage_spec.agent_id
-            if not agent_id_to_invoke: # Should be validated by MasterExecutionPlan model
-                 self.logger.error(f"Stage '{current_stage_name}' in plan '{flow_id}' has neither agent_id nor agent_category. Terminating.")
-                 final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-                 flow_error_details = f"Stage '{current_stage_name}' misconfigured: missing agent_id/category."
-                 break
-            
-            max_retries_for_stage = stage_spec.max_retries if stage_spec.max_retries is not None else self.DEFAULT_AGENT_RETRIES
-            agent_error_obj: Optional[AgentErrorDetails] = None
-            next_stage_after_error_handling: Optional[str] = None
-            pause_status_override: Optional[FlowPauseStatus] = None
-            
-            try:
-                # Resolve agent callable (this might raise NoAgentFoundForCategoryError, AmbiguousAgentCategoryError)
-                # agent_callable, resolved_agent_id = await self.agent_provider.get_agent_callable(agent_id_to_invoke)
-                agent_callable = self.agent_provider.get(agent_id_to_invoke) # Corrected method call
-                resolved_agent_id = agent_id_to_invoke # Assuming agent_id_to_invoke is the resolved ID
-                
-                if stage_spec.agent_category and not stage_spec.agent_id: # If category was used, log resolved agent
-                    self.logger.info(f"Stage '{current_stage_name}': Category '{stage_spec.agent_category}' resolved to agent ID '{resolved_agent_id}'.")
-                
-                agent_id_for_error_handling = resolved_agent_id # Use the specifically resolved agent_id
-
-                # Attempt to execute the stage
-                # _invoke_agent_for_stage now handles its own retries internally based on max_retries_for_stage
-                stage_output = await self._invoke_agent_for_stage(
-                    stage_name=current_stage_name,
-                    agent_id=resolved_agent_id, # Pass the resolved agent ID
-                    agent_callable=agent_callable,
-                    inputs_spec=stage_spec.inputs,
-                    max_retries=max_retries_for_stage # Pass max_retries for internal retry loop
-                )
-                # If _invoke_agent_for_stage completes without raising, it means success after any internal retries.
-
-                # Update shared context with outputs
-                output_key = stage_spec.output_context_path or current_stage_name
-                self.shared_context.previous_stage_outputs[output_key] = stage_output
-                self._last_successful_stage_output = stage_output # Update for potential use by next stages
-
-                # Handle artifact registration from stage_output if necessary
-                if isinstance(stage_output, dict) and self.ARTIFACT_OUTPUT_KEY in stage_output:
-                    artifact_paths = stage_output[self.ARTIFACT_OUTPUT_KEY]
-                    if isinstance(artifact_paths, list):
-                        for p_str in artifact_paths:
-                            self.shared_context.register_artifact(current_stage_name, Path(p_str))
-                    elif isinstance(artifact_paths, str):
-                         self.shared_context.register_artifact(current_stage_name, Path(artifact_paths))
-                
-                # Check success criteria
-                criteria_passed, failed_criteria = await self._check_success_criteria(current_stage_name, stage_spec, self.shared_context.previous_stage_outputs)
-                if not criteria_passed:
-                    self.logger.warning(f"Stage '{current_stage_name}' failed success criteria: {failed_criteria}. Triggering error handling.")
-                    # Create an AgentErrorDetails for success criteria failure
-                    agent_error_obj = AgentErrorDetails(
-                        agent_id=resolved_agent_id,
-                        stage_name=current_stage_name,
-                        error_type="SuccessCriteriaFailed",
-                        message=f"Stage failed success criteria: {', '.join(failed_criteria)}",
-                        details={"failed_criteria": failed_criteria},
-                        can_retry=False, # Typically, success criteria failure is not directly retryable by the same agent
-                        can_escalate=True
-                    )
-                    # Call _handle_stage_error. attempt_number is effectively > max_retries to prevent direct retry of invoke
-                    next_stage_after_error_handling, agent_error_obj, _, pause_status_override = await self._handle_stage_error(
-                        current_stage_name=current_stage_name,
-                        flow_id=flow_id,
-                        run_id=run_id,
-                        current_plan=self.current_plan, # Use self.current_plan
-                        agent_id_for_error=resolved_agent_id,
-                        error=agent_error_obj, # This is the AgentErrorDetails for SuccessCriteriaFailed
-                        attempt_number=max_retries_for_stage + 1, # Ensure it doesn't retry via _invoke_agent's loop
-                        current_shared_context=self.shared_context # Pass shared_context
-                    )
-                    if pause_status_override: # If error handling led to a pause
-                        # Save paused state and break loop
-                        self.state_manager.save_paused_run(run_id, flow_id, current_stage_name, pause_status_override, self.shared_context.model_dump())
-                        self.logger.info(f"Run {run_id} paused at stage '{current_stage_name}' due to error handling result: {pause_status_override.value}")
-                        return self.shared_context.previous_stage_outputs # Or specific pause info
-                    
-                    if next_stage_after_error_handling is None and agent_error_obj: # Error handling decided to fail the stage/pipeline
-                        final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-                        flow_error_details = agent_error_obj.message
-                        current_stage_name = NEXT_STAGE_END_FAILURE # Break loop
-
-                if current_stage_name != NEXT_STAGE_END_FAILURE : # If not already failed by criteria
-                    self._emit_metric(MetricEventType.MASTER_STAGE_END, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=resolved_agent_id, data={"status": StageStatus.COMPLETED_SUCCESS.value})
-                    self.state_manager.record_stage_end(run_id, flow_id, current_stage_name, StageStatus.COMPLETED_SUCCESS, outputs=stage_output)
-                    self.shared_context.current_stage_status = StageStatus.COMPLETED_SUCCESS
-
-                    # BEGIN: Automatic artifact materialization for SmartCodeGeneratorAgent_v1
-                    if resolved_agent_id == "SmartCodeGeneratorAgent_v1":
-                        self.logger.info(f"Run {run_id}: Stage '{current_stage_name}' used SmartCodeGeneratorAgent_v1. Attempting automatic artifact materialization.")
-                        # MODIFIED: Check if stage_output is an instance of SmartCodeGeneratorAgentOutput (or has the needed attributes)
-                        if hasattr(stage_output, 'generated_code_artifact_doc_id') and hasattr(stage_output, 'target_file_path'):
-                            artifact_doc_id = stage_output.generated_code_artifact_doc_id
-                            target_file_path_from_output = stage_output.target_file_path
-
-                            if artifact_doc_id and target_file_path_from_output:
-                                self.logger.info(f"Run {run_id}: Attempting to write artifact '{artifact_doc_id}' to '{target_file_path_from_output}'.")
-                                try:
-                                    pcma_agent_instance = self.agent_provider._project_chroma_manager # Relies on RegistryAgentProvider
-                                    if not pcma_agent_instance:
-                                        raise ValueError("ProjectChromaManagerAgent could not be retrieved from agent_provider for artifact materialization.")
-
-                                    # SystemFileSystemAgent_v1 expects system_context as a dict for BaseAgent init
-                                    system_context_for_fs_dict = {
-                                        "project_root": Path(self.shared_context.project_root_path),
-                                        "logger": self.logger, # Pass orchestrator's logger for now
-                                        "run_id": run_id
-                                        # llm_provider and prompt_manager are not directly used by file ops
-                                    }
-                                    
-                                    fs_agent = SystemFileSystemAgent_v1(
-                                        system_context=system_context_for_fs_dict, 
-                                        pcma_agent=pcma_agent_instance
-                                    )
-                                    
-                                    tool_call_input = WriteArtifactToFileInput(
-                                        artifact_doc_id=artifact_doc_id,
-                                        collection_name="code_artifacts", # As per SmartCodeGeneratorAgent_v1
-                                        target_file_path=target_file_path_from_output,
-                                        overwrite=True # Default to overwrite for generated code
-                                    )
-                                    
-                                    # write_artifact_to_file_tool needs project_root explicitly passed
-                                    write_result_dict = await fs_agent.write_artifact_to_file_tool(
-                                        artifact_doc_id=tool_call_input.artifact_doc_id,
-                                        collection_name=tool_call_input.collection_name,
-                                        target_file_path=tool_call_input.target_file_path,
-                                        overwrite=tool_call_input.overwrite,
-                                        project_root=Path(self.shared_context.project_root_path)
-                                    )
-
-                                    if write_result_dict.get("success"):
-                                        self.logger.info(f"Run {run_id}: Successfully materialized artifact '{artifact_doc_id}' to '{target_file_path_from_output}'.")
-                                    else:
-                                        self.logger.error(f"Run {run_id}: Failed to materialize artifact '{artifact_doc_id}' to '{target_file_path_from_output}'. Error: {write_result_dict.get('error')}")
-                                except Exception as e_materialize:
-                                    self.logger.error(f"Run {run_id}: Exception during artifact materialization for '{artifact_doc_id}': {e_materialize}", exc_info=True)
-                            else:
-                                self.logger.warning(f"Run {run_id}: SmartCodeGeneratorAgent_v1 output for stage '{current_stage_name}' missing 'generated_code_artifact_doc_id' or 'target_file_path' values. Cannot materialize.")
-                        else:
-                            self.logger.warning(f"Run {run_id}: SmartCodeGeneratorAgent_v1 output for stage '{current_stage_name}' (type: {type(stage_output)}) does not have expected attributes for materialization. Cannot materialize.")
-                    # END: Automatic artifact materialization
-
-                    current_stage_name = self._get_next_stage(current_stage_name) # Determine next stage
-
-            except (NoAgentFoundForCategoryError, AmbiguousAgentCategoryError) as e_agent_resolve:
-                self.logger.error(f"Run {run_id}: Agent resolution failed for stage '{current_stage_name}', agent specifier '{agent_id_to_invoke}': {e_agent_resolve}")
-                # This is a structural/configuration error for the stage.
-                # It's not an agent execution error, so attempt_number is 1.
-                agent_error_obj = AgentErrorDetails(
-                    agent_id=agent_id_to_invoke, # This was the specifier
-                    stage_name=current_stage_name,
-                    error_type=e_agent_resolve.__class__.__name__,
-                    message=str(e_agent_resolve),
-                    can_retry=False, # Retrying won't help if agent can't be resolved
-                    can_escalate=True # Reviewer might suggest fixing plan
-                )
-                next_stage_after_error_handling, agent_error_obj, _, pause_status_override = await self._handle_stage_error(
-                    current_stage_name=current_stage_name,
-                    flow_id=flow_id,
-                    run_id=run_id,
-                    current_plan=self.current_plan, # Use self.current_plan
-                    agent_id_for_error=agent_id_to_invoke, # This was the specifier
-                    error=agent_error_obj, # This is the AgentErrorDetails for resolution failure
-                    attempt_number=1, # No retries for resolution failure
-                    current_shared_context=self.shared_context # Pass shared_context
-                )
-
-            except Exception as e_invoke: # Catch errors from _invoke_agent_for_stage (e.g., AgentErrorDetails if all retries failed)
-                self.logger.error(f"Run {run_id}: Exception during agent invocation for stage '{current_stage_name}': {e_invoke}", exc_info=True)
-                # _invoke_agent_for_stage should have already tried retries and would raise AgentErrorDetails if it failed permanently
-                # If it's another unexpected error, wrap it.
-                current_agent_id_for_err = stage_spec.agent_id or stage_spec.agent_category or "UNKNOWN_AGENT"
-                
-                # Error handling is now primarily managed by _invoke_agent_for_stage which raises AgentErrorDetails on final failure
-                # or if a non-retryable error occurs.
-                # The _handle_stage_error here is for post-invocation issues or if _invoke_agent itself has an unhandled exception (less likely).
-                # For now, assume e_invoke is the AgentErrorDetails from _invoke_agent_for_stage if it failed after retries.
-                next_stage_after_error_handling, agent_error_obj, _, pause_status_override = await self._handle_stage_error(
-                    current_stage_name=current_stage_name,
-                    flow_id=flow_id,
-                    run_id=run_id,
-                    current_plan=self.current_plan, # Use self.current_plan
-                    agent_id_for_error=current_agent_id_for_err,
-                    error=e_invoke, 
-                    attempt_number=max_retries_for_stage + 1, # Signify that agent invocation retries (if any) are done
-                    current_shared_context=self.shared_context # Pass shared_context
-                )
-            
-            # Post-invocation error handling (if any error occurred and was processed by _handle_stage_error)
-            if agent_error_obj: # This means an error occurred (either during invoke, or success criteria, or agent resolution)
-                self.shared_context.current_stage_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-                self._emit_metric(MetricEventType.MASTER_STAGE_END, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=agent_error_obj.agent_id, data={"status": StageStatus.FAILURE.value, "error": agent_error_obj.message}) # Changed to StageStatus.FAILURE
-                self.state_manager.record_stage_end(run_id, flow_id, current_stage_name, StageStatus.FAILURE, error_details=agent_error_obj.model_dump()) # Changed to StageStatus.FAILURE
-
-                if pause_status_override:
-                    self.state_manager.save_paused_run(run_id, flow_id, current_stage_name, pause_status_override, self.shared_context.model_dump())
-                    self.logger.info(f"Run {run_id} paused at stage '{current_stage_name}' due to error handling result: {pause_status_override.value}")
-                    return self.shared_context.previous_stage_outputs # Or specific pause info
-                
-                if next_stage_after_error_handling is None: # Error handling decided to fail the stage/pipeline
-                    final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-                    flow_error_details = agent_error_obj.message if agent_error_obj else "Unknown error after handling."
-                    current_stage_name = NEXT_STAGE_END_FAILURE # Break loop
-                else: # Error handling provided a next stage (e.g., reviewer intervention, or continue_ignore_error)
-                    current_stage_name = next_stage_after_error_handling
-            
-            # Check for user clarification checkpoint
-            if stage_spec.clarification_checkpoint and current_stage_name not in [NEXT_STAGE_END_FAILURE, NEXT_STAGE_END_SUCCESS, None]:
-                should_pause_for_clarification = True
-                if stage_spec.clarification_checkpoint.condition:
-                    should_pause_for_clarification = self._parse_condition(stage_spec.clarification_checkpoint.condition)
-                
-                if should_pause_for_clarification:
-                    self.logger.info(f"Run {run_id}: Pausing at stage '{current_stage_name}' for user clarification. Prompt: {stage_spec.clarification_checkpoint.prompt}")
-                    pause_details = PausedRunDetails(
-                        run_id=run_id,
-                        flow_id=flow_id,
-                        paused_at_stage_id=current_stage_name, # Pause *before* executing the next stage
-                        status=FlowPauseStatus.PAUSED_FOR_CLARIFICATION,
-                        timestamp=datetime.now(timezone.utc),
-                        required_clarification_prompt=stage_spec.clarification_checkpoint.prompt,
-                        # Store current full shared context
-                        full_shared_context_snapshot=self.shared_context.model_dump() 
-                    )
-                    self.state_manager.save_paused_run_details(pause_details) # Use new method
-                    self._emit_metric(MetricEventType.FLOW_PAUSED, flow_id, run_id, stage_id=current_stage_name, data={"reason": FlowPauseStatus.PAUSED_FOR_CLARIFICATION.value, "prompt": stage_spec.clarification_checkpoint.prompt})
-                    return self.shared_context.previous_stage_outputs # Return current outputs, flow is paused.
-            
-            self.state_manager.update_run_context(run_id, self.shared_context.previous_stage_outputs, self.shared_context.artifact_references) # Save context progress
-
-        # ---- End of main execution loop ----
-
-        if current_stage_name == NEXT_STAGE_END_SUCCESS:
-            final_status = StageStatus.COMPLETED_SUCCESS
-            self.logger.info(f"Run {run_id} for flow '{flow_id}' completed successfully.")
-        elif current_stage_name == NEXT_STAGE_END_FAILURE:
-            final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-            self.logger.error(f"Run {run_id} for flow '{flow_id}' ended in failure. Error: {flow_error_details or 'Unknown error'}")
-        elif hops >= self.MAX_HOPS: # Already handled inside loop, but as a final status check
-            final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-            flow_error_details = flow_error_details or "Max hops reached."
-            self.logger.error(f"Run {run_id} for flow '{flow_id}' terminated due to max hops. Error: {flow_error_details}")
-        elif current_stage_name is None and final_status == StageStatus.COMPLETED_SUCCESS: # Flow ended because no next stage was defined
-             self.logger.info(f"Run {run_id} for flow '{flow_id}' completed successfully as no next stage was defined.")
-        else: # Other unexpected termination
-            final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-            flow_error_details = flow_error_details or f"Flow ended unexpectedly at stage '{current_stage_name}'."
-            self.logger.error(f"Run {run_id} for flow '{flow_id}' ended unexpectedly. Final Stage: {current_stage_name}. Status: {final_status}. Error: {flow_error_details}")
-
-        self._emit_metric(MetricEventType.FLOW_END, flow_id, run_id, data={"status": final_status.value, "error": flow_error_details})
-        self.state_manager.record_flow_end(run_id, flow_id, final_status, error_message=flow_error_details, final_outputs=self.shared_context.previous_stage_outputs)
-        
-        # Clean up run-specific state from orchestrator instance if necessary,
-        # though shared_context is re-initialized per run.
-        # self._current_run_id is cleared by the caller (run method)
-
-        # Ensure previous_stage_outputs is a dict (it should be)
-        if self.shared_context.previous_stage_outputs is None:
-            self.shared_context.previous_stage_outputs = {}
-            self.logger.warning(f"Run {run_id} flow {flow_id}: previous_stage_outputs was None at the end of _execute_flow_loop. Initialized to empty dict before adding status.")
-
-        self.shared_context.previous_stage_outputs["_orchestrator_final_status"] = final_status.value
-        if flow_error_details: # flow_error_details might be None if successful
-            self.shared_context.previous_stage_outputs["_orchestrator_flow_error_details"] = flow_error_details
-        elif "_orchestrator_flow_error_details" in self.shared_context.previous_stage_outputs:
-            # Ensure the key is not present if there are no error details
-            del self.shared_context.previous_stage_outputs["_orchestrator_flow_error_details"]
-        
-        return self.shared_context.previous_stage_outputs
-
-
-    def _validate_master_plan_structure(self, plan: MasterExecutionPlan):
-        """
-        Validates the structural integrity of the MasterExecutionPlan.
-        Attempts to auto-correct certain common, recoverable structural issues.
-        Logs errors for unrecoverable issues or if auto-correction is risky.
-        """
-        if not plan:
-            self.logger.error("MasterExecutionPlan is None. Cannot validate.")
-            # This is a critical error, likely an issue with plan generation or loading.
-            # Depending on context, might raise an exception or return a status.
-            return
-
-        # Validate Plan ID
-        if not plan.id or not plan.id.strip():
-            old_plan_id = plan.id
-            new_plan_id = str(uuid.uuid4())
-            self.logger.error(f"MasterExecutionPlan is missing an ID (was: '{old_plan_id}'). Auto-assigning new ID: {new_plan_id}")
-            plan.id = new_plan_id # Auto-correct
-            # Consider if this modification needs to be saved back to the source if applicable.
-
-        # Validate Start Stage
-        if not plan.start_stage or not plan.start_stage.strip():
-            self.logger.error(f"MasterExecutionPlan (ID: {plan.id}) is missing a start_stage.")
-            # This is usually unrecoverable without manual intervention or a default start_stage assumption.
-        elif plan.start_stage not in plan.stages:
-            self.logger.error(f"MasterExecutionPlan (ID: {plan.id}) start_stage '{plan.start_stage}' does not exist in stages.")
-            # Unrecoverable.
-
-        # Validate Stages
-        if not plan.stages:
-            self.logger.error(f"MasterExecutionPlan (ID: {plan.id}) has no stages defined.")
-            # Unrecoverable if stages are expected.
-
-        for stage_name, stage_spec in plan.stages.items():
-            if not stage_spec:
-                self.logger.error(f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': Stage specification is None.")
-                continue # Skip validation for this null stage_spec
-
-            # Validate Agent ID/Category
-            if not stage_spec.agent_id and not stage_spec.agent_category:
-                self.logger.error(f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': Must have either agent_id or agent_category.")
-
-            # Auto-correction for SystemInterventionAgent_v1 (formerly HumanInputAgent_v1)
-            if stage_spec.agent_id == "HumanInputAgent_v1": # Check for old ID
-                self.logger.warning(
-                    f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': "
-                    f"Uses deprecated agent_id 'HumanInputAgent_v1'. Auto-correcting to 'SystemInterventionAgent_v1'."
-                )
-                stage_spec.agent_id = "SystemInterventionAgent_v1"
-                # Ensure inputs are compatible or provide a default if necessary
-                if not stage_spec.inputs or not isinstance(stage_spec.inputs, dict) or "prompt_message_for_user" not in stage_spec.inputs:
-                    self.logger.warning(
-                        f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}' (corrected to SystemInterventionAgent_v1): "
-                        f"Missing or invalid 'inputs' for SystemInterventionAgent_v1. "
-                        f"Injecting default 'prompt_message_for_user'. Original inputs: {stage_spec.inputs}"
-                    )
-                    stage_spec.inputs = {"prompt_message_for_user": "Default prompt: System intervention required."}
-
-            elif stage_spec.agent_id == SystemInterventionAgent_v1.AGENT_ID:
-                if not stage_spec.inputs or not isinstance(stage_spec.inputs, dict) or "prompt_message_for_user" not in stage_spec.inputs:
-                    original_inputs_sia = stage_spec.inputs
-                    self.logger.warning(
-                        f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}' (SystemInterventionAgent_v1): "
-                        f"Missing or invalid 'inputs'. Expected '{{ \"prompt_message_for_user\": \"...\" }}'. "
-                        f"Injecting default. Original inputs: {original_inputs_sia}"
-                    )
-                    stage_spec.inputs = {"prompt_message_for_user": "Default prompt: System intervention required due to plan validation."}
-
-
-            # Validate inputs for FileOperationAgent_v1 (SystemFileSystemAgent_v1)
-            if stage_spec.agent_id == "FileOperationAgent_v1" or stage_spec.agent_id == "SystemFileSystemAgent_v1":
-                if not stage_spec.inputs or not isinstance(stage_spec.inputs, dict):
-                    self.logger.critical(
-                        f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}' ({stage_spec.agent_id}): "
-                        f"'inputs' field is missing or not a dictionary. This is a critical structural issue. "
-                        f"Auto-injecting placeholder: {{'tool_name': 'noop_placeholder', 'tool_input': {{}} }}. Original inputs: {stage_spec.inputs}"
-                    )
-                    stage_spec.inputs = {"tool_name": "noop_placeholder", "tool_input": {}}
-                elif "tool_name" not in stage_spec.inputs:
-                    self.logger.critical(
-                        f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}' ({stage_spec.agent_id}): "
-                        f"'tool_name' is missing from 'inputs'. This is a critical structural issue. "
-                        f"Auto-injecting placeholder 'noop_placeholder'. Original inputs: {stage_spec.inputs}"
-                    )
-                    stage_spec.inputs["tool_name"] = "noop_placeholder" 
-                    if "tool_input" not in stage_spec.inputs: # Also ensure tool_input exists
-                         stage_spec.inputs["tool_input"] = {}
-                # `tool_input` can be an empty dict for some tools, so we don't mandate its presence beyond being part of inputs if tool_name is there.
-
-
-            # Validate inputs for SmartCodeGeneratorAgent_v1
-            if stage_spec.agent_id == "SmartCodeGeneratorAgent_v1":
-                if not stage_spec.inputs or not isinstance(stage_spec.inputs, dict):
-                    self.logger.critical(
-                        f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}' (SmartCodeGeneratorAgent_v1): "
-                        f"'inputs' field is missing or not a dictionary. This is a critical structural issue. "
-                        f"Auto-injecting placeholder inputs. Original inputs: {stage_spec.inputs}"
-                    )
-                    stage_spec.inputs = {
-                        "task_description": "Placeholder: Task description missing.",
-                        "target_file_path": "placeholder/missing_file.py"
-                    }
-                else:
-                    missing_keys = []
-                    if "task_description" not in stage_spec.inputs:
-                        missing_keys.append("task_description")
-                    if "target_file_path" not in stage_spec.inputs:
-                        missing_keys.append("target_file_path")
-                    
-                    if missing_keys:
-                        self.logger.critical(
-                            f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}' (SmartCodeGeneratorAgent_v1): "
-                            f"Following keys are missing from 'inputs': {', '.join(missing_keys)}. This is a critical structural issue. "
-                            f"Auto-injecting placeholders for missing keys. Original inputs: {stage_spec.inputs}"
-                        )
-                        if "task_description" not in stage_spec.inputs:
-                            stage_spec.inputs["task_description"] = "Placeholder: Task description was missing."
-                        if "target_file_path" not in stage_spec.inputs:
-                            stage_spec.inputs["target_file_path"] = "placeholder/file_path_was_missing.py"
-            
-            # Validate Transitions (next_stage, next_stage_true, next_stage_false)
-            # Ensure that any stage referenced in a transition actually exists in the plan.
-            transitions_to_check = []
-            if stage_spec.next_stage:
-                transitions_to_check.append((stage_spec.next_stage, "next_stage"))
-            if stage_spec.on_success and stage_spec.on_success.next_stage:
-                 transitions_to_check.append((stage_spec.on_success.next_stage, "on_success.next_stage"))
-            if stage_spec.on_failure:
-                if isinstance(stage_spec.on_failure, str): # Direct stage ID
-                     transitions_to_check.append((stage_spec.on_failure, "on_failure (direct)"))
-                elif hasattr(stage_spec.on_failure, 'next_stage') and stage_spec.on_failure.next_stage: # OnFailureConfig object
-                     transitions_to_check.append((stage_spec.on_failure.next_stage, "on_failure.next_stage"))
-
-
-            # Check next_stage_true/false only if a condition exists
-            if stage_spec.condition:
-                if stage_spec.next_stage_true:
-                    transitions_to_check.append((stage_spec.next_stage_true, "next_stage_true"))
-                else:
-                    self.logger.warning(f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': Has a 'condition' but 'next_stage_true' is missing.")
-                
-                if stage_spec.next_stage_false:
-                    transitions_to_check.append((stage_spec.next_stage_false, "next_stage_false"))
-                else:
-                    self.logger.warning(f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': Has a 'condition' but 'next_stage_false' is missing.")
-            
-            # If no condition, but next_stage_true or next_stage_false are present, it's a warning.
-            # The orchestrator might prioritize next_stage in this case.
-            elif not stage_spec.condition and (stage_spec.next_stage_true or stage_spec.next_stage_false):
-                self.logger.warning(f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': Has 'next_stage_true' or 'next_stage_false' but no 'condition'. 'next_stage' will be prioritized if present.")
-
-
-            for target_stage, transition_type in transitions_to_check:
-                # Allow special terminal stage names
-                if target_stage in [NEXT_STAGE_END_SUCCESS, NEXT_STAGE_END_FAILURE, "FINAL_STEP"]: # Added FINAL_STEP
-                    continue
-                if target_stage not in plan.stages:
-                    self.logger.error(
-                        f"MasterExecutionPlan (ID: {plan.id}), stage '{stage_name}': "
-                        f"Transition '{transition_type}' references non-existent stage '{target_stage}'."
-                    )
-        self.logger.info(f"MasterExecutionPlan (ID: {plan.id}) structure validation complete. Review logs for errors/warnings.")
-
-# Ensuring the file ends with a valid, indented statement.
-pass

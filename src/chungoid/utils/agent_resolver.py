@@ -25,6 +25,12 @@ import inspect
 
 # ADDED: Moved import to module level
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
+from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # MOVED TO MODULE LEVEL
+from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1 # ADDED IMPORT
+from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 # ADDED FOR SYSTEM TEST RUNNER
+
+# ADDED: Import ProjectChromaManagerAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
 # Define logger at the module level
 logger = logging.getLogger(__name__)
@@ -169,7 +175,7 @@ class RegistryAgentProvider:
         from chungoid.utils.llm_provider import LLMProvider # Assuming this is the correct path
         from chungoid.utils.prompt_manager import PromptManager # Assuming this is the correct path
         from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
-        from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # ADDED for explicit check
+        # from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # REMOVED FROM HERE
         # ADDED: Import for SystemFileSystemAgent_v1 to check its type
         from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
 
@@ -222,6 +228,8 @@ class RegistryAgentProvider:
             logger.info(f"RegistryAgentProvider: Identifier '{identifier}' FOUND in fallback map.")
             potential_item = self._fallback[identifier]
             
+            agent_instance: Any = None # INITIALIZE agent_instance to None here
+            
             # DETAILED LOGGING for the item itself
             logger.debug(f"RegistryAgentProvider: Fallback item for '{identifier}' IS: {potential_item}")
             logger.debug(f"RegistryAgentProvider: Fallback item type for '{identifier}' IS: {type(potential_item)}")
@@ -244,154 +252,112 @@ class RegistryAgentProvider:
             if is_class_via_isinstance or is_class_via_inspect:
                 logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' identified as a class (isinstance: {is_class_via_isinstance}, inspect: {is_class_via_inspect}). Attempting instantiation.")
                 try:
-                    # MODIFIED: Special handling for MasterPlannerAgent instantiation
-                    if identifier == "SystemMasterPlannerAgent_v1" and inspect.isclass(potential_item):
-                        logger.info(f"RegistryAgentProvider: Special instantiation for MasterPlannerAgent.")
+                    # Try to instantiate it, passing known common dependencies
+                    # Define agent_instance here before the conditional logic for different agent types
+                    instantiated_agent_object: Any = None # Initialize to None
+
+                    # Special handling for MasterPlannerAgent
+                    if potential_item == MasterPlannerAgent: # Direct class comparison
+                        logger.info("RegistryAgentProvider: Special instantiation for MasterPlannerAgent.")
                         if not self._llm_provider or not self._prompt_manager or not self._project_chroma_manager:
-                            logger.error("MasterPlannerAgent requires llm_provider, prompt_manager, and project_chroma_manager for instantiation in resolver.")
-                            raise ValueError("Missing dependencies for MasterPlannerAgent instantiation in RegistryAgentProvider.")
-                        try:
-                            # Explicitly import MasterPlannerAgent here to ensure we're using the right one
-                            from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
-                            if potential_item is MasterPlannerAgent: # Double check it's the correct class
-                                agent_instance = MasterPlannerAgent(
-                                    llm_provider=self._llm_provider,
-                                    prompt_manager=self._prompt_manager,
-                                    project_chroma_manager=self._project_chroma_manager
-                                )
-                                logger.info(f"RegistryAgentProvider: Successfully instantiated MasterPlannerAgent '{identifier}'.")
-                            else: # Should not happen if ID matches
-                                logger.error(f"RegistryAgentProvider: Mismatch - ID is SystemMasterPlannerAgent_v1 but class is {potential_item}")
-                                raise TypeError(f"Fallback item for '{identifier}' is not the expected MasterPlannerAgent class.")
-                        except Exception as e_master_planner_inst:
-                            logger.error(f"RegistryAgentProvider: Error during special MasterPlannerAgent instantiation for '{identifier}': {e_master_planner_inst}", exc_info=True)
-                            raise ValueError(f"Could not instantiate MasterPlannerAgent '{identifier}': {e_master_planner_inst}")
-                    
-                    # ADDED: Special handling for SmartCodeGeneratorAgent_v1 (CoreCodeGeneratorAgent_v1)
-                    elif identifier == CoreCodeGeneratorAgent_v1.AGENT_ID and inspect.isclass(potential_item):
-                        logger.info(f"RegistryAgentProvider: Special instantiation for CoreCodeGeneratorAgent_v1 (ID: {identifier}).")
+                            raise ValueError("MasterPlannerAgent requires LLMProvider, PromptManager, and ProjectChromaManager.")
+                        instantiated_agent_object = potential_item(
+                            llm_provider=self._llm_provider, 
+                            prompt_manager=self._prompt_manager,
+                            project_chroma_manager=self._project_chroma_manager
+                        )
+                    # Special handling for SystemRequirementsGatheringAgent_v1
+                    elif potential_item == SystemRequirementsGatheringAgent_v1: # Direct class comparison
+                        logger.info("RegistryAgentProvider: Special instantiation for SystemRequirementsGatheringAgent_v1.")
+                        if not self._llm_provider or not self._prompt_manager:
+                            raise ValueError("SystemRequirementsGatheringAgent_v1 requires LLMProvider and PromptManager.")
+                        instantiated_agent_object = potential_item(
+                            llm_provider=self._llm_provider, 
+                            prompt_manager=self._prompt_manager
+                        )
+                    elif potential_item == CoreCodeGeneratorAgent_v1: # Direct class comparison
+                        logger.info("RegistryAgentProvider: Special instantiation for CoreCodeGeneratorAgent_v1.")
                         if not self._llm_provider or not self._prompt_manager or not self._project_chroma_manager:
-                            logger.error(f"{identifier} requires llm_provider, prompt_manager, and project_chroma_manager.")
-                            raise ValueError(f"Missing dependencies for {identifier} instantiation in RegistryAgentProvider.")
-                        try:
-                            if potential_item is CoreCodeGeneratorAgent_v1:
-                                agent_instance = CoreCodeGeneratorAgent_v1(
-                                    llm_provider=self._llm_provider,
-                                    prompt_manager=self._prompt_manager,
-                                    pcma_agent=self._project_chroma_manager
-                                    # system_context can be passed if needed, e.g. system_context={"logger": logger}
-                                )
-                                logger.info(f"RegistryAgentProvider: Successfully instantiated {identifier}.")
-                            # ADDED: Special handling for SystemFileSystemAgent_v1 instantiation
-                            elif identifier == SystemFileSystemAgent_v1.AGENT_ID and inspect.isclass(potential_item) and potential_item is SystemFileSystemAgent_v1:
-                                logger.info(f"RegistryAgentProvider: Special instantiation for SystemFileSystemAgent_v1.")
-                                if not self._project_chroma_manager:
-                                    logger.error(f"RegistryAgentProvider: Cannot instantiate SystemFileSystemAgent_v1 without ProjectChromaManagerAgent.")
-                                    raise ValueError("ProjectChromaManagerAgent not available for SystemFileSystemAgent_v1 instantiation.")
-                                agent_instance = SystemFileSystemAgent_v1(
-                                    pcma_agent=self._project_chroma_manager
-                                    # Pass other necessary dependencies if SystemFileSystemAgent_v1 evolves to need them like logger context
-                                )
-                                logger.info(f"RegistryAgentProvider: Successfully instantiated SystemFileSystemAgent_v1 '{identifier}'.")
-                            else:
-                                logger.info(f"RegistryAgentProvider: Attempting generic instantiation for class '{identifier}'.")
-                                # This is the path for other agents that are classes and need generic instantiation
-                                # For example, MockHumanInputAgent will take this path.
-                                # Ensure that if these agents have required __init__ args, they are handled here or are optional.
-                                try:
-                                    agent_instance = potential_item() # Attempt generic instantiation
-                                    logger.info(f"RegistryAgentProvider: Successfully instantiated generic agent class '{identifier}'.")
-                                except Exception as e_generic_inst:
-                                    logger.error(f"RegistryAgentProvider: Error during generic instantiation of class '{identifier}': {e_generic_inst}", exc_info=True)
-                                    raise TypeError(f"Failed to instantiate fallback class '{identifier}': {e_generic_inst}") from e_generic_inst
-                        except Exception as e_core_code_gen_inst:
-                            logger.error(f"RegistryAgentProvider: Error during special {identifier} instantiation: {e_core_code_gen_inst}", exc_info=True)
-                            raise ValueError(f"Could not instantiate {identifier}: {e_core_code_gen_inst}")
-                    # END ADDED
+                            raise ValueError("CoreCodeGeneratorAgent_v1 requires LLMProvider, PromptManager, and ProjectChromaManager.")
+                        instantiated_agent_object = potential_item(
+                            llm_provider=self._llm_provider, 
+                            prompt_manager=self._prompt_manager,
+                            pcma_agent=self._project_chroma_manager # Note: CoreCodeGeneratorAgent_v1 uses 'pcma_agent'
+                        )
+                    elif potential_item == SystemTestRunnerAgent_v1: # Direct class comparison
+                        logger.info("RegistryAgentProvider: Special instantiation for SystemTestRunnerAgent_v1.")
+                        # SystemTestRunnerAgent_v1's BaseAgent handles these via kwargs
+                        instantiated_agent_object = potential_item(
+                            llm_provider=self._llm_provider,
+                            prompt_manager=self._prompt_manager
+                        )
+                    # Special handling for ProjectChromaManagerAgent_v1
+                    elif potential_item == ProjectChromaManagerAgent_v1:
+                        logger.info("RegistryAgentProvider: Special instantiation for ProjectChromaManagerAgent_v1.")
+                        # ProjectChromaManagerAgent_v1 might take project_id or other specific init args
+                        # Assuming it can be instantiated without args for now, or that cli.py handles this.
+                        # If it needs llm_provider, prompt_manager, etc., add checks like above.
+                        # For now, let's assume it needs the project_id which should be part of its own config/setup
+                        # or that the instance passed in fallback is already configured.
+                        # This path is for when the CLASS is in fallback.
+                        # If a pre-configured INSTANCE is in fallback, it will take the 'else' path below.
+                        instantiated_agent_object = potential_item(project_id=self._project_chroma_manager.project_id if self._project_chroma_manager else "unknown_project_in_resolver")
+
+                    # Generic instantiation for other agent classes
                     else:
-                        logger.info(f"RegistryAgentProvider: Attempting generic instantiation for class '{identifier}'.")
-                        # Generic instantiation - assumes no specific args beyond what Pydantic handles or system_context
-                        # For agents NOT inheriting from BaseAgent or needing specific non-Pydantic args,
-                        # this generic path might fail or need more enhancement.
-                        # For now, let's assume it might take system_context if that's a common pattern.
-                        # However, this is risky. Prefer explicit handling for agents with complex __init__.
+                        logger.info(f"RegistryAgentProvider: Attempting generic instantiation for class {potential_item.__name__}.")
+                        # Simple instantiation for agents without specific constructor needs from the provider
+                        # If they need llm_provider etc., they should be added to the special handling above.
+                        # Or, the agent's __init__ should allow them as Optional.
+                        # For now, try to instantiate without arguments.
                         try:
-                            # Simplistic generic instantiation: pass common dependencies if available and class accepts **kwargs
-                            # This is a common pattern but might not fit all non-BaseAgent classes perfectly.
-                            # For classes NOT inheriting from BaseAgent and having specific constructor needs,
-                            # they MUST be handled by an explicit `elif identifier == "MyAgentID"` block above.
-                            
-                            # Construct a dictionary of available dependencies
-                            available_deps = {}
-                            if self._llm_provider:
-                                available_deps['llm_provider'] = self._llm_provider
-                            if self._prompt_manager:
-                                available_deps['prompt_manager'] = self._prompt_manager
-                            if self._project_chroma_manager:
-                                available_deps['pcma_agent'] = self._project_chroma_manager # Note: key might be 'project_chroma_manager' for some
-                            
-                            # Pass only the dependencies that the class's __init__ can accept
-                            sig = inspect.signature(potential_item.__init__)
-                            init_params = sig.parameters
-                            
-                            deps_to_pass = {}
-                            if 'system_context' in init_params: # Pass system_context if agent expects it
-                                deps_to_pass['system_context'] = {'logger': logger} # Example system_context
+                            instantiated_agent_object = potential_item() 
+                        except TypeError as e_init:
+                            logger.warning(f"RegistryAgentProvider: Generic instantiation for {potential_item.__name__} failed. It might require arguments (e.g., llm_provider, prompt_manager) not handled in generic path. Error: {e_init}")
+                            # Re-raise or handle as appropriate. For now, let it propagate if instantiation fails.
+                            raise
 
-                            for dep_name, dep_value in available_deps.items():
-                                if dep_name in init_params:
-                                    deps_to_pass[dep_name] = dep_value
-                                # Try common alternative names
-                                elif dep_name == 'project_chroma_manager' and 'pcma_agent' in init_params:
-                                     deps_to_pass['pcma_agent'] = dep_value
+                    agent_instance = instantiated_agent_object # Assign the successfully instantiated object
+                    logger.info(f"RegistryAgentProvider: Successfully instantiated class '{identifier}' to object: {agent_instance}")
 
+                except TypeError as e:
+                    logger.error(f"RegistryAgentProvider: Error instantiating or preparing fallback class '{identifier}': {e}", exc_info=True)
+                    # Better error reporting
+                    msg = (
+                        f"Failed to instantiate agent '{identifier}' from fallback class "
+                        f"'{potential_item.__name__ if hasattr(potential_item, '__name__') else potential_item}'. "
+                        f"TypeError: {e}. Check if the agent's __init__ method matches "
+                        f"the arguments provided by RegistryAgentProvider (llm_provider, prompt_manager, project_chroma_manager for specific agents, or no-args for generic ones)."
+                    )
+                    logger.error(msg)
+                    raise ValueError(msg) from e # Raise a ValueError with more context
+                except Exception as e_instantiate:
+                    logger.error(f"RegistryAgentProvider: General error during instantiation of fallback class '{identifier}': {e_instantiate}", exc_info=True)
+                    raise ValueError(f"Failed to instantiate fallback agent '{identifier}': {e_instantiate}") from e_instantiate
+            else:
+                # Fallback item is not a class, so it should be an already-initialized agent instance or a direct callable function.
+                logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is already a callable/instance (type: {type(potential_item)}). Using it directly.")
+                agent_instance = potential_item # If not a class, it's the instance or callable itself.
 
-                            if 'self' in deps_to_pass: # Should not happen with bound methods but good to filter
-                                del deps_to_pass['self']
+            # At this point, agent_instance should be defined, either as an instantiated class or the direct callable.
+            if hasattr(agent_instance, 'invoke_async') and callable(getattr(agent_instance, 'invoke_async')):
+                logger.info(f"RegistryAgentProvider: Returning 'invoke_async' method for instantiated agent '{identifier}'.")
+                # functools.partial can be used if invoke_async needs `self`
+                # However, if agent_instance is already an object, agent_instance.invoke_async is already bound.
+                self._cache[identifier] = agent_instance.invoke_async
+                return agent_instance.invoke_async
+            elif callable(agent_instance): # If it's a simple callable function (not a class instance with invoke_async)
+                logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is a direct callable. Using it.")
+                self._cache[identifier] = agent_instance
+                return agent_instance
+            else:
+                # This case should ideally not be reached if validation is correct.
+                logger.error(f"RegistryAgentProvider: Fallback item '{identifier}' (type: {type(agent_instance)}) is neither a recognized agent class instance with 'invoke_async' nor a direct callable after processing. THIS IS UNEXPECTED.")
+                raise TypeError(f"Fallback item '{identifier}' is not a valid agent callable or class.")
 
-                            logger.debug(f"RegistryAgentProvider: Generic instantiation for '{identifier}' using potential_item(**{list(deps_to_pass.keys())})")
-                            agent_instance = potential_item(**deps_to_pass)
-                            logger.info(f"RegistryAgentProvider: Successfully instantiated generic agent class '{identifier}'.")
-                        except TypeError as e_generic_type:
-                            logger.error(f"RegistryAgentProvider: TypeError during generic instantiation of '{identifier}': {e_generic_type}. This agent might need explicit handling in agent_resolver.py if it has a custom __init__ signature not matching common patterns.", exc_info=True)
-                            raise ValueError(f"Could not instantiate agent '{identifier}' (generic path TypeError): {e_generic_type}")
-                        except Exception as e_gen_inst: # Catch-all for other instantiation errors
-                            logger.error(f"Error during generic instantiation of agent class '{identifier}': {e_gen_inst}", exc_info=True)
-                            raise ValueError(f"Could not instantiate agent '{identifier}' from fallback class: {e_gen_inst}")
+        logger.debug(f"RegistryAgentProvider: Identifier '{identifier}' NOT found in fallback map. Attempting to resolve from AgentRegistry.")
 
-                    # After successful instantiation (special or generic)
-                    if hasattr(agent_instance, "invoke_async") and callable(getattr(agent_instance, "invoke_async")) and inspect.iscoroutinefunction(getattr(agent_instance, "invoke_async")):
-                        resolved_callable = functools.partial(agent_instance.invoke_async)
-                        logger.info(f"RegistryAgentProvider: Returning functools.partial(agent_instance.invoke_async) for '{identifier}'.")
-                        self._cache[identifier] = resolved_callable
-                        return resolved_callable
-                    elif callable(agent_instance):
-                        logger.info(f"RegistryAgentProvider: Returning instantiated agent_instance (which is callable) for '{identifier}'.")
-                        self._cache[identifier] = agent_instance
-                        return agent_instance
-                    else:
-                        logger.error(f"RegistryAgentProvider: Instantiated agent '{identifier}' is not directly callable and does not have a standard invoke_async method.")
-                        raise NotImplementedError(f"Instantiated agent '{identifier}' is not callable in a standard way.")
-                except Exception as e_inst: # Catch errors from the instantiation block
-                    logger.error(f"RegistryAgentProvider: Error instantiating or preparing fallback class '{identifier}': {e_inst}", exc_info=True)
-                    # Don't fall through to registry lookup if fallback class instantiation fails.
-                    # This was an explicit fallback entry.
-                    # Re-raise or raise a specific error.
-                    # Raising the original error for now.
-                    raise
-            
-            # If potential_item is already a callable function/method (not a class)
-            elif callable(potential_item):
-                logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is directly callable. Caching and returning.")
-                self._cache[identifier] = potential_item
-                return potential_item
-            else: # Should not happen if AgentFallbackItem is Type | Callable
-                logger.error(f"RegistryAgentProvider: Fallback item '{identifier}' is neither a class nor callable. Type: {type(potential_item)}")
-                raise TypeError(f"Fallback item '{identifier}' is not a valid type (class or callable).")
-
-        logger.debug(f"RegistryAgentProvider: Identifier '{identifier}' NOT returned from fallback map. Proceeding to card-based resolution.")
-
-        # If not in fallback or fallback processing failed/skipped, check registry card
+        # If not in fallback, try AgentRegistry
         logger.debug(f"RegistryAgentProvider: Proceeding to registry lookup for '{identifier}'.")
         card = self._registry.get(identifier)
         if card is None:

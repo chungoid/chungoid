@@ -24,6 +24,7 @@ from chungoid.schemas.agent_master_planner_reviewer import (
     ModifyMasterPlanRemoveStageDetails,
     ModifyMasterPlanModifyStageDetails
 )
+from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.schemas.common_enums import FlowPauseStatus
 # Corrected LLM Provider Imports

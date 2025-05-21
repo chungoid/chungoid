@@ -131,7 +131,16 @@ class CoreCodeGeneratorAgent_v1:
                         logger_instance.warning(f"LOPRD requirement {doc_id} not found or content empty. Status: {retrieved_loprd.status if retrieved_loprd else 'N/A'}")
             
             if not code_specification_content:
-                raise ValueError("Code specification content could not be retrieved or is empty.")
+                logger_instance.info(
+                    f"No code_specification_doc_id provided (value: {parsed_inputs.code_specification_doc_id}) "
+                    f"or the document content was empty. Using task_description as the primary specification."
+                )
+                # Use task_description from parsed_inputs if code_specification_content is missing.
+                # The prompt should be robust enough to primarily use task_description 
+                # if the detailed specification is minimal or absent.
+                code_specification_content = parsed_inputs.task_description # Fallback to task_description
+                if not code_specification_content: # If task_description itself is somehow empty (should be caught by input validation)
+                    raise ValueError("Neither code_specification_content nor task_description is available.")
 
         except Exception as e:
             logger_instance.error(f"Failed to retrieve context documents via PCMA: {e}", exc_info=True)

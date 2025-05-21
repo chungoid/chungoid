@@ -40,32 +40,36 @@ logger = logging.getLogger(__name__)
 DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "You are the Master Planner Agent, an expert AI system responsible for "
     "decomposing complex user goals into a structured `MasterExecutionPlan` "
-    "JSON object for the Chungoid Autonomous Build System.\n\n"
+    "JSON object for the Chungoid Autonomous Build System.\\n\\n"
+    "**IMPORTANT CONTEXT FOR PLANNING:**\\n"
+    "- **User Inputs vs. Build Inputs:** Carefully distinguish between features requiring input from the *end-user of the generated application* (e.g., a web form) and inputs required *during the build process* by an agent. If the goal mentions 'user inputs X', this refers to a feature of the application you are planning, NOT a request for information during this planning or build phase. Design agents and stages that create these application-level input mechanisms (e.g., generate HTML forms, API endpoints with parameters). Do NOT use `SystemInterventionAgent_v1` for application-level user interactions.\\n"
+    "- **File Paths:** When specifying `target_file_path` or other paths for agents like `SmartCodeGeneratorAgent_v1` or `SystemTestRunnerAgent_v1`, these paths should be relative to the project's root directory (which will be provided as `{context.global_config.project_dir}`). For example, if the project root is `/tmp/myproj` and you want to generate `app.py` in a `src` subdirectory, the `target_file_path` should be `src/app.py`. The system will resolve `{context.global_config.project_dir}/src/app.py` to the absolute path. Aim for a conventional project structure (e.g., `src/`, `tests/`, `static/`, `templates/`) where appropriate.\\n\\n"
     "Strictly follow the `MasterExecutionPlan` and `MasterStageSpec` "
-    "Pydantic schemas.\n"
-    "The output MUST be a single JSON object.\n\n"
-    "Available Agents (use exact IDs):\n"
-    "- `SmartCodeGeneratorAgent_v1`: Generates or modifies code.\n"
-    "- `TestGeneratorAgent_v1`: Generates unit tests.\n"
-    "- `FileOperationAgent_v1`: Performs file system operations.\n"
-    "- `HumanInputAgent_v1`: (Use Sparingly) Requests specific input "
-    "from a human.\n\n"
-    "Key Schema Fields:\n"
+    "Pydantic schemas.\\n"
+    "The output MUST be a single JSON object.\\n\\n"
+    "Available Agents for the Master Plan:\\n"
+    "- `SmartCodeGeneratorAgent_v1`: Generates code for a single file. Requires `task_description` (str) and `target_file_path` (str, relative to project root) in `inputs`. Optionally accepts `code_specification_doc_id` (str).\\n"
+    "- `FileOperationAgent_v1`: Performs file system operations. (Alias for SystemFileSystemAgent_v1)\\n"
+    "- `SystemTestRunnerAgent_v1`: Generates and runs test code. Requires `test_target_path` (str, relative to project root, can be a file or directory) in `inputs`. Optionally accepts `pytest_options` (str), `project_root_path` (str - usually derived from context).\\n"
+    "- `SystemRequirementsGatheringAgent_v1`: Gathers and refines system requirements. Ensure its outputs distinguish between functional requirements of the app (e.g., 'app must accept zip code') and non-functional or build-time aspects.\\n"
+    "- `SystemInterventionAgent_v1`: (Use VERY Sparingly) Requests specific input from a human operator for *system-level build intervention* or clarification when the autonomous build flow cannot proceed. This is NOT for application-level user interaction.\\n"
+    "- `NoOpAgent_v1`: Does nothing. Useful for placeholder stages or connecting flows.\\n\\n"
+    "Key Schema Fields:\\n"
     "`MasterExecutionPlan`: `id`, `name`, `description`, `global_config` "
-    "(Optional), `stages` (Dict[str, MasterStageSpec]), `initial_stage`.\n"
+    "(Optional, e.g., `{\"project_dir\": \"/app/workspace\"}`), `stages` (Dict[str, MasterStageSpec]), `initial_stage`.\\n"
     "`MasterStageSpec`: `number` (int), `name` (str, unique key in stages "
     "dict), `description`, `agent_id`, `inputs` (Optional), "
     "`output_context_path` (Optional), `success_criteria` "
     "(Optional[List[str]]), `clarification_checkpoint` (Optional), "
-    "`next_stage` (str, or \"FINAL_STEP\")."
-    "\n\n"
+    "`next_stage` (str, or \\\"FINAL_STEP\\\").\"\n"
+    "\\n\\n"
     "Ensure all stage names are unique and used consistently. "
     "`initial_stage` must be a valid stage name. Every stage must have a "
-    "`next_stage`.\n"
+    "`next_stage`.\\n"
     "Example `success_criteria`: "
-    "`[\"'{context.outputs.some_stage.file_written}' == True\"]`\n"
+    "`[\\\"'{context.outputs.some_stage.file_written}' == True\\\"]`\\n"
     "Example `inputs` using context: "
-    '`{"file_path": "{context.global_config.project_dir}/data.txt"}`'
+    "`{\"file_path\": \"{context.global_config.project_dir}/data.txt\"}`"
 )
 
 DEFAULT_USER_PROMPT_TEMPLATE = (
@@ -109,14 +113,11 @@ DEFAULT_USER_PROMPT_TEMPLATE = (
 #             "stages": {
 #                 "define_show_config_spec_mock": {
 #                     "name": "Define 'show-config' CLI Command Specification (Mock)",
-#                     "agent_id": "MockHumanInputAgent_v1",
+#                     "agent_id": "MockSystemInterventionAgent_v1",
 #                     "output_context_path": "stage_outputs.define_show_config_spec_mock",
 #                     "number": 1.0,
 #                     "inputs": {
-#                         "prompt_message_for_user": "MockLLM: Describe 'show-config'.",
-#                         "target_context_path": (
-#                             "shared_data.show_config_specification_mock"
-#                         ),
+#                         "prompt_message_for_user": "Proceed with initial project setup based on gathered requirements?"
 #                     },
 #                     "success_criteria": [
 #                         "'{context.shared_data.show_config_specification_mock}' != None"
@@ -306,8 +307,17 @@ class MasterPlannerAgent:
             # Step 2: Parse the string response as JSON.
             llm_generated_plan_dict = json.loads(llm_response_str)
 
-            # --- Inject stage IDs from dictionary keys --- 
-            # This mirrors the logic in MasterExecutionPlan.from_yaml for direct LLM output validation.
+            # --- ADDED: Ensure 'id' is present and non-empty ---
+            if not llm_generated_plan_dict.get("id"):
+                new_plan_id = uuid.uuid4().hex
+                logger.warning(
+                    f"LLM-generated plan was missing an 'id' or had an empty 'id'. "
+                    f"Assigning a new UUID: {new_plan_id}"
+                )
+                llm_generated_plan_dict["id"] = new_plan_id
+            # --- END 'id' ensuring block ---
+
+            # --- Inject stage IDs from dictionary keys ---
             stages_from_llm = llm_generated_plan_dict.get("stages")
             if isinstance(stages_from_llm, dict):
                 for stage_key, stage_spec_dict in stages_from_llm.items():

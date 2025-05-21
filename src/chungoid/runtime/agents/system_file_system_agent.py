@@ -284,22 +284,22 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
             
             if sandboxed_path.exists() and not sandboxed_path.is_dir():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False, 
                     path=str(sandboxed_path), 
                     error=f"Path exists but is not a directory."
                 ).model_dump()
 
             os.makedirs(sandboxed_path, exist_ok=True)
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=True, 
                 path=str(sandboxed_path), 
                 message="Directory created or already exists."
             ).model_dump()
         except ValueError as ve: # Catch sandbox violation
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except Exception as e:
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=False, 
                 error=f"Failed to create directory: {str(e)}", 
                 path=path
@@ -311,14 +311,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
 
             if sandboxed_path.is_dir():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False,
                     path=str(sandboxed_path),
                     error="Path exists and is a directory, not a file."
                 ).model_dump()
 
             if sandboxed_path.exists() and not overwrite:
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False, 
                     path=str(sandboxed_path), 
                     error="File exists and overwrite is set to False."
@@ -329,7 +329,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
             if not parent_dir.exists():
                 os.makedirs(parent_dir, exist_ok=True)
             elif not parent_dir.is_dir():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False,
                     path=str(parent_dir),
                     error=f"Cannot create file. Parent path '{parent_dir}' exists but is not a directory."
@@ -338,21 +338,21 @@ class SystemFileSystemAgent_v1(BaseAgent):
             with open(sandboxed_path, 'w' if overwrite else 'x') as f:
                 f.write(content)
             
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=True, 
                 path=str(sandboxed_path), 
                 message="File created successfully."
             ).model_dump()
         except ValueError as ve: # Catch sandbox violation
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except FileExistsError: # Specifically for 'x' mode when file exists and overwrite is False
-             return FileSystemOutput(
+             return self.FileSystemOutput(
                 success=False, 
                 path=path, # Use original path in error message
                 error="File exists and overwrite is set to False (FileExistsError)."
             ).model_dump()
         except Exception as e:
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=False, 
                 error=f"Failed to create file: {str(e)}", 
                 path=path
@@ -369,7 +369,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
 
             if sandboxed_path.is_dir():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False,
                     path=str(sandboxed_path),
                     error="Path exists and is a directory, cannot write content to it."
@@ -380,7 +380,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
             if not parent_dir.exists():
                 os.makedirs(parent_dir, exist_ok=True)
             elif not parent_dir.is_dir():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False,
                     path=str(parent_dir),
                     error=f"Cannot write to file. Parent path '{parent_dir}' exists but is not a directory."
@@ -391,15 +391,15 @@ class SystemFileSystemAgent_v1(BaseAgent):
                 f.write(content)
             
             action = "appended to" if append else "written to"
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=True, 
                 path=str(sandboxed_path), 
                 message=f"Content successfully {action} file."
             ).model_dump()
         except ValueError as ve: # Catch sandbox violation
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except Exception as e:
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=False, 
                 error=f"Failed to write to file: {str(e)}", 
                 path=path
@@ -411,14 +411,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
 
             if not sandboxed_path.exists():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False, 
                     path=str(sandboxed_path), 
                     error="File not found."
                 ).model_dump()
             
             if sandboxed_path.is_dir():
-                return FileSystemOutput(
+                return self.FileSystemOutput(
                     success=False, 
                     path=str(sandboxed_path), 
                     error="Path is a directory, not a file."
@@ -427,16 +427,16 @@ class SystemFileSystemAgent_v1(BaseAgent):
             with open(sandboxed_path, 'r') as f:
                 content = f.read()
             
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=True, 
                 path=str(sandboxed_path), 
                 message="File read successfully.",
                 content=content
             ).model_dump()
         except ValueError as ve: # Catch sandbox violation
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except Exception as e:
-            return FileSystemOutput(
+            return self.FileSystemOutput(
                 success=False, 
                 error=f"Failed to read file: {str(e)}", 
                 path=path
@@ -448,16 +448,16 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
 
             if not sandboxed_path.exists():
-                return FileSystemOutput(success=False, path=str(sandboxed_path), error="File not found.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="File not found.").model_dump()
             if sandboxed_path.is_dir():
-                return FileSystemOutput(success=False, path=str(sandboxed_path), error="Path is a directory, not a file. Use delete_directory.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Path is a directory, not a file. Use delete_directory.").model_dump()
 
             os.remove(sandboxed_path)
-            return FileSystemOutput(success=True, path=str(sandboxed_path), message="File deleted successfully.").model_dump()
+            return self.FileSystemOutput(success=True, path=str(sandboxed_path), message="File deleted successfully.").model_dump()
         except ValueError as ve:
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except Exception as e:
-            return FileSystemOutput(success=False, error=f"Failed to delete file: {str(e)}", path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=f"Failed to delete file: {str(e)}", path=path).model_dump()
 
     async def delete_directory(self, path: str, project_root: Path, recursive: bool = False) -> Dict[str, Any]:
         """Deletes a directory. If recursive is False, the directory must be empty."""
@@ -465,35 +465,35 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
 
             if not sandboxed_path.exists():
-                return FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory not found.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory not found.").model_dump()
             if not sandboxed_path.is_dir():
-                return FileSystemOutput(success=False, path=str(sandboxed_path), error="Path is a file, not a directory. Use delete_file.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Path is a file, not a directory. Use delete_file.").model_dump()
 
             if recursive:
                 shutil.rmtree(sandboxed_path)
                 message = "Directory and its contents deleted successfully."
             else:
                 if any(sandboxed_path.iterdir()): # Check if directory is not empty
-                    return FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory is not empty and recursive is False.").model_dump()
+                    return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory is not empty and recursive is False.").model_dump()
                 os.rmdir(sandboxed_path)
                 message = "Empty directory deleted successfully."
             
-            return FileSystemOutput(success=True, path=str(sandboxed_path), message=message).model_dump()
+            return self.FileSystemOutput(success=True, path=str(sandboxed_path), message=message).model_dump()
         except ValueError as ve:
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except Exception as e:
-            return FileSystemOutput(success=False, error=f"Failed to delete directory: {str(e)}", path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=f"Failed to delete directory: {str(e)}", path=path).model_dump()
 
     async def path_exists(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Checks if a path (file or directory) exists."""
         try:
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
             exists = sandboxed_path.exists()
-            return FileSystemOutput(success=True, path=str(sandboxed_path), exists=exists, message=f"Path checked.").model_dump()
+            return self.FileSystemOutput(success=True, path=str(sandboxed_path), exists=exists, message=f"Path checked.").model_dump()
         except ValueError as ve: # Path traversal or outside project
-            return FileSystemOutput(success=False, error=str(ve), path=path, exists=False).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path, exists=False).model_dump()
         except Exception as e: # Other unexpected errors
-            return FileSystemOutput(success=False, error=f"Error checking path existence: {str(e)}", path=path, exists=False).model_dump()
+            return self.FileSystemOutput(success=False, error=f"Error checking path existence: {str(e)}", path=path, exists=False).model_dump()
 
     async def list_directory_contents(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Lists the contents (files and subdirectories) of a directory."""
@@ -501,16 +501,16 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
 
             if not sandboxed_path.exists():
-                return FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory not found.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory not found.").model_dump()
             if not sandboxed_path.is_dir():
-                return FileSystemOutput(success=False, path=str(sandboxed_path), error="Path is not a directory.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Path is not a directory.").model_dump()
 
             contents = [item.name for item in os.listdir(sandboxed_path)]
-            return FileSystemOutput(success=True, path=str(sandboxed_path), content=contents, message="Directory contents listed successfully.").model_dump()
+            return self.FileSystemOutput(success=True, path=str(sandboxed_path), content=contents, message="Directory contents listed successfully.").model_dump()
         except ValueError as ve:
-            return FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve), path=path).model_dump()
         except Exception as e:
-            return FileSystemOutput(success=False, error=f"Failed to list directory contents: {str(e)}", path=path).model_dump()
+            return self.FileSystemOutput(success=False, error=f"Failed to list directory contents: {str(e)}", path=path).model_dump()
 
     async def move_path(self, src_path: str, dest_path: str, project_root: Path, overwrite: bool = False) -> Dict[str, Any]:
         """Moves a file or directory. Overwrites destination if overwrite is True."""
@@ -519,27 +519,27 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_dest = self._resolve_and_sandbox_path(dest_path, project_root)
 
             if not sandboxed_src.exists():
-                return FileSystemOutput(success=False, path=str(sandboxed_src), error="Source path not found.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_src), error="Source path not found.").model_dump()
 
             if sandboxed_dest.exists() and not overwrite:
-                return FileSystemOutput(success=False, path=str(sandboxed_dest), error="Destination path exists and overwrite is False.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_dest), error="Destination path exists and overwrite is False.").model_dump()
             
             if sandboxed_dest.exists() and overwrite:
                 if sandboxed_dest.is_dir() and not sandboxed_src.is_dir(): # Cannot overwrite dir with file
-                     return FileSystemOutput(success=False, path=str(sandboxed_dest), error="Cannot overwrite a directory with a file.").model_dump()
+                     return self.FileSystemOutput(success=False, path=str(sandboxed_dest), error="Cannot overwrite a directory with a file.").model_dump()
                 elif sandboxed_dest.is_file() and sandboxed_src.is_dir(): # Cannot overwrite file with dir using simple move
-                     return FileSystemOutput(success=False, path=str(sandboxed_dest), error="Cannot overwrite a file with a directory using simple move. Delete destination first or use a different destination.").model_dump()
+                     return self.FileSystemOutput(success=False, path=str(sandboxed_dest), error="Cannot overwrite a file with a directory using simple move. Delete destination first or use a different destination.").model_dump()
                 elif sandboxed_dest.is_dir():
                     shutil.rmtree(sandboxed_dest) # remove existing dir if src is also dir
                 else:
                     os.remove(sandboxed_dest) # remove existing file
 
             shutil.move(str(sandboxed_src), str(sandboxed_dest))
-            return FileSystemOutput(success=True, path=str(sandboxed_dest), message=f"Path moved successfully from '{sandboxed_src}' to '{sandboxed_dest}'.").model_dump()
+            return self.FileSystemOutput(success=True, path=str(sandboxed_dest), message=f"Path moved successfully from '{sandboxed_src}' to '{sandboxed_dest}'.").model_dump()
         except ValueError as ve:
-            return FileSystemOutput(success=False, error=str(ve)).model_dump() # path will be in ve
+            return self.FileSystemOutput(success=False, error=str(ve)).model_dump() # path will be in ve
         except Exception as e:
-            return FileSystemOutput(success=False, error=f"Failed to move path: {str(e)}").model_dump()
+            return self.FileSystemOutput(success=False, error=f"Failed to move path: {str(e)}").model_dump()
 
     async def copy_path(self, src_path: str, dest_path: str, project_root: Path, overwrite: bool = False) -> Dict[str, Any]:
         """Copies a file or directory. Overwrites destination if overwrite is True."""
@@ -548,10 +548,10 @@ class SystemFileSystemAgent_v1(BaseAgent):
             sandboxed_dest = self._resolve_and_sandbox_path(dest_path, project_root)
 
             if not sandboxed_src.exists():
-                return FileSystemOutput(success=False, path=str(sandboxed_src), error="Source path not found.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_src), error="Source path not found.").model_dump()
 
             if sandboxed_dest.exists() and not overwrite:
-                return FileSystemOutput(success=False, path=str(sandboxed_dest), error="Destination path exists and overwrite is False.").model_dump()
+                return self.FileSystemOutput(success=False, path=str(sandboxed_dest), error="Destination path exists and overwrite is False.").model_dump()
 
             if sandboxed_dest.exists() and overwrite:
                 if sandboxed_dest.is_dir():
@@ -564,11 +564,11 @@ class SystemFileSystemAgent_v1(BaseAgent):
             else: # It's a file
                 shutil.copy2(sandboxed_src, sandboxed_dest) # copy2 preserves metadata
             
-            return FileSystemOutput(success=True, path=str(sandboxed_dest), message=f"Path copied successfully from '{sandboxed_src}' to '{sandboxed_dest}'.").model_dump()
+            return self.FileSystemOutput(success=True, path=str(sandboxed_dest), message=f"Path copied successfully from '{sandboxed_src}' to '{sandboxed_dest}'.").model_dump()
         except ValueError as ve:
-            return FileSystemOutput(success=False, error=str(ve)).model_dump()
+            return self.FileSystemOutput(success=False, error=str(ve)).model_dump()
         except Exception as e:
-            return FileSystemOutput(success=False, error=f"Failed to copy path: {str(e)}").model_dump()
+            return self.FileSystemOutput(success=False, error=f"Failed to copy path: {str(e)}").model_dump()
 
     # ADDED: New method to write artifact content to file
     async def write_artifact_to_file_tool(
@@ -583,7 +583,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
         if not self._pcma_agent:
             error_msg = "ProjectChromaManagerAgent not available to SystemFileSystemAgent. Cannot retrieve artifact."
             self._logger.error(error_msg)
-            return FileSystemOutput(success=False, error=error_msg).model_dump()
+            return self.FileSystemOutput(success=False, error=error_msg).model_dump()
 
         self._logger.info(f"Attempting to retrieve artifact '{artifact_doc_id}' from collection '{collection_name}'.")
         try:
@@ -595,45 +595,50 @@ class SystemFileSystemAgent_v1(BaseAgent):
             if not retrieved_artifact or retrieved_artifact.status != "SUCCESS" or not retrieved_artifact.content:
                 error_msg = f"Failed to retrieve artifact '{artifact_doc_id}' from collection '{collection_name}'. Status: {retrieved_artifact.status if retrieved_artifact else 'N/A'}, Content Empty: {not retrieved_artifact.content if retrieved_artifact else 'N/A'}"
                 self._logger.error(error_msg)
-                return FileSystemOutput(success=False, error=error_msg).model_dump()
+                return self.FileSystemOutput(success=False, error=error_msg).model_dump()
             
-            content_to_write = str(retrieved_artifact.content)
-            self._logger.info(f"Artifact '{artifact_doc_id}' retrieved. Content length: {len(content_to_write)}. Target file: {target_file_path}")
-
-            # Now use existing file writing logic (similar to create_file or write_to_file)
-            sandboxed_target_path = self._resolve_and_sandbox_path(target_file_path, project_root)
-
-            if sandboxed_target_path.exists() and not overwrite:
-                return FileSystemOutput(
-                    success=False, 
-                    path=str(sandboxed_target_path), 
-                    error=f"File '{target_file_path}' already exists and overwrite is False."
-                ).model_dump()
-
-            if sandboxed_target_path.is_dir():
-                 return FileSystemOutput(
-                    success=False, 
-                    path=str(sandboxed_target_path), 
-                    error=f"Target path '{target_file_path}' is a directory, cannot write file content."
-                ).model_dump()
-
-            sandboxed_target_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(sandboxed_target_path, "w", encoding="utf-8") as f:
-                f.write(content_to_write)
+            content = str(retrieved_artifact.content)
+            if not content:
+                error_msg = f"Artifact content for doc_id '{artifact_doc_id}' in collection '{collection_name}' is empty. Cannot write to file."
+                self._logger.error(error_msg)
+                return self.FileSystemOutput(success=False, error=error_msg).model_dump()
             
-            self._logger.info(f"Successfully wrote artifact '{artifact_doc_id}' to '{sandboxed_target_path}'.")
-            return FileSystemOutput(
-                success=True, 
-                path=str(sandboxed_target_path), 
-                message=f"Artifact '{artifact_doc_id}' successfully written to '{target_file_path}'."
-            ).model_dump()
+            # Resolve target path
+            try:
+                absolute_target_path = self._resolve_and_sandbox_path(target_file_path, project_root)
+            except ValueError as path_e:
+                self._logger.error(f"Path validation error for target_file_path '{target_file_path}': {path_e}")
+                return self.FileSystemOutput(success=False, error=str(path_e), path=target_file_path).model_dump()
 
-        except ValueError as ve: # Catch path resolution errors
-            self._logger.error(f"Path validation error for '{target_file_path}': {ve}", exc_info=True)
-            return FileSystemOutput(success=False, error=f"Path validation error: {ve}").model_dump()
+            # Check for overwrite
+            if absolute_target_path.exists() and not overwrite:
+                error_msg = f"File '{absolute_target_path}' already exists and overwrite is False."
+                self._logger.warning(error_msg)
+                return self.FileSystemOutput(success=False, error=error_msg, path=str(absolute_target_path)).model_dump()
+
+            # Create parent directories if they don't exist
+            try:
+                absolute_target_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as dir_e:
+                error_msg = f"Failed to create parent directories for '{absolute_target_path}': {dir_e}"
+                self._logger.error(error_msg, exc_info=True)
+                return self.FileSystemOutput(success=False, error=error_msg, path=str(absolute_target_path)).model_dump()
+
+            # Write content to file
+            try:
+                with open(absolute_target_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                self._logger.info(f"Successfully wrote artifact '{artifact_doc_id}' from collection '{collection_name}' to '{absolute_target_path}'.")
+                return self.FileSystemOutput(success=True, path=str(absolute_target_path), message="Artifact written to file successfully.").model_dump()
+            except Exception as write_e:
+                error_msg = f"Failed to write content to file '{absolute_target_path}': {write_e}"
+                self._logger.error(error_msg, exc_info=True)
+                return self.FileSystemOutput(success=False, error=error_msg, path=str(absolute_target_path)).model_dump()
+
         except Exception as e:
-            self._logger.error(f"Error in write_artifact_to_file_tool for artifact '{artifact_doc_id}' to '{target_file_path}': {e}", exc_info=True)
-            return FileSystemOutput(success=False, error=f"Failed to write artifact to file: {e}", details=traceback.format_exc()).model_dump()
+            self._logger.error(f"Unexpected error in write_artifact_to_file_tool for doc_id '{artifact_doc_id}': {e}", exc_info=True)
+            # Ensure this also uses self.FileSystemOutput
+            return self.FileSystemOutput(success=False, error=f"Failed to write artifact to file: {e}", details=traceback.format_exc()).model_dump()
 
     # --------------------------------------------------------------------------
 

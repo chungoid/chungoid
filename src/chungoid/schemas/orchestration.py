@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from chungoid.schemas.common_enums import StageStatus
+from chungoid.schemas.master_flow import MasterExecutionPlan
 
 class SharedContext(BaseModel):
     """
@@ -17,6 +18,9 @@ class SharedContext(BaseModel):
     
     run_id: Optional[str] = Field(None, description="The unique identifier for the current execution run of a flow.")
     flow_id: Optional[str] = Field(None, description="The unique identifier for the specific flow being executed.")
+
+    initial_goal_str: Optional[str] = Field(None, description="The initial user goal string that triggered the flow run, if applicable.")
+    current_master_plan: Optional[MasterExecutionPlan] = Field(None, description="The active MasterExecutionPlan for the current run.")
 
     current_cycle_id: Optional[str] = Field(None, description="Identifier for the current iteration or operational cycle.")
     current_stage_id: Optional[str] = Field(None, description="ID of the currently executing stage in the workflow.")

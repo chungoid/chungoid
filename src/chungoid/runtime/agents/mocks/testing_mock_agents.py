@@ -483,6 +483,7 @@ def get_mock_agent_fallback_map() -> Dict[str, Any]: # Changed type hint for now
         # However, the best practice is to update test plans to use the new ID "SystemInterventionAgent_v1".
 
         # For now, let's assume the goal is to use the new agent if "SystemInterventionAgent_v1" is requested.
+
         MockSystemInterventionAgent.AGENT_ID: MockSystemInterventionAgent,
 
         # Add other general-purpose mock agents that might be used in core test flows
@@ -491,3 +492,11 @@ def get_mock_agent_fallback_map() -> Dict[str, Any]: # Changed type hint for now
         MockSystemRequirementsGatheringAgent.AGENT_ID: MockSystemRequirementsGatheringAgent,
 
     } 
+
+# This setup ensures that the fallback mechanism for mock agents is exercised
+# if the agent_registry doesn't have them pre-loaded.
+# It also serves as a basic test for agent instantiation via fallback.
+
+# For new tests, always use "SystemInterventionAgent_v1" or the mock's direct ID.
+
+# Check if a specific agent from the fallback map is callable 

@@ -148,7 +148,7 @@ async def test_master_planner_agent_includes_original_request_and_context_in_pro
         # Return a valid minimal plan dict to satisfy the rest of the agent logic
         return {
             "id": "spy_plan", "name": "Spy Plan", "description": "Plan for spy test",
-            "start_stage": "stage1", "stages": {"stage1": {"name": "stage1", "number": 1, "agent_id": "MockHumanInputAgent_v1", "next_stage": "FINAL_STEP"}}
+            "start_stage": "stage1", "stages": {"stage1": {"name": "stage1", "number": 1, "agent_id": "MockSystemInterventionAgent_v1", "next_stage": "FINAL_STEP"}}
         }
 
     with patch.object(MockLLMClient, 'generate_json', side_effect=generate_json_spy) as mock_llm_generate_json_call:
@@ -312,7 +312,7 @@ async def test_master_planner_agent_includes_original_request_and_context_in_pro
         # Return a valid minimal plan dict to satisfy the rest of the agent logic
         return {
             "id": "spy_plan", "name": "Spy Plan", "description": "Plan for spy test",
-            "start_stage": "stage1", "stages": {"stage1": {"name": "stage1", "number": 1, "agent_id": "MockHumanInputAgent_v1", "next_stage": "FINAL_STEP"}}
+            "start_stage": "stage1", "stages": {"stage1": {"name": "stage1", "number": 1, "agent_id": "MockSystemInterventionAgent_v1", "next_stage": "FINAL_STEP"}}
         }
 
     with patch.object(MockLLMClient, 'generate_json', side_effect=generate_json_spy) as mock_llm_generate_json_call:
@@ -476,7 +476,7 @@ async def test_master_planner_agent_includes_original_request_and_context_in_pro
         # Return a valid minimal plan dict to satisfy the rest of the agent logic
         return {
             "id": "spy_plan", "name": "Spy Plan", "description": "Plan for spy test",
-            "start_stage": "stage1", "stages": {"stage1": {"name": "stage1", "number": 1, "agent_id": "MockHumanInputAgent_v1", "next_stage": "FINAL_STEP"}}
+            "start_stage": "stage1", "stages": {"stage1": {"name": "stage1", "number": 1, "agent_id": "MockSystemInterventionAgent_v1", "next_stage": "FINAL_STEP"}}
         }
 
     with patch.object(MockLLMClient, 'generate_json', side_effect=generate_json_spy) as mock_llm_generate_json_call:
@@ -563,7 +563,7 @@ async def test_master_planner_agent_prompt_no_proj_context():
         captured_args['system_prompt'] = system_prompt
         captured_args['user_prompt'] = user_prompt
         return {"id": "spy_plan_no_ctx", "name": "Spy Plan No Ctx", "description": "Plan for spy test no ctx",
-                "start_stage": "s1", "stages": {"s1": {"name": "s1", "number": 1, "agent_id": "MockHumanInputAgent_v1", "next_stage": "FINAL_STEP"}}}
+                "start_stage": "s1", "stages": {"s1": {"name": "s1", "number": 1, "agent_id": "MockSystemInterventionAgent_v1", "next_stage": "FINAL_STEP"}}}
 
     with patch.object(MockLLMClient, 'generate_json', side_effect=generate_json_spy) as mock_llm_call:
         output = await agent.invoke_async(planner_input)

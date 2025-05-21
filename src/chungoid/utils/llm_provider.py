@@ -101,7 +101,7 @@ class MockLLMProvider(LLMProvider):
                     "number": 1,
                     "name": "Mock Stage 1",
                     "description": "This is a mock stage.",
-                    "agent_id": "HumanInputAgent_v1", # A known safe agent
+                    "agent_id": "SystemInterventionAgent_v1", # A known safe agent
                     "inputs": {"prompt_message_for_user": "Mock input for stage 1"},
                     "next_stage": "FINAL_STEP"
                 }

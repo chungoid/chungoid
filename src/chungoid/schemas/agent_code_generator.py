@@ -10,7 +10,9 @@ class SmartCodeGeneratorAgentInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this code generation task.")
     project_id: str = Field(..., description="Project ID for ProjectChromaManagerAgent interactions.")
     
-    code_specification_doc_id: str = Field(..., description="ChromaDB ID of the detailed code specification document (e.g., from a plan stage). Content expected to be Markdown or structured text.")
+    task_description: str = Field(..., description="Core description of the code to be generated or task to be performed. Used as primary spec if code_specification_doc_id is absent.")
+
+    code_specification_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the detailed code specification document (e.g., from a plan stage). Content expected to be Markdown or structured text.")
     target_file_path: str = Field(..., description="Intended relative path of the file to be created or modified.")
     programming_language: str = Field("python", description="Target programming language.")
 
