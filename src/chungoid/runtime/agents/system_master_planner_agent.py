@@ -307,12 +307,13 @@ class MasterPlannerAgent:
             # Step 2: Parse the string response as JSON.
             llm_generated_plan_dict = json.loads(llm_response_str)
 
-            # --- ADDED: Ensure 'id' is present and non-empty ---
-            if not llm_generated_plan_dict.get("id"):
+            # --- ADDED: Ensure 'id' is present, a non-empty string ---
+            current_id = llm_generated_plan_dict.get("id")
+            if not isinstance(current_id, str) or not current_id.strip():
                 new_plan_id = uuid.uuid4().hex
                 logger.warning(
-                    f"LLM-generated plan was missing an 'id' or had an empty 'id'. "
-                    f"Assigning a new UUID: {new_plan_id}"
+                    f"LLM-generated plan was missing an 'id', had an empty 'id', or 'id' was not a string. "
+                    f"Original id: '{current_id}'. Assigning a new UUID: {new_plan_id}"
                 )
                 llm_generated_plan_dict["id"] = new_plan_id
             # --- END 'id' ensuring block ---
