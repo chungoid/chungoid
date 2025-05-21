@@ -1718,6 +1718,38 @@ class AsyncOrchestrator(BaseOrchestrator):
                     self._emit_metric(MetricEventType.MASTER_STAGE_END, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=resolved_agent_id, data={"status": StageStatus.COMPLETED_SUCCESS.value})
                     self.state_manager.record_stage_end(run_id, flow_id, current_stage_name, StageStatus.COMPLETED_SUCCESS, outputs=stage_output)
                     self.shared_context.current_stage_status = StageStatus.COMPLETED_SUCCESS
+                    # Update shared context with outputs if output_context_path is specified
+                    if stage_output and stage_spec.output_context_path: # Check stage_output exists
+                        key_to_use_in_outputs_dict = stage_spec.output_context_path
+                        # CORE FIX: Strip "outputs." prefix if it exists
+                        if stage_spec.output_context_path.startswith("outputs."):
+                            key_to_use_in_outputs_dict = stage_spec.output_context_path[len("outputs."):]
+                            self.logger.info(f"Run {run_id}: Adjusted output_context_path: from '{stage_spec.output_context_path}' to '{key_to_use_in_outputs_dict}' for storing in shared_context.outputs.")
+                        
+                        self.shared_context.outputs[key_to_use_in_outputs_dict] = stage_output.model_dump()
+                        self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.outputs with key '{key_to_use_in_outputs_dict}'.")
+                        
+                        # Keep a flat copy for immediate next stage access as well
+                        self.shared_context.previous_stage_outputs = stage_output.model_dump() 
+
+                        # Also update previous_stage_outputs_by_name
+                        if hasattr(self.shared_context, 'previous_stage_outputs_by_name'): # Defensive check
+                            self.shared_context.previous_stage_outputs_by_name[current_stage_name] = stage_output.model_dump()
+                            self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.previous_stage_outputs_by_name.")
+                        else:
+                            self.logger.warning(f"Run {run_id}: self.shared_context does not have 'previous_stage_outputs_by_name'. Skipping update.")
+                            
+                    elif stage_output: # Stage output exists, but no specific output_context_path
+                        self.shared_context.previous_stage_outputs = stage_output.model_dump()
+                        self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.previous_stage_outputs (no specific output_context_path).")
+                        if hasattr(self.shared_context, 'previous_stage_outputs_by_name'): # Defensive check
+                             self.shared_context.previous_stage_outputs_by_name[current_stage_name] = stage_output.model_dump()
+                        
+                    else: # No stage_output model (e.g. agent returned None)
+                        self.shared_context.previous_stage_outputs = {}
+                        self.logger.debug(f"Run {run_id}: No stage_output for stage '{current_stage_name}'. Setting previous_stage_outputs to empty dict.")
+                        if hasattr(self.shared_context, 'previous_stage_outputs_by_name'): # Defensive check
+                            self.shared_context.previous_stage_outputs_by_name[current_stage_name] = {}
 
                     # BEGIN: Automatic artifact materialization for SmartCodeGeneratorAgent_v1
                     if resolved_agent_id == "SmartCodeGeneratorAgent_v1":

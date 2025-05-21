@@ -195,6 +195,9 @@ from chungoid.utils.llm_provider import LLMProvider # Already imported but ensur
 # ADDED: Import ProjectChromaManagerAgent_v1 at the top for the map
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
+# ADDED: Import for NoOpAgent_v1
+from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1 
+
 # --- Production System Agents Fallback Map ---
 # This map defines the primary fallback for system agents.
 # It uses the actual agent classes.
@@ -208,6 +211,7 @@ PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] =
     SystemFileSystemAgent_v1.AGENT_ID: SystemFileSystemAgent_v1, # Ensure this uses the class name
     SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
     ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
+    NoOpAgent_v1.AGENT_ID: NoOpAgent_v1, # ADDED NoOpAgent_v1
     # ProjectChromaManagerAgent_v1 is typically instantiated directly in CLI commands
     # and added to the fallback map as an instance, not as a class here.
     # AutonomousEngineAgent_v1 is handled by get_autonomous_engine_agent_fallback_map
