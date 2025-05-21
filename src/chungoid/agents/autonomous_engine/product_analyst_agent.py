@@ -3,13 +3,18 @@ from __future__ import annotations
 import logging
 import datetime # Not strictly used, but good for potential timestamping
 import uuid
-from typing import Any, Dict, Optional, TypeVar, Generic, ClassVar
+from typing import Any, Dict, Optional, TypeVar, Generic, ClassVar, TYPE_CHECKING
 from pathlib import Path
 import json
 
 from pydantic import BaseModel, Field, ValidationError
 
-from chungoid.runtime.agents.agent_base import BaseAgent
+# MODIFIED: Use TYPE_CHECKING for BaseAgent import
+# if TYPE_CHECKING: # REMOVE THIS LINE
+from chungoid.runtime.agents.agent_base import BaseAgent, InputSchema, OutputSchema # MOVED OUT
+if TYPE_CHECKING: # AgentProvider can likely stay here if only for type hints
+    from chungoid.utils.agent_resolver import AgentProvider
+
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 # Assuming ProjectChromaManagerAgent will provide methods to get/store artifacts
@@ -18,7 +23,9 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
     RetrieveArtifactOutput, # Added
     PROJECT_GOALS_COLLECTION, # Added
     LOPRD_ARTIFACTS_COLLECTION, # For storing LOPRD
-    AGENT_REFLECTIONS_AND_LOGS_COLLECTION # Added for ARCA feedback
+    AGENT_REFLECTIONS_AND_LOGS_COLLECTION, # Added for ARCA feedback
+    SHARED_ARTIFACTS_COLLECTION,
+    ARTIFACT_TYPE_PRODUCT_ANALYSIS_JSON
 )
 from chungoid.schemas.common import ConfidenceScore # Assuming a common schema exists
 from chungoid.schemas.orchestration import SharedContext # ADDED SharedContext IMPORT
@@ -26,6 +33,7 @@ from chungoid.schemas.autonomous_engine.loprd_schema import LOPRD # MODIFIED: Im
 from chungoid.utils.json_schema_loader import load_json_schema_from_file # For LOPRD schema
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard categories/visibility
+from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactInput
 
 logger = logging.getLogger(__name__)
 

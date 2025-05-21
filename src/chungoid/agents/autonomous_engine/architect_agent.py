@@ -75,7 +75,19 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
         config: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None
     ):
-        super().__init__(config=config, system_context=system_context, agent_id=agent_id)
+        kwargs_for_super = {
+            "llm_provider": llm_provider,
+            "prompt_manager": prompt_manager,
+            "project_chroma_manager": project_chroma_manager
+        }
+        if config is not None:
+            kwargs_for_super["config"] = config
+        if system_context is not None:
+            kwargs_for_super["system_context"] = system_context
+        if agent_id is not None:
+            kwargs_for_super["agent_id"] = agent_id
+
+        super().__init__(**kwargs_for_super)
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
         self._project_chroma_manager = project_chroma_manager

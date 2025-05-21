@@ -1,7 +1,7 @@
 """Utilities for interacting with ChromaDB for context storage."""
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import chromadb
 from chromadb.config import Settings # Ensure Settings is imported
 from .config_loader import get_config
@@ -54,26 +54,38 @@ def get_chroma_client() -> chromadb.ClientAPI:
     """
     global _client, _client_project_context, _client_mode, _current_project_directory
 
+    # Detailed logging at the beginning of the function
+    logger.debug(f"Enter get_chroma_client. Current state before any logic: _client is {{'NOT None' if _client else 'None'}}, _client_mode='{_client_mode}', _client_project_context='{_client_project_context}', _current_project_directory='{_current_project_directory}'")
+
     # Core configuration loading directly using the imported get_config
     app_config = get_config() 
     chroma_config = app_config.get("chromadb", {})
     mode = chroma_config.get("mode", "in-memory") # Default to in-memory
+    logger.debug(f"  Determined mode from config: '{mode}'")
 
     # Determine the effective project directory for persistent mode
-    # This is crucial for the singleton logic: if project context changes, client needs re-init
     effective_project_dir = _current_project_directory # Can be None
+    logger.debug(f"  Effective project directory for this call: '{effective_project_dir}'")
 
     # Singleton Re-initialization Logic:
     # Re-initialize if:
     # 1. Client doesn't exist OR
     # 2. Mode has changed OR
     # 3. For persistent mode, if the effective_project_dir has changed from what was used for init.
-    if (
-        _client is None or 
-        _client_mode != mode or 
-        (mode == "persistent" and _client_project_context != effective_project_dir)
-    ):
-        logger.info(f"Chroma client needs initialization/re-initialization. Current mode: '{mode}'.")
+    
+    needs_reinit = False
+    if _client is None:
+        logger.debug("  Condition met: _client is None. Needs re-initialization.")
+        needs_reinit = True
+    elif _client_mode != mode:
+        logger.debug(f"  Condition met: _client_mode ('{_client_mode}') != mode ('{mode}'). Needs re-initialization.")
+        needs_reinit = True
+    elif mode == "persistent" and _client_project_context != effective_project_dir:
+        logger.debug(f"  Condition met: mode is 'persistent' AND _client_project_context ('{_client_project_context}') != effective_project_dir ('{effective_project_dir}'). Needs re-initialization.")
+        needs_reinit = True
+
+    if needs_reinit:
+        logger.info(f"Chroma client needs initialization/re-initialization. Current mode: '{mode}'. Effective project dir: '{effective_project_dir}'")
         if mode == "in-memory":
             logger.debug("Initializing in-memory ChromaDB client.")
             _client = chromadb.Client(Settings(is_persistent=False)) # Explicitly non-persistent
@@ -83,10 +95,11 @@ def get_chroma_client() -> chromadb.ClientAPI:
                 logger.error("ChromaDB mode is 'http' but no URL is configured.")
                 raise ChromaOperationError("ChromaDB HTTP URL not configured.")
             logger.debug(f"Initializing HTTP ChromaDB client for URL: {server_url}")
-            _client = _factory_get_client(mode="http", server_url=server_url, project_dir=Path(".")) # project_dir is not strictly used for http
+            # project_dir is not strictly used for http but pass something valid
+            _client = _factory_get_client(mode="http", server_url=server_url, project_dir=Path(".") if effective_project_dir is None else effective_project_dir)
         elif mode == "persistent":
             if not effective_project_dir:
-                logger.error("ChromaDB mode is 'persistent' but no project directory context is set.")
+                logger.error("ChromaDB mode is 'persistent' but no project directory context is set (effective_project_dir is None).")
                 raise ChromaOperationError("ChromaDB project directory context not set for persistent mode.")
             logger.debug(f"Initializing persistent ChromaDB client for project: {effective_project_dir}")
             # _factory_get_client handles path construction using effective_project_dir
@@ -97,12 +110,15 @@ def get_chroma_client() -> chromadb.ClientAPI:
         
         _client_mode = mode
         _client_project_context = effective_project_dir if mode == "persistent" else None # Store context for persistent
-        logger.info(f"ChromaDB client initialized in '{mode}' mode.")
+        logger.info(f"ChromaDB client initialized in '{_client_mode}' mode. _client is now {{'NOT None' if _client else 'None'}}. _client_project_context set to '{_client_project_context}'.")
     else:
-        logger.debug("Reusing existing ChromaDB client.")
+        logger.debug(f"Reusing existing ChromaDB client. Mode: '{_client_mode}', Project Context: '{_client_project_context}'")
 
     if not _client: # Should be caught by earlier logic, but as a safeguard
+        logger.error("CRITICAL: ChromaDB client is None after get_chroma_client logic. THIS SHOULD NOT HAPPEN.")
         raise ChromaOperationError("ChromaDB client could not be initialized.")
+    
+    logger.debug(f"Exit get_chroma_client: Returning client. _client is {{'NOT None' if _client else 'None'}}, _client_mode='{_client_mode}', _client_project_context='{_client_project_context}'")
     return _client
 
 # --- Internal Factory --- 
@@ -189,14 +205,13 @@ def _factory_get_client(
 
 def get_or_create_collection(collection_name: str) -> Optional[chromadb.Collection]:
     """Helper to get or create a collection, returning the collection object or None."""
-    client = get_chroma_client()
-    if not client:
+    collection = get_chroma_client().get_or_create_collection(name=collection_name)
+    if not collection:
         logger.error(
             f"Cannot get/create collection '{collection_name}': ChromaDB client not available."
         )
         return None
     try:
-        collection = client.get_or_create_collection(name=collection_name)
         logger.debug(f"Ensured collection exists: {collection_name}")
         return collection
     except Exception as e:
@@ -377,3 +392,35 @@ def get_persistent_chroma_client_direct_example(project_directory: Path) -> chro
     except Exception as e:
         logger.error(f"Failed to initialize PersistentClient at {persist_path}: {e}", exc_info=True)
         raise
+
+@classmethod
+def get_client(cls, db_path: Optional[str] = None) -> Union[chromadb.HttpClient, chromadb.PersistentClient]:
+    logger.debug(f"Enter ChromaUtils.get_client: db_path='{db_path}'. Current state before lock: _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
+    with cls._client_lock:
+        logger.debug(f"  ChromaUtils.get_client inside lock: db_path='{db_path}'. Current state: _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
+        if db_path:  # Specific path requested
+            logger.debug(f"    Specific path branch. Checking condition: (db_path ('{db_path}') != _current_db_path ('{cls._current_db_path}')) OR (_client is {'None' if cls._client is None else 'NOT None'}) OR (_current_db_path is None and db_path is not None)")
+            if cls._client is None or cls._current_db_path != db_path:
+                logger.info(f"Chroma client needs re-initialization for specific path: {db_path}. Previous path: {cls._current_db_path}, client was {'NOT None' if cls._client else 'None'}.")
+                cls._current_db_path = db_path
+                cls._client = chromadb.PersistentClient(path=db_path)
+                logger.info(f"ChromaDB PersistentClient (NEW INSTANCE) initialized for specific path: {db_path}. _client is now {'NOT None' if cls._client else 'None'}.")
+            else:  # db_path matches _current_db_path AND _client is set
+                logger.info(f"Reusing existing ChromaDB PersistentClient for specific path: {db_path}. _client was already {'NOT None' if cls._client else 'None'}.")
+        else:  # Default client requested (db_path is None)
+            logger.debug(f"    Default client branch. Current state: _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
+            logger.debug(f"    Checking condition: (_client is None) OR (_current_db_path is {'NOT None' if cls._current_db_path else 'None'}) different from default path: {cls.DEFAULT_CHROMA_DB_PATH}")
+            if cls._client is None or cls._current_db_path != cls.DEFAULT_CHROMA_DB_PATH:
+                logger.info(f"Chroma client needs default initialization. Client was {'NOT None' if cls._client else 'None'}, _current_db_path was {cls._current_db_path}. Default path: {cls.DEFAULT_CHROMA_DB_PATH}")
+                cls.initialize_client(force_reinit=True)  # force_reinit will ensure it sets _client and _current_db_path (to default)
+                logger.info(f"Default client initialization complete. _client is now {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
+            else:  # Default client already exists and was for the default path
+                logger.info(f"Reusing existing default ChromaDB client for path {cls.DEFAULT_CHROMA_DB_PATH}. _client is {'NOT None' if cls._client else 'None'}")
+
+        if cls._client is None:  # Should not happen if logic above is correct
+            logger.error("CRITICAL: ChromaDB client is None after get_client logic. THIS SHOULD NOT HAPPEN.")
+            raise ChromaDBNotInitializedError("ChromaDB client is not initialized after get_client logic.")
+        
+        logger.debug(f"  Exit ChromaUtils.get_client inside lock: Returning client. _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
+    logger.debug(f"Exit ChromaUtils.get_client after lock: _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
+    return cls._client

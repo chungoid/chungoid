@@ -49,6 +49,7 @@ QUALITY_ASSURANCE_LOGS_COLLECTION = "quality_assurance_logs"
 LIBRARY_DOCUMENTATION_COLLECTION = "library_documentation_collection"
 EXTERNAL_MCP_TOOLS_DOCUMENTATION_COLLECTION = "external_mcp_tools_documentation_collection"
 REVIEW_REPORTS_COLLECTION = "review_reports_collection" # Added for blueprint reviews and similar
+SHARED_ARTIFACTS_COLLECTION = "shared_artifacts_collection" # ADDED
 
 # List of all defined collections for easy iteration
 ALL_PROJECT_COLLECTIONS = [
@@ -69,6 +70,7 @@ ALL_PROJECT_COLLECTIONS = [
     LIBRARY_DOCUMENTATION_COLLECTION,
     EXTERNAL_MCP_TOOLS_DOCUMENTATION_COLLECTION,
     REVIEW_REPORTS_COLLECTION, # Added to the list
+    SHARED_ARTIFACTS_COLLECTION, # ADDED
 ]
 
 # --- Standardized Artifact Types (for metadata.artifact_type) --- #
@@ -110,6 +112,7 @@ ARTIFACT_TYPE_ARCA_LOG_ENTRY_JSON = "ARCA_LogEntry_JSON" # For AGENT_REFLECTIONS
 ARTIFACT_TYPE_AGENT_REFLECTION_JSON = "AgentReflection_JSON" # For AGENT_REFLECTIONS_AND_LOGS_COLLECTION
 ARTIFACT_TYPE_QA_LOG_ENTRY_JSON = "QA_LogEntry_JSON" # For QUALITY_ASSURANCE_LOGS_COLLECTION
 ARTIFACT_TYPE_DEBUGGING_SESSION_LOG_JSON = "DebuggingSessionLog_JSON" # For DEBUGGING_SESSION_LOGS_COLLECTION
+ARTIFACT_TYPE_PRODUCT_ANALYSIS_JSON = "ProductAnalysis_JSON" # For ProductAnalystAgent outputs
 
 
 # --- API Method Schemas (as Pydantic models) --- #

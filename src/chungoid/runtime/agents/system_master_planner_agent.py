@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, ClassVar
 import uuid
 from datetime import datetime, timezone
 
@@ -16,6 +16,7 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.runtime.agents.agent_base import BaseAgent
 
 # MODIFIED: Added ProjectChromaManagerAgent_v1 and Path for conceptual PCMA instantiation
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
@@ -162,39 +163,41 @@ DEFAULT_USER_PROMPT_TEMPLATE = (
 #         return mock_plan_dict
 
 
-class MasterPlannerAgent:
-    AGENT_ID = "SystemMasterPlannerAgent_v1"
-    AGENT_NAME = "System Master Planner Agent"
-    VERSION = "0.2.0"  # Updated version
-    DESCRIPTION = (
+class MasterPlannerAgent(BaseAgent):
+    AGENT_ID: ClassVar[str] = "SystemMasterPlannerAgent_v1"
+    AGENT_NAME: ClassVar[str] = "System Master Planner Agent"
+    VERSION: ClassVar[str] = "0.2.0"  # Updated version
+    DESCRIPTION: ClassVar[str] = (
         "Generates a MasterExecutionPlan based on a high-level user goal using an "
         "LLM."
     )  # Updated
-    CATEGORY = AgentCategory.SYSTEM_ORCHESTRATION
-    VISIBILITY = AgentVisibility.PUBLIC
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
-    NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME = "blueprint_to_flow_agent_v1.yaml"
+    NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME: ClassVar[str] = "blueprint_to_flow_agent_v1.yaml"
+
+    # MODIFIED: Declared fields
+    project_chroma_manager: ProjectChromaManagerAgent_v1
+    system_prompt: str
 
     def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, project_chroma_manager: ProjectChromaManagerAgent_v1):
-        # In a real scenario, the LLM client would be injected or initialized here
-        # self.llm_client: LLMInterface = get_llm_client()
-        # self.llm_client = MockLLMClient()  # Using placeholder for now
-        if llm_provider is None:
-            logger.error("MasterPlannerAgent requires an LLMProvider.")
-            raise ValueError("LLMProvider cannot be None for MasterPlannerAgent")
-        if prompt_manager is None:
-            logger.error("MasterPlannerAgent requires a PromptManager.")
-            raise ValueError("PromptManager cannot be None for MasterPlannerAgent")
-        if project_chroma_manager is None: # MODIFIED: Added check for PCMA
-            logger.error("MasterPlannerAgent requires a ProjectChromaManagerAgent.")
-            raise ValueError("ProjectChromaManagerAgent cannot be None for MasterPlannerAgent in Blueprint-to-Flow mode")
-            
-        self.llm_client = llm_provider # Use the injected provider
-        self.prompt_manager = prompt_manager # Store prompt_manager
-        self.project_chroma_manager = project_chroma_manager # MODIFIED: Store PCMA
-        self.system_prompt = (
-            DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT
-        )  # Loaded at init
+        initial_data = {
+            "llm_provider": llm_provider,
+            "prompt_manager": prompt_manager,
+            "project_chroma_manager": project_chroma_manager,
+            "system_prompt": DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT
+        }
+        # Pydantic's BaseModel.__init__ (called via super() chain) will use these
+        # to populate fields from BaseAgent (llm_provider, prompt_manager)
+        # and MasterPlannerAgent (project_chroma_manager, system_prompt).
+        super().__init__(**initial_data)
+
+        # Post-initialization checks or logic can go here if needed,
+        # but basic field presence/type for declared non-optional fields 
+        # is handled by Pydantic during super().__init__.
+        # The previous "if self.project_chroma_manager is None:" check is removed
+        # as Pydantic would have raised a ValidationError if project_chroma_manager
+        # (a non-optional field) was None after super().__init__.
 
     async def invoke_async(
         self,
@@ -299,17 +302,14 @@ class MasterPlannerAgent:
         )
 
         try:
-            # The LLMProvider's generate method might take system_prompt separately or expect it combined.
-            # For this example, let's assume we combine if system_prompt is present.
-            final_prompt_for_llm = current_user_prompt
-            if current_system_prompt and current_system_prompt.strip(): # Only prepend if system prompt is non-empty
-                final_prompt_for_llm = f"{current_system_prompt}\n\n{current_user_prompt}"
-            
-            llm_response_str = await self.llm_client.generate(
-                prompt=final_prompt_for_llm
-                # model_id="gpt-4-turbo-preview", # Or from config
-                # json_response=True # REMOVED: This was causing the TypeError. OpenAILLMProvider handles response_format.
+            # MODIFIED: Use self.llm_provider
+            llm_response_str = await self.llm_provider.generate(
+                system_prompt=current_system_prompt,
+                prompt=current_user_prompt,
+                model_id="gpt-4-turbo-preview", # MODIFIED: Used a specific model ID
+                temperature=0.1       # Consistent temperature
             )
+            logger.debug(f"Raw LLM JSON response: {llm_response_str}")
 
             # Step 2: Parse the string response as JSON.
             llm_generated_plan_dict = json.loads(llm_response_str)

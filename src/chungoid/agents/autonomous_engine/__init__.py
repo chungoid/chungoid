@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Type
+from typing import List, Dict, Any, Type, TYPE_CHECKING
 from chungoid.utils.agent_registry import AgentCard
-from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.schemas.common import AgentCallable
 
 # Import agent classes
@@ -26,6 +25,10 @@ from .code_debugging_agent import CodeDebuggingAgent_v1
 
 # ProjectChromaManagerAgent is more of a utility/service, not typically called directly in a flow stage by ID in the same way.
 # It will be instantiated and used by other agents or the orchestrator contextually.
+
+# MODIFIED: Use TYPE_CHECKING to avoid circular import
+if TYPE_CHECKING:
+    from chungoid.runtime.agents.agent_base import BaseAgent
 
 AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type[BaseAgent]] = [
     ProductAnalystAgent_v1,
