@@ -4,6 +4,7 @@ import os
 import json
 import logging
 from datetime import datetime, timezone
+import pprint
 from typing import List, Dict, Any, Optional, Union, cast
 from pathlib import Path
 import chromadb
@@ -22,14 +23,13 @@ import json # Add for JSONDecodeError
 from pydantic import ValidationError # Add for Pydantic validation error
 
 # NEW IMPORTS for ProjectStateV2
-from ..schemas.project_state import ProjectStateV2, CycleHistoryItem, RunRecord, StageRecord # ENSURE RunRecord and StageRecord are also imported if they come from here
+from ..schemas.project_state import ProjectStateV2, CycleHistoryItem, RunRecord, StageRecord # CORRECTED: Was CycleRecord
 from ..constants import STATE_FILE_NAME # Using constant for state file name
 from ..schemas.project_status_schema import ProjectOverallStatus # ADDED ProjectOverallStatus import
 
 # from chungoid.schemas.common_enums import FileStatus, ProjectStatus # Removed unused
 from chungoid.schemas.master_flow import MasterExecutionPlan # Added import
 # from chungoid.schemas.file_schemas import FileProcessResult, StatusEntry # Removed unused
-# from .file_ops import find_project_root, load_json_from_file, write_json_to_file # Changed to relative import - NOW REMOVING AS UNUSED
 
 from pydantic import BaseModel, Field
 
@@ -40,6 +40,7 @@ from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactInput, Retriev
 # REMOVED ProjectStateV2 from this import, kept others
 from chungoid.schemas.project_status_schema import CycleInfo, CycleStatus, ProjectOverallStatus, ArtifactLink, KeyDecision, HumanReviewRecord
 
+MAX_OUTPUT_SUMMARY_LENGTH = 200 # Define a constant for output summary length
 
 class StatusFileError(Exception):
     """Custom exception for errors related to status file operations."""
@@ -228,84 +229,66 @@ class StateManager:
     def _load_or_initialize_project_state(self) -> None:
         """Loads project state from file or initializes a new one if not found or invalid."""
         self.logger.info(f"UNIQUE_LOG_MARKER_V3: Entering _load_or_initialize_project_state")
-        loaded_successfully = False
-        if self.status_file_path.exists() and self.status_file_path.stat().st_size > 0:
-            try:
-                with open(self.status_file_path, "r") as f:
-                    data = json.load(f)
-                
-                # Ensure 'run_history' key exists in the loaded data before creating the model instance.
-                # This is crucial because if it's missing, Pydantic V2 might not consider it a valid field
-                # for direct assignment later, even if the class schema has it.
-                if 'run_history' not in data or data['run_history'] is None:
-                    self.logger.warning(
-                        f"Loaded data from {self.status_file_path} is missing 'run_history' or it is None. "
-                        "Adding an empty 'run_history': {} before Pydantic validation."
-                    )
-                    data['run_history'] = {}
-
-                # Attempt to parse with ProjectStateV2 using the (potentially modified) data dict
-                self._project_state = ProjectStateV2(**data)
-                self.logger.info(f"Successfully loaded and validated project state for {self._project_state.project_id} from {self.status_file_path}")
-                loaded_successfully = True
-
-            except (json.JSONDecodeError, ValidationError, TypeError) as e:
-                self.logger.warning(
-                    f"Failed to load or validate existing status file at {self.status_file_path} (Error: {e}). "
-                    "Backing up and creating a new default state.",
-                    exc_info=True
-                )
-                self._backup_existing_status_file()
-                # new_project_id = f"proj_{uuid.uuid4().hex[:12]}" # Project ID should ideally be stable or re-used if backup has it
-                # Try to get project ID from backup if possible, else generate new
-                new_project_id = data.get("project_id", f"proj_{uuid.uuid4().hex[:12]}") if 'data' in locals() and isinstance(data, dict) else f"proj_{uuid.uuid4().hex[:12]}"
-                project_name = data.get("project_name") if 'data' in locals() and isinstance(data, dict) else None
-
-                self._project_state = self._create_default_project_state_v2(
-                    project_id=new_project_id,
-                    project_name=project_name
-                )
-                # Ensure run_history is present even in this newly created default state
-                if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
-                    self._project_state.run_history = {}
-                self._write_status_file(self._project_state)
-                loaded_successfully = True # Technically successful as a new valid state is now in memory and saved
         
-        if not loaded_successfully: # If file didn't exist, was empty, or initial load failed and wasn't recovered above
-            self.logger.info(f"No existing status file found at {self.status_file_path}, file was empty, or initial load failed. Creating a new default state.")
-            # Generate a new project ID if one couldn't be salvaged from a failed load.
-            # This path is usually for a completely fresh setup.
-            new_project_id = f"proj_{uuid.uuid4().hex[:12]}"
-            self._project_state = self._create_default_project_state_v2(project_id=new_project_id)
-            # Ensure run_history is present in this brand new default state
-            #if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
-            #     self._project_state.run_history = {}
-            self._write_status_file(self._project_state)
+        # Determine a project_id, e.g., from the target directory name
+        # This ID will be used if a new state needs to be created.
+        default_project_id = self.target_dir_path.name
+        
+        if not self.status_file_path.exists():
+            self.logger.warning(f"Status file not found at {self.status_file_path}. Initializing new state for project_id: {default_project_id}.")
+            self._project_state = self._create_default_project_state_v2(project_id=default_project_id)
+            self._save_project_state() # Corrected: _save_project_state now takes no arguments
+            self.logger.info(f"Initialized new project state for {default_project_id}.") # Log reason separately
+            return
 
-        # Final check to ensure _project_state itself is not None and has run_history
-        if not hasattr(self, '_project_state') or not self._project_state:
-            self.logger.critical(f"CRITICAL: _project_state is None after _load_or_initialize_project_state. Forcing placeholder.")
-            self._project_state = self._create_placeholder_project_state() 
-            if not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
-                self._project_state.run_history = {}
-            self._write_status_file(self._project_state)
-        elif not hasattr(self._project_state, 'run_history') or self._project_state.run_history is None:
-            # This case means _project_state exists but somehow run_history is still not there (e.g. placeholder didn't get it)
-            # This should be very rare if _create_default_project_state_v2 and _create_placeholder_project_state ensure it.
-            self.logger.warning(
-                f"Post-load/init: _project_state for {self._project_state.project_id} still missing 'run_history'. "
-                "Attempting to forcefully re-create the model with run_history."
-            )
-            try:
-                current_data = self._project_state.model_dump()
-                current_data['run_history'] = {} # Ensure it's there
-                self._project_state = ProjectStateV2(**current_data)
-                self.logger.info(f"Forcefully re-created ProjectStateV2 for {self._project_state.project_id} to include run_history.")
-                self._save_project_state() 
-            except Exception as e_force_assign:
-                self.logger.error(f"Failed to forcefully re-create _project_state with run_history: {e_force_assign}. ", exc_info=True)
-                                  
-        self.logger.info(f"StateManager._project_state initialized for project: {self._project_state.project_id}, Name: {self._project_state.project_name}")
+        try:
+            with open(self.status_file_path, "r") as f:
+                data = json.load(f)
+
+            # --- BEGIN DATA MIGRATION FOR outputs_summary ---
+            migrated_count = 0
+            if "run_history" in data and isinstance(data["run_history"], dict):
+                for run_id, run_data in data["run_history"].items():
+                    if isinstance(run_data, dict) and "stages" in run_data and isinstance(run_data["stages"], list):
+                        for stage_data in run_data["stages"]:
+                            if isinstance(stage_data, dict) and "outputs_summary" in stage_data and isinstance(stage_data["outputs_summary"], dict):
+                                self.logger.info(f"Migrating outputs_summary for run {run_id}, stage {stage_data.get('name', 'Unknown')}")
+                                stage_data["outputs_summary"] = json.dumps(stage_data["outputs_summary"])
+                                migrated_count += 1
+            
+            # Assuming cycle_history might also contain stages with outputs_summary
+            if "cycle_history" in data and isinstance(data["cycle_history"], dict):
+                for cycle_id, cycle_data_outer in data["cycle_history"].items(): # cycle_data_outer is the value of a cycle_id key
+                    # CycleRecord / CycleHistoryItem might directly BE the "cycle_data" OR it might be nested.
+                    # Let's assume CycleRecord/CycleHistoryItem IS cycle_data_outer and has a 'stages' attribute
+                    if isinstance(cycle_data_outer, dict) and "stages" in cycle_data_outer and isinstance(cycle_data_outer["stages"], list):
+                        for stage_data in cycle_data_outer["stages"]:
+                             if isinstance(stage_data, dict) and "outputs_summary" in stage_data and isinstance(stage_data["outputs_summary"], dict):
+                                self.logger.info(f"Migrating outputs_summary for cycle {cycle_id}, stage {stage_data.get('name', 'Unknown')}")
+                                stage_data["outputs_summary"] = json.dumps(stage_data["outputs_summary"])
+                                migrated_count += 1
+                    # If CycleRecord is just a list of stages directly under cycle_data_outer (unlikely given run_history structure)
+                    # elif isinstance(cycle_data_outer, list): # if cycle_data_outer is a list of stages
+                    #    for stage_data in cycle_data_outer:
+                    #        if isinstance(stage_data, dict) and "outputs_summary" in stage_data and isinstance(stage_data["outputs_summary"], dict):
+                    #            # ... migration logic ...
+                    #            pass
+
+
+            if migrated_count > 0:
+                self.logger.info(f"Successfully migrated {migrated_count} outputs_summary fields from dict to JSON string.")
+            # --- END DATA MIGRATION ---
+
+            self._project_state = ProjectStateV2(**data)
+            self.logger.info(f"Successfully loaded and validated project state from {self.status_file_path}")
+
+        except (json.JSONDecodeError, ValidationError, TypeError, AttributeError) as e:
+            self.logger.warning(f"Failed to load or validate existing status file at {self.status_file_path} (Error: {e}). Backing up and creating a new default state for project_id: {default_project_id}.")
+            self._backup_existing_status_file()
+            self._project_state = self._create_default_project_state_v2(project_id=default_project_id)
+            # Also save the newly created state
+            self._save_project_state() # Corrected: _save_project_state now takes no arguments
+            self.logger.info(f"Created new default project state for {default_project_id} after error: {e}") # Log reason separately
 
     def _create_placeholder_project_state(self) -> ProjectStateV2:
         """Creates a minimal, temporary ProjectStateV2 object when actual state cannot be loaded."""
@@ -1961,7 +1944,7 @@ async def get_chungoid_project_status(ide_services):
             target_stage_record.status = StageStatus(status) # Convert string to StageStatus enum
             target_stage_record.end_time = now
             if outputs is not None:
-                 target_stage_record.outputs_summary = {"type": str(type(outputs)), "value_preview": str(outputs)[:200]}
+                 target_stage_record.outputs_summary = json.dumps({"type": str(type(outputs).__name__), "value_preview": str(outputs)[:MAX_OUTPUT_SUMMARY_LENGTH]})
             target_stage_record.error_details = error_details # This is already a Dict[str, Any]
             
             self._project_state.last_updated = now

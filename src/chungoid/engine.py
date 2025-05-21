@@ -18,7 +18,6 @@ from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOp
 from chungoid.utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
 from chungoid.utils.config_loader import get_config, ConfigError
 from chungoid.utils.llm_provider import LLMProvider # Added LLMProvider
-from chungoid.runtime.agents.master_planner_agent import MasterPlannerAgent # Added MasterPlannerAgent
 from chungoid.schemas.user_goal_schemas import UserGoalRequest # Added UserGoalRequest
 from chungoid.schemas.master_flow import MasterExecutionPlan # Added MasterExecutionPlan
 from chungoid.utils.agent_resolver import AgentProvider # Added AgentProvider (assuming engine will manage this)
@@ -221,32 +220,35 @@ class ChungoidEngine:
                 user_goal_dict = kwargs['user_goal']
                 user_goal_request_obj = UserGoalRequest(**user_goal_dict)
                 
-                planner = MasterPlannerAgent(
-                    agent_provider=self.agent_provider, 
-                    llm_provider=self.llm_provider
-                )
+                # planner = MasterPlannerAgent(
+                #     agent_provider=self.agent_provider, 
+                #     llm_provider=self.llm_provider
+                # )
                 
-                # MasterPlannerAgent.execute is async, so we need to run it in an event loop
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    plan = loop.run_until_complete(planner.execute(user_goal_request_obj))
-                finally:
-                    loop.close()
+                # # MasterPlannerAgent.execute is async, so we need to run it in an event loop
+                # loop = asyncio.new_event_loop()
+                # asyncio.set_event_loop(loop)
+                # try:
+                #     plan = loop.run_until_complete(planner.execute(user_goal_request_obj))
+                # finally:
+                #     loop.close()
 
-                # Save the plan before returning its model dump
-                if not plan.id.startswith("error_plan_"): # Only save successful plans
-                    save_success = self.state_manager.save_master_execution_plan(plan)
-                    if not save_success:
-                        logger.error(f"Failed to save MasterExecutionPlan ID: {plan.id} to state file.")
-                        # Decide if this should alter the tool's success response or just log
+                # # Save the plan before returning its model dump
+                # if not plan.id.startswith("error_plan_"): # Only save successful plans
+                #     save_success = self.state_manager.save_master_execution_plan(plan)
+                #     if not save_success:
+                #         logger.error(f"Failed to save MasterExecutionPlan ID: {plan.id} to state file.")
+                #         # Decide if this should alter the tool's success response or just log
                 
-                # The wrapper needs to return a dict, not the Pydantic model directly,
-                # because the main execute_mcp_tool tries to json.dumps it.
-                if isinstance(plan, MasterExecutionPlan):
-                    return plan.model_dump() # <<< REVERTED TO THIS
-                elif isinstance(plan, dict): # Error plan already a dict
-                    return plan
+                # # The wrapper needs to return a dict, not the Pydantic model directly,
+                # # because the main execute_mcp_tool tries to json.dumps it.
+                # if isinstance(plan, MasterExecutionPlan):
+                #     return plan.model_dump() # <<< REVERTED TO THIS
+                # elif isinstance(plan, dict): # Error plan already a dict
+                #     return plan
+                # For now, return an error or placeholder since MasterPlannerAgent is removed
+                logger.error("MasterPlannerAgent related code in _create_master_plan_sync_wrapper is commented out due to deprecation.")
+                return {"error": "MasterPlannerAgent is deprecated and its usage here is commented out."}
             except ValidationError as ve:
                 logger.error(f"UserGoalRequest validation error for create_master_plan: {ve}")
                 raise # Re-raise to be caught by execute_mcp_tool error handler

@@ -31,7 +31,7 @@ from chungoid.schemas.common_enums import FlowPauseStatus
 from chungoid.utils.llm_provider import LLMProvider, OpenAILLMProvider 
 # Import MasterStageSpec for type hinting in prompt examples
 from chungoid.schemas.master_flow import MasterStageSpec, MasterExecutionPlan # Added MasterExecutionPlan for helper methods
-from chungoid.runtime.agents.mocks.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
+# from chungoid.runtime.agents.mocks.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +69,9 @@ Consider the following rules and guidelines:
         *   IF `explicit_setup_message_content` contains 'stage_B_needs_clarification'
         *   AND `explicit_clarification_content` is MISSING or EMPTY in the `relevant_context_snippet`,
         *   THEN you MUST suggest `ADD_CLARIFICATION_STAGE`.
-            *   The new stage should use agent 'mock_clarification_agent_v1'.
-            *   Its `inputs` MUST be: {{"query": "What is the actual question to ask? (e.g., 'What is the current weather?')"}}. (The LLM should resolve this to the actual message).
-            *   Its `success_criteria` MUST be: ["clarification_provided IS_NOT_EMPTY"].
+            *   The new stage should use an appropriate agent capable of user clarification (e.g., an agent categorized for 'human_interaction' or 'system_intervention' if suitable for plan-level clarification, such as 'SystemInterventionAgent_v1' if the planner needs input from the operator).
+            *   Its `inputs` MUST conform to the chosen agent's schema. For example, if using an agent like 'SystemInterventionAgent_v1', it might be: {{"prompt_message_for_user": "What is the actual question to ask? (e.g., 'What is the current weather?')"}}. (The LLM should resolve this to the actual message and adapt inputs for the chosen agent).
+            *   Its `success_criteria` MUST be appropriate for the chosen agent (e.g., ["human_response IS_NOT_EMPTY"] or ["clarification_provided IS_NOT_EMPTY"]).
             *   The `new_stage_spec.id` SHOULD BE 'stage_BC_clarify_for_B'. (The system will make it unique if needed, e.g., `stage_BC_clarify_for_B_v1`).
             *   The `insert_before_stage_id` MUST be the ID of the stage that just failed (i.e., `paused_stage_id` from your input, which should be 'stage_B_fail_point' in this scenario).
             *   Other `new_stage_spec` fields (name, description, number) should be sensible.
@@ -82,7 +82,7 @@ Consider the following rules and guidelines:
         *   AND the `paused_stage_id` is 'stage_B_fail_point' (or the stage that originally needed clarification),
         *   THEN you MUST suggest `RETRY_STAGE_WITH_CHANGES` for the `paused_stage_id` ('stage_B_fail_point').
             *   The `changes_to_stage_spec.inputs` MUST include setting `trigger_fail` to `false`.
-            *   It should also preserve other necessary inputs for 'stage_B_fail_point', like `setup_message` (e.g., `{{"trigger_fail": false, "setup_message": "context.intermediate_outputs.setup_message.message"}}`).
+            *   It should also preserve other necessary inputs for 'stage_B_fail_point', like `setup_message` (e.g., `{{\"trigger_fail\": false, \"setup_message\": \"context.intermediate_outputs.setup_message.message\"}}`).
             *   Reasoning should state clarification was found, and now the original stage can be retried with changes.
 
 4.  **Success Criteria Failures:**
@@ -123,17 +123,17 @@ Example `AddClarificationStageDetails`:
     "name": "Clarification for Y",
     "description": "Gathers info for Y",
     "number": 2.5,
-    "agent_id": "mock_clarification_agent_v1",
-    "inputs": {{ "query": "What is the actual question to ask? (e.g., 'What is the current weather?')" }},
+    "agent_id": "SystemInterventionAgent_v1",
+    "inputs": {{ "prompt_message_for_user": "What is the actual question to ask? (e.g., 'What is the current weather?')" }},
     "output_context_path": "intermediate_outputs.clarification_for_Y",
-    "success_criteria": ["clarification_provided IS_NOT_EMPTY"],
+    "success_criteria": ["human_response IS_NOT_EMPTY"],
     "on_failure": {{ "action": "FAIL_MASTER_FLOW", "log_message": "Clarification failed for Y" }}
     // next_stage will be handled by the system if not specified
   }},
   "original_failed_stage_id": "string (ID of the stage that FAILED or successfully COMPLETED, triggering this review)",
   "insert_before_stage_id": "string (ID of the stage BEFORE which the new stage should be inserted - determine this from user request in context, e.g., 'add before stage_B')",
   "new_stage_output_to_map_to_verification_stage_input": {{ 
-    "source_output_field": "clarification_provided",
+    "source_output_field": "human_response",
     "target_input_field_in_verification_stage": "clarification_data"
   }}
 }}
@@ -147,12 +147,12 @@ When suggesting `ADD_CLARIFICATION_STAGE`:
 1.  Determine the correct `insert_before_stage_id` by carefully reading the user's request in the `full_context_at_pause` (specifically, `explicit_setup_message_content` or `context.outputs.stage_A_setup.message` often contains phrases like "add a stage before stage_X").
 2.  The `original_failed_stage_id` is the ID of the stage that led to this review (the stage that paused/failed, or the stage that succeeded if this is an `on_success` review).
 3.  **New Stage Inputs:**
-    *   If the `agent_id` for the `new_stage_spec` is `mock_clarification_agent_v1`, its `inputs` field MUST be a dictionary containing a single key `"query"`.
-    *   The value for `"query"` MUST be the *actual question string* that the clarification agent should ask (e.g., "What is the current weather?"). You should extract this question from the user's request in the context (e.g., from `explicit_setup_message_content`). DO NOT use a context path string like "context.outputs.some.path" for the query value itself.
-4.  **MANDATORY CHECK FOR OUTPUT MAPPING**: You MUST inspect the user's request details (primarily in `context.outputs.stage_A_setup.message` or `explicit_setup_message_content`). If this request contains instructions to map the new clarification stage's output to another stage's input (e.g., "map its output to stage_C_verify.inputs.clarification_data" or similar phrasing),
+    *   If the `agent_id` for the `new_stage_spec` is, for example, 'SystemInterventionAgent_v1', its `inputs` field MUST be a dictionary containing a key like `\"prompt_message_for_user\"`. Adapt inputs to the chosen agent's schema.
+    *   The value for this prompt/query MUST be the *actual question string* that the clarification agent should ask (e.g., "What is the current weather?"). You should extract this question from the user's request in the context (e.g., from `explicit_setup_message_content`). DO NOT use a context path string like "context.outputs.some.path" for the query value itself.
+4.  **MANDATORY CHECK FOR OUTPUT MAPPING**: You MUST inspect the user\'s request details (primarily in `context.outputs.stage_A_setup.message` or `explicit_setup_message_content`). If this request contains instructions to map the new clarification stage\'s output to another stage\'s input (e.g., \"map its output to stage_C_verify.inputs.clarification_data\" or similar phrasing),
     then you MUST populate the `new_stage_output_to_map_to_verification_stage_input` field. This field requires:
-    *   `source_output_field`: If the `new_stage_spec.agent_id` is `mock_clarification_agent_v1`, this MUST be `"clarification_provided"`. For other agents, use the actual output field name from that agent's output model.
-    *   `target_input_field_in_verification_stage`: The exact name of the input field in the *target verification stage* where this data should be mapped (e.g., `"clarification_data"`).
+    *   `source_output_field`: Use the actual output field name from the chosen clarification agent's output model (e.g., `\"human_response\"` for 'SystemInterventionAgent_v1', or `\"clarification_provided\"` for other hypothetical agents).
+    *   `target_input_field_in_verification_stage`: The exact name of the input field in the *target verification stage* where this data should be mapped (e.g., `\"clarification_data\"`).
     If, and only if, NO such mapping instructions are found in the user request context, you may omit `new_stage_output_to_map_to_verification_stage_input` or set it to null.
 5.  Ensure the `new_stage_spec.next_stage` correctly points to the stage that should execute *after* the new stage (this is often the `insert_before_stage_id`).
 
@@ -289,9 +289,7 @@ class MasterPlannerReviewerAgent:
             }
             
             setup_message_obj = intermediate_outputs.get("setup_message")
-            if isinstance(setup_message_obj, MockSetupAgentV1Output):
-                snippet["explicit_setup_message_content"] = setup_message_obj.message
-            elif isinstance(setup_message_obj, dict) and "message" in setup_message_obj:
+            if isinstance(setup_message_obj, dict) and "message" in setup_message_obj:
                 snippet["explicit_setup_message_content"] = setup_message_obj.get("message")
 
             # --- START NEW LOGIC FOR CLARIFICATION ---
@@ -301,11 +299,7 @@ class MasterPlannerReviewerAgent:
             found_clarification_output = None
             for key, value in intermediate_outputs.items():
                 if key.startswith(clarification_key_pattern): # e.g., "stage_BC_clarify_for_B" or "stage_BC_clarify_for_B_v1"
-                    if isinstance(value, MockClarificationAgentV1Output):
-                        found_clarification_output = value.clarification_provided
-                        snippet["explicit_clarification_output_found_at_key"] = key # For LLM debugging
-                        break
-                    elif isinstance(value, dict) and "clarification_provided" in value:
+                    if isinstance(value, dict) and "clarification_provided" in value:
                         found_clarification_output = value.get("clarification_provided")
                         snippet["explicit_clarification_output_found_at_key"] = key # For LLM debugging
                         break
@@ -478,10 +472,10 @@ class MasterPlannerReviewerAgent:
                     logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (needs clarification): ADD_CLARIFICATION_STAGE.")
                     new_stage_spec_dict = {
                         "id": "stage_BC_clarify_for_B", "name": "Clarification for Stage B (Mock)", "description": "Mock clarification stage.",
-                        "number": input_payload.paused_stage_spec.get("number", 0.0) + 0.1, "agent_id": "mock_clarification_agent_v1",
-                        "inputs": {"query": f"Clarification for stage_B based on: {initial_msg_content_from_stage_A}"},
+                        "number": input_payload.paused_stage_spec.get("number", 0.0) + 0.1, "agent_id": "SystemInterventionAgent_v1",
+                        "inputs": {"prompt_message_for_user": f"Clarification for stage_B based on: {initial_msg_content_from_stage_A}"},
                         "output_context_path": "intermediate_outputs.clarification_for_stage_b", "next_stage": "stage_B_fail_point",
-                        "success_criteria": ["clarification_provided IS_NOT_EMPTY"], "on_failure": {"action": "FAIL_MASTER_FLOW"}
+                        "success_criteria": ["human_response IS_NOT_EMPTY"], "on_failure": {"action": "FAIL_MASTER_FLOW"}
                     }
                     try: final_new_stage_spec = MasterStageSpec(**new_stage_spec_dict)
                     except Exception as e: return self._default_escalate_to_user(f"Mock ADD_CLARIFICATION_STAGE spec error: {e}")

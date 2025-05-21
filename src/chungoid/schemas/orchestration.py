@@ -15,6 +15,7 @@ class SharedContext(BaseModel):
     """
     project_id: str = Field(..., description="The unique identifier for the current project.")
     project_root_path: str = Field(..., description="The absolute string path to the project's root directory.")
+    mcp_root_workspace_path: Optional[str] = Field(None, description="The absolute string path to the root of the MCP workspace.")
     
     run_id: Optional[str] = Field(None, description="The unique identifier for the current execution run of a flow.")
     flow_id: Optional[str] = Field(None, description="The unique identifier for the specific flow being executed.")

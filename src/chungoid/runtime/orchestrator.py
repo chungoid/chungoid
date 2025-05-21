@@ -1077,6 +1077,80 @@ class AsyncOrchestrator(BaseOrchestrator):
                      invoke_kwargs["project_root"] = self.shared_context.project_root_path
 
                 agent_output = await agent_callable(**invoke_kwargs)
+            elif agent_id == "SystemTestRunnerAgent_v1":
+                # Example: SystemTestRunnerAgent might not use 'inputs' kwarg directly
+                # or might need project_root explicitly.
+                # This depends on its invoke_async signature.
+                # For now, assuming it follows the default or its __init__ handles project_root.
+                invoke_kwargs = {
+                    "inputs": final_inputs_for_agent, # Pass the resolved inputs
+                    "full_context": self.shared_context
+                }
+                if self.shared_context.project_root_path:
+                     invoke_kwargs["project_root"] = self.shared_context.project_root_path
+
+                agent_output = await agent_callable(**invoke_kwargs)
+            elif agent_id == "ArchitectAgent_v1": # ADDED: Specific handling for ArchitectAgent_v1
+                self.logger.info(f"Run {self._current_run_id}: Preparing ArchitectAgentInput for ArchitectAgent_v1.")
+                try:
+                    # --- Prepare ArchitectAgentInput ---
+                    # project_id should be available in shared_context
+                    project_id_for_architect = self.shared_context.project_id
+                    if not project_id_for_architect:
+                        raise ValueError("project_id is not set in shared_context for ArchitectAgent_v1.")
+
+                    # loprd_doc_id comes from the output of the 'goal_analysis' stage
+                    # This assumes 'goal_analysis' stage ran and its output structure.
+                    goal_analysis_output = self.shared_context.previous_stage_outputs.get("goal_analysis")
+                    loprd_doc_id_for_architect = None
+                    if isinstance(goal_analysis_output, dict):
+                        loprd_doc_id_for_architect = goal_analysis_output.get("refined_requirements_document_id")
+                    elif hasattr(goal_analysis_output, "refined_requirements_document_id"): # If it's an object
+                        loprd_doc_id_for_architect = getattr(goal_analysis_output, "refined_requirements_document_id")
+                    
+                    if not loprd_doc_id_for_architect:
+                        # Fallback or error if loprd_doc_id is crucial and not found
+                        # For now, we'll proceed, but the agent might fail if it's required and missing.
+                        self.logger.warning(f"loprd_doc_id not found in 'goal_analysis' stage output for ArchitectAgent_v1. Inputs provided to Architect: {final_inputs_for_agent}")
+                        # If final_inputs_for_agent (from plan) contains loprd_doc_id, use that as a fallback
+                        loprd_doc_id_from_plan = final_inputs_for_agent.get("loprd_doc_id")
+                        if loprd_doc_id_from_plan:
+                            loprd_doc_id_for_architect = loprd_doc_id_from_plan
+                            self.logger.info(f"Using loprd_doc_id from plan inputs as fallback: {loprd_doc_id_for_architect}")
+                        else:
+                             # If it's absolutely required and not found, we might need to raise an error earlier or
+                             # the ArchitectAgent itself will fail. For now, pass None if not found.
+                             self.logger.error("Critical: loprd_doc_id could not be determined for ArchitectAgent_v1. The agent will likely fail.")
+
+
+                    # Create the ArchitectAgentInput object
+                    # final_inputs_for_agent might contain other optional fields like existing_blueprint_doc_id
+                    architect_task_input_data = {
+                        "project_id": project_id_for_architect,
+                        "loprd_doc_id": loprd_doc_id_for_architect, # This might be None if not found
+                        **final_inputs_for_agent # Spread other inputs from plan (e.g., existing_blueprint_doc_id)
+                    }
+                    # task_id has a default factory in ArchitectAgentInput
+
+                    # Remove None values if ArchitectAgentInput fields are not Optional and have no defaults
+                    # For ArchitectAgentInput, loprd_doc_id is mandatory.
+                    if architect_task_input_data.get("loprd_doc_id") is None:
+                        # This will cause a validation error if loprd_doc_id is not Optional in the Pydantic model
+                        # and is required. The agent's __init__ or invoke will fail.
+                         self.logger.error("ArchitectAgentInput is being created with loprd_doc_id as None. This will likely fail validation if the field is not Optional.")
+
+
+                    from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgentInput # Import locally for Pydantic model
+                    architect_agent_input_obj = ArchitectAgentInput(**architect_task_input_data)
+                    
+                    self.logger.info(f"Run {self._current_run_id}: Invoking ArchitectAgent_v1 with ArchitectAgentInput: {architect_agent_input_obj.model_dump_json(indent=2)}")
+                    agent_output = await agent_callable(task_input=architect_agent_input_obj, full_context=self.shared_context)
+                except ValidationError as ve:
+                    self.logger.error(f"Pydantic ValidationError creating ArchitectAgentInput for stage '{stage_name}': {ve}. Data: {architect_task_input_data}", exc_info=True)
+                    raise OrchestratorError(f"Failed to create valid input for ArchitectAgent_v1 for stage '{stage_name}': {ve}") from ve
+                except Exception as e_arch_prep:
+                    self.logger.error(f"Error preparing inputs or invoking ArchitectAgent_v1 for stage '{stage_name}': {e_arch_prep}", exc_info=True)
+                    raise OrchestratorError(f"Failed to prepare inputs for ArchitectAgent_v1: {e_arch_prep}") from e_arch_prep
             else:
                 # Default invocation for other agents
                 agent_output = await agent_callable(inputs=final_inputs_for_agent, full_context=self.shared_context)

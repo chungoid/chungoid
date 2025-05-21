@@ -2,8 +2,6 @@ from __future__ import annotations
 import json
 from chungoid.utils.config_loader import get_config, ConfigError, load_config
 import click
-import typer
-import yaml
 import uuid # ADDED FOR PROJECT ID GENERATION
 
 """Command-line interface for Chungoid-core.
@@ -41,51 +39,36 @@ from chungoid.core_utils import get_project_root_or_raise, init_project_structur
 from chungoid.schemas.master_flow import MasterExecutionPlan
 from chungoid.schemas.metrics import MetricEventType
 from chungoid.schemas.flows import PausedRunDetails
-# from chungoid.runtime.agents import ALL_AGENT_CARDS # For programmatic registration example - Commenting out as it's unused and causes import error
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_agent_card_static as get_reviewer_card
-# from chungoid.runtime.agents.system_core_stage_executor_agent import get_agent_card_static as get_executor_card # Removed incorrect import
-from chungoid.runtime.orchestrator import AsyncOrchestrator # for type hint
-from chungoid.schemas.metrics import MetricEvent # For type hint
-from chungoid.utils.agent_registry import AgentRegistry # Corrected: AGENT_REGISTRY is not exported or used
+from chungoid.runtime.orchestrator import AsyncOrchestrator
+from chungoid.schemas.metrics import MetricEvent
+from chungoid.utils.agent_registry import AgentRegistry
 from chungoid.utils.state_manager import StateManager
-from chungoid.utils.metrics_store import MetricsStore # for metrics CLI
-from chungoid.utils.prompt_manager import PromptManager # ADDED THIS IMPORT
-from chungoid.utils.llm_provider import MockLLMProvider, OpenAILLMProvider, LLMManager # MODIFIED: Added LLMManager
-# from chungoid.config import ProjectConfig # REMOVED - This was incorrect and caused ModuleNotFoundError / SyntaxError
-
-# Other existing imports ...
+from chungoid.utils.metrics_store import MetricsStore
+from chungoid.utils.prompt_manager import PromptManager
+from chungoid.utils.llm_provider import MockLLMProvider, OpenAILLMProvider, LLMManager # Keep MockLLMProvider for --use-mock-llm-provider flag
 
 # For Agent Cards (used in agent_registry.add())
 from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card
-# from chungoid.runtime.agents.mock_agents import (  # Removed
-#     get_mock_human_input_agent_card,
-#     get_mock_code_generator_agent_card,
-#     get_mock_test_generator_agent_card
-# )
-from chungoid.runtime.agents.mocks.mock_system_intervention_agent import get_agent_card_static as get_mock_system_intervention_agent_card
-from chungoid.runtime.agents.mocks.mock_code_generator_agent import get_agent_card_static as get_mock_code_generator_agent_card
-from chungoid.runtime.agents.mocks.mock_test_generator_agent import get_agent_card_static as get_mock_test_generator_agent_card
-from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import get_agent_card_static as get_mock_system_requirements_gathering_agent_card
 
 from chungoid.runtime.agents.system_master_planner_agent import get_agent_card_static as get_master_planner_agent_card
-from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_agent_card_static as get_master_planner_reviewer_agent_card
+from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
 
 # For Agent Classes (used in the fallback_agents_map and direct instantiation)
-# from chungoid.runtime.agents.core_stage_executor import CoreStageExecutorAgent # Removed - it's a function, not a class
-from chungoid.runtime.agents.mocks.mock_system_intervention_agent import MockSystemInterventionAgent # MODIFIED
-from chungoid.runtime.agents.mocks.mock_code_generator_agent import MockCodeGeneratorAgent
-from chungoid.runtime.agents.mocks.mock_test_generator_agent import MockTestGeneratorAgent
-from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import MockSystemRequirementsGatheringAgent
-
 from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
 
-# Other existing imports ...
+# Real Agent Imports (ensure all necessary are here)
+from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
+from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent
+from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
+from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
+from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent
+from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
+from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
-# For CLI subcommands that call external scripts
 import subprocess
-
-# For JSON output
 import json as py_json # Avoid conflict with click.json
 
 # --- DIAGNOSTIC CODE AT THE TOP OF cli.py ---
@@ -164,12 +147,6 @@ from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterP
 # Import for MasterPlannerAgent registration
 from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent, get_agent_card_static as get_master_planner_agent_card
 
-# Imports for Mock Agents (P2.6 MVP)
-from chungoid.runtime.agents.mocks.mock_system_intervention_agent import get_agent_card_static as get_mock_system_intervention_agent_card
-from chungoid.runtime.agents.mocks.mock_code_generator_agent import get_agent_card_static as get_mock_code_generator_agent_card
-from chungoid.runtime.agents.mocks.mock_test_generator_agent import get_agent_card_static as get_mock_test_generator_agent_card
-from chungoid.runtime.agents.mocks.mock_system_requirements_gathering_agent import get_agent_card_static as get_mock_system_requirements_gathering_agent_card
-
 # New imports for MasterPlannerInput
 from chungoid.schemas.agent_master_planner import MasterPlannerInput # <<< ADD THIS IMPORT
 
@@ -182,7 +159,7 @@ from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegr
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 
 # New imports for MockTestGenerationAgentV1
-from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGenerationAgentV1, get_agent_card_static as get_mock_test_generation_agent_v1_card
+# from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGenerationAgentV1, get_agent_card_static as get_mock_test_generation_agent_v1_card
 
 # Import the new system_test_runner_agent
 # from chungoid.runtime.agents import system_test_runner_agent # ADDED # OLD IMPORT
@@ -195,17 +172,17 @@ from chungoid.schemas.common import AgentID # CORRECTED IMPORT
 from chungoid.runtime.agents.agent_base import BaseAgent # For type hinting # CORRECTED IMPORT
 
 # --- ADDED IMPORTS FOR MOCK SETUP AGENT ---
-from chungoid.runtime.agents.mocks.testing_mock_agents import (
-    MockSetupAgentV1,
-    MockFailPointAgentV1,
-    get_mock_agent_fallback_map, # ADDED THIS IMPORT
-    MockSystemInterventionAgent, # ADDED THIS IMPORT
-    # MockNoOpAgent # REMOVED THIS IMPORT - Will import directly
-)
+# from chungoid.runtime.agents.mocks.testing_mock_agents import (
+#     MockSetupAgentV1,
+#     MockFailPointAgentV1,
+#     get_mock_agent_fallback_map, # ADDED THIS IMPORT
+#     MockSystemInterventionAgent, # ADDED THIS IMPORT
+#     # MockNoOpAgent # REMOVED THIS IMPORT - Will import directly
+# )
 # --- END ADDED IMPORTS ---
 
 # ADDED: Import MockNoOpAgent directly from its new file
-from chungoid.runtime.agents.mocks.mock_noop_agent import MockNoOpAgent
+# from chungoid.runtime.agents.mocks.mock_noop_agent import MockNoOpAgent
 
 # ADDED: Imports for production system agents and dependencies
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
@@ -221,27 +198,34 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import Proje
 # --- Production System Agents Fallback Map ---
 # This map defines the primary fallback for system agents.
 # It uses the actual agent classes.
-production_system_agents_map: Dict[AgentID, AgentFallbackItem] = {
+PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] = {
     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
     MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
-    CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # This is CoreCodeGeneratorAgent_v1
-    TestGeneratorAgent.AGENT_ID: TestGeneratorAgent,   # This is CoreTestGeneratorAgent_v1
+    CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Alias for CoreCodeGeneratorAgent_v1
+    TestGeneratorAgent.AGENT_ID: TestGeneratorAgent,   # Alias for CoreTestGeneratorAgent_v1
     SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
     SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent, # This is SystemTestRunnerAgent_v1
-    "FileOperationAgent_v1": SystemFileSystemAgent_v1, # Alias for SystemFileSystemAgent_v1
+    SystemFileSystemAgent_v1.AGENT_ID: SystemFileSystemAgent_v1, # Ensure this uses the class name
     SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
     ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
-    # Using mock classes for these system agents initially, as they have the correct AGENT_ID
-    # and provide basic functionality. They can be replaced with full implementations later.
-    "SystemInterventionAgent_v1": MockSystemInterventionAgent,
-    "NoOpAgent_v1": MockNoOpAgent,
     # ProjectChromaManagerAgent_v1 is typically instantiated directly in CLI commands
-    # and passed to the RegistryAgentProvider. Adding its class here for completeness
-    # if it were to be resolved by ID from a plan without prior instantiation.
-    ProjectChromaManagerAgent_v1.AGENT_ID: ProjectChromaManagerAgent_v1,
-    "SystemTestGeneratorAgent_v1": SystemTestRunnerAgent, # Alias SystemTestGeneratorAgent_v1 to SystemTestRunnerAgent
+    # and added to the fallback map as an instance, not as a class here.
+    # AutonomousEngineAgent_v1 is handled by get_autonomous_engine_agent_fallback_map
 }
 # --- End Production System Agents Fallback Map ---
+
+# --- Autonomous Engine Agents Fallback Map ---
+def get_autonomous_engine_agent_fallback_map() -> Dict[AgentID, Union[Type[BaseAgent], BaseAgent]]:
+    """Returns a dictionary of core autonomous engine agents for fallback."""
+    # This map should only contain system-critical, non-mock agents
+    # that are part of the autonomous engine's core capabilities.
+    return {
+        # AutonomousEngineAgent_v1.AGENT_ID: AutonomousEngineAgent_v1, # COMMENTED OUT
+        # Other autonomous engine agents can be added here as classes.
+        # ProjectChromaManagerAgent_v1 is often instantiated specifically with project context
+        # in the CLI command logic and added to the final_fallback_map there.
+    }
+# --- End Autonomous Engine Agents Fallback Map ---
 
 # Assuming StatusFileError might be a custom exception, if not defined elsewhere, it might need to be.
 # For now, let's assume it's imported or defined if critical. If it's from a known module, add import.
@@ -255,7 +239,7 @@ logger = logging.getLogger(__name__)
 # Helper utilities
 # ---------------------------------------------------------------------------
 
-_LOG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+_LOG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] # Corrected this line
 
 
 def _configure_logging(level: str) -> None:
@@ -515,13 +499,6 @@ def flow(ctx: click.Context) -> None:  # noqa: D401
         "These are stored in project_status.json and can be used for filtering later."
     )
 )
-@click.option( # ADDED --use-mock-agents flag
-    "--use-mock-agents/--no-use-mock-agents",
-    "use_mock_agents_flag",
-    default=False,
-    show_default=True,
-    help="Use mock agents from testing_mock_agents.py for fallback, overriding production agents where IDs match."
-)
 @click.pass_context
 def flow_run(ctx: click.Context, 
              master_flow_id_opt: Optional[str], 
@@ -530,8 +507,7 @@ def flow_run(ctx: click.Context,
              project_dir_opt: Path, 
              initial_context: Optional[str],
              run_id_override_opt: Optional[str],
-             tags: Optional[str],
-             use_mock_agents_flag: bool # ADDED use_mock_agents_flag
+             tags: Optional[str]
              ) -> None:
     logger = logging.getLogger("chungoid.cli.flow_run")
     logger.info(f"'chungoid flow run' invoked. Master Flow ID: {master_flow_id_opt}, YAML: {flow_yaml_opt}, Goal: {goal}, Project Dir: {project_dir_opt}")
@@ -604,14 +580,13 @@ def flow_run(ctx: click.Context,
     # For CLI, ensuring they are available for the run:
     agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
     agent_registry.add(get_master_planner_agent_card(), overwrite=True)
-    agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True)
-    agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
-    agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True) # Alias for MockTestGenerationAgentV1 for now
-    agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
+    # agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True) # REMOVE
+    # agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True) # REMOVE
+    # agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True) # REMOVE
+    # agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True) # REMOVE
     agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
     agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
     agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
-    agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
     agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
 
     # For simplicity in RegistryAgentProvider, we provide one merged map. Let's ensure system agents are there.
@@ -636,11 +611,8 @@ def flow_run(ctx: click.Context,
     # final_fallback_map.update(get_autonomous_engine_agent_fallback_map()) # MODIFIED LOGIC
 
     # MODIFIED: Construct final_fallback_map with new precedence
-    final_fallback_map: Dict[AgentID, AgentFallbackItem] = production_system_agents_map.copy()
+    final_fallback_map: Dict[AgentID, AgentFallbackItem] = PRODUCTION_SYSTEM_AGENTS_MAP.copy()
     final_fallback_map.update(get_autonomous_engine_agent_fallback_map())
-    if use_mock_agents_flag:
-        logger.info("Applying mock agent fallbacks from testing_mock_agents.py, which may override production/autonomous engine agents.")
-        final_fallback_map.update(get_mock_agent_fallback_map())
     
     # MODIFIED: Ensure all necessary dependencies are prepared for RegistryAgentProvider
     # LLMProvider setup
@@ -844,6 +816,71 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
         resumed_project_config = load_config(str(config_file_path) if config_file_path.exists() else None)
         resumed_project_config["project_root_dir"] = str(project_path)
 
+        # --- ADDED: Setup for AgentProvider dependencies in flow_resume --- 
+        # Determine server_stages_dir_path_str_flow for resume context
+        try:
+            cli_file_path_stages_resume = Path(__file__).resolve()
+            script_dir_stages_resume = cli_file_path_stages_resume.parent.resolve()
+            core_root_dir_stages_resume = script_dir_stages_resume.parent.parent
+            server_stages_dir_path_str_resume_flow = str(core_root_dir_stages_resume / "server_prompts" / "stages")
+
+            if resumed_project_config.get("server_stages_dir_override"):
+                server_stages_dir_path_str_resume_flow = resumed_project_config["server_stages_dir_override"]
+            elif not Path(server_stages_dir_path_str_resume_flow).is_dir():
+                server_stages_dir_path_str_resume_flow = str(project_path / "server_prompts" / "stages")
+                if not Path(server_stages_dir_path_str_resume_flow).is_dir():
+                    server_stages_dir_path_str_resume_flow = str(DEFAULT_SERVER_STAGES_DIR)
+        except Exception as e_stages_dir_resume:
+            logger.error(f"Flow Resume: Error determining server_stages_dir_path_str: {e_stages_dir_resume}. Defaulting.")
+            server_stages_dir_path_str_resume_flow = str(DEFAULT_SERVER_STAGES_DIR)
+        logger.info(f"Flow Resume: Determined server_stages_dir for PrompManager/PCMA context: {server_stages_dir_path_str_resume_flow}")
+
+        # LLMProvider setup for resume
+        llm_provider_instance_for_resume: Optional[LLMProvider] = None
+        llm_manager_for_resume: Optional[LLMManager] = None # To manage the lifecycle of the provider
+        if resumed_project_config.get("llm_config", {}).get("use_mock_llm_provider", False):
+            logger.info("Flow Resume: Using MockLLMProvider based on config/flag.")
+            llm_provider_instance_for_resume = MockLLMProvider()
+        else:
+            openai_api_key_resume = os.getenv("OPENAI_API_KEY")
+            if openai_api_key_resume:
+                default_openai_model_resume = resumed_project_config.get("llm_config", {}).get("default_openai_model", "gpt-3.5-turbo")
+                logger.info(f"Flow Resume: Initializing OpenAILLMProvider with default model: {default_openai_model_resume}")
+                llm_provider_instance_for_resume = OpenAILLMProvider(api_key=openai_api_key_resume, default_model=default_openai_model_resume)
+            else:
+                logger.warning("Flow Resume: OPENAI_API_KEY not set. LLM-dependent agents might fail if not mocked.")
+        
+        if llm_provider_instance_for_resume:
+            # PromptManager setup for resume (needed for LLMManager and potentially agents)
+            prompt_manager_base_dir_resume = Path(server_stages_dir_path_str_resume_flow).parent if Path(server_stages_dir_path_str_resume_flow).name == "stages" else Path(server_stages_dir_path_str_resume_flow)
+            prompt_manager_instance_for_resume = PromptManager(prompt_directory_paths=[prompt_manager_base_dir_resume])
+            logger.info(f"Flow Resume: PromptManager initialized with directory: {prompt_manager_base_dir_resume}")
+            llm_manager_for_resume = LLMManager(llm_provider_instance=llm_provider_instance_for_resume, prompt_manager=prompt_manager_instance_for_resume)
+        else:
+            prompt_manager_instance_for_resume = None # No LLM provider, so no LLMManager, and PromptManager might not be strictly needed by provider
+            logger.info("Flow Resume: No LLM provider, so LLMManager not created. PromptManager also may not be initialized if not otherwise needed.")
+
+        # ProjectChromaManager setup for resume
+        project_id_for_pcma_resume = resumed_project_config.get('project_id')
+        if not project_id_for_pcma_resume:
+            temp_sm_for_pcma_resume = StateManager(target_directory=project_path, server_stages_dir=server_stages_dir_path_str_resume_flow)
+            try:
+                project_id_for_pcma_resume = temp_sm_for_pcma_resume.get_project_state().project_id
+            except Exception: 
+                 logger.warning("Flow Resume: Project ID for PCMA could not be retrieved from config or state. PCMA might not be available.")
+
+        project_chroma_manager_instance_for_resume: Optional[ProjectChromaManagerAgent_v1] = None
+        if project_id_for_pcma_resume:
+            try:
+                project_chroma_manager_instance_for_resume = ProjectChromaManagerAgent_v1(
+                    project_root_workspace_path=str(project_path),
+                    project_id=project_id_for_pcma_resume
+                )
+                logger.info(f"Flow Resume: Instantiated ProjectChromaManagerAgent_v1 with project_id: {project_id_for_pcma_resume}")
+            except Exception as e_pcma_resume:
+                logger.error(f"Flow Resume: Failed to instantiate ProjectChromaManagerAgent_v1: {e_pcma_resume}", exc_info=True)
+        # --- END ADDED: Setup for AgentProvider dependencies --- 
+
         registry_project_root = Path(resumed_project_config["project_root_dir"])
         registry_chroma_mode = resumed_project_config.get("chromadb", {}).get("mode", "persistent")
 
@@ -852,34 +889,55 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
         agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
         agent_registry.add(get_master_planner_agent_card(), overwrite=True)
         # ... (add other necessary agents as in flow_run)
-        agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
-        agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
-        agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
+        # agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True)
+        # agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
+        # agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
+        # agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
         agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
         agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
         agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
+        # ADD SystemTestRunnerAgent registration here for consistency if it's expected in flow_resume's context
+        agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
 
 
-        fallback_agents_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map()
+        # fallback_agents_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map() # REMOVE
         # Add/override with core system agents
-        core_system_agents_resume = {
-            MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
-            MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
-            # Add other essential system agents here if needed
-        }
+        # core_system_agents_resume = { # REMOVE
+        #     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent, # REMOVE
+        #     MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent, # REMOVE
+        #     # Add other essential system agents here if needed # REMOVE
+        # } # REMOVE
         # Merge, ensuring core system agents take precedence if IDs overlap (though unlikely for mocks)
         # Or, decide on a clear priority. For now, let mock map be primary, then add system agents.
         # A more robust way would be to have separate maps and the resolver check them in order.
         # For simplicity in RegistryAgentProvider, we provide one merged map. Let's ensure system agents are there.
         
         # Start with mock agents
-        final_fallback_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map()
+        # final_fallback_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map() # REMOVE
         # Add/override with core system agents
-        final_fallback_map_resume.update(core_system_agents_resume)
-        
-        agent_provider = RegistryAgentProvider(registry=agent_registry, fallback=final_fallback_map_resume)
+        # final_fallback_map_resume.update(core_system_agents_resume) # REMOVE
 
+        # RECONSTRUCT final_fallback_map_resume similar to flow_run
+        final_fallback_map_resume: Dict[AgentID, AgentFallbackItem] = PRODUCTION_SYSTEM_AGENTS_MAP.copy()
+        final_fallback_map_resume.update(get_autonomous_engine_agent_fallback_map())
+        # If flow_resume needs an instantiated ProjectChromaManagerAgent, it should be created and added here.
+        # For now, assuming it's not needed or handled by the global maps for resume.
+        # Consider if specific instances like a ProjectChromaManager for THIS run are needed.
+        # If so, they'd be instantiated and added to final_fallback_map_resume here.
+        
+        agent_provider = RegistryAgentProvider(
+            registry=agent_registry, 
+            fallback=final_fallback_map_resume,
+            # Pass llm_provider, prompt_manager, project_chroma_manager if RegistryAgentProvider might instantiate agents needing them
+            # This requires setting up llm_provider_instance, prompt_manager_instance, etc., similar to flow_run
+            # For brevity, assuming flow_resume might not always need to re-instantiate complex agents
+            # requiring these, or that the global ones are sufficient. This might need revisiting.
+            llm_provider=llm_provider_instance_for_resume, # Use the one defined in flow_resume context
+            prompt_manager=prompt_manager_instance_for_resume, # Use the one defined
+            project_chroma_manager=project_chroma_manager_instance_for_resume # Use the one defined
+            )
+
+        # The main try/except/finally for do_resume actions
         try:
             cli_file_path = Path(__file__).resolve()
             server_stages_dir_path_str_resume = str(cli_file_path.parent.parent.parent / "server_prompts" / "stages")
@@ -887,50 +945,30 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
                 server_stages_dir_path_str_resume = str(project_path / "server_prompts" / "stages")
                 if not Path(server_stages_dir_path_str_resume).is_dir():
                     server_stages_dir_path_str_resume = resumed_project_config.get("server_stages_dir_fallback", DEFAULT_SERVER_STAGES_DIR)
-        except Exception:
-            server_stages_dir_path_str_resume = resumed_project_config.get("server_stages_dir_fallback", DEFAULT_SERVER_STAGES_DIR)
-        
-        logger.info(f"Using server_stages_dir for StateManager (resume): {server_stages_dir_path_str_resume}")
-        state_manager = StateManager(
-            target_directory=resumed_project_config["project_root_dir"],
-            server_stages_dir=server_stages_dir_path_str_resume
-        )
-        metrics_store = MetricsStore(project_root=Path(resumed_project_config["project_root_dir"]))
-        
-        orchestrator = AsyncOrchestrator(
-            config=resumed_project_config, 
-            agent_provider=agent_provider,
-            state_manager=state_manager,
-            metrics_store=metrics_store 
-        )
-        
-        click.echo(f"Resuming flow run_id={run_id} with action '{action}' and data '{action_data_for_resume}'...")
-        try:
-            final_context_or_error = await orchestrator.resume_flow(
-                run_id=run_id,
-                action=action, # Pass the string action directly
-                action_data=action_data_for_resume # Pass the prepared dictionary
-            )
+            else:
+                click.echo(f"Flow run '{run_id}' processed with action '{action}'. Check logs and project status for outcome.")
+
         except Exception as e:
-            logger.exception(f"An unexpected error occurred during orchestrator.resume_flow: {e}")
-            click.echo(f"Error during flow resumption: {e}", err=True)
-            sys.exit(1)
+            # This catches errors from the block above (orchestrator call, state_manager, etc.)
+            logger.error(f"An unexpected error occurred during active flow_resume operations: {e}", exc_info=True)
+            click.echo(f"An unexpected error occurred during resume: {e}", err=True)
+            # sys.exit(1) # Let the outer try/except handle sys.exit
+            raise # Re-raise to be caught by the outer try/except that calls asyncio.run()
+        finally:
+            # Ensure LLM client (if any) is closed
+            if llm_manager_for_resume and llm_manager_for_resume._llm_provider is not None: # Check llm_manager_for_resume
+                 logger.info(f"Flow Resume: Attempting to close LLM provider client of type: {type(llm_manager_for_resume._llm_provider).__name__}")
+                 await llm_manager_for_resume.close_client()
 
-        if isinstance(final_context_or_error, dict) and final_context_or_error.get("_flow_error"):
-            click.echo(f"Error resuming flow: {final_context_or_error['_flow_error']}", err=True)
-            sys.exit(1)
-        elif action.lower() == "abort" and isinstance(final_context_or_error, dict) and final_context_or_error.get("status") == FlowPauseStatus.ABORTED_BY_USER.value: # Check against enum value
-            click.echo(f"Flow run '{run_id}' successfully aborted.")
-        else:
-            click.echo(f"Flow run '{run_id}' processed with action '{action}'. Check logs and project status for outcome.")
-
-
+    # Outer try/except that calls asyncio.run()
     try:
         asyncio.run(do_resume())
-    except Exception as e:
-        logger.error(f"High-level error during flow_resume execution: {e}", exc_info=True)
-        click.echo(f"An unexpected error occurred: {e}", err=True)
-        sys.exit(1)
+        # Successful completion, exit code 0 is implicit
+    except Exception:
+         # Errors are logged within do_resume's try/except block and re-raised.
+         # This ensures a non-zero exit code if do_resume itself had an unhandled exception or re-raised one.
+         # click.echo("Flow resume failed. See logs for details.", err=True) # Error message already echoed in do_resume
+         sys.exit(1) # Ensure non-zero exit code on any exception from do_resume
 
 
 # ---------------------------------------------------------------------------
@@ -1433,18 +1471,11 @@ from chungoid.schemas.project_status_schema import HumanReviewRecord
 @click.option("--run-id", "run_id_override_opt", type=str, default=None, help="Specify a custom run ID for this execution.")
 @click.option("--initial-context", type=str, default=None, help="JSON string containing initial context variables for the build.")
 @click.option("--tags", type=str, default=None, help="Comma-separated tags for this build (e.g., 'dev,release').")
-@click.option("--use-mock-llm-provider/--no-use-mock-llm-provider", default=False, help="Use mock LLM provider instead of a real one. Defaults to False (uses real LLM).") # ADDED FLAG
-@click.option( # ADDED --use-mock-agents flag
-    "--use-mock-agents/--no-use-mock-agents",
-    "use_mock_agents_flag",
-    default=False,
-    show_default=True,
-    help="Use mock agents from testing_mock_agents.py for fallback, overriding production agents where IDs match."
-)
+@click.option("--use-mock-llm-provider/--no-use-mock-llm-provider", default=False, help="Use mock LLM provider instead of a real one. Defaults to False (uses real LLM).") # Keep this flag
 @click.pass_context
-def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str], use_mock_llm_provider: bool, use_mock_agents_flag: bool): # Corrected parameter name here, ADDED use_mock_llm_provider, ADDED use_mock_agents_flag
+def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str], use_mock_llm_provider: bool):
     """Initiates a project build from a user goal specified in a file."""
-    logger.info(f"Starting build from goal file: {goal_file} for project directory: {project_dir_opt}")
+    logger.info(f"Starting build from goal file: {goal_file} for project directory: {project_dir_opt} with use_mock_llm_provider={use_mock_llm_provider}")
     log_level = ctx.obj.get("log_level", "INFO") # Get log_level from context
 
     # Ensure project directory exists
@@ -1479,18 +1510,32 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             logger.error(f"Invalid JSON in --initial-context: {e}")
             click.echo(f"Error: Invalid JSON provided for --initial-context. Details: {e}", err=True)
             raise click.Abort()
-        except ValueError as e:
+        except ValueError as e: 
             logger.error(f"Error with initial context structure: {e}")
-            click.echo(f"Error: {e}", err=True)
+            click.echo(f"Error: {e}", err=True) 
             raise click.Abort()
 
-    # ADDED: Merge tags into parsed_initial_context
+    # Add MCP root workspace path to the initial context
+    # cli.py is in chungoid-core/src/chungoid/cli.py
+    # MCP root is four levels up from cli.py's directory
+    mcp_root_path = Path(__file__).parent.parent.parent.parent.resolve()
+    parsed_initial_context['mcp_root_workspace_path'] = str(mcp_root_path)
+    logger.info(f"Added 'mcp_root_workspace_path': {str(mcp_root_path)} to initial context.")
+
+    # Prepare run_id
+    current_run_id = run_id_override_opt if run_id_override_opt else str(uuid.uuid4())
+    parsed_initial_context["_run_id"] = current_run_id 
+    logger.info(f"Build Run ID: {current_run_id}")
+
+    # Merge tags into parsed_initial_context
     if tags:
         parsed_initial_context["_run_tags"] = [tag.strip() for tag in tags.split(',')]
-        logger.info(f"Added tags to initial context: {parsed_initial_context['_run_tags']}")
+        logger.info(f"Added tags to initial context: {parsed_initial_context.get('_run_tags')}")
 
     async def do_build():
-        nonlocal user_goal # Allow access to user_goal from outer scope
+        nonlocal user_goal
+        # nonlocal parsed_initial_context # No longer needed as it's passed correctly or reconstructed
+
         try:
             # Configuration loading
             logger.info(f"Attempting to load configuration for project: {abs_project_dir}")
@@ -1603,7 +1648,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 if not openai_api_key:
                     logger.error("OPENAI_API_KEY environment variable not set. Cannot use OpenAILLMProvider.")
                     click.echo("Error: OPENAI_API_KEY environment variable is required when not using --use-mock-llm-provider.", err=True)
-                    # Instead of click.Abort(), raise a specific error that can be caught by the outer try/except
+            # Instead of click.Abort(), raise a specific error that can be caught by the outer try/except
                     raise ValueError("OPENAI_API_KEY not set for OpenAILLMProvider")
                 
                 # You might want to fetch a default_model from config or use a hardcoded one
@@ -1649,6 +1694,12 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
 
 
             # Agent Registry Setup
+            agent_registry = AgentRegistry(project_root=abs_project_dir) # MODIFIED to use abs_project_dir
+            agent_registry.add(core_stage_executor_card, overwrite=True)
+            # Remove mock agent card registrations
+            # agent_registry.add_agent_card(get_mock_system_intervention_agent_card()) # REMOVE
+            # agent_registry.add_agent_card(get_mock_code_generator_agent_card()) # REMOVE
+            # agent_registry.add_agent_card(get_mock_test_generation_agent_v1_card()) # REMOVE
             agent_registry = AgentRegistry(project_root=abs_project_dir) # MODIFIED: Added project_root
             # Register essential system agents (example, adapt as needed)
             agent_registry.add(core_stage_executor_card, overwrite=True) # MODIFIED: Added overwrite=True
@@ -1658,7 +1709,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             # Add mock agents for testing if needed (or make this conditional)
             # agent_registry.add_agent_card(get_mock_system_intervention_agent_card())
             # agent_registry.add_agent_card(get_mock_code_generator_agent_card())
-            # agent_registry.add_agent_card(get_mock_test_generator_agent_card())
+            # agent_registry.add_agent_card(get_mock_test_generation_agent_card())
             # agent_registry.add_agent_card(get_mock_system_requirements_gathering_agent_card())
 
             # Fallback agents map - these are classes, not cards.
@@ -1701,8 +1752,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
                 "FileOperationAgent_v1": SystemFileSystemAgent_v1, # ADDED: Map FileOperationAgent_v1 to SystemFileSystemAgent_v1
                 SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1, # Ensure this is here
-                "NoOpAgent_v1": MockNoOpAgent,  # <<< ADDED THIS LINE
-                "SystemInterventionAgent_v1": MockSystemInterventionAgent, # <<< ADDED THIS LINE
+                # "NoOpAgent_v1": MockNoOpAgent,  # <<< REMOVE THIS LINE
+                # "SystemInterventionAgent_v1": MockSystemInterventionAgent, # <<< REMOVE THIS LINE
             })
             final_fallback_map.update(core_system_agent_classes)
 
@@ -1719,22 +1770,18 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             if "NoOpAgent_v1" in final_fallback_map:
                 logger.info("DIAGNOSTIC (do_build): 'NoOpAgent_v1' IS PRESENT in final_fallback_map keys.")
                 logger.info(f"DIAGNOSTIC (do_build): Value for 'NoOpAgent_v1' is {final_fallback_map['NoOpAgent_v1']}")
-            else:
+            else: 
                 logger.error("DIAGNOSTIC (do_build): 'NoOpAgent_v1' IS MISSING from final_fallback_map keys.")
             # --- END DIAGNOSTIC LOGGING ---
             
-            agent_provider = RegistryAgentProvider(
+            agent_provider = RegistryAgentProvider( # Align this block with the `if/else` above
                 registry=agent_registry,
-                fallback=final_fallback_map, # MODIFIED: Changed fallback_agents_map to fallback
-                # Pass dependencies required by agents that might be instantiated from classes by the provider
-                llm_provider=llm_provider_instance, 
+                fallback=final_fallback_map, 
+                llm_provider=llm_provider_instance,
                 prompt_manager=prompt_manager,
-                project_chroma_manager=project_chroma_manager, # ADDED project_chroma_manager
-                # We might also need to pass the global `config` or `state_manager` if agents need them
-                # during their construction by the RegistryAgentProvider.
-                # For now, assuming they get project_root or necessary params via their own input schemas.
+                project_chroma_manager=project_chroma_manager,
             )
-            logger.info("RegistryAgentProvider initialized.")
+            logger.info("RegistryAgentProvider initialized.") # Align this with agent_provider
 
             # Orchestrator Setup
             # The orchestrator will now use the goal string to generate a plan via the LLMManager
