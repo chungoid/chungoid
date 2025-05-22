@@ -5,7 +5,7 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, ClassVar
+from typing import Any, Dict, List, Optional, Union, ClassVar, Tuple
 import logging
 import traceback # For detailed error logging
 
@@ -112,20 +112,80 @@ class SystemFileSystemAgent_v1(BaseAgent):
 
         self._logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
-    def _resolve_and_sandbox_path(self, relative_path: str, project_root: Path) -> Path:
-        """
-        Resolves a relative path against the project root and ensures it's within the project.
-        Raises ValueError if path is outside project scope or invalid.
-        """
-        if ".." in Path(relative_path).parts:
-            raise ValueError("Path traversal detected (contains '..'). Path must be relative and within project.")
+    def _resolve_and_sandbox_path(self, relative_path_arg: Union[str, Path], project_root_override: Optional[Union[str,Path]] = None) -> Tuple[Path, Optional[str]]:
+        # Determine the effective project root
+        base_path_arg: Union[str, Path, None]
+        if project_root_override is not None:
+            base_path_arg = project_root_override
+            self._logger.info(f"RESOLVE_PATH_DEBUG: Using project_root_override: {base_path_arg} (type: {type(base_path_arg)})")
+        elif hasattr(self, 'project_root') and self.project_root:
+            base_path_arg = self.project_root
+            self._logger.info(f"RESOLVE_PATH_DEBUG: Using self.project_root: {base_path_arg} (type: {type(base_path_arg)})")
+        else: # Fallback: Try to get from system_context if available (should be less common)
+            base_path_arg = self.system_context.get("project_root_path") if self.system_context else None
+            if base_path_arg:
+                self._logger.info(f"RESOLVE_PATH_DEBUG: Using project_root_path from system_context: {base_path_arg} (type: {type(base_path_arg)})")
+            else:
+                self._logger.error("RESOLVE_PATH_DEBUG: effective_project_root could not be determined (None or empty).")
+                return Path(), "Project root not defined for file operation."
 
-        absolute_path = (project_root / relative_path).resolve()
+        # Ensure base_path_arg (effective_project_root) is a Path object
+        effective_project_root: Path
+        if isinstance(base_path_arg, str):
+            self._logger.info(f"RESOLVE_PATH_DEBUG: base_path_arg (effective_project_root) was string '{base_path_arg}'. Converting to Path.")
+            try:
+                effective_project_root = Path(base_path_arg)
+            except Exception as e_conv_base:
+                self._logger.error(f"RESOLVE_PATH_DEBUG: Error converting base_path_arg '{base_path_arg}' to Path: {e_conv_base}")
+                return Path(), f"Project root '{base_path_arg}' could not be converted to a Path object."
+        elif isinstance(base_path_arg, Path):
+            effective_project_root = base_path_arg
+        else: # Should not happen if logic above is correct, but as a safeguard
+            self._logger.error(f"RESOLVE_PATH_DEBUG: base_path_arg (effective_project_root) is of unexpected type {type(base_path_arg)}. Value: '{base_path_arg}'")
+            return Path(), f"Project root is of an invalid type: {type(base_path_arg)}."
         
-        # Ensure the resolved path is still within the project_root directory
-        if project_root.resolve() not in absolute_path.parents and absolute_path != project_root.resolve():
-            raise ValueError(f"Path '{absolute_path}' is outside the project root '{project_root.resolve()}'.")
-        return absolute_path
+        self._logger.info(f"RESOLVE_PATH_DEBUG: effective_project_root FINAL type {type(effective_project_root)}, value '{effective_project_root}'.")
+
+        # Ensure relative_path_arg is also Path for the operation
+        path_to_join: Path
+        if isinstance(relative_path_arg, str):
+            self._logger.info(f"RESOLVE_PATH_DEBUG: relative_path_arg was string '{relative_path_arg}'. Converting to Path.")
+            try:
+                path_to_join = Path(relative_path_arg)
+            except Exception as e_conv_rel:
+                self._logger.error(f"RESOLVE_PATH_DEBUG: Error converting relative_path_arg '{relative_path_arg}' to Path: {e_conv_rel}")
+                return Path(), f"Relative path '{relative_path_arg}' could not be converted to a Path object."
+        elif isinstance(relative_path_arg, Path):
+            path_to_join = relative_path_arg
+        else:
+            self._logger.error(f"RESOLVE_PATH_DEBUG: Invalid type for relative_path_arg: {type(relative_path_arg)}")
+            return Path(), f"Invalid type for relative_path: {type(relative_path_arg)}"
+        
+        self._logger.info(f"RESOLVE_PATH_DEBUG: path_to_join FINAL type {type(path_to_join)}, value '{path_to_join}'.")
+        
+        # Check for path traversal attempts in relative_path
+        if ".." in path_to_join.parts:
+            self._logger.error(f"RESOLVE_PATH_DEBUG: path_to_join '{path_to_join}' contains '..', which is not allowed for a relative_path.")
+            return Path(), f"Relative path '{relative_path_arg}' cannot contain '..'."
+
+        if path_to_join.is_absolute():
+            self._logger.error(f"RESOLVE_PATH_DEBUG: path_to_join '{path_to_join}' is absolute, which is not allowed for a relative_path.")
+            return Path(), f"Relative path '{relative_path_arg}' cannot be absolute."
+
+        self._logger.info(f"RESOLVE_PATH_DEBUG: PRE-JOIN: effective_project_root='{effective_project_root}' (type: {type(effective_project_root)}), path_to_join='{path_to_join}' (type: {type(path_to_join)})")
+
+        # At this point, effective_project_root and path_to_join are guaranteed to be Path objects by the logic above.
+        absolute_path = (effective_project_root / path_to_join).resolve()
+        self._logger.info(f"RESOLVE_PATH_DEBUG: absolute_path AFTER JOIN & RESOLVE: '{absolute_path}' (type: {type(absolute_path)})")
+
+        # Security check: Ensure the resolved path is within the project root
+        # Use effective_project_root.resolve() for comparison
+        resolved_root_for_check = effective_project_root.resolve()
+        if resolved_root_for_check not in absolute_path.parents and absolute_path != resolved_root_for_check:
+            self._logger.error(f"RESOLVE_PATH_DEBUG: absolute_path '{absolute_path}' is outside the project root '{resolved_root_for_check}'.")
+            return Path(), f"Path '{absolute_path}' is outside the project root '{resolved_root_for_check}'."
+
+        return absolute_path, None
 
     async def invoke_async(
         self,
@@ -173,14 +233,32 @@ class SystemFileSystemAgent_v1(BaseAgent):
         method = getattr(self, actual_tool_name)
         
         try:
-            if "project_root" in method.__code__.co_varnames:
-                 result = await asyncio.to_thread(method, **actual_tool_input, project_root=actual_project_root)
-            else:
-                 result = await asyncio.to_thread(method, **actual_tool_input)
+            # If method is an async function, await it directly.
+            # The method itself should handle blocking I/O appropriately (e.g., using to_thread internally if needed for actual file ops)
+            if asyncio.iscoroutinefunction(method):
+                if "project_root" in method.__code__.co_varnames:
+                    # Assuming tool methods like create_directory are defined as async
+                    # and might take project_root
+                    result = await method(**actual_tool_input, project_root=actual_project_root)
+                else:
+                    result = await method(**actual_tool_input)
+            else: # If it's a synchronous method (should ideally not be the case for tool methods)
+                self._logger.warning(f"Tool method {actual_tool_name} is synchronous. Running in thread.")
+                if "project_root" in method.__code__.co_varnames:
+                    result = await asyncio.to_thread(method, **actual_tool_input, project_root=actual_project_root)
+                else:
+                    result = await asyncio.to_thread(method, **actual_tool_input)
             
+            # Ensure the result is a dictionary, as expected by the type hint and orchestrator
             if isinstance(result, BaseModel):
-                return result.model_dump()
-            return result
+                return result.model_dump() # Standard Pydantic model output
+            elif isinstance(result, dict):
+                return result # Already a dict
+            else:
+                # This case should ideally not be reached if tool methods return FileSystemOutput or a dict.
+                self._logger.warning(f"Tool method {actual_tool_name} returned non-dict/BaseModel type: {type(result)}. Value: {str(result)[:200]}. Wrapping in a generic error dict.")
+                return {"success": False, "error": f"Tool {actual_tool_name} returned unexpected type: {type(result)}", "details": str(result)[:500]}
+
         except Exception as e:
             self._logger.error(f"Error executing tool {actual_tool_name} for agent {self.AGENT_ID}: {e}", exc_info=True)
             return {"success": False, "error": str(e), "details": f"Exception type: {type(e).__name__}"}
@@ -280,20 +358,29 @@ class SystemFileSystemAgent_v1(BaseAgent):
 
     async def create_directory(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Creates a directory (and any parent directories if they don't exist)."""
+        self._logger.info(f"CREATE_DIRECTORY_DEBUG: Received project_root type: {type(project_root)}, value: {project_root}")
+        if not project_root:
+            return self.FileSystemOutput(success=False, error="Project root not provided.").model_dump()
+
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
-            
-            if sandboxed_path.exists() and not sandboxed_path.is_dir():
+            absolute_path, error = self._resolve_and_sandbox_path(path, project_root)
+            if error:
+                return self.FileSystemOutput(success=False, path=path, error=error).model_dump()
+
+            self._logger.info(f"CREATE_DIR_PRE_MKDIR: Type of absolute_path: {type(absolute_path)}, Value: {absolute_path}")
+
+            if absolute_path.exists() and not absolute_path.is_dir():
                 return self.FileSystemOutput(
                     success=False, 
-                    path=str(sandboxed_path), 
+                    path=str(absolute_path), 
                     error=f"Path exists but is not a directory."
                 ).model_dump()
 
-            os.makedirs(sandboxed_path, exist_ok=True)
+            absolute_path.mkdir(parents=True, exist_ok=True)
+            self._logger.info(f"Directory created: {absolute_path}")
             return self.FileSystemOutput(
                 success=True, 
-                path=str(sandboxed_path), 
+                path=str(absolute_path), 
                 message="Directory created or already exists."
             ).model_dump()
         except ValueError as ve: # Catch sandbox violation
@@ -308,7 +395,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def create_file(self, path: str, project_root: Path, content: str = "", overwrite: bool = False) -> Dict[str, Any]:
         """Creates a file with optional content. Fails if overwrite is False and file exists."""
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
+
+            if error:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_path), 
+                    error=error
+                ).model_dump()
 
             if sandboxed_path.is_dir():
                 return self.FileSystemOutput(
@@ -366,7 +460,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
         If the file exists and append is True, content will be added to the end.
         """
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
+
+            if error:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_path), 
+                    error=error
+                ).model_dump()
 
             if sandboxed_path.is_dir():
                 return self.FileSystemOutput(
@@ -408,13 +509,13 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def read_file(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Reads the content of a file."""
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
 
-            if not sandboxed_path.exists():
+            if error:
                 return self.FileSystemOutput(
                     success=False, 
                     path=str(sandboxed_path), 
-                    error="File not found."
+                    error=error
                 ).model_dump()
             
             if sandboxed_path.is_dir():
@@ -445,7 +546,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def delete_file(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Deletes a file."""
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
+
+            if error:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_path), 
+                    error=error
+                ).model_dump()
 
             if not sandboxed_path.exists():
                 return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="File not found.").model_dump()
@@ -462,7 +570,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def delete_directory(self, path: str, project_root: Path, recursive: bool = False) -> Dict[str, Any]:
         """Deletes a directory. If recursive is False, the directory must be empty."""
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
+
+            if error:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_path), 
+                    error=error
+                ).model_dump()
 
             if not sandboxed_path.exists():
                 return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory not found.").model_dump()
@@ -487,7 +602,13 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def path_exists(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Checks if a path (file or directory) exists."""
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
+            if error:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_path), 
+                    error=error
+                ).model_dump()
             exists = sandboxed_path.exists()
             return self.FileSystemOutput(success=True, path=str(sandboxed_path), exists=exists, message=f"Path checked.").model_dump()
         except ValueError as ve: # Path traversal or outside project
@@ -498,7 +619,14 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def list_directory_contents(self, path: str, project_root: Path) -> Dict[str, Any]:
         """Lists the contents (files and subdirectories) of a directory."""
         try:
-            sandboxed_path = self._resolve_and_sandbox_path(path, project_root)
+            sandboxed_path, error = self._resolve_and_sandbox_path(path, project_root)
+
+            if error:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_path), 
+                    error=error
+                ).model_dump()
 
             if not sandboxed_path.exists():
                 return self.FileSystemOutput(success=False, path=str(sandboxed_path), error="Directory not found.").model_dump()
@@ -515,8 +643,15 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def move_path(self, src_path: str, dest_path: str, project_root: Path, overwrite: bool = False) -> Dict[str, Any]:
         """Moves a file or directory. Overwrites destination if overwrite is True."""
         try:
-            sandboxed_src = self._resolve_and_sandbox_path(src_path, project_root)
-            sandboxed_dest = self._resolve_and_sandbox_path(dest_path, project_root)
+            sandboxed_src, error_src = self._resolve_and_sandbox_path(src_path, project_root)
+            sandboxed_dest, error_dest = self._resolve_and_sandbox_path(dest_path, project_root)
+
+            if error_src or error_dest:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_src) if error_src else str(sandboxed_dest), 
+                    error=error_src or error_dest
+                ).model_dump()
 
             if not sandboxed_src.exists():
                 return self.FileSystemOutput(success=False, path=str(sandboxed_src), error="Source path not found.").model_dump()
@@ -544,8 +679,15 @@ class SystemFileSystemAgent_v1(BaseAgent):
     async def copy_path(self, src_path: str, dest_path: str, project_root: Path, overwrite: bool = False) -> Dict[str, Any]:
         """Copies a file or directory. Overwrites destination if overwrite is True."""
         try:
-            sandboxed_src = self._resolve_and_sandbox_path(src_path, project_root)
-            sandboxed_dest = self._resolve_and_sandbox_path(dest_path, project_root)
+            sandboxed_src, error_src = self._resolve_and_sandbox_path(src_path, project_root)
+            sandboxed_dest, error_dest = self._resolve_and_sandbox_path(dest_path, project_root)
+
+            if error_src or error_dest:
+                return self.FileSystemOutput(
+                    success=False, 
+                    path=str(sandboxed_src) if error_src else str(sandboxed_dest), 
+                    error=error_src or error_dest
+                ).model_dump()
 
             if not sandboxed_src.exists():
                 return self.FileSystemOutput(success=False, path=str(sandboxed_src), error="Source path not found.").model_dump()
@@ -579,7 +721,9 @@ class SystemFileSystemAgent_v1(BaseAgent):
         project_root: Path, 
         overwrite: bool = False
     ) -> Dict[str, Any]:
-        """Retrieves an artifact from ChromaDB and writes its content to a file."""
+        """Retrieves an artifact from ChromaDB and writes its content to a specified file."""
+        self._logger.info(f"WRITE_ARTIFACT_DEBUG: Received project_root type: {type(project_root)}, value: {project_root}")
+
         if not self._pcma_agent:
             error_msg = "ProjectChromaManagerAgent not available to SystemFileSystemAgent. Cannot retrieve artifact."
             self._logger.error(error_msg)
@@ -605,7 +749,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
             
             # Resolve target path
             try:
-                absolute_target_path = self._resolve_and_sandbox_path(target_file_path, project_root)
+                absolute_target_path, error_path = self._resolve_and_sandbox_path(target_file_path, project_root)
             except ValueError as path_e:
                 self._logger.error(f"Path validation error for target_file_path '{target_file_path}': {path_e}")
                 return self.FileSystemOutput(success=False, error=str(path_e), path=target_file_path).model_dump()
@@ -618,6 +762,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
 
             # Create parent directories if they don't exist
             try:
+                self._logger.info(f"WRITE_ARTIFACT_PRE_PARENT_MKDIR: Type of absolute_target_path.parent: {type(absolute_target_path.parent)}, Value: {absolute_target_path.parent}")
                 absolute_target_path.parent.mkdir(parents=True, exist_ok=True)
             except Exception as dir_e:
                 error_msg = f"Failed to create parent directories for '{absolute_target_path}': {dir_e}"

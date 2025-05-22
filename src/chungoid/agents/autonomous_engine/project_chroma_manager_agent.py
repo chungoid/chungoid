@@ -390,70 +390,86 @@ class ProjectChromaManagerAgent_v1(BaseModel):
         base_collection_name: str,
         document_id: str
     ) -> RetrieveArtifactOutput:
-        """Retrieves an artifact by its ID from the project-specific collection."""
-        set_chroma_project_context(self._actual_project_workspace_path)
+        """
+        Retrieves a specific artifact (document) by its ID from the specified project-specific collection.
+
+        Args:
+            base_collection_name: The base name of the collection (e.g., "loprd_artifacts").
+                                  The project ID will be prefixed automatically.
+            document_id: The unique ID of the document/artifact to retrieve.
+
+        Returns:
+            RetrieveArtifactOutput: An object containing the status, artifact content, metadata, and any error messages.
+        """
+        if not self._logger: # Should be initialized in __init__
+            self._logger = logging.getLogger(f"{self.__class__.__name__}.{self.project_id}")
+            self._logger.warning("PCMA Logger was not initialized in __init__, re-initialized in retrieve_artifact.")
+
+        self._logger.info(f"Attempting to retrieve artifact ID '{document_id}' from base collection '{base_collection_name}'.")
+
         collection_name = self._get_project_collection_name(base_collection_name)
+        
         try:
-            # Use get_document_by_id from chroma_utils
-            # This now returns a flat dict: {'id': ..., 'document': ..., 'metadata': ...} or None
-            result = get_document_by_id(
-                collection_name=collection_name, 
-                doc_id=document_id,
-                include=["documents", "metadatas"] # Ensure both are included
+            # MODIFIED: Call utility, ensuring correct param name
+            # No need to pass self._client, as get_document_by_id uses get_chroma_client()
+            document_data = await asyncio.to_thread( 
+                get_document_by_id,
+                collection_name, # Pass collection_name directly
+                doc_id=document_id  # CORRECTED: Use doc_id as the keyword argument for the utility
             )
-            
-            self._logger.info(f"Retrieve artifact DEBUG: Raw result from get_document_by_id for doc '{document_id}': {result}") 
 
-            if result and result.get("id") == document_id:
-                content_str = result.get("document")
-                metadata = result.get("metadata")
+            if document_data and document_data.get("document"):
+                self._logger.debug(f"PCMA_RETRIEVE_DEBUG: Artifact '{document_id}' from '{collection_name}' - Type: {type(document_data.get('document'))}, Empty: {not bool(document_data.get('document'))}, Content (first 100): {str(document_data.get('document'))[:100]}")
 
-                self._logger.error(f"PCMA_RETRIEVE_DEBUG: DOC_ID='{document_id}'")
-                self._logger.error(f"PCMA_RETRIEVE_DEBUG: RAW_CONTENT_STR_FROM_CHROMA='{content_str}'")
-                self._logger.error(f"PCMA_RETRIEVE_DEBUG: TYPE_OF_RAW_CONTENT_STR='{type(content_str)}'")
-                self._logger.error(f"PCMA_RETRIEVE_DEBUG: IS_CONTENT_STR_NONE='{content_str is None}'")
-                self._logger.error(f"PCMA_RETRIEVE_DEBUG: IS_CONTENT_STR_EMPTY_STRING='{content_str == ""}'")
+                content_str = document_data.get("document")
+                # ----- PCMA_RETRIEVE_DEBUG messages changed from ERROR to DEBUG -----
+                self._logger.debug(f"PCMA_RETRIEVE_DEBUG: TYPE_OF_RAW_CONTENT_STR='{type(content_str)}'")
+                self._logger.debug(f"PCMA_RETRIEVE_DEBUG: IS_CONTENT_STR_NONE='{content_str is None}'")
+                self._logger.debug(f"PCMA_RETRIEVE_DEBUG: IS_CONTENT_STR_EMPTY_STRING='{content_str == ""}'")
+                # ----- End of changed log messages -----
 
-                if content_str and isinstance(content_str, str) and \
-                   ((content_str.startswith('{') and content_str.endswith('}')) or \
-                    (content_str.startswith('[') and content_str.endswith(']'))):
-                    # Looks like JSON, try to parse
+                parsed_content: Union[str, Dict[str, Any], None] = None
+                if content_str is not None:
                     try:
-                        parsed_content = json.loads(content_str)
-                        self._logger.error(f"PCMA_RETRIEVE_DEBUG: PRE_RETURN_PARSED_CONTENT='{parsed_content}'")
-                        self._logger.error(f"PCMA_RETRIEVE_DEBUG: PRE_RETURN_PARSED_CONTENT_TYPE='{type(parsed_content)}'")
-                        return RetrieveArtifactOutput(
-                            document_id=document_id,
-                            content=parsed_content,
-                            metadata=metadata,
-                            status="SUCCESS"
-                        )
-                    except json.JSONDecodeError as e:
-                        self._logger.error(f"JSONDecodeError for doc_id {document_id} while parsing presumed JSON: {e}. Raw content: '{str(content_str)[:500]}'")
-                        # Return original string as content on decode error, but mark as failure for this attempt
-                        return RetrieveArtifactOutput(
-                            document_id=document_id,
-                            content=content_str, 
-                            metadata=metadata, 
-                            status="FAILURE", 
-                            error_message=f"Content looked like JSON but failed to parse: {e}"
-                        )
-                else:
-                    # Not JSON-like, or content_str is None / not a string. Return as is.
-                    # If content_str is None, content in output will be None.
-                    self._logger.info(f"PCMA_RETRIEVE_INFO: Returning content as non-JSON (or None) for doc_id {document_id}. Type: {type(content_str)}")
-                    return RetrieveArtifactOutput(
-                        document_id=document_id,
-                        content=content_str, 
-                        metadata=metadata,
-                        status="SUCCESS" # Success in retrieving, even if content is None or not JSON
-                    )
-            else: # result from Chroma was None or ID didn't match
-                self._logger.warning(f"Artifact '{document_id}' not found in collection '{collection_name}' for project '{self.project_id}'. Result from get_document_by_id: {result}") # Changed to self._logger
-                return RetrieveArtifactOutput(document_id=document_id, status="NOT_FOUND", error_message="Artifact not found.")
+                        # Attempt to parse as JSON if it looks like a JSON object or array
+                        if content_str.strip().startswith("{") or content_str.strip().startswith("["):
+                            parsed_content = json.loads(content_str)
+                        else:
+                            # Otherwise, treat as a plain string
+                            parsed_content = content_str
+                    except json.JSONDecodeError:
+                        # If JSON parsing fails, treat it as a plain string
+                        self._logger.warning(f"Content for artifact ID '{document_id}' in collection '{collection_name}' could not be parsed as JSON, returning as raw string.")
+                        parsed_content = content_str
+                
+                self._logger.debug(f"PCMA_RETRIEVE_DEBUG: PRE_RETURN_PARSED_CONTENT='{str(parsed_content)[:200]}...'")
+
+
+                return RetrieveArtifactOutput(
+                    status="SUCCESS",
+                    document_id=document_id,
+                    content=parsed_content,
+                    metadata=document_data.get("metadata"),
+                    message=f"Artifact '{document_id}' retrieved successfully from '{collection_name}'."
+                )
+            else:
+                self._logger.warning(f"Artifact ID '{document_id}' not found in collection '{collection_name}'.")
+                return RetrieveArtifactOutput(
+                    status="NOT_FOUND",
+                    document_id=document_id,
+                    message=f"Artifact '{document_id}' not found in collection '{collection_name}'."
+                )
+
         except Exception as e:
-            self._logger.error(f"Error retrieving artifact '{document_id}' from '{collection_name}' for project '{self.project_id}': {e}", exc_info=True) # Changed to self._logger
-            return RetrieveArtifactOutput(document_id=document_id, status="FAILURE", error_message=str(e))
+            self._logger.error(
+                f"Failed to retrieve artifact ID '{document_id}' from collection '{collection_name}': {e}",
+                exc_info=True
+            )
+            return RetrieveArtifactOutput(
+                status="FAILURE",
+                document_id=document_id,
+                error_message=str(e)
+            )
 
     async def get_related_artifacts(self, params: GetRelatedArtifactsInput) -> GetRelatedArtifactsOutput:
         """

@@ -1583,11 +1583,11 @@ class AsyncOrchestrator(BaseOrchestrator):
             # The previous_stage_outputs should be returned as they are.
             return self.shared_context.previous_stage_outputs if self.shared_context.previous_stage_outputs else {}
 
-    async def _execute_flow_loop(
+    async def _execute_flow_loop( # Ensure async def
         self,
         run_id: str,
         flow_id: str,
-        start_stage_name: str,
+        start_stage_name: str
         # initial_shared_context is now assumed to be populated on self.shared_context by the caller (run or resume_flow)
     ) -> Dict[str, Any]:
         current_stage_name: Optional[str] = start_stage_name
@@ -1610,18 +1610,14 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self.logger.error(f"Run {run_id}: Orchestrator critical error - current_plan is not set during loop execution. Terminating.")
                 final_status = StageStatus.FAILURE
                 flow_error_details = "Orchestrator critical error: current_plan not set."
-                # The following line was a bug from a previous merge/edit, current_stage_name is not available here if current_plan is None.
-                # flow_error_details = f"Stage '{current_stage_name}' not found in plan."
                 break
 
-            # --- MOVED: stage_spec definition before its use ---
             stage_spec = self.current_plan.stages.get(current_stage_name)
             if not stage_spec:
                 self.logger.error(f"Stage '{current_stage_name}' not found in plan '{flow_id}' for run {run_id}. Terminating.")
                 final_status = StageStatus.FAILURE
                 flow_error_details = f"Stage '{current_stage_name}' not found in plan."
                 break
-            # --- END MOVED ---
 
             self.shared_context.current_stage_id = current_stage_name
             self.shared_context.current_stage_status = StageStatus.RUNNING # Update shared context
@@ -1631,9 +1627,9 @@ class AsyncOrchestrator(BaseOrchestrator):
             self.state_manager.record_stage_start(run_id, flow_id, current_stage_name, stage_spec.agent_id)
 
             agent_id_to_invoke = stage_spec.agent_category or stage_spec.agent_id
-            if not agent_id_to_invoke: # Should be validated by MasterExecutionPlan model
+            if not agent_id_to_invoke: 
                  self.logger.error(f"Stage '{current_stage_name}' in plan '{flow_id}' has neither agent_id nor agent_category. Terminating.")
-                 final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
+                 final_status = StageStatus.FAILURE 
                  flow_error_details = f"Stage '{current_stage_name}' misconfigured: missing agent_id/category."
                  break
             
@@ -1643,33 +1639,26 @@ class AsyncOrchestrator(BaseOrchestrator):
             pause_status_override: Optional[FlowPauseStatus] = None
             
             try:
-                # Resolve agent callable (this might raise NoAgentFoundForCategoryError, AmbiguousAgentCategoryError)
-                # agent_callable, resolved_agent_id = await self.agent_provider.get_agent_callable(agent_id_to_invoke)
-                agent_callable = self.agent_provider.get(agent_id_to_invoke) # Corrected method call
-                resolved_agent_id = agent_id_to_invoke # Assuming agent_id_to_invoke is the resolved ID
+                agent_callable = self.agent_provider.get(agent_id_to_invoke) 
+                resolved_agent_id = agent_id_to_invoke 
                 
-                if stage_spec.agent_category and not stage_spec.agent_id: # If category was used, log resolved agent
+                if stage_spec.agent_category and not stage_spec.agent_id: 
                     self.logger.info(f"Stage '{current_stage_name}': Category '{stage_spec.agent_category}' resolved to agent ID '{resolved_agent_id}'.")
                 
-                agent_id_for_error_handling = resolved_agent_id # Use the specifically resolved agent_id
+                agent_id_for_error_handling = resolved_agent_id 
 
-                # Attempt to execute the stage
-                # _invoke_agent_for_stage now handles its own retries internally based on max_retries_for_stage
                 stage_output = await self._invoke_agent_for_stage(
                     stage_name=current_stage_name,
-                    agent_id=resolved_agent_id, # Pass the resolved agent ID
+                    agent_id=resolved_agent_id, 
                     agent_callable=agent_callable,
                     inputs_spec=stage_spec.inputs,
-                    max_retries=max_retries_for_stage # Pass max_retries for internal retry loop
+                    max_retries=max_retries_for_stage 
                 )
-                # If _invoke_agent_for_stage completes without raising, it means success after any internal retries.
 
-                # Update shared context with outputs
                 output_key = stage_spec.output_context_path or current_stage_name
                 self.shared_context.previous_stage_outputs[output_key] = stage_output
-                self._last_successful_stage_output = stage_output # Update for potential use by next stages
+                self._last_successful_stage_output = stage_output 
 
-                # Handle artifact registration from stage_output if necessary
                 if isinstance(stage_output, dict) and self.ARTIFACT_OUTPUT_KEY in stage_output:
                     artifact_paths = stage_output[self.ARTIFACT_OUTPUT_KEY]
                     if isinstance(artifact_paths, list):
@@ -1678,202 +1667,136 @@ class AsyncOrchestrator(BaseOrchestrator):
                     elif isinstance(artifact_paths, str):
                          self.shared_context.register_artifact(current_stage_name, Path(artifact_paths))
                 
-                # Check success criteria
                 criteria_passed, failed_criteria = await self._check_success_criteria(current_stage_name, stage_spec, self.shared_context.previous_stage_outputs)
                 if not criteria_passed:
                     self.logger.warning(f"Stage '{current_stage_name}' failed success criteria: {failed_criteria}. Triggering error handling.")
-                    # Create an AgentErrorDetails for success criteria failure
                     agent_error_obj = AgentErrorDetails(
                         agent_id=resolved_agent_id,
                         stage_name=current_stage_name,
                         error_type="SuccessCriteriaFailed",
                         message=f"Stage failed success criteria: {', '.join(failed_criteria)}",
                         details={"failed_criteria": failed_criteria},
-                        can_retry=False, # Typically, success criteria failure is not directly retryable by the same agent
+                        can_retry=False, 
                         can_escalate=True
                     )
-                    # Call _handle_stage_error. attempt_number is effectively > max_retries to prevent direct retry of invoke
                     next_stage_after_error_handling, agent_error_obj, _, pause_status_override = await self._handle_stage_error(
                         current_stage_name=current_stage_name,
                         flow_id=flow_id,
                         run_id=run_id,
-                        current_plan=self.current_plan, # Use self.current_plan
+                        current_plan=self.current_plan, 
                         agent_id_for_error=resolved_agent_id,
-                        error=agent_error_obj, # This is the AgentErrorDetails for SuccessCriteriaFailed
-                        attempt_number=max_retries_for_stage + 1, # Ensure it doesn't retry via _invoke_agent's loop
-                        current_shared_context=self.shared_context # Pass shared_context
+                        error=agent_error_obj, 
+                        attempt_number=max_retries_for_stage + 1, 
+                        current_shared_context=self.shared_context 
                     )
-                    if pause_status_override: # If error handling led to a pause
-                        # Save paused state and break loop
+                    if pause_status_override: 
                         self.state_manager.save_paused_run(run_id, flow_id, current_stage_name, pause_status_override, self.shared_context.model_dump())
                         self.logger.info(f"Run {run_id} paused at stage '{current_stage_name}' due to error handling result: {pause_status_override.value}")
-                        return self.shared_context.previous_stage_outputs # Or specific pause info
+                        return self.shared_context.previous_stage_outputs 
                     
-                    if next_stage_after_error_handling is None and agent_error_obj: # Error handling decided to fail the stage/pipeline
-                        final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
+                    if next_stage_after_error_handling is None and agent_error_obj: 
+                        final_status = StageStatus.FAILURE 
                         flow_error_details = agent_error_obj.message
-                        current_stage_name = NEXT_STAGE_END_FAILURE # Break loop
+                        current_stage_name = NEXT_STAGE_END_FAILURE 
 
-                if current_stage_name != NEXT_STAGE_END_FAILURE : # If not already failed by criteria
+                if current_stage_name != NEXT_STAGE_END_FAILURE : 
                     self._emit_metric(MetricEventType.MASTER_STAGE_END, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=resolved_agent_id, data={"status": StageStatus.COMPLETED_SUCCESS.value})
                     self.state_manager.record_stage_end(run_id, flow_id, current_stage_name, StageStatus.COMPLETED_SUCCESS, outputs=stage_output)
                     self.shared_context.current_stage_status = StageStatus.COMPLETED_SUCCESS
-                    # Update shared context with outputs if output_context_path is specified
-                    if stage_output and stage_spec.output_context_path: # Check stage_output exists
+                    
+                    self.logger.debug(f"Run {run_id}: Stage '{current_stage_name}' - Evaluating output storage. Stage_spec.output_context_path: '{stage_spec.output_context_path if stage_spec else None}'. Stage_output is not None: {stage_output is not None}")
+
+                    if stage_output and stage_spec.output_context_path: 
                         key_to_use_in_outputs_dict = stage_spec.output_context_path
-                        # CORE FIX: Strip "outputs." prefix if it exists
-                        if stage_spec.output_context_path.startswith("outputs."):
-                            key_to_use_in_outputs_dict = stage_spec.output_context_path[len("outputs."):]
-                            self.logger.info(f"Run {run_id}: Adjusted output_context_path: from '{stage_spec.output_context_path}' to '{key_to_use_in_outputs_dict}' for storing in shared_context.outputs.")
+                        if key_to_use_in_outputs_dict.startswith("outputs."):
+                            key_to_use_in_outputs_dict = key_to_use_in_outputs_dict[len("outputs."):]
                         
-                        self.shared_context.outputs[key_to_use_in_outputs_dict] = stage_output.model_dump()
-                        self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.outputs with key '{key_to_use_in_outputs_dict}'.")
-                        
-                        # Keep a flat copy for immediate next stage access as well
-                        self.shared_context.previous_stage_outputs = stage_output.model_dump() 
-
-                        # Also update previous_stage_outputs_by_name
-                        if hasattr(self.shared_context, 'previous_stage_outputs_by_name'): # Defensive check
-                            self.shared_context.previous_stage_outputs_by_name[current_stage_name] = stage_output.model_dump()
-                            self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.previous_stage_outputs_by_name.")
+                        self.shared_context.outputs[key_to_use_in_outputs_dict] = stage_output
+                        self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.outputs['{key_to_use_in_outputs_dict}']")
+                        if isinstance(stage_output, BaseModel):
+                            self.shared_context.previous_stage_outputs = stage_output.model_dump()
+                        elif isinstance(stage_output, dict):
+                            self.shared_context.previous_stage_outputs = stage_output.copy()
                         else:
-                            self.logger.warning(f"Run {run_id}: self.shared_context does not have 'previous_stage_outputs_by_name'. Skipping update.")
-                            
-                    elif stage_output: # Stage output exists, but no specific output_context_path
-                        self.shared_context.previous_stage_outputs = stage_output.model_dump()
+                            self.logger.warning(f"Stage output for {current_stage_name} (with output_context_path) is of unexpected type {type(stage_output)}. Storing as is in previous_stage_outputs.")
+                            self.shared_context.previous_stage_outputs = stage_output
+                    elif stage_output: 
                         self.logger.debug(f"Run {run_id}: Stored output of stage '{current_stage_name}' into shared_context.previous_stage_outputs (no specific output_context_path).")
-                        if hasattr(self.shared_context, 'previous_stage_outputs_by_name'): # Defensive check
-                             self.shared_context.previous_stage_outputs_by_name[current_stage_name] = stage_output.model_dump()
-                        
-                    else: # No stage_output model (e.g. agent returned None)
-                        self.shared_context.previous_stage_outputs = {}
-                        self.logger.debug(f"Run {run_id}: No stage_output for stage '{current_stage_name}'. Setting previous_stage_outputs to empty dict.")
-                        if hasattr(self.shared_context, 'previous_stage_outputs_by_name'): # Defensive check
-                            self.shared_context.previous_stage_outputs_by_name[current_stage_name] = {}
-
-                    # BEGIN: Automatic artifact materialization for SmartCodeGeneratorAgent_v1
-                    if resolved_agent_id == "SmartCodeGeneratorAgent_v1":
-                        self.logger.info(f"Run {run_id}: Stage '{current_stage_name}' used SmartCodeGeneratorAgent_v1. Attempting automatic artifact materialization.")
-                        # MODIFIED: Check if stage_output is an instance of SmartCodeGeneratorAgentOutput (or has the needed attributes)
-                        if hasattr(stage_output, 'generated_code_artifact_doc_id') and hasattr(stage_output, 'target_file_path'):
-                            artifact_doc_id = stage_output.generated_code_artifact_doc_id
-                            target_file_path_from_output = stage_output.target_file_path
-
-                            if artifact_doc_id and target_file_path_from_output:
-                                self.logger.info(f"Run {run_id}: Attempting to write artifact '{artifact_doc_id}' to '{target_file_path_from_output}'.")
-                                try:
-                                    pcma_agent_instance = self.agent_provider._project_chroma_manager # Relies on RegistryAgentProvider
-                                    if not pcma_agent_instance:
-                                        raise ValueError("ProjectChromaManagerAgent could not be retrieved from agent_provider for artifact materialization.")
-
-                                    # SystemFileSystemAgent_v1 expects system_context as a dict for BaseAgent init
-                                    system_context_for_fs_dict = {
-                                        "project_root": Path(self.shared_context.project_root_path),
-                                        "logger": self.logger, # Pass orchestrator's logger for now
-                                        "run_id": run_id
-                                        # llm_provider and prompt_manager are not directly used by file ops
-                                    }
-                                    
-                                    fs_agent = SystemFileSystemAgent_v1(
-                                        system_context=system_context_for_fs_dict, 
-                                        pcma_agent=pcma_agent_instance,
-                                        llm_provider=self.agent_provider._llm_provider, # ADDED direct kwarg
-                                        prompt_manager=self.agent_provider._prompt_manager # ADDED direct kwarg
-                                    )
-                                    
-                                    tool_call_input = WriteArtifactToFileInput(
-                                        artifact_doc_id=artifact_doc_id,
-                                        collection_name=GENERATED_CODE_ARTIFACTS_COLLECTION, # MODIFIED: Use the correct constant
-                                        target_file_path=target_file_path_from_output,
-                                        overwrite=True # Default to overwrite for generated code
-                                    )
-                                    
-                                    # write_artifact_to_file_tool needs project_root explicitly passed
-                                    write_result_dict = await fs_agent.write_artifact_to_file_tool(
-                                        artifact_doc_id=tool_call_input.artifact_doc_id,
-                                        collection_name=tool_call_input.collection_name,
-                                        target_file_path=tool_call_input.target_file_path,
-                                        overwrite=tool_call_input.overwrite,
-                                        project_root=Path(self.shared_context.project_root_path)
-                                    )
-
-                                    if write_result_dict.get("success"):
-                                        self.logger.info(f"Run {run_id}: Successfully materialized artifact '{artifact_doc_id}' to '{target_file_path_from_output}'.")
-                                    else:
-                                        self.logger.error(f"Run {run_id}: Failed to materialize artifact '{artifact_doc_id}' to '{target_file_path_from_output}'. Error: {write_result_dict.get('error')}")
-                                except Exception as e_materialize:
-                                    self.logger.error(f"Run {run_id}: Exception during artifact materialization for '{artifact_doc_id}': {e_materialize}", exc_info=True)
-                            else:
-                                self.logger.warning(f"Run {run_id}: SmartCodeGeneratorAgent_v1 output for stage '{current_stage_name}' missing 'generated_code_artifact_doc_id' or 'target_file_path' values. Cannot materialize.")
+                        if isinstance(stage_output, BaseModel):
+                            self.shared_context.previous_stage_outputs = stage_output.model_dump()
+                        elif isinstance(stage_output, dict):
+                            self.shared_context.previous_stage_outputs = stage_output.copy() 
                         else:
-                            self.logger.warning(f"Run {run_id}: SmartCodeGeneratorAgent_v1 output for stage '{current_stage_name}' (type: {type(stage_output)}) does not have expected attributes for materialization. Cannot materialize.")
-                    # END: Automatic artifact materialization
+                            self.logger.warning(f"Stage output for {current_stage_name} (no output_context_path) is of unexpected type {type(stage_output)}. Storing as is in previous_stage_outputs.")
+                            self.shared_context.previous_stage_outputs = stage_output 
+                    else: 
+                        self.logger.debug(f"Run {run_id}: Stage '{current_stage_name}' had no output. previous_stage_outputs remains unchanged or set to empty dict if first stage.")
+                        if self.shared_context.previous_stage_outputs is None:
+                             self.shared_context.previous_stage_outputs = {} 
 
-                    current_stage_name = self._get_next_stage(current_stage_name) # Determine next stage
+                    if stage_spec.agent_id == "SystemFileSystemAgent_v1" and isinstance(stage_output, dict) and self.ARTIFACT_OUTPUT_KEY in stage_output:
+                        artifact_paths = stage_output[self.ARTIFACT_OUTPUT_KEY]
+                        if isinstance(artifact_paths, list):
+                            for p_str in artifact_paths:
+                                self.shared_context.register_artifact(current_stage_name, Path(p_str))
+                        elif isinstance(artifact_paths, str):
+                             self.shared_context.register_artifact(current_stage_name, Path(artifact_paths))
+
+                    current_stage_name = self._get_next_stage(current_stage_name) 
 
             except (NoAgentFoundForCategoryError, AmbiguousAgentCategoryError) as e_agent_resolve:
                 self.logger.error(f"Run {run_id}: Agent resolution failed for stage '{current_stage_name}', agent specifier '{agent_id_to_invoke}': {e_agent_resolve}")
-                # This is a structural/configuration error for the stage.
-                # It's not an agent execution error, so attempt_number is 1.
                 agent_error_obj = AgentErrorDetails(
-                    agent_id=agent_id_to_invoke, # This was the specifier
+                    agent_id=agent_id_to_invoke, 
                     stage_name=current_stage_name,
                     error_type=e_agent_resolve.__class__.__name__,
                     message=str(e_agent_resolve),
-                    can_retry=False, # Retrying won't help if agent can't be resolved
-                    can_escalate=True # Reviewer might suggest fixing plan
+                    can_retry=False, 
+                    can_escalate=True 
                 )
                 next_stage_after_error_handling, agent_error_obj, _, pause_status_override = await self._handle_stage_error(
                     current_stage_name=current_stage_name,
                     flow_id=flow_id,
                     run_id=run_id,
-                    current_plan=self.current_plan, # Use self.current_plan
-                    agent_id_for_error=agent_id_to_invoke, # This was the specifier
-                    error=agent_error_obj, # This is the AgentErrorDetails for resolution failure
-                    attempt_number=1, # No retries for resolution failure
-                    current_shared_context=self.shared_context # Pass shared_context
+                    current_plan=self.current_plan, 
+                    agent_id_for_error=agent_id_to_invoke, 
+                    error=agent_error_obj, 
+                    attempt_number=1, 
+                    current_shared_context=self.shared_context 
                 )
 
-            except Exception as e_invoke: # Catch errors from _invoke_agent_for_stage (e.g., AgentErrorDetails if all retries failed)
+            except Exception as e_invoke: 
                 self.logger.error(f"Run {run_id}: Exception during agent invocation for stage '{current_stage_name}': {e_invoke}", exc_info=True)
-                # _invoke_agent_for_stage should have already tried retries and would raise AgentErrorDetails if it failed permanently
-                # If it's another unexpected error, wrap it.
                 current_agent_id_for_err = stage_spec.agent_id or stage_spec.agent_category or "UNKNOWN_AGENT"
                 
-                # Error handling is now primarily managed by _invoke_agent_for_stage which raises AgentErrorDetails on final failure
-                # or if a non-retryable error occurs.
-                # The _handle_stage_error here is for post-invocation issues or if _invoke_agent itself has an unhandled exception (less likely).
-                # For now, assume e_invoke is the AgentErrorDetails from _invoke_agent_for_stage if it failed after retries.
                 next_stage_after_error_handling, agent_error_obj, _, pause_status_override = await self._handle_stage_error(
                     current_stage_name=current_stage_name,
                     flow_id=flow_id,
                     run_id=run_id,
-                    current_plan=self.current_plan, # Use self.current_plan
+                    current_plan=self.current_plan, 
                     agent_id_for_error=current_agent_id_for_err,
                     error=e_invoke, 
-                    attempt_number=max_retries_for_stage + 1, # Signify that agent invocation retries (if any) are done
-                    current_shared_context=self.shared_context # Pass shared_context
+                    attempt_number=max_retries_for_stage + 1, 
+                    current_shared_context=self.shared_context 
                 )
             
-            # Post-invocation error handling (if any error occurred and was processed by _handle_stage_error)
-            if agent_error_obj: # This means an error occurred (either during invoke, or success criteria, or agent resolution)
-                self.shared_context.current_stage_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
-                self._emit_metric(MetricEventType.MASTER_STAGE_END, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=agent_error_obj.agent_id, data={"status": StageStatus.FAILURE.value, "error": agent_error_obj.message}) # Changed to StageStatus.FAILURE
-                self.state_manager.record_stage_end(run_id, flow_id, current_stage_name, StageStatus.FAILURE, error_details=agent_error_obj.model_dump()) # Changed to StageStatus.FAILURE
+            if agent_error_obj: 
+                self.shared_context.current_stage_status = StageStatus.FAILURE 
+                self._emit_metric(MetricEventType.MASTER_STAGE_END, flow_id, run_id, stage_id=current_stage_name, master_stage_id=current_stage_name, agent_id=agent_error_obj.agent_id, data={"status": StageStatus.FAILURE.value, "error": agent_error_obj.message}) 
+                self.state_manager.record_stage_end(run_id, flow_id, current_stage_name, StageStatus.FAILURE, error_details=agent_error_obj.model_dump()) 
 
                 if pause_status_override:
                     self.state_manager.save_paused_run(run_id, flow_id, current_stage_name, pause_status_override, self.shared_context.model_dump())
                     self.logger.info(f"Run {run_id} paused at stage '{current_stage_name}' due to error handling result: {pause_status_override.value}")
-                    return self.shared_context.previous_stage_outputs # Or specific pause info
+                    return self.shared_context.previous_stage_outputs 
                 
-                if next_stage_after_error_handling is None: # Error handling decided to fail the stage/pipeline
-                    final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
+                if next_stage_after_error_handling is None: 
+                    final_status = StageStatus.FAILURE 
                     flow_error_details = agent_error_obj.message if agent_error_obj else "Unknown error after handling."
-                    current_stage_name = NEXT_STAGE_END_FAILURE # Break loop
-                else: # Error handling provided a next stage (e.g., reviewer intervention, or continue_ignore_error)
+                    current_stage_name = NEXT_STAGE_END_FAILURE 
+                else: 
                     current_stage_name = next_stage_after_error_handling
             
-            # Check for user clarification checkpoint
             if stage_spec.clarification_checkpoint and current_stage_name not in [NEXT_STAGE_END_FAILURE, NEXT_STAGE_END_SUCCESS, None]:
                 should_pause_for_clarification = True
                 if stage_spec.clarification_checkpoint.condition:
@@ -1884,59 +1807,49 @@ class AsyncOrchestrator(BaseOrchestrator):
                     pause_details = PausedRunDetails(
                         run_id=run_id,
                         flow_id=flow_id,
-                        paused_at_stage_id=current_stage_name, # Pause *before* executing the next stage
+                        paused_at_stage_id=current_stage_name, 
                         status=FlowPauseStatus.PAUSED_FOR_CLARIFICATION,
                         timestamp=datetime.now(timezone.utc),
                         required_clarification_prompt=stage_spec.clarification_checkpoint.prompt,
-                        # Store current full shared context
                         full_shared_context_snapshot=self.shared_context.model_dump() 
                     )
-                    self.state_manager.save_paused_run_details(pause_details) # Use new method
+                    self.state_manager.save_paused_run_details(pause_details) 
                     self._emit_metric(MetricEventType.FLOW_PAUSED, flow_id, run_id, stage_id=current_stage_name, data={"reason": FlowPauseStatus.PAUSED_FOR_CLARIFICATION.value, "prompt": stage_spec.clarification_checkpoint.prompt})
-                    return self.shared_context.previous_stage_outputs # Return current outputs, flow is paused.
+                    return self.shared_context.previous_stage_outputs 
             
-            self.state_manager.update_run_context(run_id, self.shared_context.previous_stage_outputs, self.shared_context.artifact_references) # Save context progress
-
-        # ---- End of main execution loop ----
+            self.state_manager.update_run_context(run_id, self.shared_context.previous_stage_outputs, self.shared_context.artifact_references) 
 
         if current_stage_name == NEXT_STAGE_END_SUCCESS:
             final_status = StageStatus.COMPLETED_SUCCESS
             self.logger.info(f"Run {run_id} for flow '{flow_id}' completed successfully.")
         elif current_stage_name == NEXT_STAGE_END_FAILURE:
-            final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
+            final_status = StageStatus.FAILURE 
             self.logger.error(f"Run {run_id} for flow '{flow_id}' ended in failure. Error: {flow_error_details or 'Unknown error'}")
-        elif hops >= self.MAX_HOPS: # Already handled inside loop, but as a final status check
-            final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
+        elif hops >= self.MAX_HOPS: 
+            final_status = StageStatus.FAILURE 
             flow_error_details = flow_error_details or "Max hops reached."
             self.logger.error(f"Run {run_id} for flow '{flow_id}' terminated due to max hops. Error: {flow_error_details}")
-        elif current_stage_name is None and final_status == StageStatus.COMPLETED_SUCCESS: # Flow ended because no next stage was defined
+        elif current_stage_name is None and final_status == StageStatus.COMPLETED_SUCCESS: 
              self.logger.info(f"Run {run_id} for flow '{flow_id}' completed successfully as no next stage was defined.")
-        else: # Other unexpected termination
-            final_status = StageStatus.FAILURE # Changed to StageStatus.FAILURE
+        else: 
+            final_status = StageStatus.FAILURE 
             flow_error_details = flow_error_details or f"Flow ended unexpectedly at stage '{current_stage_name}'."
             self.logger.error(f"Run {run_id} for flow '{flow_id}' ended unexpectedly. Final Stage: {current_stage_name}. Status: {final_status}. Error: {flow_error_details}")
 
         self._emit_metric(MetricEventType.FLOW_END, flow_id, run_id, data={"status": final_status.value, "error": flow_error_details})
         self.state_manager.record_flow_end(run_id, flow_id, final_status, error_message=flow_error_details, final_outputs=self.shared_context.previous_stage_outputs)
         
-        # Clean up run-specific state from orchestrator instance if necessary,
-        # though shared_context is re-initialized per run.
-        # self._current_run_id is cleared by the caller (run method)
-
-        # Ensure previous_stage_outputs is a dict (it should be)
         if self.shared_context.previous_stage_outputs is None:
             self.shared_context.previous_stage_outputs = {}
             self.logger.warning(f"Run {run_id} flow {flow_id}: previous_stage_outputs was None at the end of _execute_flow_loop. Initialized to empty dict before adding status.")
 
         self.shared_context.previous_stage_outputs["_orchestrator_final_status"] = final_status.value
-        if flow_error_details: # flow_error_details might be None if successful
+        if flow_error_details: 
             self.shared_context.previous_stage_outputs["_orchestrator_flow_error_details"] = flow_error_details
         elif "_orchestrator_flow_error_details" in self.shared_context.previous_stage_outputs:
-            # Ensure the key is not present if there are no error details
             del self.shared_context.previous_stage_outputs["_orchestrator_flow_error_details"]
         
         return self.shared_context.previous_stage_outputs
-
 
     def _resolve_input_values(self, inputs_spec: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1948,128 +1861,364 @@ class AsyncOrchestrator(BaseOrchestrator):
         if not inputs_spec:
             return {}
 
-        resolved_inputs: Dict[str, Any] = {}
-        self.logger.debug(f"Resolving input_spec: {inputs_spec}")
+        # Corrected: Initialize resolved_inputs, not resolved_values
+        resolved_inputs: Dict[str, Any] = {} 
 
         for key, value_spec in inputs_spec.items():
             if isinstance(value_spec, str):
-                # Attempt to resolve dynamic context paths first (e.g., {context...})
-                # This regex will find patterns like {context.path.to.value}
-                match = re.fullmatch(r"\{context\.([^}]+)\}", value_spec)
-                if match:
-                    path_str = match.group(1)
+                # Try to match direct context path: {context.path.to.value}
+                direct_match = re.match(r"^\{context\.([a-zA-Z0-9_.]+)\}$", value_spec)
+                if direct_match:
+                    path_str = direct_match.group(1)
                     self.logger.debug(f"Found general context path string: '{value_spec}', extracted path: '{path_str}' for key '{key}'")
-                    current_val = self.shared_context
-                    resolved_successfully = True
-                    try:
-                        for part in path_str.split("."):
-                            if isinstance(current_val, dict): # Check if it's a dict (like shared_context.outputs)
-                                if part in current_val:
-                                    current_val = current_val[part]
-                                else:
-                                    # Try to see if it's an attribute on an object within a dict (e.g. a Pydantic model in outputs)
-                                    # This part is tricky if the dict value isn't a Pydantic model or similar
-                                    # For now, assume direct key access or direct attribute access on shared_context itself.
-                                    # A more robust solution might involve checking type(current_val)
-                                    self.logger.warning(f"Path part '{part}' not directly in dict for path '{path_str}' for key '{key}'. Current dict keys: {list(current_val.keys())}")
-                                    resolved_successfully = False
-                                    break
-                            elif hasattr(current_val, part): # Check if it's an attribute (like shared_context.project_id)
-                                current_val = getattr(current_val, part)
-                            else:
-                                self.logger.warning(f"Path part '{part}' not found on current object (type: {type(current_val)}) for path '{path_str}' for key '{key}'")
-                                resolved_successfully = False
-                                break
-                        
-                        if resolved_successfully:
-                            resolved_inputs[key] = current_val
-                            self.logger.info(f"Successfully resolved general context path '{value_spec}' for key '{key}' to: {current_val}")
-                        else:
-                            self.logger.warning(f"Could not fully resolve general context path '{value_spec}' for key '{key}'. Using original string or None.")
-                            resolved_inputs[key] = value_spec # Or None, depending on desired strictness
-
-                    except Exception as e:
-                        self.logger.error(f"Error resolving general context path '{value_spec}' for key '{key}': {e}. Using original string or None.")
-                        resolved_inputs[key] = value_spec # Or None
-                    continue # Move to next key-value pair
-
-                # --- Handle specific known context path patterns via direct string replacement (legacy or specific cases) ---
-                temp_value_spec = value_spec # Start with original value_spec for these checks
-                replacement_made = False
-
-                if "{context.project_root_path}" in temp_value_spec and hasattr(self.shared_context, 'project_root_path') and self.shared_context.project_root_path:
-                    temp_value_spec = temp_value_spec.replace("{context.project_root_path}", str(self.shared_context.project_root_path))
-                    self.logger.debug(f"Replaced '{{context.project_root_path}}' in '{value_spec}' with '{self.shared_context.project_root_path}' -> '{temp_value_spec}'")
-                    replacement_made = True
-                
-                if "{context.global_config.project_dir}" in temp_value_spec and hasattr(self.shared_context, 'project_root_path') and self.shared_context.project_root_path:
-                    temp_value_spec = temp_value_spec.replace("{context.global_config.project_dir}", str(self.shared_context.project_root_path))
-                    self.logger.debug(f"Replaced '{{context.global_config.project_dir}}' in '{value_spec}' with '{self.shared_context.project_root_path}' -> '{temp_value_spec}'")
-                    replacement_made = True
-                
-                value_spec_after_replacement = temp_value_spec
-
-                # --- End specific known context path patterns ---
-
-                if value_spec_after_replacement.startswith("@outputs."):
-                    path = value_spec_after_replacement[len("@outputs."):]
-                    current_val = self.shared_context.previous_stage_outputs # This should be self.shared_context.outputs
-                    try:
-                        # Ensure current_val is a dictionary before trying to access parts
-                        if not isinstance(current_val, dict):
-                             # Try from self.shared_context.outputs as a fallback or primary
-                            self.logger.warning(f"@outputs path '{path}' requested, but self.shared_context.previous_stage_outputs is not a dict. Trying self.shared_context.outputs.")
-                            current_val = self.shared_context.outputs # Correct source for cross-stage outputs
-
-                        if not isinstance(current_val, dict):
-                            raise TypeError(f"Cannot resolve @outputs path, target context ('outputs' or 'previous_stage_outputs') is not a dictionary. Type: {type(current_val)}")
-
-                        for part in path.split("."):
-                            if isinstance(current_val, dict): # Must be a dict to proceed with key access
-                                current_val = current_val[part]
-                            # No need to check hasattr for Pydantic models here, as outputs are stored as dicts
-                            else: # Should not happen if outputs are always dicts
-                                raise KeyError(f"Path part '{part}' not found or context changed to non-dict for '@outputs.{path}'")
-                        resolved_inputs[key] = current_val
-                        self.logger.debug(f"Resolved input '{key}' from @outputs.{path} to: {current_val}")
-                    except Exception as e:
-                        self.logger.warning(f"Could not resolve @outputs.{path} for input '{key}': {e}. Using None.")
-                        resolved_inputs[key] = None
-                elif value_spec_after_replacement.startswith("@context."):
-                    self.logger.warning(f"Resolution for context type other than @outputs (e.g., {value_spec_after_replacement}) not fully implemented for key '{key}'. Using None.")
-                    resolved_inputs[key] = None
-                elif value_spec_after_replacement.startswith("@artifact."):
-                     self.logger.warning(f"Resolution for @artifact not implemented for key '{key}'. Using None.")
-                     resolved_inputs[key] = None
-                elif value_spec_after_replacement.startswith("@config."):
-                    path = value_spec_after_replacement[len("@config."):]
-                    config_source = self.config
-                    if path.startswith("global_project_settings."):
-                        config_source = self.shared_context.global_project_settings
-                        path = path[len("global_project_settings."):]
                     
-                    current_val = config_source
-                    try:
-                        for part in path.split("."):
-                            current_val = current_val[part]
-                        resolved_inputs[key] = current_val
-                        self.logger.debug(f"Resolved input '{key}' from @config.{path} to: {current_val}")
-                    except Exception as e:
-                        self.logger.warning(f"Could not resolve @config.{path} for input '{key}': {e}. Using None.")
-                        resolved_inputs[key] = None
-                elif replacement_made: # If one of the direct string replacements occurred, use the result
-                    resolved_inputs[key] = value_spec_after_replacement
-                    self.logger.debug(f"Input '{key}' resolved via direct replacement to: {value_spec_after_replacement}")
+                    resolved_value = None
+                    path_resolved_from_outputs = False
+                    path_resolved_from_previous = False
+                    p_str_to_try_for_log = path_str # For logging in case of exception
+
+                    # Attempt 1: Resolve from self.shared_context.outputs if path starts with "outputs."
+                    if path_str.startswith("outputs."):
+                        try:
+                            current_obj = self.shared_context.outputs
+                            # path_str is like "outputs.stage_name.key" or "outputs.key"
+                            for part in path_str.split('.')[1:]: # Skip "outputs."
+                                if isinstance(current_obj, dict) and part in current_obj:
+                                    current_obj = current_obj[part]
+                                elif hasattr(current_obj, part): # Handles Pydantic models
+                                    current_obj = getattr(current_obj, part)
+                                else:
+                                    self.logger.debug(f"Path part '{part}' not in shared_context.outputs dict or as attr for path '{path_str}' for key '{key}'. Current obj type: {type(current_obj)}")
+                                    current_obj = None 
+                                    break
+                            if current_obj is not None:
+                                resolved_value = current_obj
+                                path_resolved_from_outputs = True
+                                self.logger.debug(f"Resolved '{path_str}' for key '{key}' from shared_context.outputs to: {str(resolved_value)[:100]}")
+                        except Exception as e_outputs:
+                            self.logger.warning(f"Error resolving path '{path_str}' in self.shared_context.outputs: {e_outputs}")
+                    
+                    # Attempt 2: If not resolved from outputs, try self.shared_context.previous_stage_outputs
+                    if not path_resolved_from_outputs and self.shared_context.previous_stage_outputs:
+                        self.logger.debug(f"Path '{path_str}' for key '{key}' not resolved from shared_context.outputs. Trying previous_stage_outputs.")
+                        
+                        key_to_find_directly_in_previous = path_str # Default for simple {context.key} or if complex path matches an actual key
+                        is_complex_outputs_path = False
+                        path_parts = path_str.split('.')
+
+                        if path_str.startswith("outputs.") and len(path_parts) == 3:
+                            # This is for a path like "outputs.STAGE_NAME.ACTUAL_KEY"
+                            # where STAGE_NAME's output (a Pydantic model or dict) is directly in previous_stage_outputs.
+                            # We need to find ACTUAL_KEY on that model/dict.
+                            key_to_find_directly_in_previous = path_parts[2] # ACTUAL_KEY
+                            is_complex_outputs_path = True
+                            self.logger.debug(f"Interpreting '{path_str}' as looking for '{key_to_find_directly_in_previous}' on the direct output of stage '{path_parts[1]}' (expected in previous_stage_outputs).")
+                        elif path_str.startswith("outputs.") and len(path_parts) == 2:
+                            # This is for "outputs.KEY", try finding KEY directly on previous_stage_outputs
+                            key_to_find_directly_in_previous = path_parts[1]
+                            self.logger.debug(f"Interpreting '{path_str}' as looking for '{key_to_find_directly_in_previous}' directly in previous_stage_outputs.")
+                        # Else, for a simple {context.key} or non-standard {context.outputs.something}, key_to_find_directly_in_previous remains path_str
+                        
+                        current_obj_prev = self.shared_context.previous_stage_outputs
+
+                        try:
+                            if isinstance(current_obj_prev, dict) and key_to_find_directly_in_previous in current_obj_prev:
+                                resolved_value = current_obj_prev[key_to_find_directly_in_previous]
+                                path_resolved_from_previous = True
+                            elif hasattr(current_obj_prev, key_to_find_directly_in_previous): # Handles Pydantic models
+                                resolved_value = getattr(current_obj_prev, key_to_find_directly_in_previous)
+                                path_resolved_from_previous = True
+                            
+                            # Fallback: If not resolved by direct key access (e.g. for non-outputs.STAGE.KEY patterns or truly nested structures in previous_outputs)
+                            # and it wasn't a recognized complex outputs path that should have resolved directly.
+                            if not path_resolved_from_previous and not is_complex_outputs_path:
+                                self.logger.debug(f"Direct key '{key_to_find_directly_in_previous}' not found or path not complex outputs type. Attempting full traversal of '{path_str}' on previous_stage_outputs.")
+                                temp_obj = current_obj_prev
+                                successfully_traversed = True
+                                for part in path_parts: # Use original path_parts for traversal
+                                    if isinstance(temp_obj, dict) and part in temp_obj:
+                                        temp_obj = temp_obj[part]
+                                    elif hasattr(temp_obj, part):
+                                        temp_obj = getattr(temp_obj, part)
+                                    else:
+                                        successfully_traversed = False
+                                        self.logger.debug(f"Full traversal of '{path_str}' on previous_stage_outputs failed at part '{part}'.")
+                                        break
+                                if successfully_traversed and temp_obj is not None:
+                                    resolved_value = temp_obj
+                                    path_resolved_from_previous = True
+
+                            if path_resolved_from_previous:
+                                self.logger.debug(f"Resolved '{path_str}' (as '{key_to_find_directly_in_previous}' or full traversal) for key '{key}' from previous_stage_outputs to: {str(resolved_value)[:100]}")
+                        
+                        except Exception as e_previous:
+                            self.logger.warning(f"Error resolving path '{path_str}' (interpreted for direct key '{key_to_find_directly_in_previous}') in self.shared_context.previous_stage_outputs: {e_previous}")
+
+                    if path_resolved_from_outputs or path_resolved_from_previous:
+                        resolved_inputs[key] = resolved_value # Corrected: resolved_inputs
+                    else:
+                        self.logger.warning(f"Could not fully resolve general context path '{value_spec}' for key '{key}'. Using original string: '{value_spec}'.")
+                        resolved_inputs[key] = value_spec # Corrected: resolved_inputs
+                
+                elif value_spec.startswith("{context.initial_inputs.") and value_spec.endswith("}"):
+                    self.logger.warning(f"Initial inputs not fully implemented for key '{key}'. Using original string: '{value_spec}'.")
+                    resolved_inputs[key] = value_spec # Corrected: resolved_inputs
                 else:
-                    # Assume it's a literal string value if no other pattern matched
-                    resolved_inputs[key] = value_spec_after_replacement
-                    self.logger.debug(f"Input '{key}' is a literal string (no context pattern matched): {value_spec_after_replacement}")
+                    self.logger.info(f"No matching pattern found for key '{key}'. Using original string: '{value_spec}'.")
+                    resolved_inputs[key] = value_spec # Corrected: resolved_inputs
             else:
-                # If not a string, pass it through as is
-                resolved_inputs[key] = value_spec
+                resolved_inputs[key] = value_spec # Corrected: resolved_inputs
                 self.logger.debug(f"Input '{key}' is a literal of type {type(value_spec)}: {value_spec}")
         
-        self.logger.debug(f"Resolved inputs: {resolved_inputs}")
+        return resolved_inputs # Corrected: resolved_inputs
+
+    def _validate_master_plan_structure(self, plan: MasterExecutionPlan):
+        """
+        Validates the basic structure of a MasterExecutionPlan.
+        Can perform some auto-fixing for common LLM generation omissions.
+        """
+        self.logger.info(f"Validating structure of MasterExecutionPlan ID: {plan.id}")
+        if not plan.start_stage or plan.start_stage not in plan.stages:
+            msg = f"MasterExecutionPlan {plan.id} has an invalid or missing start_stage: '{plan.start_stage}'."
+            self.logger.error(msg)
+            raise ValueError(msg)
+
+        all_stage_names = set(plan.stages.keys())
+        referenced_next_stages = set()
+
+        # First pass: basic validation and collection of next_stage references
+        for stage_name, stage_spec in plan.stages.items():
+            self.logger.debug(f"Validating stage: {stage_name} (Agent: {stage_spec.agent_id})")
+            if stage_spec.next_stage:
+                referenced_next_stages.add(stage_spec.next_stage)
+            
+            # AUTO-FIX: If SmartCodeGeneratorAgent_v1 is used and inputs are defined but target_file_path is missing.
+            if stage_spec.agent_id == "SmartCodeGeneratorAgent_v1" and stage_spec.inputs and "target_file_path" not in stage_spec.inputs:
+                self.logger.critical(f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) is missing 'target_file_path' in 'inputs'. Injecting default.")
+                stage_spec.inputs["target_file_path"] = f"AUTO-FIXED/placeholder/{stage_name}_missing_path.py"
+                self.logger.warning(f"AUTO-FIX APPLIED for {stage_spec.agent_id} stage '{stage_name}'. New inputs: {stage_spec.inputs}")
+
+            # AUTO-FIX: If CoreTestGeneratorAgent_v1 is used and inputs are defined but test_file_path is missing
+            if stage_spec.agent_id == "CoreTestGeneratorAgent_v1" and stage_spec.inputs and "test_file_path" not in stage_spec.inputs:
+                self.logger.critical(f"CRITICAL_VALIDATION_ERROR (AUTO-FIXING): Stage '{stage_name}' ({stage_spec.agent_id}) is missing 'test_file_path' in 'inputs'. Injecting default.")
+                stage_spec.inputs["test_file_path"] = f"AUTO-FIXED/placeholder/{stage_name}_missing_tests.py"
+                self.logger.warning(f"AUTO-FIX APPLIED for {stage_spec.agent_id} stage '{stage_name}'. New inputs: {stage_spec.inputs}")
+
+
+        # Check if all referenced next_stages (that aren't FINAL_STEP) exist
+        for next_stage_ref in referenced_next_stages:
+            if next_stage_ref != "FINAL_STEP" and next_stage_ref not in all_stage_names:
+                msg = f"MasterExecutionPlan {plan.id}: Stage '{next_stage_ref}' is referenced as a next_stage but does not exist in the plan stages."
+                self.logger.error(msg)
+                # Potentially raise ValueError here, or allow auto-linking to attempt a fix if applicable
+                # For now, logging as an error. Stricter validation might be needed.
+
+        # Second pass: Auto-link stages if next_stage is missing, based on sequential numbers
+        # Sort stages by number to attempt sequential linking
+        sorted_stages_by_number = sorted(plan.stages.items(), key=lambda item: item[1].number if item[1].number is not None else float('inf'))
+        
+        for i, (stage_name, stage_spec) in enumerate(sorted_stages_by_number):
+            if not stage_spec.next_stage and stage_name != "FINAL_STEP": # Check if next_stage is None or empty
+                # Try to find the next stage by number
+                current_number = stage_spec.number
+                if current_number is not None:
+                    next_stage_candidate_name = None
+                    # Look for the stage with number + 1
+                    for next_s_name, next_s_spec in sorted_stages_by_number:
+                        if next_s_spec.number == current_number + 1:
+                            next_stage_candidate_name = next_s_name
+                            break
+                    
+                    if next_stage_candidate_name:
+                        self.logger.warning(
+                            f"AUTO-FIX APPLIED: Stage '{stage_name}' (Number: {current_number}) was missing 'next_stage'. "
+                            f"Automatically linking to stage '{next_stage_candidate_name}' (Number: {current_number + 1})."
+                        )
+                        stage_spec.next_stage = next_stage_candidate_name
+                    elif i + 1 < len(sorted_stages_by_number):
+                        # Fallback: if no direct number+1 match, link to the next in the sorted list if not FINAL_STEP
+                        potential_next_name = sorted_stages_by_number[i+1][0]
+                        if potential_next_name != "FINAL_STEP": # Avoid linking to FINAL_STEP unless it's truly the last
+                             self.logger.warning(
+                                f"AUTO-FIX APPLIED (Fallback): Stage '{stage_name}' (Number: {current_number}) was missing 'next_stage'. "
+                                f"Automatically linking to next stage in sorted list: '{potential_next_name}'."
+                            )
+                             stage_spec.next_stage = potential_next_name
+                        # If the next in list is FINAL_STEP, and we didn't find a number+1, we might be at the actual end.
+                        # Or, if it's the last stage in the list and next_stage is still missing, it might implicitly be FINAL_STEP
+                    elif i == len(sorted_stages_by_number) - 1: # Is it the last stage in the plan?
+                         self.logger.warning(
+                            f"AUTO-FIX APPLIED (Last Stage): Stage '{stage_name}' (Number: {current_number}) was missing 'next_stage' and is the last numbered stage. "
+                            f"Setting next_stage to 'FINAL_STEP'."
+                        )
+                         stage_spec.next_stage = "FINAL_STEP"
+
+
+        self.logger.info(f"MasterExecutionPlan ID: {plan.id} structure validation successful.")
+
+    # Regex to capture "context.path.to.value" in group 1, and "path.to.value" in group 2
+    REGEX_CONTEXT_PATH = re.compile(r"{(context\.((?:[\w\-]+\.?)+))}")
+
+    def _resolve_path_value(self, path_after_context_str: str) -> Any:
+        # path_after_context_str is "outputs.stage.key" or "global_config.key" etc.
+        # It's the part *after* "context."
+        
+        key_parts = path_after_context_str.split('.') # e.g. ["outputs", "stage_name", "attribute_key"] or ["global_config", "project_dir"]
+
+        if not key_parts or not key_parts[0]:
+            self.logger.warning(f"RESOLVE_PATH_VALUE: Path_after_context '{path_after_context_str}' resulted in invalid key_parts. Returning original: '{{context.{path_after_context_str}}}'")
+            return f"{{context.{path_after_context_str}}}"
+
+        # current_value: Any = self.shared_context # This was the old way, direct access to shared_context fields
+        first_key_segment = key_parts[0]
+        
+        if first_key_segment == "outputs":
+            # Path is like "outputs.stage_name_as_key.attribute_name_in_model.sub_attribute"
+            if len(key_parts) < 2: # Must have at least outputs.stage_name_as_key
+                self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): Path '{path_after_context_str}' is too short. Needs at least one key part after 'outputs'. Returning original: '{{context.{path_after_context_str}}}'")
+                return f"{{context.{path_after_context_str}}}"
+            
+            stage_name_as_key = key_parts[1] # This is the key for the shared_context.outputs dictionary
+
+            if not (hasattr(self.shared_context, 'outputs') and isinstance(self.shared_context.outputs, dict)):
+                self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): shared_context.outputs is not a dict or does not exist for path 'context.{path_after_context_str}'. Returning original.")
+                return f"{{context.{path_after_context_str}}}"
+
+            if stage_name_as_key not in self.shared_context.outputs:
+                self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): Stage key '{stage_name_as_key}' not found in shared_context.outputs for path 'context.{path_after_context_str}'. Current output keys: {list(self.shared_context.outputs.keys())}. Returning original.")
+                return f"{{context.{path_after_context_str}}}"
+            
+            # Start with the object/value stored for the stage_name_as_key
+            current_resolved_value = self.shared_context.outputs[stage_name_as_key]
+            
+            # If there are more parts, navigate into the current_resolved_value
+            # key_parts[2:] are the attributes to get from current_resolved_value
+            if len(key_parts) > 2:
+                for i, attribute_part in enumerate(key_parts[2:]):
+                    path_being_accessed = ".".join(key_parts[2:i+3]) # For logging: e.g., "attr1" then "attr1.attr2"
+                    
+                    # --- DETAILED LOGGING START ---
+                    self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (Outputs): Attempting to access attribute_part='{attribute_part}'")
+                    self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (Outputs): current_resolved_value type: {type(current_resolved_value)}")
+                    if isinstance(current_resolved_value, BaseModel):
+                        self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (Outputs): current_resolved_value class: {current_resolved_value.__class__.__name__}")
+                        try:
+                            fields_keys = list(current_resolved_value.model_fields.keys())
+                            self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (Outputs): current_resolved_value.model_fields.keys(): {fields_keys}")
+                        except Exception as e_log_fields:
+                            self.logger.warning(f"RESOLVE_PATH_VALUE_DETAIL (Outputs): Could not get model_fields.keys(): {e_log_fields}")
+                    elif isinstance(current_resolved_value, dict):
+                        self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (Outputs): current_resolved_value keys: {list(current_resolved_value.keys())}")
+                    # --- DETAILED LOGGING END ---
+
+                    if isinstance(current_resolved_value, BaseModel):
+                        if hasattr(current_resolved_value, attribute_part):
+                            current_resolved_value = getattr(current_resolved_value, attribute_part)
+                        else:
+                            self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): Attribute '{attribute_part}' (part of '{path_being_accessed}') not found in BaseModel for stage '{stage_name_as_key}'. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                            return f"{{context.{path_after_context_str}}}"
+                    elif isinstance(current_resolved_value, dict):
+                        if attribute_part in current_resolved_value:
+                            current_resolved_value = current_resolved_value[attribute_part]
+                        else:
+                            self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): Key '{attribute_part}' (part of '{path_being_accessed}') not found in dict for stage '{stage_name_as_key}'. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                            return f"{{context.{path_after_context_str}}}"
+                    elif current_resolved_value is None:
+                        self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): Encountered None while trying to access '{attribute_part}' for stage '{stage_name_as_key}'. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                        return f"{{context.{path_after_context_str}}}"
+                    else: # It's a primitive or un-navigable type, but more path parts exist
+                        self.logger.warning(f"RESOLVE_PATH_VALUE (Outputs): Cannot navigate '{attribute_part}' in value of type {type(current_resolved_value)} for stage '{stage_name_as_key}'. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                        return f"{{context.{path_after_context_str}}}"
+            
+            # After loop (or if len(key_parts) == 2), current_resolved_value is the final value
+            self.logger.info(f"RESOLVE_PATH_VALUE (Outputs): Resolved '{{context.{path_after_context_str}}}' to '{str(current_resolved_value)[:100]}...' (type: {type(current_resolved_value)})")
+            return current_resolved_value
+
+        elif first_key_segment == "global_config":
+            # Path is like "global_config.project_dir"
+            if not hasattr(self.shared_context, 'global_config') or self.shared_context.global_config is None:
+                self.logger.warning(f"RESOLVE_PATH_VALUE: global_config not found or is None. Path: '{{context.{path_after_context_str}}}'. Returning original.")
+                return f"{{context.{path_after_context_str}}}"
+            
+            current_resolved_value = self.shared_context.global_config
+            # key_parts[1:] are attributes to get from global_config
+            for i, attribute_part in enumerate(key_parts[1:]):
+                path_being_accessed = ".".join(key_parts[1:i+2])
+                
+                # --- DETAILED LOGGING START (GlobalConfig) ---
+                self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (GlobalConfig): Attempting to access attribute_part='{attribute_part}'")
+                self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (GlobalConfig): current_resolved_value type: {type(current_resolved_value)}")
+                if isinstance(current_resolved_value, BaseModel):
+                    self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (GlobalConfig): current_resolved_value class: {current_resolved_value.__class__.__name__}")
+                    try:
+                        fields_keys = list(current_resolved_value.model_fields.keys())
+                        self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (GlobalConfig): current_resolved_value.model_fields.keys(): {fields_keys}")
+                    except Exception as e_log_fields_gc:
+                        self.logger.warning(f"RESOLVE_PATH_VALUE_DETAIL (GlobalConfig): Could not get model_fields.keys(): {e_log_fields_gc}")
+                elif isinstance(current_resolved_value, dict):
+                    self.logger.info(f"RESOLVE_PATH_VALUE_DETAIL (GlobalConfig): current_resolved_value keys: {list(current_resolved_value.keys())}")
+                # --- DETAILED LOGGING END (GlobalConfig) ---
+
+                if isinstance(current_resolved_value, BaseModel):
+                    if hasattr(current_resolved_value, attribute_part):
+                        current_resolved_value = getattr(current_resolved_value, attribute_part)
+                    else:
+                        self.logger.warning(f"RESOLVE_PATH_VALUE (GlobalConfig): Attribute '{attribute_part}' (part of '{path_being_accessed}') not found in BaseModel. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                        return f"{{context.{path_after_context_str}}}"
+                elif isinstance(current_resolved_value, dict):
+                    if attribute_part in current_resolved_value:
+                        current_resolved_value = current_resolved_value[attribute_part]
+                    else:
+                        self.logger.warning(f"RESOLVE_PATH_VALUE (GlobalConfig): Key '{attribute_part}' (part of '{path_being_accessed}') not found in dict. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                        return f"{{context.{path_after_context_str}}}"
+                elif current_resolved_value is None:
+                    self.logger.warning(f"RESOLVE_PATH_VALUE (GlobalConfig): Encountered None while trying to access '{attribute_part}'. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                    return f"{{context.{path_after_context_str}}}"
+                else:
+                    self.logger.warning(f"RESOLVE_PATH_VALUE (GlobalConfig): Cannot navigate '{attribute_part}' in value of type {type(current_resolved_value)}. Full path: '{{context.{path_after_context_str}}}'. Returning original.")
+                    return f"{{context.{path_after_context_str}}}"
+            
+            self.logger.info(f"RESOLVE_PATH_VALUE (GlobalConfig): Resolved '{{context.{path_after_context_str}}}' to '{str(current_resolved_value)[:100]}...' (type: {type(current_resolved_value)})")
+            return current_resolved_value
+        
+        # Fallback for unknown top-level keys like "context.unknown_key..."
+        self.logger.warning(f"RESOLVE_PATH_VALUE: Unknown top-level key '{first_key_segment}' in path 'context.{path_after_context_str}'. Returning original.")
+        return f"{{context.{path_after_context_str}}}"
+
+    def _recursively_resolve_values(self, item: Any) -> Any:
+        if isinstance(item, str):
+            match = self.REGEX_CONTEXT_PATH.fullmatch(item) # item is like "{context.path.to.value}"
+            if match:
+                # group(1) is "context.path.to.value" (the full string inside braces if needed for logging original)
+                # group(2) is "path.to.value" (the part after "context.")
+                path_after_context = match.group(2) 
+                self.logger.debug(f"RECURSIVE_RESOLVE: Matched context path string: '{item}', extracted path_after_context: '{path_after_context}' for _resolve_path_value.")
+                return self._resolve_path_value(path_after_context)
+            return item # Not a context path, return as is
+        elif isinstance(item, dict):
+            return {key: self._recursively_resolve_values(value) for key, value in item.items()}
+        elif isinstance(item, list):
+            return [self._recursively_resolve_values(elem) for elem in item]
+        else:
+            return item # Non-string, non-dict, non-list, return as is
+
+    def _resolve_input_values(self, inputs_spec: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recursively resolves input values from the inputs_spec,
+        handling context path lookups like {context.path.to.value}.
+        """
+        if not inputs_spec:
+            return {}
+        
+        self.logger.info(f"RESOLVE_INPUTS: Starting recursive resolution for inputs_spec: {inputs_spec}")
+        
+        resolved_inputs = {}
+        for key, value_spec in inputs_spec.items():
+            resolved_value = self._recursively_resolve_values(value_spec)
+            resolved_inputs[key] = resolved_value
+            self.logger.info(f"RESOLVE_INPUTS: Key '{key}' resolved to: {str(resolved_value)[:200]} (type: {type(resolved_value)})")
+
+        self.logger.info(f"RESOLVE_INPUTS: Final recursively resolved_inputs: {resolved_inputs}")
         return resolved_inputs
 
     def _validate_master_plan_structure(self, plan: MasterExecutionPlan):

@@ -252,75 +252,69 @@ class RegistryAgentProvider:
                 if hasattr(potential_item, '__bases__') and potential_item.__bases__:
                     logger.info(f"RegistryAgentProvider: Fallback item's BaseAgent module: {potential_item.__bases__[0].__module__}, id: {id(potential_item.__bases__[0])}")
 
-                if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
-                    agent_class_to_instantiate = cast(Type[BaseAgent], potential_item)
-                    agent_id_to_check = agent_class_to_instantiate.AGENT_ID
-
-                    # List of agent IDs that require the full set of providers (llm, prompt, project_chroma_manager)
-                    # These are typically more complex agents or those deeply integrated with core services.
-                    agents_requiring_full_set = [
-                        MasterPlannerAgent.AGENT_ID,
-                        CoreCodeGeneratorAgent_v1.AGENT_ID,
-                        SystemTestRunnerAgent_v1.AGENT_ID,
-                        SystemRequirementsGatheringAgent_v1.AGENT_ID, # Already expecting project_chroma_manager
-                        ArchitectAgent_v1.AGENT_ID # ADDED
-                    ]
-
-                    if agent_id_to_check in agents_requiring_full_set:
-                        logger.info(f"RegistryAgentProvider: Special instantiation for {agent_id_to_check} with project_chroma_manager (was pcma_agent).")
-                        if not self._llm_provider or not self._prompt_manager or not self._project_chroma_manager:
-                            logger.error(f"RegistryAgentProvider: Required providers (LLM, Prompt, ProjectChromaManager) not initialized, cannot instantiate {agent_id_to_check}.")
-                            raise NoAgentFoundError(f"Required providers not available for {agent_id_to_check}")
-                        
-                        # Special handling for SystemRequirementsGatheringAgent_v1
-                        if agent_id_to_check == SystemRequirementsGatheringAgent_v1.AGENT_ID:
-                            agent_instance = agent_class_to_instantiate(
-                                llm_provider=self._llm_provider,
-                                prompt_manager=self._prompt_manager,
-                                project_chroma_manager=self._project_chroma_manager # Corrected keyword
-                            )
-                        # Special handling for ArchitectAgent_v1
-                        elif agent_id_to_check == ArchitectAgent_v1.AGENT_ID:
-                             agent_instance = agent_class_to_instantiate(
-                                llm_provider=self._llm_provider,
-                                prompt_manager=self._prompt_manager,
-                                project_chroma_manager=self._project_chroma_manager
-                            )
-                        # ADDED: Special handling for MasterPlannerAgent
-                        elif agent_id_to_check == MasterPlannerAgent.AGENT_ID:
-                            agent_instance = agent_class_to_instantiate(
-                                llm_provider=self._llm_provider,
-                                prompt_manager=self._prompt_manager,
-                                project_chroma_manager=self._project_chroma_manager # Corrected keyword
-                            )
-                        else: # For other agents in the set like CoreCodeGeneratorAgent_v1, SystemTestRunnerAgent_v1
-                            agent_instance = agent_class_to_instantiate(
-                                llm_provider=self._llm_provider,
-                                prompt_manager=self._prompt_manager,
-                                pcma_agent=self._project_chroma_manager # Assuming these still use pcma_agent or will be updated
-                            )
-                    # SystemMasterPlannerAgent_v1 requires project_chroma_manager (already specific)
-                    elif agent_id_to_check == MasterPlannerAgent.AGENT_ID:
-                        logger.info("RegistryAgentProvider: Special instantiation for SystemMasterPlannerAgent_v1.")
-                        if not self._project_chroma_manager:
-                            logger.error("RegistryAgentProvider: _project_chroma_manager not initialized, cannot instantiate SystemMasterPlannerAgent_v1 properly.")
-                            raise NoAgentFoundError("_project_chroma_manager not available for SystemMasterPlannerAgent_v1")
-                        agent_instance = agent_class_to_instantiate(
+                # --- Begin specific agent instantiation logic ---
+                if isinstance(potential_item, type) and issubclass(potential_item, BaseAgent):
+                    logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is a BaseAgent subclass. Attempting instantiation.")
+                    # Special handling for agents requiring dependencies like LLMProvider, PromptManager, or ProjectChromaManager
+                    
+                    # MODIFIED: Use self._llm_provider, self._prompt_manager, self._project_chroma_manager
+                    if potential_item.__name__ == "CoreCodeGeneratorAgent_v1" or potential_item.__name__ == "SmartCodeGeneratorAgent_v1":
+                        logger.info(f"RegistryAgentProvider: Special instantiation for {potential_item.__name__} with llm_provider, prompt_manager, and pcma_agent (was project_chroma_manager).")
+                        agent_instance = potential_item(
+                            llm_provider=self._llm_provider,
+                            prompt_manager=self._prompt_manager,
+                            pcma_agent=self._project_chroma_manager
+                        )
+                    elif potential_item.__name__ == "MasterPlannerAgent":
+                        logger.info(f"RegistryAgentProvider: Special instantiation for MasterPlannerAgent with llm_provider and prompt_manager.")
+                        agent_instance = potential_item(
+                            llm_provider=self._llm_provider,
+                            prompt_manager=self._prompt_manager,
+                            project_chroma_manager=self._project_chroma_manager # Also needs PCMA
+                        )
+                    elif potential_item.__name__ == "SystemFileSystemAgent_v1":
+                        logger.info(f"RegistryAgentProvider: Special instantiation for SystemFileSystemAgent_v1 with pcma_agent, llm_provider, and prompt_manager.")
+                        agent_instance = potential_item(
+                            pcma_agent=self._project_chroma_manager,
+                            llm_provider=self._llm_provider,
+                            prompt_manager=self._prompt_manager
+                        )
+                    elif potential_item.__name__ == "SystemTestRunnerAgent_v1":
+                        logger.info(f"RegistryAgentProvider: Special instantiation for SystemTestRunnerAgent_v1 with llm_provider, prompt_manager, and project_chroma_manager.")
+                        agent_instance = potential_item(
+                            llm_provider=self._llm_provider,
+                            prompt_manager=self._prompt_manager,
+                            project_chroma_manager=self._project_chroma_manager
+                        )
+                    # ADDED: Ensure ArchitectAgent_v1 also gets its dependencies
+                    elif potential_item.__name__ == "ArchitectAgent_v1":
+                        logger.info(f"RegistryAgentProvider: Special instantiation for ArchitectAgent_v1 with llm_provider, prompt_manager, and project_chroma_manager.")
+                        agent_instance = potential_item(
+                            llm_provider=self._llm_provider,
+                            prompt_manager=self._prompt_manager,
+                            project_chroma_manager=self._project_chroma_manager
+                        )
+                    elif potential_item.__name__ == "SystemRequirementsGatheringAgent_v1":
+                        logger.info(f"RegistryAgentProvider: Special instantiation for SystemRequirementsGatheringAgent_v1 with llm_provider, prompt_manager, and project_chroma_manager.")
+                        agent_instance = potential_item(
                             llm_provider=self._llm_provider,
                             prompt_manager=self._prompt_manager,
                             project_chroma_manager=self._project_chroma_manager
                         )
                     else:
-                        # Standard instantiation for other fallback agents
-                        logger.info(f"RegistryAgentProvider: Standard instantiation for fallback agent {agent_id_to_check}.")
-                        agent_instance = agent_class_to_instantiate(
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager
-                        )
-                elif isinstance(potential_item, BaseAgent): # Already an instance
-                    agent_instance = potential_item
+                        logger.info(f"RegistryAgentProvider: Standard instantiation for fallback agent {potential_item.__name__}.")
+                        try:
+                            agent_instance = potential_item() # Standard instantiation
+                        except TypeError as e_type:
+                            logger.error(f"TypeError during standard instantiation of {potential_item.__name__}: {e_type}. This might mean it needs specific dependencies not handled here.", exc_info=True)
+                            raise NoAgentFoundError(f"Failed to instantiate agent '{identifier}' ({potential_item.__name__}) due to TypeError: {e_type}. Check agent constructor and resolver logic.") from e_type
+
+                elif inspect.isfunction(potential_item) or inspect.ismethod(potential_item):
+                    logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is a function or method. Wrapping in a callable.")
+                    agent_instance = BaseAgent(identifier, potential_item)
                 else:
                     raise NoAgentFoundError(f"Fallback item for '{identifier}' is not a valid BaseAgent class or instance.")
+                # --- End specific agent instantiation logic ---
 
             # If not in fallback, try AgentRegistry by ID (Simplified for this example)
             # In a real scenario, this would involve querying ChromaDB / self._registry
