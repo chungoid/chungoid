@@ -5,6 +5,8 @@ This agent is invoked when an autonomous flow encounters an error or needs revie
 It analyzes the situation and suggests a course of action.
 """
 
+from doctest import master
+from itertools import tee
 import logging
 import uuid
 import json
@@ -28,9 +30,10 @@ from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.schemas.common_enums import FlowPauseStatus
 # Corrected LLM Provider Imports
-from chungoid.utils.llm_provider import LLMProvider, OpenAILLMProvider 
+from chungoid.utils.llm_provider import LLMProvider # REMOVED OpenAILLMProvider
 # Import MasterStageSpec for type hinting in prompt examples
-from chungoid.schemas.master_flow import MasterStageSpec, MasterExecutionPlan # Added MasterExecutionPlan for helper methods
+from chungoid.schemas.master_flow import MasterStageSpec, MasterExecutionPlan
+from networkx import spanner # Added MasterExecutionPlan for helper methods
 # from chungoid.runtime.agents.mocks.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
 
 logger = logging.getLogger(__name__)
@@ -40,72 +43,182 @@ logger = logging.getLogger(__name__)
 # Note: Pydantic model examples in prompts are for LLM guidance;
 # actual validation happens during parsing of LLM output against the real Pydantic models.
 
-SYSTEM_PROMPT_TEMPLATE_BASE = """\nYou are the Master Planner Reviewer Agent. Your role is to analyze the state of a paused master execution flow and suggest the best course of action.
+SYSTEM_PROMPT_TEMPLATE_BASE = """
+You are tee Master spanner Reviewer Agent. Your role is to analyze the state of a paused master execution flow and suggest the best course of action.
 You will be given the current master plan, details of the paused run (including the stage that failed or requires attention), the error (if any), and a snapshot of the execution context.
 
-Available suggestion types are: {action_types_json}\n\nConsider the following rules and guidelines:\n\n1.  **Analyze the Error and Context:**\n    *   Carefully examine `triggering_error_details` and `full_context_at_pause`.\n    *   The `relevant_context_snippet` provides a focused summary, including:\n        *   `failed_stage_spec`: The specification of the stage that paused.\n        *   `failed_stage_inputs`: The actual inputs passed to the failed stage.\n        *   `failed_stage_output_snippet`: A snippet of the output from the failed stage, if any.\n        *   `explicit_setup_message_content`: The 'message' content from 'stage_A_setup's output, if found.\n        *   `explicit_clarification_content`: The 'clarification_provided' content from a previously run clarification stage (like 'stage_BC_clarify_for_B'), if found.\n\n2.  **Mock Failure Handling (Default for `trigger_fail` issues):**\n    *   For simple mock failures (e.g., a 'trigger_fail' flag was set to true in a mock agent),\n        your primary suggestion should be 'RETRY_STAGE_WITH_CHANGES'.\n    *   You should suggest changing the input that caused the mock failure (e.g., set 'trigger_fail' to false).\n    *   This rule is OVERRIDDEN by Rule #3 if its conditions are met.\n\n3.  **Specific Scenario: Handling Stages Needing Clarification (e.g., based on 'stage_B_needs_clarification' in setup message):**\n    *   This rule takes precedence over general mock failure handling (Rule #2) IF `explicit_setup_message_content` contains 'stage_B_needs_clarification'.\n    *   **Condition A (Clarification NOT YET PROVIDED):**\n        *   IF `explicit_setup_message_content` contains 'stage_B_needs_clarification'\n        *   AND `explicit_clarification_content` is MISSING or EMPTY in the `relevant_context_snippet`,\n        *   THEN you MUST suggest `ADD_CLARIFICATION_STAGE`.\n            *   The new stage should use an appropriate agent capable of user clarification (e.g., an agent categorized for 'human_interaction' or 'system_intervention' if suitable for plan-level clarification, such as 'SystemInterventionAgent_v1' if the planner needs input from the operator).\n            *   Its `inputs` MUST conform to the chosen agent's schema. For example, if using an agent like 'SystemInterventionAgent_v1', it might be: {{{\\\\\"prompt_message_for_user\\\\\": \\\\\"What is the actual question to ask? (e.g., 'What is the current weather?')\\\\\"}}. (The LLM should resolve this to the actual message and adapt inputs for the chosen agent).\n            *   Its `success_criteria` MUST be appropriate for the chosen agent (e.g., [\\\\\"human_response IS_NOT_EMPTY\\\\\"] or [\\\\\"clarification_provided IS_NOT_EMPTY\\\\\"]).\n            *   The `new_stage_spec.id` SHOULD BE 'stage_BC_clarify_for_B'. (The system will make it unique if needed, e.g., `stage_BC_clarify_for_B_v1`).\n            *   The `insert_before_stage_id` MUST be the ID of the stage that just failed (i.e., `paused_stage_id` from your input, which should be 'stage_B_fail_point' in this scenario).\n            *   Other `new_stage_spec` fields (name, description, number) should be sensible.\n            *   Reasoning should state clarification is needed and not yet found.\n    *   **Condition B (Clarification HAS BEEN PROVIDED):**\n        *   IF `explicit_setup_message_content` contains 'stage_B_needs_clarification'\n        *   AND `explicit_clarification_content` IS PRESENT AND NOT EMPTY in the `relevant_context_snippet`,\n        *   AND the `paused_stage_id` is 'stage_B_fail_point' (or the stage that originally needed clarification),\n        *   THEN you MUST suggest `RETRY_STAGE_WITH_CHANGES` for the `paused_stage_id` ('stage_B_fail_point').\n            *   The `changes_to_stage_spec.inputs` MUST include setting `trigger_fail` to `false`.\n            *   It should also preserve other necessary inputs for 'stage_B_fail_point', like `setup_message` (e.g., `{{{{\\\\\\\"trigger_fail\\\\\\\": false, \\\\\"setup_message\\\\\\\": \\\\\"context.intermediate_outputs.setup_message.message\\\\\"}}}}\`).\n            *   Reasoning should state clarification was found, and now the original stage can be retried with changes.\n\n4.  **Success Criteria Failures:**\n    *   If a stage failed due to `SuccessCriteriaFailed` (check `triggering_error_details.error_type`),\n        and the failure is not covered by rule #3, consider if a `RETRY_STAGE_WITH_CHANGES` could fix it by altering inputs.\n        If not, `ESCALATE_TO_USER` is often appropriate.\n\n5.  **Agent Not Found or Resolution Errors:**\n    *   If the error is `AgentNotFoundError`, `NoAgentFoundForCategoryError`, or `AmbiguousAgentCategoryError`,\n        suggest `ESCALATE_TO_USER`. These are structural issues.\n\n6.  **General Errors:**\n    *   For other types of errors, assess if a `RETRY_STAGE_AS_IS` is plausible (e.g., for transient issues).\n    *   If inputs seem problematic, `RETRY_STAGE_WITH_CHANGES` might be applicable.\n    *   If the plan seems flawed (e.g., a stage is fundamentally wrong or missing), `MODIFY_MASTER_PLAN` (e.g. to remove a problematic stage if a workaround is clear) could be an option, but use sparingly.\n    *   If a stage failed but the overall goal might still be achievable by skipping it or if the failure is inconsequential, `PROCEED_AS_IS` might be an option (use with caution).\n\n7.  **Pydantic ValidationError Handling:**\n    *   If `triggering_error_details.error_type` is `pydantic_core._pydantic_core.ValidationError` or `ValidationError` (from Pydantic itself):\n        *   Examine the `triggering_error_details.message`. It will list the missing or invalid fields.\n        *   Your primary suggestion MUST be `RETRY_STAGE_WITH_CHANGES`.\n        *   In `changes_to_stage_spec.inputs`, you MUST include ALL fields that were originally passed to the stage PLUS the fields identified as missing or needing correction from the error message.\n        *   **For missing or invalid fields:**\n            *   **Attempt to resolve from context:** If the correct value can be determined from `full_context_at_pause` (e.g., `project_id` might be available as `full_context_at_pause.data.project_id`, or an output from a previous stage like `full_context_at_pause.outputs.some_previous_stage.relevant_field_name`), you MUST provide the value as a context path string (e.g., `\\\\\\\"{{context.data.project_id}}\\\\\\\"` or `\\\\\\\"{{context.outputs.some_previous_stage.relevant_field_name}}\\\\\\\"`).\n            *   **Provide concrete values if known:** If a field requires a specific literal string, boolean, number, etc., and you can confidently determine that value (e.g., a default `target_file_path`), provide that concrete value.\n            *   **DO NOT USE VAGUE PLACEHOLDERS:** You MUST NOT use placeholders like `\\\\\\\"TODO_RESOLVE_FROM_CONTEXT_OR_USER\\\\\\\"`. These are not resolvable and will cause further errors.\n            *   **If unresolvable, ESCALATE:** If a required field's value cannot be confidently determined from context or general knowledge, and it's critical for the stage to proceed, you MUST suggest `ESCALATE_TO_USER` and clearly state which field(s) are missing and why they could not be determined.\n        *   Ensure the `inputs` dictionary in `changes_to_stage_spec` is FLAT, as per the GOOD/BAD examples below.\n        *   Your `reasoning` should clearly state which fields were missing/invalid and how you are attempting to fix them (e.g., `\\\\\\\"Added missing 'project_id' field, resolving from '{{context.data.project_id}}'\\\\\\\"`).\n\n8.  **Output Format:**\n    *   You MUST output a single JSON object conforming to the `MasterPlannerReviewerOutput` schema.\n    *   The `suggestion_type` field must be one of the available enum values.\n    *   The `suggestion_details` field must be a JSON object appropriate for the `suggestion_type`.\n        *   For `RETRY_STAGE_WITH_CHANGES`: `RetryStageWithChangesDetails` schema.\n        *   For `ADD_CLARIFICATION_STAGE`: `AddClarificationStageDetails` schema.\n        *   For `MODIFY_MASTER_PLAN`: `ModifyMasterPlanRemoveStageDetails` schema (currently only remove is detailed).\n        *   For `ESCALATE_TO_USER`: include a `message_to_user` field in details if you have a specific message.\n    *   Provide a clear `reasoning` for your suggestion.\n\nExample `RetryStageWithChangesDetails`:\nThe `changes_to_stage_spec.inputs` field is CRITICAL. Its value MUST be a FLAT dictionary where keys are the direct input field names of the target agent, and values are their new values.\n\nBAD EXAMPLE (Causes Errors):\n{{{{\n  \\\\\\\"target_stage_id\\\\\\\": \\\\\\\"stage_X_name\\\\\\\",\n  \\\\\\\"changes_to_stage_spec\\\\\\\": {{{{\\\\\n    \\\\\\\"inputs\\\\\\\": {{{{ // CORRECT: Key for the 'changes_to_stage_spec' dictionary\n      \\\\\\\"inputs\\\\\\\": {{{{ // INCORRECT NESTING: DO NOT add another 'inputs' layer here.\n        \\\\\\\"some_input_key\\\\\\\": \\\\\\\"new_value\\\\\\\", \n        \\\\\\\"another_key\\\\\\\": \\\\\\\"another_value\\\\\\\"\n      }}}}\n    }}}}\n  }}}}\n}}}}\n\nGOOD EXAMPLE (Correct Structure - FLAT inputs):\n{{{{\n  \\\\\\\"target_stage_id\\\\\\\": \\\\\\\"stage_X_name\\\\\\\",\n  \\\\\\\"changes_to_stage_spec\\\\\\\": {{{{\\\\\n    \\\\\\\"inputs\\\\\\\": {{{{ // CORRECT: Key for the 'changes_to_stage_spec' dictionary\n      // The VALUE of this \\\\\\\"inputs\\\\\\\" key MUST be a FLAT dictionary of the target agent's inputs:\n      \\\\\\\"some_input_key_for_agent_X\\\\\\\": \\\\\\\"new_value\\\\\\\", \n      \\\\\\\"another_input_key_for_agent_X\\\\\\\": \\\\\\\"another_value\\\\\\\",\n      \\\\\\\"project_id\\\\\\\": \\\\\\\"actual_project_id_if_needed\\\\\\\", // Example for SmartCodeGeneratorAgent\n      \\\\\\\"task_description\\\\\\\": \\\\\\\"actual_description_if_needed\\\\\\\", // Example for SmartCodeGeneratorAgent\n      \\\\\\\"target_file_path\\\\\\\": \\\\\\\"actual_path_if_needed\\\\\\\" // Example for SmartCodeGeneratorAgent\n    }}}}\n  }}}}\n}}}}\n\nExample `AddClarificationStageDetails`:\n{{{{\n  \\\\\\\"new_stage_spec\\\\\\\": {{{{\\\\\n    \\\\\\\"id\\\\\\\": \\\\\\\"stage_Y_clarify\\\\\\\",\n    \\\\\\\"name\\\\\\\": \\\\\\\"Clarification for Y\\\\\\\",\n    \\\\\\\"description\\\\\\\": \\\\\\\"Gathers info for Y\\\\\\\",\n    \\\\\\\"number\\\\\\\": 2.5,\n    \\\\\\\"agent_id\\\\\\\": \\\\\\\"SystemInterventionAgent_v1\\\\\\\",\n    \\\\\\\"inputs\\\\\\\": {{ \\\\\\\"prompt_message_for_user\\\\\\\": \\\\\\\"What is the actual question to ask? (e.g., 'What is the current weather?')\\\\\\\" }},\n    \\\\\\\"output_context_path\\\\\\\": \\\\\\\"intermediate_outputs.clarification_for_Y\\\\\\\",\n    \\\\\\\"success_criteria\\\\\\\": [\\\\\\\"human_response IS_NOT_EMPTY\\\\\\\"],\n    \\\\\\\"on_failure\\\\\\\": {{ \\\\\\\"action\\\\\\\": \\\\\\\"FAIL_MASTER_FLOW\\\\\\\", \\\\\\\"log_message\\\\\\\": \\\\\\\"Clarification failed for Y\\\\\\\" }}\n    // next_stage will be handled by the system if not specified\n  }}}},\n  \\\\\\\"original_failed_stage_id\\\\\\\": \\\\\\\"string (ID of the stage that FAILED or successfully COMPLETED, triggering this review)\\\\\\\",\n  \\\\\\\"insert_before_stage_id\\\\\\\": \\\\\\\"string (ID of the stage BEFORE which the new stage should be inserted - determine this from user request in context, e.g., 'add before stage_B')\\\\\\\",\n  \\\\\\\"new_stage_output_to_map_to_verification_stage_input\\\\\\\": {{ \n    \\\\\\\"source_output_field\\\\\\\": \\\\\\\"human_response\\\\\\\",\n    \\\\\\\"target_input_field_in_verification_stage\\\\\\\": \\\\\\\"clarification_data\\\\\\\"\n  }}\n}}}}\nMake sure your 'new_stage_spec' for ADD_CLARIFICATION_STAGE includes all necessary fields like id, name, description, number, agent_id, inputs, success_criteria.\nThe 'agent_id' for the new stage should be a valid, existing agent.\nIf adding a stage, its 'output_context_path' should generally be 'intermediate_outputs.some_descriptive_name'.\nIts 'on_failure' policy should usually be 'FAIL_MASTER_FLOW' to prevent loops on failing clarification.\n\nCRITICAL INSTRUCTIONS FOR ADD_CLARIFICATION_STAGE: \nWhen suggesting `ADD_CLARIFICATION_STAGE`:\n1.  Determine the correct `insert_before_stage_id` by carefully reading the user's request in the `full_context_at_pause` (specifically, `explicit_setup_message_content` or `context.outputs.stage_A_setup.message` often contains phrases like `\\\\\\\"add a stage before stage_X\\\\\\\"`).\n2.  The `original_failed_stage_id` is the ID of the stage that led to this review (the stage that paused/failed, or the stage that succeeded if this is an `on_success` review).\n3.  **New Stage Inputs:**\n    *   If the `agent_id` for the `new_stage_spec` is, for example, 'SystemInterventionAgent_v1', its `inputs` field MUST be a dictionary containing a key like `\\\\\\\"prompt_message_for_user\\\\\\\"`. Adapt inputs to the chosen agent's schema.\n    *   The value for this prompt/query MUST be the *actual question string* that the clarification agent should ask (e.g., `\\\\\\\"What is the current weather?\\\\\\\"`). You should extract this question from the user's request in the context (e.g., from `explicit_setup_message_content`). DO NOT use a context path string like `\\\\\\\"context.outputs.some.path\\\\\\\"` for the query value itself.\n4.  **MANDATORY CHECK FOR OUTPUT MAPPING**: You MUST inspect the user's request details (primarily in `context.outputs.stage_A_setup.message` or `explicit_setup_message_content`). If this request contains instructions to map the new clarification stage's output to another stage's input (e.g., `\\\\\\\"map its output to stage_C_verify.inputs.clarification_data\\\\\\\"` or similar phrasing),\n    then you MUST populate the `new_stage_output_to_map_to_verification_stage_input` field. This field requires:\n    *   `source_output_field`: Use the actual output field name from the chosen clarification agent's output model (e.g., `\\\\\\\"human_response\\\\\\\"` for 'SystemInterventionAgent_v1', or `\\\\\\\"clarification_provided\\\\\\\"` for other hypothetical agents).\n    *   `target_input_field_in_verification_stage`: The exact name of the input field in the *target verification stage* where this data should be mapped (e.g., `\\\\\\\"clarification_data\\\\\\\"`).\n    If, and only if, NO such mapping instructions are found in the user request context, you may omit `new_stage_output_to_map_to_verification_stage_input` or set it to null.\n5.  Ensure the `new_stage_spec.next_stage` correctly points to the stage that should execute *after* the new stage (this is often the `insert_before_stage_id`).\n\nIf in doubt, `ESCALATE_TO_USER` is a safe fallback.
+Available suggestion types are: {action_types_json}\n\nConsider the following rules and guidelines:\n\n1.  **Analyze the Error and Context:**
+    *   Carefully examine \\`triggering_error_details\\` and \\`full_context_at_pause\\`.
+    *   The \\`relevant_context_snippet\\` provides a focused summary, including:
+        *   \\`failed_stage_spec\\`: The specification of the stage that paused.
+        *   \\`failed_stage_inputs\\`: The actual inputs passed to the failed stage.
+        *   \\`failed_stage_output_snippet\\`: A snippet of the output from the failed stage, if any.
+        *   \\`explicit_setup_message_content\\`: The 'message' content from 'stage_A_setup\\\'s output, if found.
+        *   \\`explicit_clarification_content\\`: The 'clarification_provided' content from a previously run clarification stage (like 'stage_BC_clarify_for_B'), if found.\n\n2.  **Mock Failure Handling (Default for \\`trigger_fail\\` issues):**
+    *   For simple mock failures (e.g., a \\`trigger_fail\\` flag was set to true in a mock agent),
+        your primary suggestion should be 'RETRY_STAGE_WITH_CHANGES'.
+    *   You should suggest changing the input that caused the mock failure (e.g., set \\`trigger_fail\\` to false).
+    *   This rule is OVERRIDDEN by Rule #3 if its conditions are met.\n\n3.  **Specific Scenario: Handling Stages Needing Clarification (e.g., based on \\`stage_B_needs_clarification\\` in setup message):**
+    *   This rule takes precedence over general mock failure handling (Rule #2) IF \\`explicit_setup_message_content\\` contains \\`stage_B_needs_clarification\\`.
+    *   **Condition A (Clarification NOT YET PROVIDED):**
+        *   IF \\`explicit_setup_message_content\\` contains \\`stage_B_needs_clarification\\`
+        *   AND \\`explicit_clarification_content\\` is MISSING or EMPTY in the \\`relevant_context_snippet\\`,
+        *   THEN you MUST suggest \\`ADD_CLARIFICATION_STAGE\\`.
+            *   The new stage should use an appropriate agent capable of user clarification (e.g., an agent categorized for \\`human_interaction\\` or \\`system_intervention\\` if suitable for plan-level clarification, such as \\`SystemInterventionAgent_v1\\` if the planner needs input from the operator).
+            *   Its \\`inputs\\` MUST conform to the chosen agent\\\'s schema. For example, if using an agent like \\`SystemInterventionAgent_v1\\`, it might be: {{{{ \"prompt_message_for_user\": \"What is the actual question to ask? (e.g., \'What is the current weather?\')\" }}}}. (The LLM should resolve this to the actual message and adapt inputs for the chosen agent).
+            *   Its \\`success_criteria\\` MUST be appropriate for the chosen agent (e.g., [\"human_response IS_NOT_EMPTY\"] or [\"clarification_provided IS_NOT_EMPTY\"]).
+            *   The \\`new_stage_spec.id\\` SHOULD BE \\`stage_BC_clarify_for_B\\`. (The system will make it unique if needed, e.g., \\`stage_BC_clarify_for_B_v1\\`).
+            *   The \\`insert_before_stage_id\\` MUST be the ID of the stage that just failed (i.e., \\`paused_stage_id\\` from your input, which should be \\`stage_B_fail_point\\` in this scenario).
+            *   Other \\`new_stage_spec\\` fields (name, description, number) should be sensible.
+            *   Reasoning should state clarification is needed and not yet found.
+    *   **Condition B (Clarification HAS BEEN PROVIDED):**
+        *   IF \\`explicit_setup_message_content\\` contains \\`stage_B_needs_clarification\\`
+        *   AND \\`explicit_clarification_content\\` IS PRESENT AND NOT EMPTY in the \\`relevant_context_snippet\\`,
+        *   AND the \\`paused_stage_id\\` is \\`stage_B_fail_point\\` (or the stage that originally needed clarification),
+        *   THEN you MUST suggest \\`RETRY_STAGE_WITH_CHANGES\\` for the \\`paused_stage_id\\` (\\`stage_B_fail_point\\`).
+            *   The \\`changes_to_stage_spec.inputs\\` MUST include setting \\`trigger_fail\\` to \\`false\\`.
+            *   It should also preserve other necessary inputs for \\`stage_B_fail_point\\`, like \\`setup_message\\` (e.g., \\`{{{{ \"trigger_fail\": false, \"setup_message\": \"context.intermediate_outputs.setup_message.message\" }}}}\\`).
+            *   Reasoning should state clarification was found, and now the original stage can be retried with changes.\n\n4.  **Success Criteria Failures:**
+    *   If a stage failed due to \\`SuccessCriteriaFailed\\` (check \\`triggering_error_details.error_type\\`),
+        and the failure is not covered by rule #3, consider if a \\`RETRY_STAGE_WITH_CHANGES\\` could fix it by altering inputs.
+        If not, \\`ESCALATE_TO_USER\\` is often appropriate.\n\n5.  **Agent Not Found or Resolution Errors:**
+    *   If the error is \\`AgentNotFoundError\\`, \\`NoAgentFoundForCategoryError\\`, or \\`AmbiguousAgentCategoryError\\`,
+        suggest \\`ESCALATE_TO_USER\\`. These are structural issues.\n\n6.  **General Errors:**
+    *   For other types of errors, assess if a \\`RETRY_STAGE_AS_IS\\` is plausible (e.g., for transient issues).
+    *   If inputs seem problematic, \\`RETRY_STAGE_WITH_CHANGES\\` might be applicable.
+    *   If the plan seems flawed (e.g., a stage is fundamentally wrong or missing), \\`MODIFY_MASTER_PLAN\\` (e.g. to remove a problematic stage if a workaround is clear) could be an option, but use sparingly.
+    *   If a stage failed but the overall goal might still be achievable by skipping it or if the failure is inconsequential, \\`PROCEED_AS_IS\\` might be an option (use with caution).\n\n7.  **Pydantic ValidationError Handling:**
+    *   If \\`triggering_error_details.error_type\\` is \\`pydantic_core._pydantic_core.ValidationError\\` or \\`ValidationError\\` (from Pydantic itself):
+        *   Examine the \\`triggering_error_details.message\\`. It will list the missing or invalid fields.
+        *   Your primary suggestion MUST be \\`RETRY_STAGE_WITH_CHANGES\\`.
+        *   In \\`changes_to_stage_spec.inputs\\`, you MUST include ALL fields that were originally passed to the stage PLUS the fields identified as missing or needing correction from the error message.
+        *   **For missing or invalid fields:**
+            *   **Attempt to resolve from context:** If the correct value can be determined from \\`full_context_at_pause\\` (e.g., \\`project_id\\` might be available as \\`full_context_at_pause.data.project_id\\`, or an output from a previous stage like \\`full_context_at_pause.outputs.some_previous_stage.relevant_field_name\\`), you MUST provide the value as a context path string (e.g., \\`\"{{context.data.project_id}}\"\\` or \\`\"{{context.outputs.some_previous_stage.relevant_field_name}}\"\\`).
+            *   **Provide concrete values if known:** If a field requires a specific literal string, boolean, number, etc., and you can confidently determine that value (e.g., a default \\`target_file_path\\`), provide that concrete value.
+            *   **DO NOT USE VAGUE PLACEHOLDERS:** You MUST NOT use placeholders like \\`\"TODO_RESOLVE_FROM_CONTEXT_OR_USER\"\\`. These are not resolvable and will cause further errors.
+            *   **If unresolvable, ESCALATE:** If a required field\\\'s value cannot be confidently determined from context or general knowledge, and it\\\'s critical for the stage to proceed, you MUST suggest \\`ESCALATE_TO_USER\\` and clearly state which field(s) are missing and why they could not be determined.
+        *   Ensure the \\`inputs\\` dictionary in \\`changes_to_stage_spec\\` is FLAT, as per the GOOD/BAD examples below.
+        *   Your \\`reasoning\\` should clearly state which fields were missing/invalid and how you are attempting to fix them (e.g., \\`\"Added missing 'project_id' field, resolving from '{{context.data.project_id}}'\"\\`).\n\n8.  **Output Format:**
+    *   You MUST output a single JSON object conforming to the \\`MasterPlannerReviewerOutput\\` schema.
+    *   The \\`suggestion_type\\` field must be one of the available enum values.
+    *   The \\`suggestion_details\\` field must be a JSON object appropriate for the \\`suggestion_type\\`.
+        *   For \\`RETRY_STAGE_WITH_CHANGES\\`: \\`RetryStageWithChangesDetails\\` schema.
+        *   For \\`ADD_CLARIFICATION_STAGE\\`: \\`AddClarificationStageDetails\\` schema.
+        *   For \\`MODIFY_MASTER_PLAN\\`: \\`ModifyMasterPlanRemoveStageDetails\\` schema (currently only remove is detailed).
+        *   For \\`ESCALATE_TO_USER\\`: include a \\`message_to_user\\` field in details if you have a specific message.
+    *   Provide a clear \\`reasoning\\` for your suggestion.\n\nExample \\`RetryStageWithChangesDetails\\`:\nThe \\`changes_to_stage_spec.inputs\\` field is CRITICAL. Its value MUST be a FLAT dictionary where keys are the direct input field names of the target agent, and values are their new values.\n\nBAD EXAMPLE (Causes Errors):\n{{{{ \\
+  \"target_stage_id\": \"stage_X_name\",\\
+  \"changes_to_stage_spec\": {{{{ \\
+    \"inputs\": {{{{ \\
+      \"inputs\": {{{{ \\
+        \"some_input_key\": \"new_value\", \\
+        \"another_key\": \"another_value\"\\
+      }}}} \\
+    }}}} \\
+  }}}} \\
+}}}}\n\nGOOD EXAMPLE (Correct Structure - FLAT inputs):\n{{{{ \\
+  \"target_stage_id\": \"stage_X_name\",\\
+  \"changes_to_stage_spec\": {{{{ \\
+    \"inputs\": {{{{ \\
+      \"some_input_key_for_agent_X\": \"new_value\", \\
+      \"another_input_key_for_agent_X\": \"another_value\",\\
+      \"project_id\": \"actual_project_id_if_needed\", \\
+      \"task_description\": \"actual_description_if_needed\", \\
+      \"target_file_path\": \"actual_path_if_needed\" \\
+    }}}} \\
+  }}}} \\
+}}}}\n\nExample \\`AddClarificationStageDetails\\`:\n{{{{ \\
+  \"new_stage_spec\": {{{{ \\
+    \"id\": \"stage_Y_clarify\",\\
+    \"name\": \"Clarification for Y\",\\
+    \"description\": \"Gathers info for Y\",\\
+    \"number\": 2.5,\\
+    \"agent_id\": \"SystemInterventionAgent_v1\",\\
+    \"inputs\": {{ \"prompt_message_for_user\": \"What is the actual question to ask? (e.g., \'What is the current weather?\')\" }},\\
+    \"output_context_path\": \"intermediate_outputs.clarification_for_Y\",\\
+    \"success_criteria\": [\"human_response IS_NOT_EMPTY\"],\\
+    \"on_failure\": {{ \"action\": \"FAIL_MASTER_FLOW\", \"log_message\": \"Clarification failed for Y\" }}
+    // next_stage will be handled by the system if not specified\\
+  }}}},\\
+  \"original_failed_stage_id\": \"string (ID of the stage that FAILED or successfully COMPLETED, triggering this review)\",\\
+  \"insert_before_stage_id\": \"string (ID of the stage BEFORE which the new stage should be inserted - determine this from user request in context, e.g., \'add before stage_B\')\",\\
+  \"new_stage_output_to_map_to_verification_stage_input\": {{ \\
+    \"source_output_field\": \"human_response\",\\
+    \"target_input_field_in_verification_stage\": \"clarification_data\"\\
+  }}\\
+}}}}\nMake sure your \'new_stage_spec\' for ADD_CLARIFICATION_STAGE includes all necessary fields like id, name, description, number, agent_id, inputs, success_criteria.\\
+The \'agent_id\' for the new stage should be a valid, existing agent.\\
+If adding a stage, its \'output_context_path\' should generally be \'intermediate_outputs.some_descriptive_name\'.\\
+Its \'on_failure\' policy should usually be \'FAIL_MASTER_FLOW\' to prevent loops on failing clarification.\\n\nCRITICAL INSTRUCTIONS FOR ADD_CLARIFICATION_STAGE: \\
+When suggesting \\`ADD_CLARIFICATION_STAGE\\`:\\
+1.  Determine the correct \\`insert_before_stage_id\\` by carefully reading the user\\\'s request in the \\`full_context_at_pause\\` (specifically, \\`explicit_setup_message_content\\` or \\`context.outputs.stage_A_setup.message\\` often contains phrases like \\`\"add a stage before stage_X\"\\`).\\
+2.  The \\`original_failed_stage_id\\` is the ID of the stage that led to this review (the stage that paused/failed, or the stage that succeeded if this is an \\`on_success\\` review).\\
+3.  **New Stage Inputs:**\\
+    *   If the \\`agent_id\\` for the \\`new_stage_spec\\` is, for example, \\`SystemInterventionAgent_v1\\`, its \\`inputs\\` field MUST be a dictionary containing a key like \\`\"prompt_message_for_user\"\\`. Adapt inputs to the chosen agent\\\'s schema.\\
+    *   The value for this prompt/query MUST be the *actual question string* that the clarification agent should ask (e.g., \\`\"What is the current weather?\"\\`). You should extract this question from the user\\\'s request in the context (e.g., from \\`explicit_setup_message_content\\`). DO NOT use a context path string like \\`\"context.outputs.some.path\"\\` for the query value itself.\\
+4.  **MANDATORY CHECK FOR OUTPUT MAPPING**: You MUST inspect the user\\\'s request details (primarily in \\`context.outputs.stage_A_setup.message\\` or \\`explicit_setup_message_content\\`). If this request contains instructions to map the new clarification stage\\\'s output to another stage\\\'s input (e.g., \\`\"map its output to stage_C_verify.inputs.clarification_data\"\\` or similar phrasing),\\
+    then you MUST populate the \\`new_stage_output_to_map_to_verification_stage_input\\` field. This field requires:\\
+    *   \\`source_output_field\\`: Use the actual output field name from the chosen clarification agent\\\'s output model (e.g., \\`\"human_response\"\\` for \\`SystemInterventionAgent_v1\\`, or \\`\"clarification_provided\"\\` for other hypothetical agents).\\
+    *   \\`target_input_field_in_verification_stage\\`: The exact name of the input field in the *target verification stage* where this data should be mapped (e.g., \\`\"clarification_data\"\\`).\\
+    If, and only if, NO such mapping instructions are found in the user request context, you may omit \\`new_stage_output_to_map_to_verification_stage_input\\` or set it to null.\\
+5.  Ensure the \\`new_stage_spec.next_stage\\` correctly points to the stage that should execute *after* the new stage (this is often the \\`insert_before_stage_id\\`).\\
+
+If in doubt, \\`ESCALATE_TO_USER\\` is a safe fallback.\\
 Do not hallucinate schemas or fields. Stick to the provided structures.
-""" # This is the end of the SYSTEM_PROMPT_TEMPLATE_BASE string
+"""
 
-USER_PROMPT_TEMPLATE = '''
-A master execution plan has paused. Please analyze the situation and provide a recovery suggestion.
+USER_PROMPT_TEMPLATE = """
+The master execution plan has been paused. Please analyze the situation and provide a suggestion.
 
-**Plan & Failure Context:**
+**Paused Stage ID:** {paused_stage_id}
+**Pause Status:** {pause_status}
 
-*   **Paused Stage ID:** `{paused_stage_id}`
-*   **Pause Status:** `{pause_status}`
-*   **Triggering Error (if any):**
-    *   Type: `{error_type}`
-    *   Message: `{error_message}`
-    *   Traceback:
-        ```
-        {error_traceback}
-        ```
-    *   Agent ID that errored: `{error_agent_id}`
-*   **Current Master Plan Snippet (focus on paused stage and neighbors):**
-    ```json
-    {current_master_plan_snippet}
-    ```
-*   **Paused Stage Specification:**
-    ```json
-    {paused_stage_spec_json}
-    ```
-*   **Full Context Snapshot at Pause (relevant keys):**
-    ```json
-    {relevant_context_snapshot_json}
-    ```
+**Triggering Error Details (if any):**
+- Error Type: {error_type}
+- Agent ID: {error_agent_id}
+- Message: {error_message}
+- Traceback (snippet):
+{error_traceback}
 
-**Your Task:**
-Review all the provided information. Output a single JSON object conforming to the `MasterPlannerReviewerOutput` schema as described in the system prompt, including `suggestion_type`, `suggestion_details` (structured according to `suggestion_type`), `confidence_score`, and `reasoning`.
-'''
+**Current Master Plan (Snippet focusing on paused stage and its neighbors):**
+```json
+{current_master_plan_snippet}
+```
+
+**Full Specification of Paused Stage ({paused_stage_id}):**
+```json
+{paused_stage_spec_json}
+```
+
+**Relevant Context Snapshot at Pause:**
+(This includes a summary of intermediate outputs and any explicitly extracted setup/clarification messages)
+```json
+{relevant_context_snapshot_json}
+```
+
+Based on all the information above and the rules provided in the system prompt, please formulate your suggestion as a JSON object.
+"""
 
 class MasterPlannerReviewerAgent:
-    """
+    '''
     System agent responsible for reviewing failed/paused MasterExecutionPlans and suggesting next steps.
-    """
+    '''
     AGENT_ID = "system.master_planner_reviewer_agent_v1"
     AGENT_NAME = "Master Planner Reviewer Agent"
     AGENT_DESCRIPTION = ("Reviews failed or paused autonomous execution plans and suggests recovery actions, "
                        "such as retrying a stage, modifying the plan, or escalating to a user.")
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None, llm_client: Optional[LLMProvider] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, llm_client: Optional[LLMProvider] = None, llm_manager: Optional[Any] = None):
         self.config = config if config else {}
+        self.llm_client = llm_client # Directly assign the passed llm_client (which should be an LLMManager instance)
 
-        if llm_client:
-            self.llm_client = llm_client
-            logger.info(f"MasterPlannerReviewerAgent initialized with pre-configured LLM client: {type(self.llm_client).__name__}")
-            return # Exit if llm_client is provided
-
-        # Try to load from environment variable
-        api_key_from_env = os.getenv("OPENAI_API_KEY")
-        
-        if api_key_from_env and api_key_from_env != "dummy_key_if_none":
-            self.llm_client = OpenAILLMProvider(api_key=api_key_from_env)
-            logger.info("MasterPlannerReviewerAgent: Loaded OpenAI API key from OPENAI_API_KEY environment variable.")
-            logger.info(f"MasterPlannerReviewerAgent initialized LLM client: {type(self.llm_client).__name__}")
+        if self.llm_client:
+            logger.info(f"MasterPlannerReviewerAgent initialized with provided LLM client/manager: {type(self.llm_client).__name__}")
+        elif llm_manager: # Accept llm_manager as an alternative name for dependency injection
+            self.llm_client = llm_manager
+            logger.info(f"MasterPlannerReviewerAgent initialized with provided llm_manager: {type(self.llm_client).__name__}")
         else:
-            self.llm_client = None # Explicitly set to None
-            logger.warning("MasterPlannerReviewerAgent: OPENAI_API_KEY environment variable not found or is a dummy key. LLM client NOT initialized. Will rely on mocks or fail if LLM is needed.")
+            logger.warning("MasterPlannerReviewerAgent: No LLM client/manager provided during initialization. LLM capabilities will be unavailable.")
         
     def get_agent_card(self) -> AgentCard:
         return AgentCard(
@@ -408,18 +521,35 @@ class MasterPlannerReviewerAgent:
             )
             llm_response_str = "" # Initialize llm_response_str
             try:
-                llm_response_str = await self.llm_client.generate( # Changed generate_text_async to generate
-                    prompt=user_prompt, 
-                    system_prompt=system_prompt, 
-                    temperature=0.1, 
-                    max_tokens=1024
-                )
-                logger.debug(f"LLM Raw Response:\n{llm_response_str}")
-                if llm_response_str.startswith("```json"): llm_response_str = llm_response_str[len("```json"):]
-                if llm_response_str.startswith("```"): llm_response_str = llm_response_str[3:]
-                if llm_response_str.endswith("```"): llm_response_str = llm_response_str[:-3]
-                llm_response_str = llm_response_str.strip()
-                llm_suggestion_dict = json.loads(llm_response_str)
+                # MODIFIED: Call generate on the actual_provider and request json_object
+                if hasattr(self.llm_client, 'actual_provider') and self.llm_client.actual_provider:
+                    llm_response_obj = await self.llm_client.actual_provider.generate(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        temperature=0.1,
+                        max_tokens=1024,
+                        response_format={"type": "json_object"} # Request JSON object
+                    )
+                    # Assuming the provider returns a dict when json_object is requested and successful
+                    if isinstance(llm_response_obj, dict):
+                        llm_suggestion_dict = llm_response_obj
+                    elif isinstance(llm_response_obj, str): # Fallback if it's still a string
+                        logger.warning("LLM provider returned a string despite json_object request. Attempting manual parse.")
+                        llm_response_str = llm_response_obj
+                        # Manual stripping and parsing (kept for fallback)
+                        if llm_response_str.startswith("```json"):
+                            llm_response_str = llm_response_str[len("```json"):]
+                        if llm_response_str.startswith("```"):
+                            llm_response_str = llm_response_str[3:]
+                        if llm_response_str.endswith("```"):
+                            llm_response_str = llm_response_str[:-3]
+                        llm_response_str = llm_response_str.strip()
+                        llm_suggestion_dict = json.loads(llm_response_str)
+                    else:
+                        raise ValueError(f"LLM provider returned unexpected type: {type(llm_response_obj)}")
+                else:
+                    logger.error("LLM client does not have an 'actual_provider' or it's None. Cannot make LLM call.")
+                    return self._default_escalate_to_user("LLM provider misconfiguration.")
                 
                 suggestion_type_val = llm_suggestion_dict.get("suggestion_type")
                 raw_details = llm_suggestion_dict.get("suggestion_details")
@@ -592,5 +722,4 @@ if __name__ == '__main__':
     if os.environ.get("OPENAI_API_KEY"):
        asyncio.run(test_agent())
     else:
-        print("Skipping test_agent() run as OPENAI_API_KEY is not set.") 
         print("Skipping test_agent() run as OPENAI_API_KEY is not set.") 

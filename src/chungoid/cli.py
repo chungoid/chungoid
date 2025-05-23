@@ -35,8 +35,9 @@ import rich.traceback
 from rich.logging import RichHandler
 
 import chungoid
+from chungoid.utils.logger_setup import setup_logging # Ensure this import is present
 from chungoid.constants import (DEFAULT_MASTER_FLOWS_DIR, DEFAULT_SERVER_STAGES_DIR, MIN_PYTHON_VERSION,
-                              PROJECT_CHUNGOID_DIR, STATE_FILE_NAME)
+                              PROJECT_CHUNGOID_DIR, STATE_FILE_NAME) # REMOVED DEFAULT_SERVER_PROMPTS_DIR
 from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus, HumanReviewDecision, OnFailureAction
 from chungoid.core_utils import get_project_root_or_raise, init_project_structure
 from chungoid.schemas.master_flow import MasterExecutionPlan
@@ -49,7 +50,7 @@ from chungoid.utils.agent_registry import AgentRegistry
 from chungoid.utils.state_manager import StateManager
 from chungoid.utils.metrics_store import MetricsStore
 from chungoid.utils.prompt_manager import PromptManager
-from chungoid.utils.llm_provider import MockLLMProvider, OpenAILLMProvider, LLMManager # Keep MockLLMProvider for --use-mock-llm-provider flag
+from chungoid.utils.llm_provider import MockLLMProvider, LLMManager # Keep MockLLMProvider for --use-mock-llm-provider flag
 
 # For Agent Cards (used in agent_registry.add())
 from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card
@@ -75,7 +76,7 @@ import subprocess
 import json as py_json # Avoid conflict with click.json
 
 # --- DIAGNOSTIC CODE AT THE TOP OF cli.py ---
-print("--- DIAGNOSING chungoid.cli (Top of cli.py) ---")
+print("--- DIAGNOSTING chungoid.cli (Top of cli.py) ---")
 print(f"Python Executable: {sys.executable}")
 print(f"Initial sys.path: {sys.path}")
 print(f"os.getcwd(): {os.getcwd()}")
@@ -244,17 +245,130 @@ def get_autonomous_engine_agent_fallback_map() -> Dict[AgentID, Union[Type[BaseA
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# NEW HELPER for default server prompts base directory
+# ---------------------------------------------------------------------------
+def _get_default_server_prompts_base_dir() -> Path:
+    """
+    Determines the default base directory for server prompts.
+    This is typically <chungoid_core_root>/server_prompts/
+    """
+    try:
+        # cli.py is in <core_root>/src/chungoid/cli.py
+        # server_prompts is at <core_root>/server_prompts/
+        cli_file_path = Path(__file__).resolve()
+        core_root_dir = cli_file_path.parent.parent.parent # Gets to <core_root>
+        default_path = core_root_dir / "server_prompts"
+        if default_path.is_dir():
+            logger.debug(f"Determined default server_prompts base dir: {default_path}")
+            return default_path
+        else:
+            logger.warning(f"Default server_prompts base dir not found at {default_path}. Attempting fallback via constants.")
+    except Exception as e:
+        logger.warning(f"Error determining default server_prompts base dir from script path: {e}. Attempting fallback via constants.")
+
+    # Fallback to constant if available and seems correct
+    # Ensure DEFAULT_SERVER_STAGES_DIR is imported from chungoid.constants
+    if DEFAULT_SERVER_STAGES_DIR:
+        stages_path = Path(DEFAULT_SERVER_STAGES_DIR)
+        # Try to derive from DEFAULT_SERVER_STAGES_DIR (e.g., if it's '.../server_prompts/stages')
+        if stages_path.is_absolute() and stages_path.name == "stages" and stages_path.parent.is_dir():
+            logger.info(f"Derived server_prompts base dir from DEFAULT_SERVER_STAGES_DIR: {stages_path.parent}")
+            return stages_path.parent
+        elif not stages_path.is_absolute(): # If it's a relative path like "server_stages"
+            # This case is less ideal as we don't have a clear root to resolve it against here.
+            # The primary method using __file__ should ideally work.
+            # If we reach here with a relative DEFAULT_SERVER_STAGES_DIR, it implies a less standard setup.
+            # We might assume it's relative to a conceptual 'server_prompts' dir, so its parent would be that.
+            # However, this is speculative. Let's prioritize the __file__ based method.
+            # If primary method fails, and DEFAULT_SERVER_STAGES_DIR is just "server_stages",
+            # then Path("server_stages").parent is just ".", which isn't helpful.
+            # The initial __file__ based logic should be the most reliable.
+            # The original logic for DEFAULT_SERVER_PROMPTS_DIR was a direct path.
+            # Let's refine the fallback: if DEFAULT_SERVER_STAGES_DIR is like "server_prompts/stages", its parent is "server_prompts".
+            # This requires a bit more convention on what DEFAULT_SERVER_STAGES_DIR might be.
+            # For now, the absolute path check is the most robust derivative.
+            pass # Avoid making unsafe assumptions with relative DEFAULT_SERVER_STAGES_DIR here.
+
+    # Absolute last resort, though this is unlikely to be correct if others failed.
+    final_fallback = Path("server_prompts").resolve()
+    logger.error(f"Could not reliably determine default server_prompts base directory. Falling back to relative path: {final_fallback}. This may be incorrect.")
+    return final_fallback
+
+# ---------------------------------------------------------------------------
+# NEW: LLM Configuration Helper
+# ---------------------------------------------------------------------------
+def _get_llm_config(
+    cli_params: Dict[str, Any], # Parameters from the specific click command context
+    project_config_llm_settings: Optional[Dict[str, Any]] = None
+    # REMOVED use_mock_override parameter
+) -> Dict[str, Any]:
+    """
+    Constructs the LLM configuration dictionary based on CLI parameters,
+    environment variables, and project configuration.
+    """
+    llm_cfg: Dict[str, Any] = {}
+
+    # REMOVED Mock Override logic block that used use_mock_override
+    
+    # Check if mock is specified via CHUNGOID_LLM_PROVIDER_TYPE env var
+    env_provider_type = os.getenv("CHUNGOID_LLM_PROVIDER_TYPE", "").lower()
+    if env_provider_type == "mock":
+        logger.info("LLM Config: Using MockLLMProvider due to CHUNGOID_LLM_PROVIDER_TYPE=mock environment variable.")
+        return {
+            "provider_type": "mock",
+            "mock_llm_responses": project_config_llm_settings.get("mock_llm_responses", {}) if project_config_llm_settings else {}
+        }
+    
+    # Check if mock is specified in project_config_llm_settings (and not overridden by env var to something else)
+    config_provider_type = (project_config_llm_settings.get("provider_type", "").lower() if project_config_llm_settings else "")
+    if not env_provider_type and config_provider_type == "mock":
+        logger.info("LLM Config: Using MockLLMProvider due to project configuration.")
+        return {
+            "provider_type": "mock",
+            "mock_llm_responses": project_config_llm_settings.get("mock_llm_responses", {}) if project_config_llm_settings else {}
+        }
+
+    # If not mock, proceed to configure LiteLLM or other providers
+    llm_cfg["provider_type"] = env_provider_type or config_provider_type or "litellm"
+
+    llm_cfg["default_model"] = (
+        cli_params.get("llm_model") or # Assumes --llm-model CLI option exists
+        os.getenv("CHUNGOID_LLM_DEFAULT_MODEL") or 
+        (project_config_llm_settings.get("default_model") if project_config_llm_settings else None) or 
+        "gpt-3.5-turbo" # Fallback default model
+    )
+
+    explicit_api_key = (
+        cli_params.get("llm_api_key") or # Assumes --llm-api-key CLI option
+        os.getenv("CHUNGOID_LLM_API_KEY") or 
+        (project_config_llm_settings.get("api_key") if project_config_llm_settings else None)
+    )
+    if explicit_api_key:
+        llm_cfg["api_key"] = explicit_api_key
+
+    base_url = (
+        cli_params.get("llm_base_url") or # Assumes --llm-base-url CLI option
+        os.getenv("CHUNGOID_LLM_BASE_URL") or 
+        os.getenv("OLLAMA_BASE_URL") or  # Common for Ollama users
+        (project_config_llm_settings.get("base_url") if project_config_llm_settings else None)
+    )
+    if base_url:
+        llm_cfg["base_url"] = base_url
+    
+    # For provider_env_vars, this would typically come from project_config or be hardcoded
+    # if there are specific env vars LiteLLM needs set programmatically.
+    if project_config_llm_settings and "provider_env_vars" in project_config_llm_settings:
+        llm_cfg["provider_env_vars"] = project_config_llm_settings["provider_env_vars"]
+
+    logger.info(f"LLM Config generated: Provider=\'{llm_cfg['provider_type']}\', Model=\'{llm_cfg['default_model']}\', APIKey={'present' if 'api_key' in llm_cfg else 'not set'}, BaseURL={'present' if 'base_url' in llm_cfg else 'not set'}")
+    return llm_cfg
+
+# ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
 
 _LOG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] # Corrected this line
 
-
-def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level),
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    )
 
 def _perform_diagnostic_checks() -> None:
     # This is a placeholder for any future diagnostic checks needed at CLI startup
@@ -277,12 +391,36 @@ def _perform_diagnostic_checks() -> None:
 )
 @click.pass_context
 def cli(ctx: click.Context, log_level: str) -> None:  # noqa: D401 – imperative mood fine
-    """Chungoid MCP CLI."""
-    ctx.obj = {"log_level": log_level.upper()}
-    _configure_logging(log_level.upper())
-    # Perform diagnostic checks only if a specific env var is set
-    if os.environ.get("CHUNGOID_CLI_DIAGNOSTICS") == "1":
-        _perform_diagnostic_checks()
+    """Chungoid-core unified command-line interface."""
+    # MODIFIED: Use new setup_logging from chungoid.utils
+    setup_logging(level=log_level) # Pass the string directly
+
+    # Store log_level and other shared context if needed.
+    ctx.obj = {"log_level": log_level}
+    
+    # Attempt to load project-specific config if in a project context
+    try:
+        # Find project root relative to current working directory
+        # This might not always be correct if CLI is run from outside a project
+        # For commands like \'init\', project_dir might not exist yet.
+        # For commands like \'run\', \'status\', \'build\', it\'s more relevant.
+        # We should ideally load config based on the explicit project_dir option of each command.
+        
+        # Placeholder for project_config, to be loaded by individual commands
+        # based on their specific project_dir context.
+        ctx.obj["project_config"] = {} 
+        # config = get_config() # OLD: This was too generic.
+        # ctx.obj[\"project_config\"] = config.dict() if config else {}
+    except ConfigError:
+        # logger.warning(\"Could not load project-specific config at CLI entry. Some defaults may apply.\")
+        # Let commands handle specific config loading.
+        pass
+    except Exception: # Catch other potential errors like project not found
+        # logger.warning(\"Could not determine project root or load config at CLI entry.\")
+        pass
+
+
+    _perform_diagnostic_checks()
     
     logger.debug(f"CLI context object initialized: {ctx.obj}")
 
@@ -507,6 +645,34 @@ def flow(ctx: click.Context) -> None:  # noqa: D401
         "These are stored in project_status.json and can be used for filtering later."
     )
 )
+@click.option(
+    "--llm-provider",
+    "llm_provider_cli",
+    type=str,
+    default=None,
+    help="Override LLM provider type for this run."
+)
+@click.option(
+    "--llm-model",
+    "llm_model_cli",
+    type=str,
+    default=None,
+    help="Override LLM model ID for this run."
+)
+@click.option(
+    "--llm-api-key",
+    "llm_api_key_cli",
+    type=str,
+    default=None,
+    help="Override LLM API key for this run."
+)
+@click.option(
+    "--llm-base-url",
+    "llm_base_url_cli",
+    type=str,
+    default=None,
+    help="Override LLM base URL for this run."
+)
 @click.pass_context
 def flow_run(ctx: click.Context, 
              master_flow_id_opt: Optional[str], 
@@ -515,252 +681,210 @@ def flow_run(ctx: click.Context,
              project_dir_opt: Path, 
              initial_context: Optional[str],
              run_id_override_opt: Optional[str],
-             tags: Optional[str]
+             tags: Optional[str],
+             llm_provider_cli: Optional[str],
+             llm_model_cli: Optional[str],
+             llm_api_key_cli: Optional[str],
+             llm_base_url_cli: Optional[str]
+             # REMOVED use_mock_llm_flag from signature
              ) -> None:
     logger = logging.getLogger("chungoid.cli.flow_run")
-    logger.info(f"'chungoid flow run' invoked. Master Flow ID: {master_flow_id_opt}, YAML: {flow_yaml_opt}, Goal: {goal}, Project Dir: {project_dir_opt}")
-
-    if not master_flow_id_opt and not flow_yaml_opt and not goal:
-        logger.error("Either --master-flow-id, --flow-yaml, or --goal must be provided.")
-        click.echo("Error: Either --master-flow-id, --flow-yaml, or --goal must be provided.", err=True)
-        raise click.exceptions.Exit(1)
-    
-    if goal and (master_flow_id_opt or flow_yaml_opt):
-        logger.error("--goal option is mutually exclusive with --master-flow-id and --flow-yaml.")
-        click.echo("Error: --goal is mutually exclusive with --master-flow-id and --flow-yaml.", err=True)
-        raise click.exceptions.Exit(1)
-
     project_path = project_dir_opt.resolve()
-    chungoid_dir = project_path / PROJECT_CHUNGOID_DIR
-    if not chungoid_dir.is_dir():
-        logger.error(f"Project '{PROJECT_CHUNGOID_DIR}' directory not found at {chungoid_dir}. Please initialize the project or specify the correct directory.")
-        click.echo(f"Error: Project '{PROJECT_CHUNGOID_DIR}' directory not found at {chungoid_dir}.", err=True)
-        raise click.exceptions.Exit(1)
+    logger.info(f"Flow Run: Project directory set to {project_path}")
 
-    config_file_path = chungoid_dir / "project_config.yaml"
-    project_config = load_config(str(config_file_path) if config_file_path.exists() else None)
-    project_config["project_root_dir"] = str(project_path) # Ensure this is always set based on CLI arg
+    if not project_path.exists() or not (project_path / PROJECT_CHUNGOID_DIR).exists():
+        click.echo(f"Error: Project directory {project_path} or its .chungoid subdirectory does not exist.", err=True)
+        raise click.Abort()
 
-    parsed_initial_context = {}
+    # Load project-specific config
+    project_config_path = project_path / PROJECT_CHUNGOID_DIR / "chungoid_config.yaml"
+    if not project_config_path.exists():
+        logger.warning(f"Project config file {project_config_path} not found. Using default settings.")
+        project_config = {} # Start with empty config if not found
+    else:
+        project_config = load_config(project_config_path) # load_config returns a dict
+    ctx.obj["project_config"] = project_config # Store in context
+    logger.info(f"Loaded project config for flow run from {project_config_path if project_config_path.exists() else 'defaults'}")
+
+    # Determine server_prompts_base_dir and server_stages_dir for StateManager
+    server_prompts_base_dir_str = str(project_config.get("server_prompts_dir") or _get_default_server_prompts_base_dir())
+    server_stages_dir_for_sm_str = str(Path(server_prompts_base_dir_str) / "stages")
+    logger.info(f"Flow Run: Server prompts base directory: {server_prompts_base_dir_str}")
+    logger.info(f"Flow Run: Server stages directory for StateManager: {server_stages_dir_for_sm_str}")
+
+    if goal and (master_flow_id_opt or flow_yaml_opt):
+        click.echo("Error: --goal cannot be used with --master-flow-id or --flow-yaml.", err=True)
+        raise click.Abort()
+    if not goal and not master_flow_id_opt and not flow_yaml_opt:
+        click.echo("Error: Must provide --goal, or --master-flow-id, or --flow-yaml.", err=True)
+        raise click.Abort()
+
+    # Setup StateManager first as it might hold project_id
+    state_manager = StateManager(target_directory=project_path, server_stages_dir=server_stages_dir_for_sm_str)
+    run_id = run_id_override_opt or str(uuid.uuid4())
+    
+    # Determine project_id (crucial for many components including PCMA)
+    project_id = state_manager.get_project_id() # Tries status file
+    if not project_id:
+        project_id = project_config.get("project_id") # Tries loaded config
+        if not project_id:
+            # This case should be rare if `chungoid init` or `chungoid build` was run, as they establish project_id.
+            # If running a flow on a raw directory, a project_id might need to be generated or passed.
+            logger.warning("Flow Run: project_id not found in state or config. A new one will not be generated for safety during flow run. Operations requiring project_id may fail.")
+            # For robust operation, project_id should exist. Consider erroring if strictly needed.
+            # For now, allow to proceed, but some agents (like PCMA) might fail if they require it for init.
+            # project_id = str(uuid.uuid4()) # Avoid generating new ID during a run if not present
+
+    logger.info(f"Flow Run: Using Run ID: {run_id}, Project ID: {project_id or 'Not Set'}")
+
+    final_initial_context_dict = {}
     if initial_context:
         try:
-            parsed_initial_context = py_json.loads(initial_context)
-            logger.info(f"Parsed initial context: {parsed_initial_context}")
+            final_initial_context_dict = py_json.loads(initial_context)
         except py_json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in --initial-context: {e}")
-            click.echo(f"Error: Invalid JSON in --initial-context: {e}", err=True)
-            raise click.exceptions.Exit(1)
-
-    if tags:
-        parsed_initial_context["_run_tags"] = [tag.strip() for tag in tags.split(',')]
-        logger.info(f"Added tags to context: {parsed_initial_context['_run_tags']}")
-
-    # MODIFIED: Define server_stages_dir_path_str_flow consistently and early
-    try:
-        cli_file_path_stages = Path(__file__).resolve()
-        script_dir_stages = cli_file_path_stages.parent.resolve() # .../src/chungoid
-        core_root_dir_stages = script_dir_stages.parent.parent    # .../chungoid-core
-        server_stages_dir_path_str_flow = str(core_root_dir_stages / "server_prompts" / "stages")
-
-        if project_config.get("server_stages_dir_override"):
-            server_stages_dir_path_str_flow = project_config["server_stages_dir_override"]
-        elif not Path(server_stages_dir_path_str_flow).is_dir():
-            logger.warning(f"Flow Run Default server_stages_dir {server_stages_dir_path_str_flow} not found. Trying project-relative.")
-            server_stages_dir_path_str_flow = str(project_path / "server_prompts" / "stages")
-            if not Path(server_stages_dir_path_str_flow).is_dir():
-                logger.warning(f"Flow Run Project-relative server_stages_dir also not found. Using constant DEFAULT_SERVER_STAGES_DIR: {DEFAULT_SERVER_STAGES_DIR}")
-                server_stages_dir_path_str_flow = str(DEFAULT_SERVER_STAGES_DIR)
-    except Exception as e_stages_dir_early_flow:
-        logger.error(f"Flow Run: Error determining server_stages_dir_path_str early: {e_stages_dir_early_flow}. Defaulting.")
-        server_stages_dir_path_str_flow = str(DEFAULT_SERVER_STAGES_DIR)
-    logger.info(f"Flow Run: Determined server_stages_dir for StateManager/PCMA context: {server_stages_dir_path_str_flow}")
-
-    registry_project_root = Path(project_config["project_root_dir"])
-    registry_chroma_mode = project_config.get("chromadb", {}).get("mode", "persistent") # More robust access
-
-    agent_registry = AgentRegistry(
-        project_root=registry_project_root, 
-        chroma_mode=registry_chroma_mode
-    )
+            click.echo(f"Error: Invalid JSON provided for --initial-context. Details: {e}", err=True)
+            raise click.Abort()
     
-    # Register system and mock agents
-    # These should ideally be registered once globally or loaded dynamically
-    # For CLI, ensuring they are available for the run:
-    agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
-    agent_registry.add(get_master_planner_agent_card(), overwrite=True)
-    # agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True) # REMOVE
-    # agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True) # REMOVE
-    # agent_registry.add(get_mock_test_generator_agent_card(), overwrite=True) # REMOVE
-    # agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True) # REMOVE
-    agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
-    agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
-    agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
-    agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
+    tags_list = [t.strip() for t in tags.split(",")] if tags else []
 
-    # For simplicity in RegistryAgentProvider, we provide one merged map. Let's ensure system agents are there.
-    
-    # Explicitly add core system agents to the fallback map if not already covered.
-    # These are agents that provide core functionality and might have specific mock behaviors for MVPs.
-    # core_system_agents = { # This local variable is replaced by production_system_agents_map
-    #     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
-    #     MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
-    #     CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # MVP uses its mocked output
-    #     TestGeneratorAgent.AGENT_ID: TestGeneratorAgent, # MVP uses its mocked output
-    #     SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1, # Handles actual file edits
-    #     SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent # Use the AGENT_ID and invoke_async function for functional agents
-    #     # Add other essential system agents here if their local Python class should be directly invokable via fallback
-    # }
-    
-    # Start with mock agents from testing_mock_agents.py
-    # final_fallback_map: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map() # MODIFIED LOGIC
-    # Add/override with core system agents
-    # final_fallback_map.update(core_system_agents) # MODIFIED LOGIC
-    # Add/override with autonomous engine agents
-    # final_fallback_map.update(get_autonomous_engine_agent_fallback_map()) # MODIFIED LOGIC
-
-    # MODIFIED: Construct final_fallback_map with new precedence
-    final_fallback_map: Dict[AgentID, AgentFallbackItem] = PRODUCTION_SYSTEM_AGENTS_MAP.copy()
+    # Fallback map for agents - similar to build command
+    final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
     final_fallback_map.update(get_autonomous_engine_agent_fallback_map())
     
-    # MODIFIED: Ensure all necessary dependencies are prepared for RegistryAgentProvider
-    # LLMProvider setup
-    # For flow_run, we need a robust way to get an LLM provider if non-mock agents requiring it are used.
-    # This setup mirrors the logic in the `build` command for consistency.
-    llm_provider_instance_for_flow_run: Optional[LLMProvider] = None
-    # Assuming project_config is loaded. If not, this logic needs to be adjusted or llm_provider remains None.
-    if project_config.get("llm_config", {}).get("use_mock_llm_provider", False): # Check a hypothetical config flag or CLI option
-        logger.info("Flow Run: Using MockLLMProvider based on config/flag.")
-        llm_provider_instance_for_flow_run = MockLLMProvider()
-    else:
-        openai_api_key_flow_run = os.getenv("OPENAI_API_KEY")
-        if openai_api_key_flow_run:
-            default_openai_model_flow_run = project_config.get("llm_config", {}).get("default_openai_model", "gpt-3.5-turbo")
-            logger.info(f"Flow Run: Initializing OpenAILLMProvider with default model: {default_openai_model_flow_run}")
-            llm_provider_instance_for_flow_run = OpenAILLMProvider(api_key=openai_api_key_flow_run, default_model=default_openai_model_flow_run)
-        else:
-            logger.warning("Flow Run: OPENAI_API_KEY not set. LLM-dependent agents might fail if not mocked.")
-            # llm_provider_instance_for_flow_run remains None
+    llm_manager_for_flow_run: Optional[LLMManager] = None
+    try:
+        llm_project_settings = project_config.get("project_settings", {}).get("llm_config", {})
+        
+        flow_run_cli_params = {
+            "llm_provider": llm_provider_cli,
+            "llm_model": llm_model_cli,
+            "llm_api_key": llm_api_key_cli,
+            "llm_base_url": llm_base_url_cli
+            # Note: use_mock_llm_provider_flag is passed directly to _get_llm_config use_mock_override
+        }
 
-    # PromptManager setup
-    # Use the server_stages_dir_path_str_flow which is now defined early
-    prompt_manager_base_dir = Path(server_stages_dir_path_str_flow).parent if Path(server_stages_dir_path_str_flow).name == "stages" else Path(server_stages_dir_path_str_flow)
-    prompt_manager_instance = PromptManager(prompt_directory_paths=[prompt_manager_base_dir])
-    logger.info(f"Flow Run: PromptManager initialized with directory: {prompt_manager_base_dir}")
-
-    # ProjectChromaManager setup
-    project_id_for_pcma = project_config.get('project_id')
-    if not project_id_for_pcma:
-        # Use server_stages_dir_path_str_flow for StateManager context
-        temp_sm_for_pcma_flow_run = StateManager(target_directory=project_path, server_stages_dir=server_stages_dir_path_str_flow)
-        try:
-            project_id_for_pcma = temp_sm_for_pcma_flow_run.get_project_state().project_id
-        except Exception: 
-             logger.warning("Flow Run: Project ID for PCMA could not be retrieved from config or state. PCMA might not be available.")
-
-    project_chroma_manager_instance_for_flow_run: Optional[ProjectChromaManagerAgent_v1] = None
-    if project_id_for_pcma:
-        try:
-            project_chroma_manager_instance_for_flow_run = ProjectChromaManagerAgent_v1(
-                project_root_workspace_path=str(project_path),
-                project_id=project_id_for_pcma
+        current_llm_config = _get_llm_config(
+                cli_params=flow_run_cli_params,
+                project_config_llm_settings=llm_project_settings
+                # REMOVED use_mock_override=use_mock_llm_flag
             )
-            logger.info(f"Flow Run: Instantiated ProjectChromaManagerAgent_v1 with project_id: {project_id_for_pcma}")
-        except Exception as e_pcma_flow:
-            logger.error(f"Flow Run: Failed to instantiate ProjectChromaManagerAgent_v1: {e_pcma_flow}", exc_info=True)
-    
+
+        prompt_manager_base_dir_for_pm = Path(server_prompts_base_dir_str) # Use the corrected base for PromptManager
+        prompt_manager_instance = PromptManager(prompt_directory_paths=[prompt_manager_base_dir_for_pm])
+        logger.info(f"Flow Run: PromptManager initialized with directory: {prompt_manager_base_dir_for_pm}")
+
+        llm_manager_for_flow_run = LLMManager(llm_config=current_llm_config, prompt_manager=prompt_manager_instance)
+
+    except Exception as e_llm_init:
+        logger.error(f"Flow Run: Failed to initialize LLMManager: {e_llm_init}", exc_info=True)
+        pass # Allow orchestrator creation; flows not needing LLM might still work.
+
+    # Agent Registry and Provider
+    agent_registry = AgentRegistry(project_root=project_path, chroma_mode="persistent")
+    # Register essential agents (can be expanded)
+    agent_registry.add_agent_card(core_stage_executor_card())
+    agent_registry.add_agent_card(get_master_planner_agent_card())
+    agent_registry.add_agent_card(get_master_planner_reviewer_agent_card())
+
     agent_provider = RegistryAgentProvider(
         registry=agent_registry,
-        fallback=final_fallback_map,
-        llm_provider=llm_provider_instance_for_flow_run,
-        prompt_manager=prompt_manager_instance,
-        project_chroma_manager=project_chroma_manager_instance_for_flow_run
+        fallback=final_fallback_map,  # RENAMED from fallback_agents_map
+        llm_provider=llm_manager_for_flow_run, # RENAMED from llm_manager
+        prompt_manager=prompt_manager_instance 
     )
+    logger.info("Flow Run: AgentProvider (RegistryAgentProvider) initialized.")
     
-    try:
-        cli_file_path = Path(__file__).resolve()
-        server_stages_dir_path_str = str(cli_file_path.parent.parent.parent / "server_prompts" / "stages")
-        if not Path(server_stages_dir_path_str).is_dir():
-            server_stages_dir_path_str = str(project_path / "server_prompts" / "stages")
-            if not Path(server_stages_dir_path_str).is_dir():
-                server_stages_dir_path_str = project_config.get("server_stages_dir_fallback", DEFAULT_SERVER_STAGES_DIR)
-    except Exception:
-        server_stages_dir_path_str = project_config.get("server_stages_dir_fallback", DEFAULT_SERVER_STAGES_DIR)
-
-    logger.info(f"Using server_stages_dir for StateManager: {server_stages_dir_path_str}")
-
-    state_manager = StateManager(
-        target_directory=project_config["project_root_dir"], 
-        server_stages_dir=server_stages_dir_path_str
-    )
-    metrics_store_root = Path(project_config["project_root_dir"]) # Ensure this is a Path for MetricsStore
-    metrics_store = MetricsStore(project_root=metrics_store_root)
-    
-    # --- Initialize Project State --- 
-    try:
-        # Generate a project ID if one isn't already in the config or determined
-        # For a new build, we usually generate one.
-        new_project_id = project_config.get('project_id') or f"proj_{uuid.uuid4().hex[:12]}"
-        
-        initialized_project_state = state_manager.initialize_project(
-            project_id=new_project_id, # ADDED project_id
-            project_name=project_path.name, 
-            initial_user_goal_summary=goal
-        )
-        current_project_id = initialized_project_state.project_id # Use the ID from the initialized state
-        logger.info(f"Project initialized/loaded with ID: {current_project_id} and state file written/verified.")
-        
-        # Ensure config object has project_id and project_root_path for AsyncOrchestrator
-        project_config['project_id'] = current_project_id
-        project_config['project_root_path'] = str(project_path) # project_root is already a Path
-        project_config['project_root'] = str(project_path) # Also ensure 'project_root' key for other potential uses
-
-    except Exception as e_init_proj:
-        logger.error(f"Failed to initialize project state: {e_init_proj}", exc_info=True)
-        click.echo(f"Error initializing project state: {e_init_proj}", err=True)
-        sys.exit(1)
-    # --- End Initialize Project State ---
+    # Shared context for this run
+    # Crucial: project_id MUST be correctly determined and passed if agents like PCMA rely on it in their __init__ via shared_context.
+    current_shared_context = {
+        "project_id": project_id, 
+        "run_id": run_id,
+        "project_root_path": str(project_path),
+        "llm_manager": llm_manager_for_flow_run,
+        "prompt_manager": prompt_manager_instance,
+        "agent_provider": agent_provider,
+        "state_manager": state_manager,
+    }
 
     orchestrator = AsyncOrchestrator(
-        config=project_config,
-        agent_provider=agent_provider,
-        state_manager=state_manager,
-        metrics_store=metrics_store
+        project_root_path_override=str(project_path),
+        state_manager=state_manager, 
+        agent_provider=agent_provider, 
+        llm_manager=llm_manager_for_flow_run, # Pass LLMManager instance
+        prompt_manager=prompt_manager_instance,
+        initial_shared_context_override=current_shared_context # Pass the full shared context
     )
 
     async def do_run():
-        final_context = await orchestrator.run(
-            flow_yaml_path=str(flow_yaml_opt) if flow_yaml_opt else None,
-            master_plan_id=master_flow_id_opt, # Will be used as plan_id by orchestrator
-            goal_str=goal, # Pass goal to orchestrator
-            initial_context=parsed_initial_context,
-            run_id_override=run_id_override_opt
-        )
+        # ... (rest of do_run logic remains largely the same) ...
+        # It will use the orchestrator initialized above.
+        nonlocal goal, master_flow_id_opt, flow_yaml_opt, final_initial_context_dict, run_id, tags_list
 
-        if "_flow_error" in final_context:
-            error_details = final_context["_flow_error"]
-            logger.error(f"Flow execution finished with error: {error_details}")
-            click.echo(f"Error during flow execution: {error_details}", err=True)
-            # Consider sys.exit(1) here for scriptability
+        master_plan_loaded: Optional[MasterExecutionPlan] = None
+        if flow_yaml_opt:
+            logger.info(f"Loading master flow from YAML: {flow_yaml_opt}")
+            master_plan_loaded = MasterExecutionPlan.load_from_yaml(flow_yaml_opt)
+            # If master_flow_id_opt is also given, it might be used as the canonical ID for this loaded plan
+            if master_flow_id_opt:
+                master_plan_loaded.id = master_flow_id_opt
+                logger.info(f"Using provided master_flow_id '{master_flow_id_opt}' for plan loaded from YAML.")
+        elif master_flow_id_opt:
+            logger.info(f"Attempting to load master flow by ID: {master_flow_id_opt}")
+            # This assumes MasterFlowRegistry can load it based on ID from a known location (e.g., .chungoid/master_flows)
+            # MasterFlowRegistry needs to be initialized with the project path
+            master_flow_reg = MasterFlowRegistry(project_dir=project_path)
+            try:
+                master_plan_loaded = master_flow_reg.get_master_flow(master_flow_id_opt)
+                if not master_plan_loaded:
+                    logger.error(f"Master flow with ID '{master_flow_id_opt}' not found by MasterFlowRegistry.")
+                    click.echo(f"Error: Master flow with ID '{master_flow_id_opt}' not found.", err=True)
+                    return # Abort async task
+            except Exception as e_load_mf:
+                logger.error(f"Error loading master flow '{master_flow_id_opt}': {e_load_mf}", exc_info=True)
+                click.echo(f"Error loading master flow '{master_flow_id_opt}': {e_load_mf}", err=True)
+                return
+        
+        if master_plan_loaded:
+            logger.info(f"Executing loaded/retrieved master plan: {master_plan_loaded.id}")
+            # Ensure initial_context from CLI is merged with any existing context in the plan
+            if master_plan_loaded.initial_context:
+                merged_context = {**master_plan_loaded.initial_context, **final_initial_context_dict}
+            else:
+                merged_context = final_initial_context_dict
+            master_plan_loaded.initial_context = merged_context
+            
+            await orchestrator.execute_master_plan_async(master_plan=master_plan_loaded, run_id_override=run_id, tags_override=tags_list)
+        elif goal:
+            logger.info(f"Generating and executing new master plan for goal: {goal}")
+            planner_input = MasterPlannerInput(
+                user_goal=goal,
+                project_id=project_id or "UNKNOWN_PROJECT", # Ensure a string, even if unknown
+                run_id=run_id,
+                initial_context=final_initial_context_dict,
+                tags=tags_list
+            )
+            await orchestrator.execute_master_planner_goal_async(master_planner_input=planner_input)
         else:
-            logger.info("Flow execution completed.")
-            click.echo("Flow run finished.")
-            if final_context.get("outputs"):
-                 outputs_summary = {k: str(v)[:100] + '...' if len(str(v)) > 100 else v for k,v in final_context['outputs'].items()}
-                 click.echo(f"Final outputs summary: {py_json.dumps(outputs_summary, indent=2)}")
+            # This case should have been caught by initial CLI param checks
+            logger.error("No execution path determined in do_run (no plan, no goal).")
+            click.echo("Internal Error: No execution path determined.", err=True)
+            return
 
+        logger.info(f"Flow run '{run_id}' completed processing through orchestrator.")
 
     try:
         asyncio.run(do_run())
     except Exception as e:
-        logger.exception("Unhandled exception during 'flow run' execution.")
-        click.echo(f"An unexpected error occurred: {e}", err=True)
+        logger.critical(f"Unhandled error during flow run '{run_id}': {e}", exc_info=True)
+        click.echo(f"Critical error during flow execution: {e}", err=True)
         sys.exit(1)
 
 
 @flow.command(name="resume")
 @click.argument("run_id", type=str)
 @click.option(
-    "--project-dir", # Added for consistency and proper config/state loading
+    "--project-dir",
     "project_dir_opt",
     type=click.Path(file_okay=False, dir_okay=True, exists=True, path_type=Path),
     default=".",
@@ -784,581 +908,164 @@ def flow_run(ctx: click.Context,
     default=None,
     help="The stage ID to jump to (for 'force_branch' action)."
 )
+@click.option(
+    "--llm-provider",
+    "llm_provider_cli_resume",
+    type=str,
+    default=None,
+    help="Override LLM provider type for this resume operation."
+)
+@click.option(
+    "--llm-model",
+    "llm_model_cli_resume",
+    type=str,
+    default=None,
+    help="Override LLM model ID for this resume operation."
+)
+@click.option(
+    "--llm-api-key",
+    "llm_api_key_cli_resume",
+    type=str,
+    default=None,
+    help="Override LLM API key for this resume operation."
+)
+@click.option(
+    "--llm-base-url",
+    "llm_base_url_cli_resume",
+    type=str,
+    default=None,
+    help="Override LLM base URL for this resume operation."
+)
 @click.pass_context
-def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: str, inputs: Optional[str], target_stage: Optional[str]) -> None:
+def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: str, inputs: Optional[str], target_stage: Optional[str],
+                  llm_provider_cli_resume: Optional[str],
+                  llm_model_cli_resume: Optional[str],
+                  llm_api_key_cli_resume: Optional[str],
+                  llm_base_url_cli_resume: Optional[str]
+                  # REMOVED use_mock_llm_flag_resume from signature
+) -> None:
     logger = logging.getLogger("chungoid.cli.flow.resume")
     project_path = project_dir_opt.resolve()
-    logger.info(f"Attempting to resume flow run_id={run_id} in project {project_path} with action='{action}'")
+    logger.info(f"Flow Resume: Project directory set to {project_path} for Run ID: {run_id}")
 
-    action_data_for_resume: Dict[str, Any] = {} # Corrected variable name
-    if inputs:
-        try:
-            # For 'provide_clarification', the entire JSON might be the data.
-            # For 'retry_with_inputs', it's specifically for 'inputs' key.
-            if action.lower() == "provide_clarification":
-                 action_data_for_resume = py_json.loads(inputs)
-            else:
-                 action_data_for_resume["inputs"] = py_json.loads(inputs)
-        except py_json.JSONDecodeError as e:
-            click.echo(f"Error: Invalid JSON string provided for --inputs: {e}", err=True)
-            sys.exit(1)
-            
-    if action.lower() == "force_branch":
-        if not target_stage:
-            click.echo("Error: --target-stage is required for 'force_branch' action.", err=True)
-            sys.exit(1)
-        action_data_for_resume["target_stage_id"] = target_stage
-    elif target_stage:
-        click.echo("Warning: --target-stage is only used with the 'force_branch' action and will be ignored.", err=True)
+    resumed_project_config_path = project_path / PROJECT_CHUNGOID_DIR / "chungoid_config.yaml"
+    if not resumed_project_config_path.exists():
+        logger.warning(f"Project config file {resumed_project_config_path} not found for resume. Using default settings.")
+        resumed_project_config = {}
+    else:
+        resumed_project_config = load_config(resumed_project_config_path)
+    ctx.obj["project_config"] = resumed_project_config # Store in context
+    logger.info(f"Loaded project config for flow resume from {resumed_project_config_path if resumed_project_config_path.exists() else 'defaults'}")
 
+    # Determine server_prompts_base_dir and server_stages_dir for StateManager
+    server_prompts_base_dir_str_resume = str(resumed_project_config.get("server_prompts_dir") or _get_default_server_prompts_base_dir())
+    server_stages_dir_for_sm_str_resume = str(Path(server_prompts_base_dir_str_resume) / "stages")
+    logger.info(f"Flow Resume: Server prompts base directory: {server_prompts_base_dir_str_resume}")
+    logger.info(f"Flow Resume: Server stages directory for StateManager: {server_stages_dir_for_sm_str_resume}")
 
     async def do_resume():
-        # Configuration and setup similar to flow_run for consistency
-        chungoid_dir = project_path / PROJECT_CHUNGOID_DIR
-        if not chungoid_dir.is_dir(): # Should exist if resuming
-            logger.error(f"Project '{PROJECT_CHUNGOID_DIR}' directory not found at {chungoid_dir} for resume.")
-            click.echo(f"Error: Project '{PROJECT_CHUNGOID_DIR}' directory not found at {chungoid_dir}.", err=True)
-            sys.exit(1)
+        nonlocal run_id, project_path, action, inputs, target_stage # Ensure these are from outer scope
+        
+        resumed_sm = StateManager(target_directory=project_path, server_stages_dir=server_stages_dir_for_sm_str_resume)
+        
+        # Project ID for resume context
+        resumed_project_id = resumed_sm.get_project_id() or resumed_project_config.get("project_id")
+        if not resumed_project_id:
+             logger.warning(f"Flow Resume: project_id not found for run {run_id}. Some operations might be affected.")
 
-        config_file_path = chungoid_dir / "project_config.yaml"
-        resumed_project_config = load_config(str(config_file_path) if config_file_path.exists() else None)
-        resumed_project_config["project_root_dir"] = str(project_path)
-
-        # --- ADDED: Setup for AgentProvider dependencies in flow_resume --- 
-        # Determine server_stages_dir_path_str_flow for resume context
+        llm_manager_for_resume: Optional[LLMManager] = None
         try:
-            cli_file_path_stages_resume = Path(__file__).resolve()
-            script_dir_stages_resume = cli_file_path_stages_resume.parent.resolve()
-            core_root_dir_stages_resume = script_dir_stages_resume.parent.parent
-            server_stages_dir_path_str_resume_flow = str(core_root_dir_stages_resume / "server_prompts" / "stages")
-
-            if resumed_project_config.get("server_stages_dir_override"):
-                server_stages_dir_path_str_resume_flow = resumed_project_config["server_stages_dir_override"]
-            elif not Path(server_stages_dir_path_str_resume_flow).is_dir():
-                server_stages_dir_path_str_resume_flow = str(project_path / "server_prompts" / "stages")
-                if not Path(server_stages_dir_path_str_resume_flow).is_dir():
-                    server_stages_dir_path_str_resume_flow = str(DEFAULT_SERVER_STAGES_DIR)
-        except Exception as e_stages_dir_resume:
-            logger.error(f"Flow Resume: Error determining server_stages_dir_path_str: {e_stages_dir_resume}. Defaulting.")
-            server_stages_dir_path_str_resume_flow = str(DEFAULT_SERVER_STAGES_DIR)
-        logger.info(f"Flow Resume: Determined server_stages_dir for PrompManager/PCMA context: {server_stages_dir_path_str_resume_flow}")
-
-        # LLMProvider setup for resume
-        llm_provider_instance_for_resume: Optional[LLMProvider] = None
-        llm_manager_for_resume: Optional[LLMManager] = None # To manage the lifecycle of the provider
-        if resumed_project_config.get("llm_config", {}).get("use_mock_llm_provider", False):
-            logger.info("Flow Resume: Using MockLLMProvider based on config/flag.")
-            llm_provider_instance_for_resume = MockLLMProvider()
-        else:
-            openai_api_key_resume = os.getenv("OPENAI_API_KEY")
-            if openai_api_key_resume:
-                default_openai_model_resume = resumed_project_config.get("llm_config", {}).get("default_openai_model", "gpt-3.5-turbo")
-                logger.info(f"Flow Resume: Initializing OpenAILLMProvider with default model: {default_openai_model_resume}")
-                llm_provider_instance_for_resume = OpenAILLMProvider(api_key=openai_api_key_resume, default_model=default_openai_model_resume)
-            else:
-                logger.warning("Flow Resume: OPENAI_API_KEY not set. LLM-dependent agents might fail if not mocked.")
-        
-        if llm_provider_instance_for_resume:
-            # PromptManager setup for resume (needed for LLMManager and potentially agents)
-            prompt_manager_base_dir_resume = Path(server_stages_dir_path_str_resume_flow).parent if Path(server_stages_dir_path_str_resume_flow).name == "stages" else Path(server_stages_dir_path_str_resume_flow)
-            prompt_manager_instance_for_resume = PromptManager(prompt_directory_paths=[prompt_manager_base_dir_resume])
-            logger.info(f"Flow Resume: PromptManager initialized with directory: {prompt_manager_base_dir_resume}")
-            llm_manager_for_resume = LLMManager(llm_provider_instance=llm_provider_instance_for_resume, prompt_manager=prompt_manager_instance_for_resume)
-        else:
-            prompt_manager_instance_for_resume = None # No LLM provider, so no LLMManager, and PromptManager might not be strictly needed by provider
-            logger.info("Flow Resume: No LLM provider, so LLMManager not created. PromptManager also may not be initialized if not otherwise needed.")
-
-        # ProjectChromaManager setup for resume
-        project_id_for_pcma_resume = resumed_project_config.get('project_id')
-        if not project_id_for_pcma_resume:
-            temp_sm_for_pcma_resume = StateManager(target_directory=project_path, server_stages_dir=server_stages_dir_path_str_resume_flow)
-            try:
-                project_id_for_pcma_resume = temp_sm_for_pcma_resume.get_project_state().project_id
-            except Exception: 
-                 logger.warning("Flow Resume: Project ID for PCMA could not be retrieved from config or state. PCMA might not be available.")
-
-        project_chroma_manager_instance_for_resume: Optional[ProjectChromaManagerAgent_v1] = None
-        if project_id_for_pcma_resume:
-            try:
-                project_chroma_manager_instance_for_resume = ProjectChromaManagerAgent_v1(
-                    project_root_workspace_path=str(project_path),
-                    project_id=project_id_for_pcma_resume
-                )
-                logger.info(f"Flow Resume: Instantiated ProjectChromaManagerAgent_v1 with project_id: {project_id_for_pcma_resume}")
-            except Exception as e_pcma_resume:
-                logger.error(f"Flow Resume: Failed to instantiate ProjectChromaManagerAgent_v1: {e_pcma_resume}", exc_info=True)
-        # --- END ADDED: Setup for AgentProvider dependencies --- 
-
-        registry_project_root = Path(resumed_project_config["project_root_dir"])
-        registry_chroma_mode = resumed_project_config.get("chromadb", {}).get("mode", "persistent")
-
-        agent_registry = AgentRegistry(project_root=registry_project_root, chroma_mode=registry_chroma_mode)
-        # Ensure agents are registered as in flow_run, or that registry is persistent/shared
-        agent_registry.add(get_master_planner_reviewer_agent_card(), overwrite=True)
-        agent_registry.add(get_master_planner_agent_card(), overwrite=True)
-        # ... (add other necessary agents as in flow_run)
-        # agent_registry.add(get_mock_system_intervention_agent_card(), overwrite=True)
-        # agent_registry.add(get_mock_code_generator_agent_card(), overwrite=True)
-        # agent_registry.add(get_mock_test_generation_agent_v1_card(), overwrite=True)
-        # agent_registry.add(get_mock_system_requirements_gathering_agent_card(), overwrite=True)
-        agent_registry.add(CodeGeneratorAgent.get_agent_card_static(), overwrite=True)
-        agent_registry.add(TestGeneratorAgent.get_agent_card_static(), overwrite=True)
-        agent_registry.add(SmartCodeIntegrationAgent_v1.get_agent_card_static(), overwrite=True)
-        # ADD SystemTestRunnerAgent registration here for consistency if it's expected in flow_resume's context
-        agent_registry.add(SystemTestRunnerAgent.get_agent_card_static(), overwrite=True)
-
-
-        # fallback_agents_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map() # REMOVE
-        # Add/override with core system agents
-        # core_system_agents_resume = { # REMOVE
-        #     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent, # REMOVE
-        #     MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent, # REMOVE
-        #     # Add other essential system agents here if needed # REMOVE
-        # } # REMOVE
-        # Merge, ensuring core system agents take precedence if IDs overlap (though unlikely for mocks)
-        # Or, decide on a clear priority. For now, let mock map be primary, then add system agents.
-        # A more robust way would be to have separate maps and the resolver check them in order.
-        # For simplicity in RegistryAgentProvider, we provide one merged map. Let's ensure system agents are there.
-        
-        # Start with mock agents
-        # final_fallback_map_resume: Dict[AgentID, AgentCallable] = get_mock_agent_fallback_map() # REMOVE
-        # Add/override with core system agents
-        # final_fallback_map_resume.update(core_system_agents_resume) # REMOVE
-
-        # RECONSTRUCT final_fallback_map_resume similar to flow_run
-        final_fallback_map_resume: Dict[AgentID, AgentFallbackItem] = PRODUCTION_SYSTEM_AGENTS_MAP.copy()
-        final_fallback_map_resume.update(get_autonomous_engine_agent_fallback_map())
-        # If flow_resume needs an instantiated ProjectChromaManagerAgent, it should be created and added here.
-        # For now, assuming it's not needed or handled by the global maps for resume.
-        # Consider if specific instances like a ProjectChromaManager for THIS run are needed.
-        # If so, they'd be instantiated and added to final_fallback_map_resume here.
-        
-        agent_provider = RegistryAgentProvider(
-            registry=agent_registry, 
-            fallback=final_fallback_map_resume,
-            # Pass llm_provider, prompt_manager, project_chroma_manager if RegistryAgentProvider might instantiate agents needing them
-            # This requires setting up llm_provider_instance, prompt_manager_instance, etc., similar to flow_run
-            # For brevity, assuming flow_resume might not always need to re-instantiate complex agents
-            # requiring these, or that the global ones are sufficient. This might need revisiting.
-            llm_provider=llm_provider_instance_for_resume, # Use the one defined in flow_resume context
-            prompt_manager=prompt_manager_instance_for_resume, # Use the one defined
-            project_chroma_manager=project_chroma_manager_instance_for_resume # Use the one defined
+            resumed_llm_project_settings = resumed_project_config.get("project_settings", {}).get("llm_config", {})
+            
+            resume_cli_params = {
+                "llm_provider": llm_provider_cli_resume,
+                "llm_model": llm_model_cli_resume,
+                "llm_api_key": llm_api_key_cli_resume,
+                "llm_base_url": llm_base_url_cli_resume
+            }
+            
+            current_llm_config_resume = _get_llm_config(
+                cli_params=resume_cli_params, 
+                project_config_llm_settings=resumed_llm_project_settings 
+                # REMOVED use_mock_override=use_mock_llm_flag_resume
             )
 
-        # The main try/except/finally for do_resume actions
-        try:
-            cli_file_path = Path(__file__).resolve()
-            server_stages_dir_path_str_resume = str(cli_file_path.parent.parent.parent / "server_prompts" / "stages")
-            if not Path(server_stages_dir_path_str_resume).is_dir():
-                server_stages_dir_path_str_resume = str(project_path / "server_prompts" / "stages")
-                if not Path(server_stages_dir_path_str_resume).is_dir():
-                    server_stages_dir_path_str_resume = resumed_project_config.get("server_stages_dir_fallback", DEFAULT_SERVER_STAGES_DIR)
-            else:
-                click.echo(f"Flow run '{run_id}' processed with action '{action}'. Check logs and project status for outcome.")
+            prompt_manager_base_dir_for_pm_resume = Path(server_prompts_base_dir_str_resume) # Use the base for PromptManager
+            prompt_manager_instance_for_resume = PromptManager(prompt_directory_paths=[prompt_manager_base_dir_for_pm_resume])
+            logger.info(f"Flow Resume: PromptManager initialized with directory: {prompt_manager_base_dir_for_pm_resume}")
+            
+            llm_manager_for_resume = LLMManager(llm_config=current_llm_config_resume, prompt_manager=prompt_manager_instance_for_resume)
+            logger.info(f"Flow Resume: LLMManager initialized with provider: {current_llm_config_resume.get('provider_type')}")
+            
+        except Exception as e_llm_resume_init:
+            logger.error(f"Flow Resume: Failed to initialize LLMManager: {e_llm_resume_init}", exc_info=True)
+            pass
 
-        except Exception as e:
-            # This catches errors from the block above (orchestrator call, state_manager, etc.)
-            logger.error(f"An unexpected error occurred during active flow_resume operations: {e}", exc_info=True)
-            click.echo(f"An unexpected error occurred during resume: {e}", err=True)
-            # sys.exit(1) # Let the outer try/except handle sys.exit
-            raise # Re-raise to be caught by the outer try/except that calls asyncio.run()
-        finally:
-            # Ensure LLM client (if any) is closed
-            if llm_manager_for_resume and llm_manager_for_resume._llm_provider is not None: # Check llm_manager_for_resume
-                 logger.info(f"Flow Resume: Attempting to close LLM provider client of type: {type(llm_manager_for_resume._llm_provider).__name__}")
-                 await llm_manager_for_resume.close_client()
+        # Fallback map for agents (consistency with other commands)
+        resume_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
+        resume_fallback_map.update(get_autonomous_engine_agent_fallback_map())
 
-    # Outer try/except that calls asyncio.run()
+        agent_registry_resume = AgentRegistry(project_root=project_path, chroma_mode="persistent")
+        agent_registry_resume.add_agent_card(core_stage_executor_card())
+        agent_registry_resume.add_agent_card(get_master_planner_agent_card())
+        agent_registry_resume.add_agent_card(get_master_planner_reviewer_agent_card())
+
+        agent_provider_resume = RegistryAgentProvider(
+            registry=agent_registry_resume,
+            fallback=resume_fallback_map,
+            llm_provider=llm_manager_for_resume, # RENAMED from llm_manager
+            prompt_manager=prompt_manager_instance_for_resume
+        )
+        logger.info("Flow Resume: AgentProvider (RegistryAgentProvider) initialized.")
+        
+        # Shared context for resume operation
+        resume_shared_context = {
+            "project_id": resumed_project_id,
+            "run_id": run_id, # The run_id being resumed
+            "project_root_path": str(project_path),
+            "llm_manager": llm_manager_for_resume,
+            "prompt_manager": prompt_manager_instance_for_resume,
+            "agent_provider": agent_provider_resume,
+            "state_manager": resumed_sm,
+        }
+
+        resumed_orchestrator = AsyncOrchestrator(
+            project_root_path_override=str(project_path),
+            state_manager=resumed_sm, 
+            agent_provider=agent_provider_resume, 
+            llm_manager=llm_manager_for_resume,
+            prompt_manager=prompt_manager_instance_for_resume,
+            initial_shared_context_override=resume_shared_context # Pass the full shared context for resume
+        )
+
+        inputs_dict: Optional[Dict[str, Any]] = None
+        if inputs:
+            try:
+                inputs_dict = py_json.loads(inputs)
+            except py_json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON for --inputs: {e}")
+                click.echo(f"Error: Invalid JSON provided for --inputs: {e}", err=True)
+                return # Abort async task
+
+        await resumed_orchestrator.resume_flow_async(
+            run_id_to_resume=run_id, 
+            action=action, 
+            new_inputs=inputs_dict, 
+            target_stage_id_for_branch=target_stage
+        )
+        logger.info(f"Flow resume for run '{run_id}' completed processing through orchestrator.")
+
     try:
         asyncio.run(do_resume())
-        # Successful completion, exit code 0 is implicit
-    except Exception:
-         # Errors are logged within do_resume's try/except block and re-raised.
-         # This ensures a non-zero exit code if do_resume itself had an unhandled exception or re-raised one.
-         # click.echo("Flow resume failed. See logs for details.", err=True) # Error message already echoed in do_resume
-         sys.exit(1) # Ensure non-zero exit code on any exception from do_resume
-
-
-# ---------------------------------------------------------------------------
-# Sub-command: metrics (inspect execution metrics)
-# ---------------------------------------------------------------------------
-
-@cli.group()
-@click.pass_context
-def metrics(ctx: click.Context) -> None:  # noqa: D401
-    """Inspect execution metrics recorded by the system."""
-    pass
-
-@metrics.command(name="list")
-@click.option(
-    "--project-dir",
-    type=click.Path(file_okay=False, dir_okay=True, exists=True, path_type=Path),
-    default=".",
-    show_default=True,
-    help="Project directory where .chungoid/metrics.jsonl is located."
-)
-@click.option("--run-id", type=str, default=None, help="Filter by run ID.")
-@click.option("--flow-id", type=str, default=None, help="Filter by flow ID.")
-@click.option("--stage-id", type=str, default=None, help="Filter by stage ID.")
-@click.option("--master-stage-id", type=str, default=None, help="Filter by master stage ID.") # For MasterExecutionPlan stages
-@click.option("--agent-id", type=str, default=None, help="Filter by agent ID.")
-@click.option(
-    "--event-type", "event_types", 
-    type=click.Choice([e.value for e in MetricEventType], case_sensitive=False),
-    multiple=True, 
-    default=None,
-    help="Filter by one or more event types."
-)
-@click.option("--limit", type=int, default=100, show_default=True, help="Limit the number of events returned.")
-@click.option("--sort-asc/--sort-desc", "sort_ascending", default=False, help="Sort events by timestamp ascending (default is descending).")
-@click.option("--output-format", type=click.Choice(["table", "json"], case_sensitive=False), default="table", show_default=True)
-@click.pass_context
-def metrics_list(
-    ctx: click.Context,
-    project_dir: Path,
-    run_id: Optional[str],
-    flow_id: Optional[str],
-    stage_id: Optional[str],
-    master_stage_id: Optional[str],
-    agent_id: Optional[str],
-    event_types: Optional[list[str]], 
-    limit: int,
-    sort_ascending: bool, 
-    output_format: str
-) -> None:
-    """List recorded metric events with optional filters."""
-    logger = logging.getLogger("chungoid.cli.metrics.list")
-    project_path = project_dir.expanduser().resolve()
-    store = MetricsStore(project_root=project_path)
-
-    enum_event_types_filter: Optional[List[MetricEventType]] = None
-    if event_types:
-        try:
-            enum_event_types_filter = [MetricEventType(et_val) for et_val in event_types]
-        except ValueError as e:
-            click.echo(f"Error: Invalid event type provided: {e}", err=True)
-            sys.exit(1)
-
-    sort_desc_for_store = not sort_ascending
-
-    try:
-        events = store.get_events(
-            run_id=run_id,
-            flow_id=flow_id,
-            stage_id=stage_id, # This might be pipeline stage if applicable
-            master_stage_id=master_stage_id, # This is for MasterExecutionPlan stage_id
-            agent_id=agent_id,
-            event_types=enum_event_types_filter,
-            limit=limit,
-            sort_desc=sort_desc_for_store
-        )
     except Exception as e:
-        logger.error(f"Failed to retrieve metrics: {e}", exc_info=True)
-        click.echo(f"Error retrieving metrics: {e}", err=True)
+        logger.critical(f"Unhandled error during flow resume '{run_id}': {e}", exc_info=True)
+        click.echo(f"Critical error during flow resume: {e}", err=True)
         sys.exit(1)
-
-    if not events:
-        click.echo("No metric events found matching the criteria.")
-        return
-
-    if output_format == "json":
-        click.echo(py_json.dumps([event.model_dump() for event in events], indent=2))
-    else: 
-        headers = ["Timestamp", "Type", "RunID", "FlowID", "MStageID", "AgentID", "DataSummary"]
-        click.echo(" | ".join(headers))
-        click.echo("-" * (sum(len(h) for h in headers) + (len(headers) -1) * 3))
-
-        for event in events:
-            data_summary = py_json.dumps(event.data) if event.data else "-"
-            if len(data_summary) > 50:
-                data_summary = data_summary[:47] + "..."
-            
-            # Try to get master_stage_id from data if available, else use event.stage_id
-            # This depends on how MetricEvent populates stage_id vs master_stage_id
-            # For now, assume event.stage_id is the one we want if master_stage_id is not primary on event
-            display_stage_id = event.master_stage_id if event.master_stage_id else (event.stage_id or "-")
-
-            row = [
-                event.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-                event.event_type.value,
-                event.run_id or "-",
-                event.flow_id or "-",
-                display_stage_id, # Use the derived display_stage_id
-                event.agent_id or "-",
-                data_summary
-            ]
-            click.echo(" | ".join(str(x) for x in row))
-
-@metrics.command(name="summary")
-@click.option(
-    "--project-dir",
-    type=click.Path(file_okay=False, dir_okay=True, exists=True, path_type=Path),
-    default=".",
-    show_default=True,
-    help="Project directory where .chungoid/metrics.jsonl is located."
-)
-@click.argument("run_id", type=str)
-@click.pass_context
-def metrics_summary(ctx: click.Context, project_dir: Path, run_id: str) -> None:
-    """Provide a summary for a specific run_id."""
-    logger = logging.getLogger("chungoid.cli.metrics.summary")
-    project_path = project_dir.expanduser().resolve()
-    store = MetricsStore(project_root=project_path)
-
-    try:
-        events = store.get_events(run_id=run_id, sort_desc=False) 
-    except Exception as e:
-        logger.error(f"Failed to retrieve metrics for run {run_id}: {e}", exc_info=True)
-        click.echo(f"Error retrieving metrics for run {run_id}: {e}", err=True)
-        sys.exit(1)
-
-    if not events:
-        click.echo(f"No metric events found for run_id: {run_id}")
-        return
-
-    summary_data: Dict[str, Any] = {
-        "run_id": run_id,
-        "flow_id": None,
-        "start_time": None,
-        "end_time": None,
-        "duration_seconds": None,
-        "status": "INCOMPLETE", 
-        "total_master_stages_encountered": 0,
-        "master_stages_completed_success": 0,
-        "master_stages_completed_failure": 0,
-        "errors_reported": []
-    }
-
-    flow_start_event: Optional[MetricEvent] = None
-    flow_end_event: Optional[MetricEvent] = None
-    master_stage_ids_encountered = set()
-
-    for event in events:
-        if summary_data["flow_id"] is None and event.flow_id:
-            summary_data["flow_id"] = event.flow_id
-
-        current_master_stage_id = event.master_stage_id or event.data.get("master_stage_id") # Check data too
-
-        if event.event_type == MetricEventType.FLOW_START:
-            if flow_start_event is None: 
-                flow_start_event = event
-                summary_data["start_time"] = event.timestamp.isoformat()
-        
-        elif event.event_type == MetricEventType.FLOW_END:
-            flow_end_event = event 
-            summary_data["end_time"] = event.timestamp.isoformat()
-            if "final_status" in event.data: # Assuming FLOW_END data has this
-                summary_data["status"] = event.data["final_status"]
-            if "total_duration_seconds" in event.data:
-                 summary_data["duration_seconds"] = event.data["total_duration_seconds"]
-
-        elif event.event_type == MetricEventType.MASTER_STAGE_START and current_master_stage_id:
-            master_stage_ids_encountered.add(current_master_stage_id)
-        
-        elif event.event_type == MetricEventType.MASTER_STAGE_END and current_master_stage_id:
-            master_stage_ids_encountered.add(current_master_stage_id) # Ensure it's counted if only end event seen
-            stage_status = event.data.get("status")
-            if stage_status == StageStatus.COMPLETED_SUCCESS.value: # Compare with enum value
-                summary_data["master_stages_completed_success"] += 1
-            elif stage_status == StageStatus.COMPLETED_FAILURE.value:
-                summary_data["master_stages_completed_failure"] += 1
-                error_msg = event.data.get("error_details", event.data.get("error_message", "Unknown error"))
-                summary_data["errors_reported"].append(f"Master Stage {current_master_stage_id} failed: {error_msg}")
-        
-        elif event.event_type == MetricEventType.ORCHESTRATOR_ERROR: # Generic orchestrator error
-             err_msg = event.data.get("message", "Unknown orchestrator error")
-             summary_data["errors_reported"].append(f"Orchestrator error: {err_msg}")
-             if summary_data["status"] == "INCOMPLETE": # If an error occurs, mark flow as failed unless already ended
-                 summary_data["status"] = StageStatus.COMPLETED_FAILURE.value # Generic failure status for flow
-
-
-    summary_data["total_master_stages_encountered"] = len(master_stage_ids_encountered)
-
-    if summary_data["duration_seconds"] is None and flow_start_event and flow_end_event:
-        duration = flow_end_event.timestamp - flow_start_event.timestamp
-        summary_data["duration_seconds"] = duration.total_seconds()
-    elif summary_data["duration_seconds"] is None and flow_start_event and summary_data["status"] != "INCOMPLETE":
-        last_event_ts = events[-1].timestamp
-        duration = last_event_ts - flow_start_event.timestamp
-        summary_data["duration_seconds"] = duration.total_seconds()
-
-    # Refine overall status if not explicitly set by FLOW_END and no other errors indicated failure
-    if summary_data["status"] == "INCOMPLETE":
-        if flow_start_event and not flow_end_event:
-            # Check if there's a PAUSED event
-            paused_event = next((e for e in reversed(events) if e.event_type == MetricEventType.FLOW_PAUSED), None)
-            if paused_event:
-                summary_data["status"] = FlowPauseStatus.PAUSED_FOR_REVIEW.value # Example, map to actual pause status if available
-            else:
-                summary_data["status"] = "RUNNING_OR_CRASHED"
-        elif flow_end_event is None and summary_data["errors_reported"]:
-            summary_data["status"] = StageStatus.COMPLETED_FAILURE.value # If errors but no clean FLOW_END
-        elif flow_end_event is None: # No end, no errors, but also not explicitly running
-             summary_data["status"] = "UNKNOWN_TERMINATION"
-
-
-    click.echo(f"Summary for Run ID: {summary_data['run_id']}")
-    click.echo(f"  Flow ID: {summary_data['flow_id'] or 'N/A'}")
-    click.echo(f"  Overall Status: {summary_data['status']}")
-    click.echo(f"  Start Time: {summary_data['start_time'] or 'N/A'}")
-    click.echo(f"  End Time: {summary_data['end_time'] or 'N/A'}")
-    click.echo(f"  Duration: {summary_data['duration_seconds']:.2f}s" if summary_data['duration_seconds'] is not None else "Duration: N/A")
-    click.echo(f"  Total Master Stages Encountered: {summary_data['total_master_stages_encountered']}")
-    click.echo(f"  Master Stages Succeeded: {summary_data['master_stages_completed_success']}")
-    click.echo(f"  Master Stages Failed: {summary_data['master_stages_completed_failure']}")
-    if summary_data["errors_reported"]:
-        click.echo("  Reported Errors/Failures:")
-        for err_item in summary_data["errors_reported"]:
-            click.echo(f"    - {str(err_item)[:200]}{'...' if len(str(err_item)) > 200 else ''}")
-    else:
-        click.echo("  Reported Errors/Failures: None")
-
-@metrics.command(name="report")
-@click.option(
-    "--project-dir",
-    type=click.Path(file_okay=False, dir_okay=True, exists=True, path_type=Path),
-    default=".",
-    show_default=True,
-    help="Project directory containing the .chungoid folder (default: current directory)."
-)
-@click.option("--run-id", type=str, default=None, help="Generate report for a specific Run ID.")
-@click.option(
-    "--output-dir",
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    default=None, 
-    help="Directory to save the HTML report (defaults to project_dir/.chungoid/reports/)."
-)
-@click.option("--limit", type=int, default=1000, show_default=True, help="Max events to include in the report data.")
-@click.pass_context
-def metrics_report(
-    ctx: click.Context,
-    project_dir: Path,
-    run_id: Optional[str],
-    output_dir: Optional[Path],
-    limit: int
-) -> None:
-    """Generate an HTML metrics report by calling an external script."""
-    logger = logging.getLogger("chungoid.cli.metrics.report")
-    project_path = project_dir.expanduser().resolve()
-
-    try:
-        cli_dir = Path(__file__).resolve().parent # chungoid/
-        scripts_dir = cli_dir.parent.parent / "scripts" # src/scripts/ -> WRONG if cli.py is in src/chungoid
-        # Correct path if cli.py is in chungoid-core/src/chungoid/
-        # and scripts are in chungoid-core/scripts/
-        correct_scripts_dir = cli_dir.parent.parent / "scripts" # This assumes src/chungoid -> src -> scripts
-        
-        # More robust: find root of the 'chungoid-core' package structure if possible
-        # This is still a bit fragile. Best would be if script path was configurable or installed.
-        # Assuming `chungoid-core/scripts/generate_metrics_report.py` relative to `chungoid-core/src/chungoid/cli.py`
-        # Path(__file__).resolve() -> /path/to/chungoid-core/src/chungoid/cli.py
-        # .parent -> /path/to/chungoid-core/src/chungoid
-        # .parent -> /path/to/chungoid-core/src
-        # .parent -> /path/to/chungoid-core
-        # then /scripts
-        package_root_dir = Path(__file__).resolve().parent.parent.parent
-        script_path = package_root_dir / "scripts" / "generate_metrics_report.py"
-
-        if not script_path.exists():
-             # Fallback for environments where the script might be elsewhere relative to execution
-             logger.warning(f"Script not found at primary path {script_path}, trying alternative relative to project.")
-             script_path = project_path / "scripts" / "generate_metrics_report.py" # Common for dev setup
-             if not script_path.exists():
-                click.echo(f"Error: Report generation script not found at {script_path} or primary path. Searched relative to CLI and project.", err=True)
-                sys.exit(1)
-        
-    except Exception as e_script_path:
-        logger.error(f"Error determining report script path: {e_script_path}")
-        click.echo(f"Error: Could not determine path to report generation script: {e_script_path}", err=True)
-        sys.exit(1)
-
-
-    cmd = [sys.executable, str(script_path), "--project-dir", str(project_path)]
-    if run_id:
-        cmd.extend(["--run-id", run_id])
-    if output_dir:
-        cmd.extend(["--output-dir", str(output_dir.resolve())]) # Resolve output_dir
-    cmd.extend(["--limit", str(limit)])
-
-    try:
-        logger.info(f"Executing report generation script: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        
-        if result.stdout:
-            click.echo(result.stdout)
-        if result.stderr: # Always print stderr if present
-            click.echo(f"Report script stderr:\n{result.stderr}", err=True)
-        
-        if result.returncode != 0:
-            click.echo(f"Error: Report generation script failed with exit code {result.returncode}.", err=True)
-            # sys.exit(result.returncode) # Optional: exit CLI if script fails
-
-    except FileNotFoundError:
-        click.echo(f"Error: Python interpreter '{sys.executable}' not found or script path '{script_path}' incorrect.", err=True)
-        sys.exit(1)
-    except Exception as e: # General catch-all for other subprocess or runtime errors
-        logger.error(f"An unexpected error occurred while trying to run the report script: {e}", exc_info=True)
-        click.echo(f"An unexpected error occurred: {e}", err=True)
-        sys.exit(1)
-
-# ---------------------------------------------------------------------------
-# Entrypoint for `python -m chungoid.cli` (optional)
-# ---------------------------------------------------------------------------
-
-@click.command("show-config")
-@click.pass_context
-def show_config(ctx):
-    '''Displays the current Chungoid project configuration.'''
-    try:
-        # Pass project_dir if available from a higher-level group context, or default
-        # For a standalone command, it might need its own --project-dir option or assume cwd
-        current_project_dir_str = ctx.obj.get("project_dir", ".") # Example if project_dir was passed higher up
-        
-        # More robust: try to determine project_dir from where CLI is run if not in ctx.obj
-        # This assumes show-config might be run from within a project.
-        # If it needs to be flexible, it should take its own --project-dir.
-        # For now, let's assume get_config can find it if run from project root.
-        # Or, we can make it take an optional project_dir argument.
-        
-        # Simplest for now: get_config without args tries to find config relative to CWD or uses default.
-        config = get_config() # No argument, relies on get_config's internal logic or default.
-
-        if not config or not config.get("project_root"): # Check if essential key is missing
-            click.secho("Error: Project configuration could not be loaded or is incomplete.", fg="red")
-            click.secho("Ensure you are in a Chungoid project directory, or that config is valid.", fg="red")
-            ctx.exit(1)
-            
-        config_file_location = config.get('config_file_loaded', 'Default values (no file loaded)')
-        click.secho(f"Current Project Configuration (from {config_file_location}):", fg="cyan", bold=True)
-        
-        # Print key config values, checking for their existence for robustness
-        click.echo(f"  project_root: {config.get('project_root', 'N/A')}")
-        click.echo(f"  dot_chungoid_path: {config.get('dot_chungoid_path', 'N/A')}")
-        click.echo(f"  state_manager_db_path: {config.get('state_manager_db_path', 'N/A')}") # Was state_manager_path
-        click.echo(f"  master_flows_dir: {config.get('master_flows_dir', 'N/A')}")
-        click.echo(f"  host_system_info: {config.get('host_system_info', 'N/A')}")
-        click.echo(f"  log_level: {config.get('log_level', 'N/A')}")
-        
-        # Display chromadb config if present
-        chromadb_config = config.get("chromadb")
-        if chromadb_config and isinstance(chromadb_config, dict):
-            click.echo("  ChromaDB Configuration:")
-            click.echo(f"    Mode: {chromadb_config.get('mode', 'N/A')}")
-            click.echo(f"    Host: {chromadb_config.get('host', 'N/A')}")
-            click.echo(f"    Port: {chromadb_config.get('port', 'N/A')}")
-            click.echo(f"    Persist Path: {chromadb_config.get('persist_path', 'N/A')}")
-        else:
-            click.echo("  ChromaDB Configuration: Not specified or invalid format")
-
-    except Exception as e:
-        click.secho(f"An unexpected error occurred while retrieving configuration: {e}", fg="red")
-        logger.error(f"Error in show_config command: {e}", exc_info=True) # Keep logger for internal trace
-        ctx.exit(1)
 
 # Register the command under 'utils' group (only once)
 # Ensure this is done only once, typically after the function definition
-if 'show-config' not in [c.name for c in utils.commands.values()]:
-    utils.add_command(show_config)
+# if 'show-config' not in [c.name for c in utils.commands.values()]:  # REMOVE THIS LINE
+#     utils.add_command(show_config)                                  # REMOVE THIS LINE
 
 @utils.command(name="show-modules")
 @click.pass_context
@@ -1366,12 +1073,11 @@ def show_modules(ctx: click.Context):
     """(Dev utility) Show loaded Chungoid modules and their paths."""
     # ... (rest of the function)
 
-# Ensure this file can be run as a script for Click CLI discovery
 # if __name__ == "__main__":
 #    cli() # This makes it runnable but is not needed for Click entry point
 
 # BUG_WORKAROUND: code_to_integrate was a literal context path.
-utils.add_command(show_config)
+# utils.add_command(show_config) # REMOVE THIS LINE
 
 # --- NEW Project Group ---
 @cli.group()
@@ -1479,11 +1185,12 @@ from chungoid.schemas.project_status_schema import HumanReviewRecord
 @click.option("--run-id", "run_id_override_opt", type=str, default=None, help="Specify a custom run ID for this execution.")
 @click.option("--initial-context", type=str, default=None, help="JSON string containing initial context variables for the build.")
 @click.option("--tags", type=str, default=None, help="Comma-separated tags for this build (e.g., 'dev,release').")
-@click.option("--use-mock-llm-provider/--no-use-mock-llm-provider", default=False, help="Use mock LLM provider instead of a real one. Defaults to False (uses real LLM).") # Keep this flag
 @click.pass_context
-def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str], use_mock_llm_provider: bool):
+def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str]):
     """Initiates a project build from a user goal specified in a file."""
-    logger.info(f"Starting build from goal file: {goal_file} for project directory: {project_dir_opt} with use_mock_llm_provider={use_mock_llm_provider}")
+    logger = logging.getLogger("chungoid.cli.build")
+    abs_project_dir = project_dir_opt.resolve()
+    logger.info(f"Starting build from goal file: {goal_file} for project directory: {project_dir_opt}")
     log_level = ctx.obj.get("log_level", "INFO") # Get log_level from context
 
     # Ensure project directory exists
@@ -1516,7 +1223,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             logger.info(f"Parsed initial context: {parsed_initial_context}")
         except py_json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in --initial-context: {e}")
-            click.echo(f"Error: Invalid JSON provided for --initial-context. Details: {e}", err=True)
+            click.echo(f"Error: Invalid JSON in --initial-context: {e}", err=True)
             raise click.Abort()
         except ValueError as e: 
             logger.error(f"Error with initial context structure: {e}")
@@ -1644,32 +1351,45 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 raise ValueError("project_id could not be determined or generated.")
             logger.info(f"Confirmed current_project_id to be used: {current_project_id}")
 
-
-            # LLM Provider Setup
-            llm_provider_instance: Union[OpenAILLMProvider, MockLLMProvider]
-            if use_mock_llm_provider:
-                logger.info("Using MockLLMProvider as requested by flag.")
-                llm_provider_instance = MockLLMProvider()
-            else:
-                logger.info("Attempting to use OpenAILLMProvider.")
-                openai_api_key = os.getenv("OPENAI_API_KEY")
-                if not openai_api_key:
-                    logger.error("OPENAI_API_KEY environment variable not set. Cannot use OpenAILLMProvider.")
-                    click.echo("Error: OPENAI_API_KEY environment variable is required when not using --use-mock-llm-provider.", err=True)
-            # Instead of click.Abort(), raise a specific error that can be caught by the outer try/except
-                    raise ValueError("OPENAI_API_KEY not set for OpenAILLMProvider")
+            # --- MODIFIED LLM SETUP FOR BUILD COMMAND START ---
+            llm_manager: Optional[LLMManager] = None
+            try:
+                # Parameters for _get_llm_config specific to the build command
+                # For build, there are no explicit --llm-model, --llm-api-key etc. flags directly on `chungoid build`
+                # So, these will typically be None, relying on env vars or project_config.
+                # The --use-mock-llm-provider flag IS available on `build`.
+                build_command_llm_cli_params = {
+                    "llm_provider": None, # No specific CLI flag for provider on 'build'
+                    "llm_model": None,    # No specific CLI flag for model on 'build'
+                    "llm_api_key": None,  # No specific CLI flag for api key on 'build'
+                    "llm_base_url": None  # No specific CLI flag for base url on 'build'
+                }
                 
-                # You might want to fetch a default_model from config or use a hardcoded one
-                default_openai_model = config.get("llm_config", {}).get("default_openai_model", "gpt-3.5-turbo")
-                logger.info(f"Initializing OpenAILLMProvider with default model: {default_openai_model}")
-                llm_provider_instance = OpenAILLMProvider(api_key=openai_api_key, default_model=default_openai_model)
+                # Project config LLM settings would come from the 'config' dict loaded earlier
+                project_config_llm_settings = config.get("project_settings", {}).get("llm_config", {})
+                if not project_config_llm_settings: # Ensure it's a dict even if missing
+                     project_config_llm_settings = {}
+                
+                effective_llm_config = _get_llm_config(
+                    cli_params=build_command_llm_cli_params,
+                    project_config_llm_settings=project_config_llm_settings
+                    # REMOVED use_mock_override=use_mock_llm_provider
+                )
+                
+                llm_manager = LLMManager(
+                    llm_config=effective_llm_config, 
+                    prompt_manager=prompt_manager # Re-use the already initialized prompt_manager
+                )
+                logger.info(f"LLMManager initialized for build command with provider: {effective_llm_config.get('provider_type')}")
 
-            llm_manager = LLMManager(
-                llm_provider_instance=llm_provider_instance, 
-                prompt_manager=prompt_manager
-            )
-            logger.info(f"LLMManager initialized with {type(llm_provider_instance).__name__}.")
-
+            except Exception as e_llm_build_init:
+                logger.error(f"Build Command: Failed to initialize LLMManager: {e_llm_build_init}", exc_info=True)
+                # Depending on strictness, you might want to raise an error or allow proceeding if LLM isn't critical
+                # For a build process, LLM is likely critical for plan generation.
+                click.echo(f"Error: Failed to initialize LLM services for build: {e_llm_build_init}", err=True)
+                raise ValueError(f"LLM Initialization failed for build: {e_llm_build_init}")
+            # --- MODIFIED LLM SETUP FOR BUILD COMMAND END ---
+            
             # State Manager Setup (already initialized above to get project_id, ensure it's the same instance)
             # Re-initializing would be problematic. We just ensure the config has the right ID now.
             # The state_manager instance created before the project_id logic block is the one we use.
@@ -1700,7 +1420,6 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 config["project_id"] = authoritative_project_id  # Update config with the authoritative ID
                 current_project_id = authoritative_project_id
 
-
             # Agent Registry Setup
             agent_registry = AgentRegistry(project_root=abs_project_dir) # MODIFIED to use abs_project_dir
             agent_registry.add(core_stage_executor_card, overwrite=True)
@@ -1727,8 +1446,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             project_chroma_manager = ProjectChromaManagerAgent_v1(
                 project_root_workspace_path=str(abs_project_dir), # MODIFIED: Renamed project_root_path and ensured it's a string
                 project_id=current_project_id # ADDED: Pass the project_id
-                # llm_provider=llm_provider_instance, # If it needs LLM
-                # prompt_manager=prompt_manager    # If it needs prompts
+                # llm_provider=llm_provider_instance, # If it needs LLM # This would now come via LLMManager
+                # prompt_manager=prompt_manager    # If it needs prompts # This would now come via LLMManager
             )
             # No card needed if we are directly instantiating and passing,
             # but if plan references by ID, it MUST be in fallback or registry.
@@ -1741,7 +1460,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             }
 
             # Determine final fallback map
-            final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] = {}
+            final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = {} # MODIFIED: Allow AgentFallbackItem
             
             # Option 1: Always use mock fallback map if `use_mock_fallback_agents` is true (add this flag if needed)
             # For build, let's be more explicit or rely on a slim set of core agents.
@@ -1763,7 +1482,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 # "NoOpAgent_v1": MockNoOpAgent,  # <<< REMOVE THIS LINE
                 # "SystemInterventionAgent_v1": MockSystemInterventionAgent, # <<< REMOVE THIS LINE
             })
-            final_fallback_map.update(core_system_agent_classes)
+            final_fallback_map.update(core_system_agent_classes) # type: ignore[arg-type] # project_chroma_manager instance is fine
 
             # ADD HumanInputAgent_v1 to the fallback map explicitly as the mock planner uses it.
             # This ensures it's available even if use_mock_fallback_agents is false.
@@ -1784,10 +1503,10 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             
             agent_provider = RegistryAgentProvider( # Align this block with the `if/else` above
                 registry=agent_registry,
-                fallback=final_fallback_map, 
-                llm_provider=llm_provider_instance,
-                prompt_manager=prompt_manager,
-                project_chroma_manager=project_chroma_manager,
+                fallback=final_fallback_map,  # RENAMED from fallback_agents_map
+                llm_provider=llm_manager, # RENAMED from llm_manager
+                prompt_manager=prompt_manager, # Pass the existing prompt_manager
+                project_chroma_manager=project_chroma_manager # ADDED: Pass the instantiated PCMA here
             )
             logger.info("RegistryAgentProvider initialized.") # Align this with agent_provider
 
@@ -1809,19 +1528,36 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 logger.error(f"Invalid default_on_failure_action value '{raw_on_failure_action}' in config. Falling back to INVOKE_REVIEWER.")
                 default_on_failure_action_enum = OnFailureAction.INVOKE_REVIEWER
 
+            # Create the shared context for this build run
+            build_shared_context_data = {
+                "project_id": current_project_id,
+                "run_id": current_run_id,
+                "project_root_path": str(abs_project_dir),
+                "llm_manager": llm_manager, # Make LLMManager available in shared context
+                "prompt_manager": prompt_manager,
+                "agent_provider": agent_provider,
+                "state_manager": state_manager,
+                "metrics_store": metrics_store,
+            }
+            if parsed_initial_context: # Merge CLI initial context
+                build_shared_context_data.update(parsed_initial_context)
+
+
             orchestrator = AsyncOrchestrator(
-                config=config, # Pass the dict
-                agent_provider=agent_provider,
+                config=config, # MODIFIED: Pass the config dictionary
+                # project_root_path_override=str(abs_project_dir), # REMOVED: Incorrect parameter
                 state_manager=state_manager,
+                agent_provider=agent_provider,
+                # llm_manager=llm_manager, # REMOVED: Not a direct constructor arg, accessed via agent_provider or context
+                # prompt_manager=prompt_manager, # REMOVED: Not a direct constructor arg, accessed via agent_provider or context
                 metrics_store=metrics_store,
-                # llm_manager=llm_manager, # REMOVED - Not an expected argument
-                master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id"),
-                default_on_failure_action=default_on_failure_action_enum
+                master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "SystemMasterPlannerReviewerAgent_v1"),
+                default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
+                # initial_shared_context_override=build_shared_context_data # REMOVED: Not a constructor arg, handled by run() method
             )
 
             # Generate a unique run ID (already done as current_run_id from outer scope)
             logger.info(f"Build Run ID: {current_run_id}")
-
 
             # Run the orchestrator with the user goal
             # The orchestrator's `run` method should handle plan generation if goal_str is provided
@@ -1830,7 +1566,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             # final_context: Dict[str, Any] = await orchestrator.run( # OLD, incorrect type
             final_status, final_shared_context, final_error_details = await orchestrator.run(
                 goal_str=user_goal, 
-                initial_context=parsed_initial_context, 
+                initial_context=build_shared_context_data, # MODIFIED: Pass the comprehensive build_shared_context_data
                 run_id_override=current_run_id 
             )
 
@@ -1898,10 +1634,10 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             # No sys.exit(1) here
             raise # Re-raise
         finally:
-            # Ensure LLM client (if any) is closed, e.g., if OpenAILLMProvider was used
-            if 'llm_manager' in locals() and llm_manager._llm_provider is not None:
-                 logger.info(f"Attempting to close LLM provider client of type: {type(llm_manager._llm_provider).__name__}")
-                 await llm_manager.close_client() # LLMManager now has a close_client method
+            # Ensure LLM client (if any) is closed
+            if 'llm_manager' in locals() and llm_manager is not None and hasattr(llm_manager, 'close_client'): # Check llm_manager directly
+                 logger.info(f"Attempting to close LLM provider client via LLMManager in build command.")
+                 await llm_manager.close_client()
 
     try:
         asyncio.run(do_build())
@@ -1914,3 +1650,69 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
 # Ensure the main CLI entry point is correct
 if __name__ == "__main__":
     cli()
+
+@utils.command(name="show-config")
+@click.option(
+    "--project-dir",
+    "project_dir_opt",
+    type=click.Path(file_okay=False, dir_okay=True, exists=False, path_type=Path), # Allow non-existent for inspection
+    default=".",
+    show_default=True,
+    help="Project directory to load config from (default: current directory)."
+)
+@click.option("--raw", is_flag=True, help="Show raw config dictionary without interpolation or defaults.")
+@click.pass_context
+def show_config(ctx: click.Context, project_dir_opt: Path, raw: bool):
+    """Displays the current Chungoid configuration (loaded or default)."""
+    logger = logging.getLogger("chungoid.cli.utils.show_config")
+    abs_project_dir = project_dir_opt.resolve()
+    click.echo(f"--- Chungoid Configuration Utility ---")
+
+    config_to_display: Optional[Dict[str, Any]] = None
+    config_source_info = "Defaults"
+
+    try:
+        # Attempt to load project-specific config first
+        # Ensure PROJECT_CHUNGOID_DIR and constants are available
+        # from chungoid.constants import PROJECT_CHUNGOID_DIR # Should be imported at top
+        project_config_file = abs_project_dir / PROJECT_CHUNGOID_DIR / "chungoid_config.yaml" 
+        # Ensure py_json is available for dumps
+        # import json as py_json # Should be imported at top
+        # Ensure yaml is imported for yaml.safe_load
+        import yaml # Added import here, ideally should be at top of file
+
+        if project_config_file.exists() and project_config_file.is_file():
+            try:
+                if raw:
+                    with open(project_config_file, 'r') as f_raw_proj:
+                        raw_project_cfg_content = yaml.safe_load(f_raw_proj)
+                    config_to_display = raw_project_cfg_content if isinstance(raw_project_cfg_content, dict) else {"error": "Raw project config is not a dict."}
+                    config_source_info = f"Raw content of {project_config_file}"
+                else:
+                    config_to_display = load_config(str(project_config_file))
+                    config_source_info = f"Loaded from {project_config_file} (merged with defaults)"
+            except ConfigError as ce:
+                click.secho(f"ConfigError trying to load from {project_config_file}: {ce}", fg="yellow")
+        
+        if config_to_display is None:
+            if raw:
+                from chungoid.utils.config_loader import DEFAULT_CONFIG as CL_DEFAULT_CONFIG
+                config_to_display = CL_DEFAULT_CONFIG
+                config_source_info = "Raw DEFAULT_CONFIG (from config_loader.py)"
+            else:
+                config_to_display = get_config()
+                config_source_info = "Default configuration (no project-specific config found/loaded)"
+        
+        click.echo(f"Configuration Source: {config_source_info}")
+        if config_to_display:
+            # Ensure py_json is available
+            import json as py_json # Added import here, ideally at top
+            click.echo(py_json.dumps(config_to_display, indent=2, default=str))
+        else:
+            click.secho("No configuration loaded or available.", fg="red")
+
+    except Exception as e:
+        click.secho(f"An unexpected error occurred while retrieving configuration: {e}", fg="red")
+        logger.error(f"Error in show_config: {e}", exc_info=True)
+
+# Ensure registration is done correctly.

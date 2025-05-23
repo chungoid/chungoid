@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, ClassVar, TYPE_CHECKING
 import json
 from pathlib import Path
 import uuid
+import traceback
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -108,10 +109,23 @@ class SystemRequirementsGatheringAgent_v1(BaseAgent[SystemRequirementsGatheringI
     async def invoke_async(
         self, inputs: Dict[str, Any], full_context: Optional[Dict[str, Any]] = None
     ) -> SystemRequirementsGatheringOutput:
+        """
+        Asynchronously processes the user goal to generate a LOPRD.
+        """
+        # Log entry with goal
+        self.logger.info(
+            f"System Requirements Gathering Agent ({self.AGENT_ID}) invoked with goal: {inputs.get('user_goal', 'Not specified')}"
+        )
+
+        # ----->>> ADD DIAGNOSTIC LOGGING HERE <<<-----
+        self.logger.info(f"AGENT DIAGNOSTIC: About to validate inputs. Type: {type(inputs)}, Value: {inputs}, ID: {id(inputs)}")
+
         try:
             parsed_inputs = SystemRequirementsGatheringInput(**inputs)
         except ValidationError as e:
-            logger.error(f"Input validation error for {self.AGENT_ID} ({self.AGENT_NAME}): {e}", exc_info=True)
+            self.logger.error(
+                f"Input validation error for {self.AGENT_ID} ({self.AGENT_NAME}): {e}\\nTraceback: {traceback.format_exc()}"
+            )
             raise
 
         logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) invoked with goal: {parsed_inputs.user_goal}")
@@ -153,7 +167,8 @@ class SystemRequirementsGatheringAgent_v1(BaseAgent[SystemRequirementsGatheringI
 
             llm_call_args = {
                 "prompt": rendered_prompt,
-                "system_prompt": "You are an AI assistant that generates detailed project requirements documents in JSON format." 
+                "system_prompt": "You are an AI assistant that generates detailed project requirements documents in JSON format.",
+                "response_format": {"type": "json_object"}
             }
 
             if self.loprd_generation_prompt_template_obj and self.loprd_generation_prompt_template_obj.model_settings:

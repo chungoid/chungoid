@@ -60,10 +60,28 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
         
         logger.debug(f"{self.AGENT_ID} invoked with inputs: {task_input}")
 
-        command = ["pytest"]
-        if task_input.pytest_options:
-            command.extend(shlex.split(task_input.pytest_options))
-        command.append(task_input.test_target_path)
+        # Handle command override vs default pytest
+        if task_input.test_command_override:
+            # Use override command
+            command = list(task_input.test_command_override)  # Copy to avoid modifying original
+            if task_input.test_command_args:
+                command.extend(task_input.test_command_args)
+            logger.info(f"Using command override: {' '.join(command)}")
+        else:
+            # Default pytest mode
+            if not task_input.test_target_path:
+                logger.error("test_target_path is required when not using test_command_override")
+                return SystemTestRunnerAgentOutput(
+                    exit_code=-5,
+                    summary="test_target_path is required when not using test_command_override",
+                    status="FAILURE_INPUT_VALIDATION_ERROR",
+                    stderr="test_target_path is required when not using test_command_override"
+                )
+            
+            command = ["pytest"]
+            if task_input.pytest_options:
+                command.extend(shlex.split(task_input.pytest_options))
+            command.append(task_input.test_target_path)
 
         # Determine CWD
         cwd_path: Optional[Path] = None
@@ -72,14 +90,23 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
             if not cwd_path.is_dir():
                 logger.warning(f"Provided project_root '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
                 cwd_path = None
-        elif full_context and hasattr(full_context, 'project_root_path') and full_context.project_root_path:
+        elif full_context and isinstance(full_context.data, dict) and full_context.data.get('project_root_path'): # Check full_context.data
             try:
-                cwd_path = Path(full_context.project_root_path)
-                if not cwd_path.is_dir():
-                    logger.warning(f"full_context.project_root_path '{cwd_path}' is not a valid directory. Running pytest from default CWD.")
-                    cwd_path = None
-                else:
+                raw_path_from_context = full_context.data.get('project_root_path') # CORRECTED ACCESS
+                self._logger.info(f"DEBUG: full_context.data.get('project_root_path') is '{raw_path_from_context}' (type: {type(raw_path_from_context)})")
+                
+                candidate_path = Path(raw_path_from_context)
+                self._logger.info(f"DEBUG: Path(full_context.data.get('project_root_path')) is '{candidate_path}' (type: {type(candidate_path)})")
+                
+                is_dir_check = candidate_path.is_dir()
+                self._logger.info(f"DEBUG: candidate_path.is_dir() result: {is_dir_check}")
+
+                if is_dir_check:
+                    cwd_path = candidate_path.resolve() # Resolve to absolute path
                     logger.info(f"Using project_root_path '{cwd_path}' from full_context as CWD for pytest.")
+                else:
+                    logger.warning(f"full_context.data.get('project_root_path') '{candidate_path}' is not a valid directory. Running pytest from default CWD.")
+                    cwd_path = None
             except Exception as e:
                 logger.warning(f"Error accessing project_root_path from full_context: {e}. Running pytest from default CWD.")
                 cwd_path = None
@@ -103,21 +130,61 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
 
         # Prepare environment for subprocess
         env = os.environ.copy()
-        # Correctly set PYTHONPATH to include the workspace's src directory
+        
+        # Get current PYTHONPATH or an empty string if it's not set
+        current_python_path = env.get('PYTHONPATH', '')
+        additional_paths = []
+
+        # Add the project's src directory if cwd_path is set
+        if cwd_path:
+            project_src_path = (cwd_path / "src").resolve()
+            if project_src_path.is_dir():
+                additional_paths.append(str(project_src_path))
+                logger.info(f"Adding project-specific src to PYTHONPATH: {project_src_path}")
+            else:
+                logger.warning(f"Project-specific src directory not found: {project_src_path}")
+
+        # Add the workspace's src directory
         workspace_root_path_str = None
         if full_context and hasattr(full_context, 'data') and isinstance(full_context.data, dict):
             workspace_root_path_str = full_context.data.get('mcp_root_workspace_path')
 
         if workspace_root_path_str:
-            workspace_src_path = (Path(workspace_root_path_str) / "src").resolve()
-            current_python_path = env.get('PYTHONPATH', '')
-            env['PYTHONPATH'] = f"{workspace_src_path}{os.pathsep}{current_python_path}" if current_python_path else str(workspace_src_path)
+            # It seems the original log showed chungoid-core/src. Let's ensure both core and project src are handled if distinct.
+            # For now, let's assume 'mcp_root_workspace_path' is the absolute root, and 'src' directly under it is one to add.
+            # And if chungoid-core is separate, that might need specific handling or be part of a broader strategy.
+            # The immediate fix is for fresh_test/src.
+            
+            # Add MCP workspace's main src (e.g., /home/flip/Desktop/chungoid-mcp/src)
+            mcp_workspace_src_path = (Path(workspace_root_path_str) / "src").resolve()
+            if mcp_workspace_src_path.is_dir() and str(mcp_workspace_src_path) not in additional_paths:
+                 additional_paths.append(str(mcp_workspace_src_path))
+                 logger.info(f"Adding MCP workspace src to PYTHONPATH: {mcp_workspace_src_path}")
+            
+            # Add chungoid-core/src as it contains schema definitions etc.
+            chungoid_core_src_path = (Path(workspace_root_path_str) / "chungoid-core" / "src").resolve()
+            if chungoid_core_src_path.is_dir() and str(chungoid_core_src_path) not in additional_paths:
+                additional_paths.append(str(chungoid_core_src_path))
+                logger.info(f"Adding chungoid-core src to PYTHONPATH: {chungoid_core_src_path}")
+            else:
+                logger.warning(f"chungoid-core src directory not found ({chungoid_core_src_path}) or already added to PYTHONPATH.")
+
+        # Construct the new PYTHONPATH
+        # Prepend additional paths, then add the original PYTHONPATH
+        if additional_paths:
+            new_python_path_parts = additional_paths
+            if current_python_path:
+                new_python_path_parts.append(current_python_path)
+            env['PYTHONPATH'] = os.pathsep.join(new_python_path_parts)
             logger.info(f"PYTHONPATH for subprocess set to: {env['PYTHONPATH']}")
-        else:
-            logger.warning("Could not determine MCP workspace root; PYTHONPATH for src not added. Test imports might fail.")
+        elif not current_python_path: # No additional paths and no existing PYTHONPATH
+             logger.info("PYTHONPATH not set and no project/workspace src paths found to add.")
+        else: # No additional paths, but existing PYTHONPATH is kept
+            logger.info(f"Using existing PYTHONPATH: {current_python_path}")
 
         try:
-            logger.info(f"Running pytest command: {' '.join(command)} in CWD: {cwd_path if cwd_path else 'default'}")
+            command_name = "pytest" if not task_input.test_command_override else task_input.test_command_override[0]
+            logger.info(f"Running {command_name} command: {' '.join(command)} in CWD: {cwd_path if cwd_path else 'default'}")
             process = subprocess.run(command, capture_output=True, text=True, cwd=cwd_path, env=env, timeout=300)
             stdout = process.stdout
             stderr = process.stderr
@@ -139,18 +206,18 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
                         summary_line = summary_line.strip()
                         break
 
-            logger.info(f"Pytest completed with exit code {exit_code}. Summary: {summary_line}")
+            logger.info(f"{command_name} completed with exit code {exit_code}. Summary: {summary_line}")
             
             if exit_code != 0:
                 if stdout:
-                    logger.info(f"Pytest stdout (exit code {exit_code}):\n{stdout}")
+                    logger.info(f"{command_name} stdout (exit code {exit_code}):\n{stdout}")
                 if stderr:
-                    logger.info(f"Pytest stderr (exit code {exit_code}):\n{stderr}")
+                    logger.info(f"{command_name} stderr (exit code {exit_code}):\n{stderr}")
             else:
                 if stdout:
-                    logger.debug(f"Pytest stdout:\n{stdout}")
+                    logger.debug(f"{command_name} stdout:\n{stdout}")
                 if stderr:
-                    logger.debug(f"Pytest stderr (exit code 0):\n{stderr}")
+                    logger.debug(f"{command_name} stderr (exit code 0):\n{stderr}")
 
             return SystemTestRunnerAgentOutput(
                 exit_code=exit_code,

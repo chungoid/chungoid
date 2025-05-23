@@ -1,6 +1,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, Optional, TypeVar, TYPE_CHECKING
+import sys
+import logging
 
 from pydantic import BaseModel, Field, ConfigDict
 from chungoid.schemas.errors import AgentErrorDetails
@@ -15,6 +17,9 @@ if TYPE_CHECKING:
 
 InputSchema = TypeVar('InputSchema', bound=BaseModel)
 OutputSchema = TypeVar('OutputSchema', bound=BaseModel)
+
+# Define a default log format string if not already available globally
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s"
 
 # MODIFIED: Inheritance order changed
 class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema], ABC):
@@ -77,16 +82,54 @@ class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema], ABC):
 
     # Optional: Helper to get logger from system_context or create a default one
     @property
-    def logger(self):
-        if hasattr(self, '_logger_instance') and self._logger_instance:
+    def logger(self) -> logging.Logger:
+        # Check if we already have a cached logger instance
+        if hasattr(self, '_logger_instance') and self._logger_instance is not None:
             return self._logger_instance
+
+        _logger: Optional[logging.Logger] = None
         
-        _logger = self.system_context.get('logger')
-        if not _logger:
-            import logging
-            _logger = logging.getLogger(self.get_name())
-        self._logger_instance = _logger # Cache it
-        return _logger
+        # Attempt to get logger from system_context first
+        if self.system_context: # This should be a dict
+            _logger = self.system_context.get('logger')
+            if _logger and not isinstance(_logger, logging.Logger):
+                # Log a warning if what we got isn't a Logger instance
+                # Use a temporary basic logger for this warning to avoid recursion if self.logger is called here
+                temp_logger_for_warning = logging.getLogger(f"agent_base.{self.__class__.__name__}")
+                temp_logger_for_warning.warning(
+                    f"Expected 'logger' in system_context to be a logging.Logger instance, got {type(_logger)}. Falling back."
+                )
+                _logger = None # Reset to trigger fallback
+
+        # Fallback if logger not found in system_context or was invalid
+        if _logger is None:
+            # Create a robust fallback logger, independent of potentially uninitialized agent state
+            fallback_logger_name = f"agent.{self.__class__.__name__}" # Includes module and class name
+            _logger = logging.getLogger(fallback_logger_name)
+            
+            # Ensure the fallback logger has at least one handler to output messages
+            # This prevents messages from being lost if no other configuration is applied.
+            if not _logger.hasHandlers():
+                try:
+                    # Attempt to add a basic StreamHandler if none exist.
+                    # This configuration should be minimal and not rely on self.config or other agent state.
+                    stream_handler = logging.StreamHandler(sys.stdout) # Default to stdout
+                    formatter = logging.Formatter(
+                        DEFAULT_LOG_FORMAT # Use a globally defined default format if available
+                    )
+                    stream_handler.setFormatter(formatter)
+                    _logger.addHandler(stream_handler)
+                    _logger.setLevel(logging.INFO) # Default level for fallback logger
+                    _logger.propagate = False # Avoid duplicate messages if root logger is also configured
+                except Exception as e_fallback_log_setup:
+                    # If even basic handler setup fails, print to stderr and use a completely basic logger.
+                    print(f"CRITICAL: Failed to set up fallback logger handler for {fallback_logger_name}: {e_fallback_log_setup}", file=sys.stderr)
+                    # As a last resort, the getLogger call itself provides a logger, even if unconfigured.
+                    pass # _logger from getLogger(name) is already set
+
+        # Cache the resolved or created logger instance
+        self._logger_instance = _logger
+        return self._logger_instance
 
     @classmethod
     def get_agent_card_static(cls) -> Any: # Changed to Any to avoid circular import with AgentCard

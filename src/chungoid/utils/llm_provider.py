@@ -4,12 +4,25 @@ import logging
 import uuid
 import json
 import os
+import re
 
 from pydantic import BaseModel, ValidationError
-from openai import AsyncOpenAI, APIError
+# Remove direct OpenAI import if LiteLLM handles it, or keep if OpenAILLMProvider is kept as a fallback/specific option
+# from openai import AsyncOpenAI, APIError 
 from dotenv import load_dotenv
 
 from chungoid.utils.prompt_manager import PromptManager, PromptDefinition, PromptRenderError, PromptLoadError
+
+# NEW: Add LiteLLM import
+# Ensure litellm is added to requirements.txt
+try:
+    import litellm
+    from litellm import acompletion # For async calls
+    # litellm.set_verbose = True # Optional: for debugging LiteLLM
+except ImportError:
+    logging.getLogger(__name__).error("LiteLLM library is not installed. Please install it with `pip install litellm`.")
+    litellm = None # Allow an ImportError to be caught by callers
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +41,8 @@ class LLMProvider(ABC):
         model_id: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        # TODO: Consider adding stop_sequences, system_prompt (if not part of main prompt)
+        system_prompt: Optional[str] = None, # Added for consistency
+        response_format: Optional[Dict[str, str]] = None, # Added for consistency
         **kwargs: Any  # For provider-specific parameters
     ) -> str:
         """
@@ -39,6 +53,8 @@ class LLMProvider(ABC):
             model_id: Optional; specific model identifier if overriding a default.
             temperature: Optional; sampling temperature.
             max_tokens: Optional; maximum number of tokens to generate.
+            system_prompt: Optional; system message for the LLM.
+            response_format: Optional; dictionary specifying response format (e.g., {"type": "json_object"}).
             kwargs: Additional provider-specific arguments.
 
         Returns:
@@ -64,6 +80,8 @@ class MockLLMProvider(LLMProvider):
         model_id: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
         **kwargs: Any
     ) -> str:
         self.calls.append({
@@ -71,11 +89,13 @@ class MockLLMProvider(LLMProvider):
             "model_id": model_id,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "system_prompt": system_prompt,
+            "response_format": response_format,
             "kwargs": kwargs
         })
 
         logger.info(f"MockLLMProvider received prompt (first 100 chars): {prompt[:100]}...")
-        logger.info(f"MockLLMProvider args: model_id={model_id}, temp={temperature}, max_tokens={max_tokens}")
+        logger.info(f"MockLLMProvider args: model_id={model_id}, temp={temperature}, max_tokens={max_tokens}, system_prompt_present={bool(system_prompt)}")
 
         # Check if a direct match for the prompt exists in predefined_responses
         if prompt in self.predefined_responses:
@@ -90,7 +110,7 @@ class MockLLMProvider(LLMProvider):
                 return predefined_response
         
         # Default behavior: return a stringified minimal valid MasterExecutionPlan
-        plan_id_mock = f"mock_plan_{str(uuid.uuid4())[:4]}" # Keep uuid import for this if not already present at file top
+        plan_id_mock = f"mock_plan_{str(uuid.uuid4())[:4]}"
         default_plan_dict = {
             "id": plan_id_mock,
             "name": f"Mock Plan for {prompt[:50]}...",
@@ -107,7 +127,7 @@ class MockLLMProvider(LLMProvider):
                 }
             }
         }
-        default_response_json_string = json.dumps(default_plan_dict) # Keep json import for this
+        default_response_json_string = json.dumps(default_plan_dict)
         logger.info(f"MockLLMProvider returning default plan JSON string: {default_response_json_string[:150]}...")
         return default_response_json_string
 
@@ -115,34 +135,50 @@ class MockLLMProvider(LLMProvider):
         return self.calls[-1] if self.calls else None
 
 
-class OpenAILLMProvider(LLMProvider):
+class LiteLLMProvider(LLMProvider):
     """
-    An LLMProvider implementation that connects to OpenAI's API.
+    An LLMProvider implementation that uses LiteLLM to connect to various LLM APIs,
+    including OpenAI, Anthropic, Google, Ollama, and HuggingFace-compatible endpoints.
     """
-    def __init__(self, api_key: str, default_model: str = "gpt-3.5-turbo"):
-        try:
-            import openai # type: ignore
-        except ImportError:
-            logger.error("OpenAI library is not installed. Please install it with `pip install openai`.")
-            raise
-        
-        if not api_key:
-            logger.error("OpenAI API key is required for OpenAILLMProvider.")
-            raise ValueError("OpenAI API key cannot be empty.")
-            
-        self.client = openai.AsyncOpenAI(api_key=api_key)
+    def __init__(self, 
+                 default_model: str, 
+                 api_key: Optional[str] = None,
+                 base_url: Optional[str] = None,
+                 provider_env_vars: Optional[Dict[str, str]] = None):
+        if not litellm:
+            raise ImportError("LiteLLM library is not installed or failed to import. Cannot use LiteLLMProvider.")
+
         self.default_model = default_model
-        logger.info(f"OpenAILLMProvider initialized with default model: {self.default_model}")
+        self.api_key = api_key
+        self.base_url = base_url
+        
+        # Store original environment state for potential restoration if needed, or manage carefully.
+        # For now, assume direct modification is acceptable for the process lifetime.
+        if provider_env_vars:
+            logger.info(f"LiteLLMProvider: Setting provider-specific environment variables: {provider_env_vars.keys()}")
+            for k, v in provider_env_vars.items():
+                os.environ[k] = v
+        
+        logger.info(f"LiteLLMProvider initialized with default model: {self.default_model}")
+        if self.base_url:
+            logger.info(f"LiteLLMProvider: Using custom base_url: {self.base_url}")
+        if self.api_key:
+            logger.info(f"LiteLLMProvider: API key provided directly (will be used if specific env var not found by LiteLLM).")
+
 
     async def generate(
         self,
         prompt: str,
         model_id: Optional[str] = None,
-        temperature: Optional[float] = 0.7, # Default temperature for OpenAI
-        max_tokens: Optional[int] = 2048,   # A reasonable default max_tokens
-        system_prompt: Optional[str] = None, # Allow for an optional system prompt
+        temperature: Optional[float] = 0.7,
+        max_tokens: Optional[int] = 2048,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
         **kwargs: Any
     ) -> str:
+        if not litellm: # Should have been caught in __init__, but as a safeguard
+            raise ImportError("LiteLLM library is not available. Cannot make LLM calls.")
+
         chosen_model = model_id or self.default_model
         
         messages = []
@@ -150,142 +186,212 @@ class OpenAILLMProvider(LLMProvider):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        litellm_kwargs = {
+            "model": chosen_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            **kwargs 
+        }
+
+        # LiteLLM generally prefers API keys in environment variables.
+        # Only pass api_key or api_base if they are explicitly provided to this provider instance.
+        # LiteLLM will try to auto-detect from environment (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+        if self.api_key:
+            litellm_kwargs["api_key"] = self.api_key
+        
+        if self.base_url:
+            litellm_kwargs["api_base"] = self.base_url
+
+        if response_format: # For OpenAI and compatible models that support it
+            litellm_kwargs["response_format"] = response_format
+            # For more robust JSON with LiteLLM, you can also pass `json=True` 
+            # or ensure the model name implies JSON mode if supported by the model on LiteLLM.
+            # Example: if response_format == {"type": "json_object"}: litellm_kwargs["json"] = True
+
         try:
-            logger.info(f"OpenAILLMProvider calling model: {chosen_model} with prompt (first 100 chars): {prompt[:100]}...")
+            logger.info(f"LiteLLMProvider calling model: {chosen_model} via LiteLLM (prompt first 100 chars): {prompt[:100]}...")
+            logger.debug(f"LiteLLMProvider acompletion kwargs: { {k:v for k,v in litellm_kwargs.items() if k != 'messages'} }") # Avoid logging full messages unless debugging heavily
+
+            # Use acompletion for async
+            response = await acompletion(**litellm_kwargs)
             
-            response = await self.client.chat.completions.create(
-                model=chosen_model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"}, # Ensure JSON output
-                **kwargs
-            )
-            
+            # LiteLLM's response structure is similar to OpenAI's
             generated_content = response.choices[0].message.content
             
-            # Log the raw response from OpenAI
-            logger.info(f"OpenAILLMProvider RAW response content from {chosen_model}:\\\\n---BEGIN RAW RESPONSE---\\\\n{generated_content}\\\\n---END RAW RESPONSE---")
+            # Log usage if available
+            usage = response.get('usage')
+            if usage:
+                logger.info(f"LiteLLMProvider token usage for model {chosen_model}: {usage}")
+
+            logger.debug(f"LiteLLMProvider RAW response object from {chosen_model}: {response.model_dump_json(indent=2)}")
+
 
             if generated_content is None:
-                logger.warning("OpenAI returned None content.")
-                return "" # Return empty string if content is None
+                logger.warning(f"LiteLLMProvider: Model {chosen_model} returned None content.")
+                return ""
 
-            # Strip Markdown fences if present
-            cleaned_content = generated_content.strip()
-            if cleaned_content.startswith("```json"):
-                cleaned_content = cleaned_content[7:] # Remove ```json
-            elif cleaned_content.startswith("```"):
-                cleaned_content = cleaned_content[3:] # Remove ```
-            
-            if cleaned_content.endswith("```"):
-                cleaned_content = cleaned_content[:-3] # Remove ```
-            
-            cleaned_content = cleaned_content.strip() # Strip any leading/trailing whitespace again
+            # Ensure we are working with a string
+            current_content = str(generated_content).strip()
 
-            logger.info(f"OpenAILLMProvider CLEANED response content:\\\\n---BEGIN CLEANED RESPONSE---\\\\n{cleaned_content}\\\\n---END CLEANED RESPONSE---")
-            return cleaned_content
+            if response_format and response_format.get("type") == "json_object":
+                logger.debug(f"LiteLLMProvider: Attempting JSON cleaning. Initial content (first 100 chars): '{current_content[:100]}'")
+                # Try to extract content within ```json ... ``` or ``` ... ```
+                # This regex looks for ``` optionally followed by 'json', then captures everything (non-greedy) until the closing ```
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", current_content, re.DOTALL)
+                if match:
+                    logger.debug("LiteLLMProvider: Found markdown code block, extracting content from group 1.")
+                    current_content = match.group(1).strip()
+                else:
+                    # Fallback: If no markdown block, try to find the first '{' and last '}'
+                    # This is for cases where the LLM might return raw JSON without fences.
+                    # It's a bit riskier but useful if response_format hints at JSON.
+                    logger.debug("LiteLLMProvider: No markdown code block found. Checking for raw JSON structure.")
+                    first_brace = current_content.find('{')
+                    last_brace = current_content.rfind('}')
+                    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                        # Check if the content between braces looks like a plausible JSON object
+                        # by trying to parse it. This is to avoid grabbing parts of natural language.
+                        potential_json_substring = current_content[first_brace : last_brace+1]
+                        try:
+                            json.loads(potential_json_substring) # Try to parse
+                            logger.debug("LiteLLMProvider: Extracted content between first and last curly braces, and it appears to be valid JSON.")
+                            current_content = potential_json_substring.strip()
+                        except json.JSONDecodeError:
+                            logger.debug("LiteLLMProvider: Content between first/last braces is not valid JSON. Using content as is (after initial strip).")
+                            # If it's not valid JSON, don't assume it's the intended output.
+                            # The original current_content (already stripped) will be used.
+                    else:
+                        logger.debug("LiteLLMProvider: No clear JSON structure (no matching braces or no braces at all). Using content as is (after initial strip).")
+                
+                # Final strip, just in case the extracted content itself has leading/trailing whitespace.
+                current_content = current_content.strip()
+                logger.debug(f"LiteLLMProvider: Content after all JSON cleaning attempts (first 100 chars): '{current_content[:100]}'")
+
+            logger.info(f"LiteLLMProvider returning content (first 200 chars after all processing):\n{current_content[:200]}...")
+            return current_content
 
         except Exception as e:
-            logger.error(f"Error calling OpenAI API (model: {chosen_model}): {e}")
-            # Consider specific error handling for API errors (e.g., rate limits, auth)
-            # For now, re-raise to allow the caller to handle or log more details.
-            # Alternatively, could return a specific error message string.
-            raise # Re-raise the exception
+            # Check for LiteLLM specific exceptions if they offer more context
+            # from litellm.exceptions import APIConnectionError, RateLimitError, etc.
+            logger.error(f"Error calling model {chosen_model} via LiteLLM: {e}", exc_info=True)
+            # Consider specific error handling strategy here. Re-raising for now.
+            raise
 
-# Example conceptual code that was previously here has been removed as we're adding the concrete implementation.
+    def _get_expected_api_key_env_var(self, model_name: str) -> Optional[str]:
+        """Helper to determine the typical env var for an API key based on model name.
+           This is mostly for informational purposes or if direct env var checks were needed,
+           as LiteLLM handles most of this internally.
+        """
+        model_lower = model_name.lower()
+        if "openai/" in model_lower or "gpt-" in model_lower or model_lower.startswith("openai"):
+            return "OPENAI_API_KEY"
+        elif "anthropic/" in model_lower or "claude-" in model_lower or model_lower.startswith("anthropic"):
+            return "ANTHROPIC_API_KEY"
+        elif "gemini" in model_lower or "google/" in model_lower or model_lower.startswith("google"):
+            return "GOOGLE_API_KEY"
+        elif "ollama/" in model_lower or model_lower.startswith("ollama"):
+            return None # Ollama typically doesn't use API keys
+        elif "huggingface/" in model_lower or "hf/" in model_lower: # For HF Inference Endpoints
+            return "HF_TOKEN" 
+        # Add more mappings as needed
+        return None
 
-# Example of how a concrete implementation might look (conceptual)
-# class OpenAILLMProvider(LLMProvider):
-#     def __init__(self, api_key: str, default_model: str = "gpt-3.5-turbo"):
-#         import openai # type: ignore
-#         self.client = openai.AsyncOpenAI(api_key=api_key)
-#         self.default_model = default_model
-
-#     async def generate(
-#         self,
-#         prompt: str,
-#         model_id: Optional[str] = None,
-#         temperature: Optional[float] = 0.7, # Default temperature
-#         max_tokens: Optional[int] = 1500,   # Default max_tokens
-#         **kwargs: Any
-#     ) -> str:
-#         chosen_model = model_id or self.default_model
-#         try:
-#             logger.info(f"OpenAILLMProvider calling model: {chosen_model} with prompt (first 100 chars): {prompt[:100]}...")
-#             # Note: OpenAI API might prefer a messages format for chat models
-#             # This is a simplified example for completion-style interaction.
-#             # For chat models, you'd construct a messages list:
-#             # messages = [{"role": "user", "content": prompt}]
-#             # response = await self.client.chat.completions.create(
-#             #     model=chosen_model,
-#             #     messages=messages,
-#             #     temperature=temperature,
-#             #     max_tokens=max_tokens,
-#             #     **kwargs
-#             # )
-#             # return response.choices[0].message.content or ""
-            
-#             # Using a more generic completion for this example, assuming `prompt` is a full prompt
-#             # This might vary significantly based on the chosen model and its capabilities.
-#             # The actual implementation needs to align with the specific OpenAI client library and model type.
-            
-#             # Placeholder for actual OpenAI call which might be different
-#             # For instance, for newer models, it's often chat completions.
-#             # This is illustrative.
-#             if "chat.completions" in chosen_model: # A guess
-#                 response = await self.client.chat.completions.create(
-#                     model=chosen_model,
-#                     messages=[{"role": "system", "content": "You are a helpful assistant."}, # Or use a passed system_prompt
-#                               {"role": "user", "content": prompt}],
-#                     temperature=temperature,
-#                     max_tokens=max_tokens,
-#                     **kwargs
-#                 )
-#                 return response.choices[0].message.content or ""
-#             else: # Fallback for older completion models, if any
-#                 response = await self.client.completions.create(
-#                     model=chosen_model,
-#                     prompt=prompt,
-#                     temperature=temperature,
-#                     max_tokens=max_tokens,
-#                     **kwargs
-#                 )
-#                 return response.choices[0].message.content or "" # Ensure it returns string
+    async def close_client(self):
+        # LiteLLM doesn't typically require explicit client closing in the same way
+        # individual SDKs like OpenAI's AsyncClient might.
+        # If specific LiteLLM cleanup is needed in the future, it can be added here.
+        logger.info(f"LiteLLMProvider: No explicit client close operation typically needed for LiteLLM itself.")
+        pass
 
 
-#         except Exception as e:
-#             logger.error(f"Error calling OpenAI API: {e}")
-#             raise
-
-
-class LLMManager: # RENAMED from LLMProvider
+class LLMManager:
     """
     Manages interactions with an LLM, leveraging a PromptManager for structured prompts
     and an underlying LLMProvider instance for actual API calls.
-    This class is responsible for orchestrating prompt rendering, making the LLM call
-    via the provided provider, and potentially parsing the response.
     """
 
-    def __init__(self, llm_provider_instance: LLMProvider, prompt_manager: PromptManager):
+    def __init__(self, llm_config: Dict[str, Any], prompt_manager: PromptManager):
         """
-        Initializes the LLMManager.
+        Initializes the LLMManager based on a configuration dictionary.
 
         Args:
-            llm_provider_instance: An instance of a class that implements the LLMProvider ABC 
-                                   (e.g., OpenAILLMProvider, MockLLMProvider). This instance
-                                   will be used for the actual LLM API calls.
+            llm_config: Configuration for the LLM provider. Example:
+                        {
+                            "provider_type": "litellm", # "litellm", "mock", or specific "openai" (legacy)
+                            "default_model": "ollama/codellama", 
+                            "api_key": "sk-...", # Optional: For direct passthrough if not in env
+                            "base_url": "http://localhost:11434", # For Ollama or custom OpenAI-like servers
+                            "provider_env_vars": {"CUSTOM_ENV_VAR": "value"}, # Programmatic env var setting
+                            "mock_llm_responses": {"prompt_text": "mock_response"} # For "mock" provider
+                        }
             prompt_manager: An instance of PromptManager to load and render prompts.
         """
-        # load_dotenv() # Dotenv loading should ideally be handled at app entry or by specific providers
-        # self.openai_api_key = os.getenv("OPENAI_API_KEY") # API key management is now handled by llm_provider_instance
-        # if not self.openai_api_key:
-        #     logger.warning("OPENAI_API_KEY not found in environment variables if direct OpenAI calls were intended here.")
-        # self.client = AsyncOpenAI(api_key=self.openai_api_key) # OpenAI client is now managed by llm_provider_instance (e.g. OpenAILLMProvider)
+        load_dotenv() # Ensure .env variables are loaded for provider auto-detection
+
+        provider_type = llm_config.get("provider_type", "litellm").lower()
+        default_model = llm_config.get("default_model", "gpt-3.5-turbo") # A sensible general fallback
         
-        self._llm_provider = llm_provider_instance
+        api_key = llm_config.get("api_key") # User can explicitly pass API key
+        base_url = llm_config.get("base_url") # For local LLMs or custom endpoints
+        provider_env_vars = llm_config.get("provider_env_vars")
+
+        logger.info(f"LLMManager: Initializing with provider_type='{provider_type}', default_model='{default_model}'")
+
+        if provider_type == "litellm":
+            if not litellm:
+                 logger.error("LLMManager: LiteLLM library not available, cannot create LiteLLMProvider. Falling back to MockLLMProvider if possible, or will fail.")
+                 # Fallback to Mock or raise critical error
+                 self._llm_provider_instance = MockLLMProvider(llm_config.get("mock_llm_responses"))
+                 logger.warning("LLMManager: Falling back to MockLLMProvider due to LiteLLM import failure.")
+            else:
+                self._llm_provider_instance = LiteLLMProvider(
+                    default_model=default_model,
+                    api_key=api_key, # Pass along if provided
+                    base_url=base_url, # Pass along if provided
+                    provider_env_vars=provider_env_vars # Pass along if provided
+                )
+        elif provider_type == "mock":
+            self._llm_provider_instance = MockLLMProvider(llm_config.get("mock_llm_responses"))
+        # Example of how a direct OpenAI provider could still be supported if needed, though LiteLLM is preferred.
+        # elif provider_type == "openai":
+        #     from openai import AsyncOpenAI, APIError # Keep these imports local if OpenAILLMProvider is reinstated
+        #     openai_api_key = api_key or os.getenv("OPENAI_API_KEY")
+        #     if not openai_api_key:
+        #         logger.error("OpenAI provider selected but OPENAI_API_KEY not found in env or config.")
+        #         raise ValueError("OpenAI API key not configured for 'openai' provider type.")
+        #     # This would require OpenAILLMProvider class to be defined
+        #     # self._llm_provider_instance = OpenAILLMProvider(api_key=openai_api_key, default_model=default_model) 
+        #     logger.warning("Direct 'openai' provider type is legacy. Prefer 'litellm' with an OpenAI model.")
+        #     # For now, if 'openai' is specified, assume it implies LiteLLM with an OpenAI model.
+        #     # Or, re-instate the OpenAILLMProvider class if direct use is essential.
+        #     # To avoid breaking existing configs that might say "openai", let's route to LiteLLM:
+        #     logger.info("Provider type 'openai' specified, will use LiteLLMProvider with an OpenAI model.")
+        #     self._llm_provider_instance = LiteLLMProvider(
+        #         default_model=default_model if "gpt-" in default_model or default_model.startswith("openai/") else "openai/gpt-3.5-turbo",
+        #         api_key=api_key,
+        #         base_url=base_url, # OpenAI also has base_url for Azure etc.
+        #         provider_env_vars=provider_env_vars
+        #     )
+        else:
+            logger.warning(f"Unknown LLM provider_type: '{provider_type}'. Attempting to use LiteLLMProvider as a fallback.")
+            if not litellm:
+                logger.error("LLMManager: LiteLLM library not available for fallback provider. Critical error.")
+                raise ImportError("LiteLLM is required for fallback provider but not installed.")
+            self._llm_provider_instance = LiteLLMProvider(
+                default_model=default_model,
+                api_key=api_key,
+                base_url=base_url,
+                provider_env_vars=provider_env_vars
+            )
+        
         self.prompt_manager = prompt_manager
-        logger.info(f"LLMManager initialized with provider: {type(llm_provider_instance).__name__} and PromptManager.")
+        logger.info(f"LLMManager initialized with concrete provider: {type(self._llm_provider_instance).__name__} and PromptManager.")
+
+    @property
+    def actual_provider(self) -> LLMProvider:
+        """Returns the actual underlying LLMProvider instance (e.g., LiteLLMProvider, MockLLMProvider)."""
+        return self._llm_provider_instance
 
     async def generate_text_async_with_prompt_manager(
         self,
@@ -296,18 +402,16 @@ class LLMManager: # RENAMED from LLMProvider
         project_id: Optional[str] = None, 
         calling_agent_id: Optional[str] = None, 
         expected_json_schema: Optional[Type[T]] = None,
-        temperature: Optional[float] = None, # Allow overriding prompt-defined temperature
-        model_id: Optional[str] = None      # Allow overriding prompt-defined model
+        temperature: Optional[float] = None, 
+        model_id: Optional[str] = None
     ) -> Any:
         """
         Generates text using a specified prompt from the PromptManager and an underlying LLMProvider.
         Handles fetching prompt definitions, rendering, calling the LLM, and basic JSON validation.
         """
-        if not self._llm_provider:
+        if not self._llm_provider_instance: # Should be caught by __init__
             logger.error("LLM provider not initialized within LLMManager.")
-            raise ValueError(
-                "LLMManager cannot make API calls: LLMProvider instance not configured."
-            )
+            raise ValueError("LLMManager cannot make API calls: LLMProvider instance not configured.")
 
         try:
             prompt_definition: PromptDefinition = self.prompt_manager.get_prompt_definition(
@@ -322,67 +426,63 @@ class LLMManager: # RENAMED from LLMProvider
             raise
 
         try:
-            # Render the user prompt (main content)
             rendered_user_prompt = self.prompt_manager.render_prompt_template_content(
                 template_content=prompt_definition.user_prompt_template_content,
                 data=prompt_render_data
             )
-            # System prompt is taken directly from the definition (it might be None)
             system_prompt_content = prompt_definition.system_prompt_template_content
-            if system_prompt_content: # Render if it has variables
+            if system_prompt_content:
                  system_prompt_content = self.prompt_manager.render_prompt_template_content(
                     template_content=system_prompt_content,
-                    data=prompt_render_data # Assuming system prompt might also use render data
+                    data=prompt_render_data
                 )
-
         except PromptRenderError as e:
             logger.error(f"Failed to render prompt {prompt_name} v{prompt_version}: {e}")
             raise
 
-        # Determine parameters for the underlying LLMProvider call
-        # Use overrides if provided, otherwise use values from prompt_definition.model_config
         final_model_id = model_id if model_id is not None else prompt_definition.model_config.model_id
         final_temperature = temperature if temperature is not None else prompt_definition.model_config.temperature
-        final_max_tokens = prompt_definition.model_config.max_tokens # No direct override for max_tokens in this method's signature yet
-
-        # Prepare kwargs for provider-specific parameters from model_config, excluding known ones
-        provider_kwargs = prompt_definition.model_config.provider_specific_params or {}
-
-        # Ensure response_format is passed if defined in prompt (OpenAILLMProvider handles this)
-        if prompt_definition.model_config.response_format:
-            provider_kwargs['response_format'] = prompt_definition.model_config.response_format
+        final_max_tokens = prompt_definition.model_config.max_tokens
         
-        logger.info(f"LLMManager: Calling underlying LLM provider ({type(self._llm_provider).__name__}) for prompt: {prompt_name} v{prompt_version}")
+        # Response format from prompt definition should be passed to the provider
+        final_response_format = prompt_definition.model_config.response_format
+
+        provider_kwargs = prompt_definition.model_config.provider_specific_params or {}
+        # Remove response_format from provider_kwargs if it's handled by the main `response_format` param
+        if 'response_format' in provider_kwargs and final_response_format:
+            del provider_kwargs['response_format']
+
+
+        logger.info(f"LLMManager: Calling underlying LLM provider ({type(self._llm_provider_instance).__name__}) for prompt: {prompt_name} v{prompt_version}")
         logger.debug(
             f"LLMManager call details: model_id='{final_model_id}', temperature={final_temperature}, "
             f"max_tokens={final_max_tokens}, system_prompt_present={bool(system_prompt_content)}, "
-            f"provider_kwargs={provider_kwargs}"
+            f"response_format_from_prompt={final_response_format}, provider_kwargs={provider_kwargs}"
         )
-        # logger.debug(f"LLMManager User Prompt (first 200 chars): {rendered_user_prompt[:200]}") # Can be verbose
 
         try:
-            llm_output_content = await self._llm_provider.generate(
+            llm_output_content = await self._llm_provider_instance.generate(
                 prompt=rendered_user_prompt,
                 model_id=final_model_id,
                 temperature=final_temperature,
                 max_tokens=final_max_tokens,
                 system_prompt=system_prompt_content, 
+                response_format=final_response_format, # Pass the response_format from prompt_definition
                 **provider_kwargs 
             )
             
-            if not llm_output_content:
-                logger.warning(f"LLM call for prompt {prompt_name} v{prompt_version} returned empty or None content.")
-                # Depending on expected_json_schema, might need to raise or return default
+            if not llm_output_content and llm_output_content != "": # Allow empty string as a valid output
+                logger.warning(f"LLM call for prompt {prompt_name} v{prompt_version} returned None content.")
                 if expected_json_schema:
-                    raise ValueError("LLM returned empty content but a JSON schema was expected.")
-                return "" # Return empty string if no schema expected and content is empty
+                    raise ValueError("LLM returned None content but a JSON schema was expected.")
+                # If not expecting JSON, None might be problematic too, but "" is fine.
+                # For safety, let's treat None as an issue if any output is expected.
+                raise ValueError("LLM returned None content.")
 
-            # Attempt to parse if a JSON schema is expected
+
             if expected_json_schema:
                 try:
-                    # The llm_output_content should already be cleaned by OpenAILLMProvider if it was that one.
-                    # Other providers might need cleaning here.
-                    # For now, assume llm_output_content is a string ready for json.loads.
+                    # llm_output_content should be cleaned by the provider if it's JSON
                     parsed_json = json.loads(llm_output_content)
                     validated_data = expected_json_schema(**parsed_json)
                     logger.info(f"Successfully parsed and validated LLM JSON output against {expected_json_schema.__name__} for prompt {prompt_name} v{prompt_version}.")
@@ -393,35 +493,38 @@ class LLMManager: # RENAMED from LLMProvider
                 except ValidationError as e_val:
                     logger.error(f"Pydantic ValidationError for prompt {prompt_name} v{prompt_version}. LLM Output (first 500 chars): {llm_output_content[:500]}. Error: {e_val}")
                     raise ValueError(f"LLM output did not match expected schema {expected_json_schema.__name__}. Error: {e_val}. Output: {llm_output_content[:200]}...") from e_val
-                except Exception as e_parse: # Catch any other parsing/validation error
+                except Exception as e_parse: 
                     logger.error(f"Unexpected error parsing/validating LLM output for prompt {prompt_name} v{prompt_version}. Error: {e_parse}. Output: {llm_output_content[:500]}")
                     raise ValueError(f"Failed to process LLM output against schema. Error: {e_parse}") from e_parse
             else:
-                # Return raw text if no JSON schema is expected
                 logger.info(f"LLM call successful for prompt {prompt_name} v{prompt_version}. Returning raw text output.")
                 return llm_output_content
 
-        except APIError as e: # Specific error from OpenAI library if that's the provider
-            logger.error(f"OpenAI APIError during LLM call for prompt {prompt_name} v{prompt_version}: {e}")
-            raise # Re-raise APIError to be handled by caller
-        except Exception as e_call:
-            logger.error(f"Generic Exception during LLM call for prompt {prompt_name} v{prompt_version} via provider {type(self._llm_provider).__name__}: {e_call}", exc_info=True)
-            raise # Re-raise generic exception
+        # Catching LiteLLM's specific exceptions can be useful here if finer-grained error handling is needed.
+        # Example:
+        # except litellm.RateLimitError as e_rate_limit:
+        #    logger.error(f"LiteLLM RateLimitError for prompt {prompt_name} v{prompt_version}: {e_rate_limit}")
+        #    raise
+        # except litellm.APIConnectionError as e_conn:
+        #    logger.error(f"LiteLLM APIConnectionError for prompt {prompt_name} v{prompt_version}: {e_conn}")
+        #    raise
+        except Exception as e_call: # General catch-all
+            logger.error(f"Generic Exception during LLM call for prompt {prompt_name} v{prompt_version} via provider {type(self._llm_provider_instance).__name__}: {e_call}", exc_info=True)
+            raise 
 
-    # Consider if close_client is needed at this manager level,
-    # or if it should be managed by the owner of the llm_provider_instance.
-    # If LLMManager creates the provider, it should close it. If it receives it, the creator should close it.
-    # For now, providing a pass-through.
     async def close_client(self):
-        if self._llm_provider and hasattr(self._llm_provider, 'close_client'):
+        if self._llm_provider_instance and hasattr(self._llm_provider_instance, 'close_client'):
             try:
-                # Assuming close_client is an async method on the provider
-                await self._llm_provider.close_client()
-                logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider).__name__}) client closed.")
+                await self._llm_provider_instance.close_client()
+                logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider_instance).__name__}) client closed.")
             except Exception as e:
                 logger.error(f"LLMManager: Error closing underlying LLM provider client: {e}", exc_info=True)
         else:
-            logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider).__name__}) does not have a close_client method or provider not set.")
+            logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider_instance).__name__}) does not have a close_client method or provider not set.")
+
+# Removed OpenAILLMProvider class as LiteLLMProvider is intended to replace it.
+# If OpenAILLMProvider needs to be kept for some specific reason, it can be reinstated,
+# but the goal is to primarily use LiteLLMProvider.
 
 # Example usage (conceptual, not runnable here)
 # async def main():

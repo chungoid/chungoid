@@ -242,135 +242,242 @@ class ContextResolutionService:
                 current = getattr(current, accessor)
         return current
 
+    def _resolve_path_value_from_base_and_parts(
+        self,
+        base_object_name: str,
+        base_object: Any,
+        parts: List[str],
+        path_expression: str, # For logging
+        shared_context_for_fallback: Optional[SharedContext] = None # ADDED for fallback
+    ) -> Any:
+        """
+        Core private method to resolve path parts starting from a base object.
+        """
+        try:
+            return self._get_value_from_container(base_object, parts)
+        except (KeyError, AttributeError, IndexError, TypeError) as e:
+            # ENHANCED FALLBACK LOGIC
+            if base_object_name == "context" and shared_context_for_fallback:
+                # Handle common cases where paths like {context.data.project_id} are used
+                # but the value is actually stored as a direct attribute
+                if len(parts) == 2 and parts[0] == "data":
+                    # Path like context.data.project_id - try context.project_id directly
+                    field_name = parts[1]
+                    if hasattr(shared_context_for_fallback, field_name):
+                        self.logger.info(
+                            f"Path '{path_expression}' (parsed as base='{base_object_name}', parts={parts}) resolution failed with {type(e).__name__}: {e}. "
+                            f"Attempting fallback to direct attribute 'shared_context.{field_name}'."
+                        )
+                        return getattr(shared_context_for_fallback, field_name)
+                
+                # Legacy fallback logic for project_root_path
+                is_context_global_config_project_dir = (
+                    parts == ["global_config", "project_dir"] and
+                    shared_context_for_fallback.data and
+                    "project_root_path" in shared_context_for_fallback.data
+                )
+                is_context_project_root_path = (
+                    parts == ["project_root_path"] and
+                    shared_context_for_fallback.data and
+                    "project_root_path" in shared_context_for_fallback.data
+                )
+
+                if is_context_global_config_project_dir:
+                    self.logger.info(
+                        f"Path '{path_expression}' (parsed as base='{base_object_name}', parts={parts}) resolution failed with {type(e).__name__}: {e}. "
+                        f"Attempting fallback to 'shared_context.data.project_root_path'."
+                    )
+                    return shared_context_for_fallback.data.get("project_root_path")
+                elif is_context_project_root_path:
+                    self.logger.info(
+                        f"Path '{path_expression}' (parsed as base='{base_object_name}', parts={parts}) resolution failed with {type(e).__name__}: {e}. "
+                        f"Directly attempting 'shared_context.data.project_root_path' as it was requested."
+                    )
+                    return shared_context_for_fallback.data.get("project_root_path")
+
+            self.logger.warning(f"Error resolving path part in '{path_expression}': {e}. Base object: {base_object_name}, Parts: {parts}")
+            raise # Re-raise the original error if no fallback handled it
+
+    def _parse_accessors(self, path_str: str) -> List[str]:
+        """
+        Parses a dot-separated path string with potential indexing into a list of accessors.
+        Example: "key1[0].key2['sub_key']" -> ["key1", "[0]", "key2", "['sub_key']"]
+        Handles simple dot separation if regex doesn't match complex parts.
+        """
+        if not path_str:
+            return []
+
+        accessors: List[str] = []
+        remaining_path = path_str
+
+        # First, split by '.' to handle top-level attributes
+        # Then, for each part, check if it contains '[]' for indexing/dict access
+        # This is a simplified approach compared to a single complex regex for all cases.
+
+        # Split by '.' that are NOT inside quotes within brackets
+        # This is tricky. A simpler way is to split by '.' and then re-join parts that were inside brackets.
+        # Or, use the _accessor_regex to find all individual components.
+
+        # Let's use a method that iteratively consumes the path.
+        # Start with the first part before any brackets or dots.
+        match = re.match(r"([a-zA-Z0-9_-]+)(.*)", remaining_path)
+        if match:
+            accessors.append(match.group(1))
+            remaining_path = match.group(2)
+        
+        # Now process the rest which should start with . or [
+        while remaining_path:
+            part_match = self._accessor_regex.match(remaining_path)
+            if part_match:
+                # Find which group matched to get the accessor
+                # Group 1: .attribute
+                # Group 2: ['key']
+                # Group 3: [\"key\"]
+                # Group 4: [index]
+                if part_match.group(1): # .attribute
+                    accessors.append(part_match.group(1))
+                elif part_match.group(2): # ['key']
+                    accessors.append(f"[{part_match.group(2)}]" if part_match.group(2) else "")
+                elif part_match.group(3): # [\"key\"]
+                    accessors.append(f"[{part_match.group(3)}]" if part_match.group(3) else "")
+                elif part_match.group(4): # [index]
+                    accessors.append(f"[{part_match.group(4)}]" if part_match.group(4) else "")
+                else:
+                    # Should not happen if regex is correct and one group matches
+                    self.logger.error(f"Accessor regex matched but no group captured for remaining path: {remaining_path}")
+                    break 
+                remaining_path = remaining_path[part_match.end():]
+            else:
+                # If regex doesn't match, it means the path is malformed or ends unexpectedly
+                if remaining_path: # If there's still unparsed path
+                    self.logger.warning(f"Could not parse remaining accessor path: '{remaining_path}' from original '{path_str}'")
+                break
+        
+        # self.logger.debug(f"Parsed '{path_str}' into accessors: {accessors}")
+        return accessors
+
     def resolve_single_path(
         self,
         path_expression: str,
         shared_context: Optional[SharedContext] = None,
-        allow_partial: bool = False # ADDED allow_partial
+        allow_partial: bool = False 
     ) -> Any:
         """
-        Resolves a single dot-separated path expression against the shared context.
-        Example: "{context.outputs.stage_one.keyA}" or "@artifact.my_id.path"
-        Handles direct attribute access, dictionary key access (including quoted keys), and list indexing.
+        Resolves a complex path expression like "context.outputs.stage_name.key[0].attribute"
+        or "file_inputs.my_file.content" or "@artifact.id.content".
+        Restored original logic flow.
         """
-        current_shared_context = shared_context if shared_context else self.shared_context
-        if not current_shared_context:
-            self.logger.warning("SharedContext is not available for path resolution.")
-            # If allow_partial is true, we might want to return a specific marker or the original path
-            # For now, returning None aligns with previous behavior for missing context.
-            return None 
+        effective_shared_context = shared_context if shared_context else self.shared_context
+        if not effective_shared_context:
+            self.logger.error("SharedContext is not available for path resolution.")
+            if allow_partial: return None
+            raise ValueError("SharedContext is not available for path resolution.")
 
-        original_path_expression = path_expression # Keep for logging
+        original_path_expression_for_logging = path_expression # Keep for logging
 
-        # Normalize: strip {}
+        # Normalize: strip {} if present
         clean_path = path_expression
         if path_expression.startswith("{") and path_expression.endswith("}"):
             clean_path = path_expression[1:-1]
         
         if not clean_path:
-            self.logger.warning(f"Path expression '{original_path_expression}' became empty after cleaning.")
-            return None
-
-        # self.logger.debug(f"Resolving single path: '{clean_path}' (original: '{original_path_expression}')")
+            self.logger.warning(f"Path expression '{original_path_expression_for_logging}' became empty after cleaning.")
+            if allow_partial: return None
+            # Raising an error for an empty path seems appropriate
+            raise ValueError(f"Path expression '{original_path_expression_for_logging}' is empty or invalid.")
 
         if clean_path.startswith("@"):
             try:
-                return self._resolve_at_path(clean_path, current_shared_context)
+                return self._resolve_at_path(clean_path, effective_shared_context)
             except Exception as e:
                 self.logger.warning(f"Failed to resolve @path '{clean_path}': {e}")
-                if allow_partial: return None # Or path_expression if we want to return unresolved paths
-                raise # Re-raise if not allowing partial resolution to signal critical failure
-
-        path_parts = clean_path.split('.', 1)
-        base_name = path_parts[0]
-        remaining_access_path_str = path_parts[1] if len(path_parts) > 1 else None
-        
-        current_value: Any
-        
-        # Determine the base object from SharedContext
-        if base_name == "context":
-            # If path is just "{context}", return the SharedContext object itself (or its data representation)
-            if not remaining_access_path_str:
-                # Decide what "{context}" itself should resolve to. 
-                # Returning the .data attribute seems more useful for templating than the object itself.
-                return current_shared_context.data if hasattr(current_shared_context, 'data') else current_shared_context
-
-            # Standardize to start processing from current_shared_context.data if path implies structured data access
-            # Path examples: context.outputs.stage.key, context.data.project_id, context.project_id (direct attribute)
-            
-            # Check for direct attributes on SharedContext first (e.g., project_id, run_id)
-            # These should take precedence if they are not dictionary keys under .data
-            first_part_of_remaining = remaining_access_path_str.split('.', 1)[0]
-            
-            is_direct_attribute_on_context = hasattr(current_shared_context, first_part_of_remaining)
-            is_key_in_context_data = (
-                hasattr(current_shared_context, 'data') and 
-                isinstance(current_shared_context.data, dict) and 
-                first_part_of_remaining in current_shared_context.data
-            )
-
-            if is_direct_attribute_on_context and not is_key_in_context_data:
-                # If it's a direct attribute of SharedContext object and NOT also a key in its data dict,
-                # then resolve starting from the SharedContext object itself.
-                current_value = current_shared_context
-                # remaining_access_path_str is already correctly set for _resolve_path_within_object
-            elif first_part_of_remaining == "data" and hasattr(current_shared_context, 'data'):
-                current_value = current_shared_context.data
-                # Strip "data." from the remaining path
-                parts = remaining_access_path_str.split('.', 1)
-                if len(parts) > 1:
-                    remaining_access_path_str = parts[1]
-                else: # Path was just "context.data"
-                    remaining_access_path_str = None # current_value (the data dict) will be returned
-            elif hasattr(current_shared_context, 'data'): # Default to data for other context paths if not direct attr
-                current_value = current_shared_context.data
-                # remaining_access_path_str is already set correctly for _resolve_path_within_object
-                # This case might now be less common if 'data.' prefix is handled above,
-                # but handles cases like "{context.some_key_directly_in_data_dict}"
-            else:
-                self.logger.warning(f"SharedContext has no 'data' attribute, or path 'context.{first_part_of_remaining}' is ambiguous/unresolvable for path '{original_path_expression}'.")
                 if allow_partial: return None
-                raise AttributeError(f"SharedContext attribute or data key '{first_part_of_remaining}' issue for path '{original_path_expression}'")
-            
-            # remaining_access_path_str is already set correctly for _resolve_path_within_object
+                raise 
 
-        elif base_name == "outputs": # For shorthand like {outputs.stage.key}
-            if not hasattr(current_shared_context, 'data') or not isinstance(current_shared_context.data.get("outputs"), dict):
-                self.logger.warning(f"'data[\"outputs\"]' not found or not a dict on SharedContext for path: {original_path_expression}")
+        # Determine base object and parts to resolve
+        # This logic mirrors the original structure more closely.
+        path_parts_split = clean_path.split('.', 1)
+        base_object_name = path_parts_split[0]
+        remaining_path_str = path_parts_split[1] if len(path_parts_split) > 1 else None
+        
+        base_object: Any = None
+
+        if base_object_name == "context":
+            if not remaining_path_str: # Path is just "{context}"
+                return effective_shared_context.data if hasattr(effective_shared_context, 'data') else effective_shared_context
+            
+            # For "context.xxx", use the SharedContext object itself as the base
+            # This allows resolving paths like "context.data.project_id", "context.project_id", etc.
+            # The SharedContext object has both direct attributes (project_id, session_id, etc.)
+            # and a data dict, so this approach handles both cases correctly
+            base_object = effective_shared_context
+            # `parts_to_resolve` will be parsed from `remaining_path_str`
+
+        elif base_object_name == "outputs":
+            if not hasattr(effective_shared_context, 'data') or not isinstance(effective_shared_context.data.get("outputs"), dict):
+                self.logger.warning(f"'data[\"outputs\"]' not found or not a dict on SharedContext for path: {original_path_expression_for_logging}")
                 if allow_partial: return None
                 raise AttributeError("'data[\"outputs\"]' not found or not a dict on SharedContext")
-            current_value = current_shared_context.data["outputs"]
-            # remaining_access_path_str is already set
+            base_object = effective_shared_context.data["outputs"]
+            # `parts_to_resolve` will be parsed from `remaining_path_str`
 
-        elif base_name == "global_config": # For {global_config.some_key}
-            if not hasattr(current_shared_context, 'data') or not isinstance(current_shared_context.data.get("global_config"), dict):
-                self.logger.warning(f"'data[\"global_config\"]' not found or not a dict on SharedContext for path: {original_path_expression}")
+        elif base_object_name == "prev_outputs": # Added this case based on _resolve_value
+            if not hasattr(effective_shared_context, 'data') or not isinstance(effective_shared_context.data.get("prev_outputs"), dict):
+                self.logger.warning(f"'data[\"prev_outputs\"]' not found or not a dict on SharedContext for path: {original_path_expression_for_logging}")
                 if allow_partial: return None
-                raise AttributeError("'data[\"global_config\"]' not found or not a dict on SharedContext")
-            current_value = current_shared_context.data["global_config"]
-            # remaining_access_path_str is already set
+                raise AttributeError("'data[\"prev_outputs\"]' not found or not a dict on SharedContext")
+            base_object = effective_shared_context.data["prev_outputs"]
+             # `parts_to_resolve` will be parsed from `remaining_path_str`
 
-        # Add other top-level namespaces if necessary, e.g., "inputs", "settings"
-        # For now, assume other base_names might be custom top-level keys in shared_context.data
-        elif hasattr(current_shared_context, 'data') and isinstance(current_shared_context.data, dict) and base_name in current_shared_context.data:
-            current_value = current_shared_context.data[base_name]
-            # remaining_access_path_str is already set
-        else:
-            self.logger.warning(f"Base path element '{base_name}' not found in SharedContext or its data for path: {original_path_expression}")
-            if allow_partial: return None
-            raise KeyError(f"Base path element '{base_name}' not found in SharedContext for '{original_path_expression}'")
+        else: # Assume other base_names are top-level keys in shared_context.data or direct attributes
+            if hasattr(effective_shared_context, 'data') and isinstance(effective_shared_context.data, dict) and base_object_name in effective_shared_context.data:
+                base_object = effective_shared_context.data[base_object_name]
+                # `parts_to_resolve` will be parsed from `remaining_path_str`
+            elif hasattr(effective_shared_context, base_object_name): # Direct attribute on SharedContext object
+                base_object = effective_shared_context # The object itself is the base
+                # `parts_to_resolve` will be parsed from `clean_path` directly by _parse_accessors
+                # No, `base_object_name` is the first part, `remaining_path_str` is the rest.
+                # So `_parse_accessors` should operate on `clean_path` if base_object is shared_context itself.
+                # This needs care. If path is "run_id", base_object_name="run_id", remaining_path_str=None
+                # The current split logic might not handle this perfectly if base_object_name is the *entire* path.
 
-        if remaining_access_path_str is None:
-            # Path was just "{context}" or "{outputs}" - return the base object determined above
-            return current_value 
-        
-        try:
-            # self.logger.debug(f"Calling _resolve_path_within_object with obj: {type(current_value)}, path_str: '{remaining_access_path_str}'")
-            return self._resolve_path_within_object(current_value, remaining_access_path_str, allow_partial=allow_partial)
-        except (KeyError, AttributeError, IndexError, TypeError) as e:
-            self.logger.warning(f"Could not resolve path '{remaining_access_path_str}' within the identified base object for '{original_path_expression}'. Error: {e}")
-            if allow_partial: return None # Or path_expression
-            raise
+                # If remaining_path_str is None, it means the path was just the base_object_name
+                if remaining_path_str is None:
+                     return getattr(effective_shared_context, base_object_name) # Return the attribute directly
+                # If there is a remaining_path_str, it means base_object_name was an attribute, and we need to delve deeper
+                base_object = getattr(effective_shared_context, base_object_name)
+                # `parts_to_resolve` will be parsed from `remaining_path_str`
+            else:
+                self.logger.warning(f"Base path element '{base_object_name}' not found in SharedContext or its data for path: {original_path_expression_for_logging}")
+                if allow_partial: return None
+                raise KeyError(f"Base path element '{base_object_name}' not found for '{original_path_expression_for_logging}'")
+
+        if remaining_path_str is None:
+            # Path was just a base name like "{context}", "{outputs}", or "{run_id}" (if run_id is direct attr)
+            return base_object # Return the base object itself
+
+        parts_to_resolve = self._parse_accessors(remaining_path_str)
+        if not parts_to_resolve: # If parsing remaining_path_str yields no further accessors
+             # This can happen if remaining_path_str was a simple key that _parse_accessors didn't break down further
+             # but _get_value_from_container expects a list.
+             # However, _get_value_from_container should handle a single string in parts if it's a direct key/attr.
+             # Let's reconsider: _parse_accessors should return [remaining_path_str] if it's a simple attribute.
+             # For now, if it's empty, but remaining_path_str was not None, it might be an issue with _parse_accessors or path.
+             # This case should ideally be covered by _get_value_from_container if `parts_to_resolve` is `[remaining_path_str]`
+             # If `remaining_path_str` was "foo" and `_parse_accessors` returns `["foo"]`, then `_get_value_from_container` works.
+             # If `_parse_accessors` returns `[]` for non-empty `remaining_path_str`, that's a bug in `_parse_accessors`.
+             # Assuming _parse_accessors correctly returns e.g. ["project_id"] for "project_id"
+             pass
+
+
+        # Crucial: Pass effective_shared_context for the fallback mechanism
+        return self._resolve_path_value_from_base_and_parts(
+            base_object_name, 
+            base_object, 
+            parts_to_resolve, 
+            original_path_expression_for_logging, # Pass original for logging
+            effective_shared_context
+        )
 
     def resolve_path_value_from_context(
         self,

@@ -28,7 +28,7 @@ from chungoid.utils.state_manager import StateManager
 from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus, OnFailureAction
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec, ClarificationCheckpointSpec, MasterStageFailurePolicy, UserGoalRequest
-from chungoid.schemas.orchestration import SharedContext
+from chungoid.schemas.orchestration import SharedContext, ResumeContext # ADDED ResumeContext
 from chungoid.schemas.agent_master_planner_reviewer import MasterPlannerReviewerInput, MasterPlannerReviewerOutput, ReviewerActionType, RetryStageWithChangesDetails
 from chungoid.schemas.metrics import MetricEvent, MetricEventType
 from chungoid.utils.metrics_store import MetricsStore
@@ -37,6 +37,7 @@ from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAge
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import EXECUTION_PLANS_COLLECTION, ProjectChromaManagerAgent_v1
 from chungoid.schemas.project_state import ProjectStateV2, RunRecord, StageRecord
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 # For checking agent_id
+from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1 # ADDED
 from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput # MODIFIED
 from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput # ADDED
 
@@ -579,156 +580,168 @@ class AsyncOrchestrator(BaseOrchestrator):
         self.shared_context.current_attempt_number_for_stage = attempt_number
         self._emit_metric(MetricEventType.MASTER_STAGE_START, flow_id, run_id, stage_id=stage_name, agent_id=stage_spec.agent_id, data={"attempt_number": attempt_number})
 
-        agent_callable = None
+        agent_callable: Optional[Callable[..., Any]] = None
+        agent_instance_for_type_check: Optional[BaseAgent] = None # To hold the resolved agent instance
         resolved_inputs = {}
         try:
             # Resolve inputs first using ContextResolutionService
-            # This will also handle parameter mapping if defined in stage_spec.parameter_mapping
             resolved_inputs = self.context_resolver.resolve_inputs_for_stage(
                 inputs_spec=stage_spec.inputs or {},
                 shared_context_override=self.shared_context
             )
             self.logger.debug(f"Run {run_id}: Resolved inputs for stage '{stage_name}': {resolved_inputs}")
 
-            # Store resolved inputs in shared_context before agent call, for potential error reporting
             self.shared_context.update_resolved_inputs_for_current_stage(resolved_inputs)
 
-            # Get agent callable
-            agent_callable = self.agent_provider.get(identifier=stage_spec.agent_id)
+            # Get agent instance for type checking and its callable
+            # Ensure shared_context is passed to provider if it needs it for instantiation
+            if isinstance(self.agent_provider, RegistryAgentProvider):
+                # If it's a RegistryAgentProvider, it should have set_orchestrator_shared_context
+                # or accept shared_context in its get methods.
+                # The get_raw_agent_instance in RegistryAgentProvider was updated to accept shared_context.data
+                self.agent_provider.set_orchestrator_shared_context(self.shared_context.data) # Pass the .data part
+                agent_instance_for_type_check = self.agent_provider.get_raw_agent_instance(
+                    stage_spec.agent_id, 
+                    shared_context=self.shared_context.data # Pass the .data part
+                )
+            else: # Fallback for other providers, may not support raw instance easily
+                 agent_instance_for_type_check = None # Or try a more generic way if available
 
-            # Special handling for MasterPlannerAgent - it needs full context and plan
-            # MasterPlannerAgent's invoke_async signature is (self, inputs: MasterPlannerInput, full_context: SharedContext)
-            if stage_spec.agent_id == MasterPlannerAgent.AGENT_ID: # Direct check for MasterPlannerAgent
+            if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
+                agent_callable = agent_instance_for_type_check.invoke_async
+            else: # Fallback if raw instance not available or no invoke_async
+                agent_callable = self.agent_provider.get(identifier=stage_spec.agent_id, shared_context=self.shared_context.data)
+
+
+            # Ensure agent_callable is actually callable
+            if not callable(agent_callable):
+                raise OrchestrationError(
+                    f"Agent ID '{stage_spec.agent_id}' resolved to a non-callable item: {type(agent_callable)}.",
+                    stage_name=stage_name, agent_id=stage_spec.agent_id, run_id=run_id
+                )
+
+            # Dispatch based on instance type
+            if isinstance(agent_instance_for_type_check, MasterPlannerAgent):
                 if not isinstance(resolved_inputs, MasterPlannerInput):
                      self.logger.info(f"Run {run_id}: Constructing MasterPlannerInput for stage '{stage_name}'")
-                     # Ensure all required fields for MasterPlannerInput are present or defaulted
                      current_plan_id = self.current_plan.id if self.current_plan else f"unknown_plan_for_run_{run_id}"
                      user_goal_for_planner = resolved_inputs.get("user_goal", self.initial_goal_str or f"Execute plan {current_plan_id}")
                      
                      master_plan_input = MasterPlannerInput(
-                         master_plan_id=current_plan_id, # Use current plan's ID
+                         master_plan_id=current_plan_id,
                          flow_id=flow_id,
                          run_id=run_id,
                          user_goal=user_goal_for_planner,
-                         # plan_instructions can be added if available in resolved_inputs
-                         # initial_context_data might be too verbose, consider if specific parts are needed
                      )
-                     raw_output = await agent_callable(inputs=master_plan_input, full_context=self.shared_context)
+                     raw_output = await agent_callable(inputs=master_plan_input, full_context=self.shared_context) # Still use agent_callable
                 else:
                     raw_output = await agent_callable(inputs=resolved_inputs, full_context=self.shared_context)
             
-            # Special handling for CoreCodeGeneratorAgent_v1 - it takes SmartCodeGeneratorAgentInput as 'task_input'
-            # Its invoke_async signature is (self, task_input: SmartCodeGeneratorAgentInput, full_context: SharedContext)
-            elif stage_spec.agent_id == CoreCodeGeneratorAgent_v1.AGENT_ID:
+            elif isinstance(agent_instance_for_type_check, CoreCodeGeneratorAgent_v1):
                 smart_input_for_core_gen: SmartCodeGeneratorAgentInput
                 if not isinstance(resolved_inputs, SmartCodeGeneratorAgentInput):
-                    self.logger.warning(f"Run {run_id}: Stage '{stage_name}' uses agent '{stage_spec.agent_id}' but inputs are not SmartCodeGeneratorAgentInput. Attempting conversion.")
-                    
-                    # START ADDED UNWRAPPING LOGIC
+                    self.logger.warning(f"Run {run_id}: Stage '{stage_name}' uses agent '{stage_spec.agent_id}' (resolved to CoreCodeGeneratorAgent_v1) but inputs are not SmartCodeGeneratorAgentInput. Attempting conversion.")
                     actual_inputs_for_conversion = resolved_inputs
                     if isinstance(resolved_inputs, dict) and list(resolved_inputs.keys()) == ["inputs"] and isinstance(resolved_inputs.get("inputs"), dict):
                         self.logger.info(f"Orchestrator (Run {run_id}): Unwrapping {{'inputs': <dict>}} structure from resolved_inputs for {stage_spec.agent_id}. Original: {resolved_inputs}")
                         actual_inputs_for_conversion = resolved_inputs["inputs"]
-                    # END ADDED UNWRAPPING LOGIC
-                        
+                    
+                    # ADDED: Ensure project_id is present for CoreCodeGeneratorAgent_v1 or its aliases
+                    # Check instance type OR agent_id string
+                    is_code_generator_variant = isinstance(agent_instance_for_type_check, CoreCodeGeneratorAgent_v1) or \
+                                                (stage_spec and stage_spec.agent_id == "SmartCodeGeneratorAgent_v1")
+
+                    if is_code_generator_variant and isinstance(actual_inputs_for_conversion, dict) and "project_id" not in actual_inputs_for_conversion:
+                        project_id_from_context = self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
+                        if project_id_from_context:
+                            self.logger.info(f"Run {run_id}: Injecting project_id '{project_id_from_context}' into inputs for {stage_spec.agent_id} stage '{stage_name}'.")
+                            actual_inputs_for_conversion["project_id"] = project_id_from_context
+                        else:
+                            self.logger.warning(f"Run {run_id}: project_id missing for {stage_spec.agent_id} stage '{stage_name}' and could not be sourced from shared_context.data.")
+
                     try:
-                        smart_input_for_core_gen = SmartCodeGeneratorAgentInput(**actual_inputs_for_conversion) # MODIFIED to use unwrapped inputs
+                        smart_input_for_core_gen = SmartCodeGeneratorAgentInput(**actual_inputs_for_conversion)
                     except Exception as e_conv_smart:
                         self.logger.error(f"Run {run_id}: Failed to convert inputs to SmartCodeGeneratorAgentInput for '{stage_name}': {e_conv_smart}. Raising error.")
                         raise OrchestrationError(f"Input conversion failed for {stage_spec.agent_id}: {e_conv_smart}", stage_name=stage_name, agent_id=stage_spec.agent_id, run_id=run_id) from e_conv_smart
                 else:
                     smart_input_for_core_gen = resolved_inputs
-                raw_output = await agent_callable(task_input=smart_input_for_core_gen, full_context=self.shared_context)
+                raw_output = await agent_callable(task_input=smart_input_for_core_gen, full_context=self.shared_context) # Use agent_callable
             
-            # Special handling for SystemRequirementsGatheringAgent_v1
-            # Its invoke_async signature is (self, inputs: SystemRequirementsGatheringInput, full_context: SharedContext)
-            elif stage_spec.agent_id == "SystemRequirementsGatheringAgent_v1": # TODO: Use AGENT_ID constant
-                req_gathering_input_data = resolved_inputs.copy() # Start with whatever was resolved
+            elif isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
+                req_gathering_input_data = resolved_inputs.copy()
+                self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: self.initial_goal_str is: '{self.initial_goal_str}' (type: {type(self.initial_goal_str)})")
+                self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: 'user_goal' not in req_gathering_input_data is: {"user_goal" not in req_gathering_input_data}")
+                self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: bool(self.initial_goal_str) is: {bool(self.initial_goal_str)}")
+
                 if "user_goal" not in req_gathering_input_data and self.initial_goal_str:
-                    self.logger.info(f"Run {run_id}: Injecting initial_goal_str ('{self.initial_goal_str[:50]}...') as user_goal for SystemRequirementsGatheringAgent_v1.")
+                    self.logger.info(f"Run {run_id}: DIAGNOSTIC INSIDE-IF for SysReqAgent: Condition was TRUE. self.initial_goal_str is: '{self.initial_goal_str}'")
+                    self.logger.info(f"Run {run_id}: Injecting initial_goal_str ('{self.initial_goal_str[:100]}...') as user_goal for SystemRequirementsGatheringAgent_v1.")
                     req_gathering_input_data["user_goal"] = self.initial_goal_str
-                
-                # Ensure resolved_inputs (now req_gathering_input_data) are passed
-                raw_output = await agent_callable(inputs=req_gathering_input_data, full_context=self.shared_context)
-            
-            # Special handling for SystemFileSystemAgent_v1 to pass project_root explicitly
-            # to its invoke_async, as its tools might need it directly if not relying on instance state.
-            # TODO: Revisit if this special casing is ideal. Ideally, all agents get context consistently.
-            if stage_spec.agent_id == SystemFileSystemAgent_v1.AGENT_ID or \
-               (self.agent_provider and hasattr(self.agent_provider, 'get_agent_actual_id_for_alias') and \
-                self.agent_provider.get_agent_actual_id_for_alias(stage_spec.agent_id) == SystemFileSystemAgent_v1.AGENT_ID):
-                
-                # Get the agent instance to call its method.
-                # Ensure shared_context is passed for proper initialization if provider uses it.
-                file_agent_instance = self.agent_provider.get_agent_instance_unsafe(stage_spec.agent_id, shared_context=self.shared_context)
-
-                effective_project_root_for_fs_agent: Optional[Path] = None
-                
-                # --- BEGIN ADDED LOGGING ---
-                sc_data_project_root = None
-                sc_data_mcp_root = None
-                if self.shared_context and self.shared_context.data:
-                    sc_data_project_root = self.shared_context.data.get('project_root_path')
-                    sc_data_mcp_root = self.shared_context.data.get('mcp_root_workspace_path')
-                
-                self.logger.info(
-                    f"Orchestrator[{stage_name}]: Pre-FileSystemAgent Path Check: "
-                    f"shared_context.data['project_root_path'] = '{sc_data_project_root}', "
-                    f"shared_context.data['mcp_root_workspace_path'] = '{sc_data_mcp_root}'"
-                )
-                # --- END ADDED LOGGING ---
-
-                if self.shared_context and self.shared_context.data and self.shared_context.data.get('project_root_path'):
-                    actual_proj_root_str = self.shared_context.data.get('project_root_path')
-                    if actual_proj_root_str: # Ensure it's not None or empty string
-                        effective_project_root_for_fs_agent = Path(actual_proj_root_str)
-                    else:
-                        self.logger.warning(
-                            f"Orchestrator[{stage_name}]: 'project_root_path' in shared_context.data is None or empty. "
-                            f"FileSystemAgent might use an incorrect root."
-                        )
-                        # Fallback logic might be needed here if this state is possible and problematic
-                        # For now, effective_project_root_for_fs_agent will remain None if actual_proj_root_str is None/empty
                 else:
-                    self.logger.warning(
-                        f"Orchestrator[{stage_name}]: 'project_root_path' key not found in shared_context.data or shared_context/data is None. "
-                        f"FileSystemAgent might use an incorrect root."
-                    )
-                    # Fallback logic might be needed here
+                    self.logger.info(f"Run {run_id}: DIAGNOSTIC ELSE for SysReqAgent: Condition was FALSE. 'user_goal' in req_gathering_input_data: {'user_goal' in req_gathering_input_data}. self.initial_goal_str (truthiness): {bool(self.initial_goal_str)}")
                 
-                self.logger.info(f"Orchestrator[{stage_name}]: Invoking {stage_spec.agent_id} (resolved to actual ID: {getattr(file_agent_instance, 'AGENT_ID', 'N/A')}) "
+                self.logger.info(f"Run {run_id}: Inputs being passed to SystemRequirementsGatheringAgent_v1: {req_gathering_input_data}")
+                raw_output = await agent_callable(inputs=req_gathering_input_data, full_context=self.shared_context) # Use agent_callable
+            
+            elif isinstance(agent_instance_for_type_check, SystemFileSystemAgent_v1):
+                # Determine the effective project root for file system operations
+                # This is crucial for SystemFileSystemAgent_v1
+                
+                # ADDED: Diagnostic log
+                self.logger.info(f"Orchestrator[{stage_name}]: Inspecting shared_context.data before determining effective_project_root_for_fs_agent: {self.shared_context.data}")
+
+                effective_project_root_for_fs_agent = self.shared_context.data.get('project_root_path')
+                
+                # REFINED: Fallback logic
+                if not effective_project_root_for_fs_agent:
+                    self.logger.warning(f"Orchestrator[{stage_name}]: 'project_root_path' was not found or was empty in shared_context.data. "
+                                        f"Attempting to fall back to 'mcp_root_workspace_path'.")
+                    effective_project_root_for_fs_agent = self.shared_context.data.get('mcp_root_workspace_path')
+                    if effective_project_root_for_fs_agent:
+                        self.logger.warning(f"Orchestrator[{stage_name}]: Using 'mcp_root_workspace_path' ({effective_project_root_for_fs_agent}) as fallback for FileSystemAgent operations. "
+                                            f"This might be incorrect if a specific project sub-directory was intended.")
+                    else:
+                        self.logger.error(f"Orchestrator[{stage_name}]: CRITICAL - Neither 'project_root_path' nor 'mcp_root_workspace_path' "
+                                          f"could be determined from shared_context.data for FileSystemAgent. File operations will likely fail or use CWD.")
+                
+                # Ensure it's a Path object if found, otherwise it might remain None
+                if isinstance(effective_project_root_for_fs_agent, str):
+                    effective_project_root_for_fs_agent = Path(effective_project_root_for_fs_agent)
+                elif not isinstance(effective_project_root_for_fs_agent, Path) and effective_project_root_for_fs_agent is not None:
+                    self.logger.warning(f"Orchestrator[{stage_name}]: effective_project_root_for_fs_agent was not a str or Path, but {type(effective_project_root_for_fs_agent)}. Setting to None.")
+                    effective_project_root_for_fs_agent = None
+
+                self.logger.info(f"Orchestrator[{stage_name}]: Invoking {stage_spec.agent_id} (resolved to actual ID: {getattr(agent_instance_for_type_check, 'AGENT_ID', 'N/A')}) "
                                  f"with calculated explicit project_root for its invoke_async: '{effective_project_root_for_fs_agent}'")
                 
-                if file_agent_instance and hasattr(file_agent_instance, 'invoke_async'):
-                    raw_output = await file_agent_instance.invoke_async(
-                        inputs=resolved_inputs,
-                        project_root=effective_project_root_for_fs_agent,
-                        shared_context=self.shared_context
-                    )
-                else:
-                    raw_output = await agent_callable(inputs=resolved_inputs, full_context=self.shared_context)
+                # SystemFileSystemAgent.invoke_async has a 'project_root' parameter
+                raw_output = await agent_callable( # Use agent_callable
+                    inputs=resolved_inputs,
+                    project_root=effective_project_root_for_fs_agent, # Pass it explicitly
+                    shared_context=self.shared_context # Pass full shared context
+                )
             
-            # Generic agent invocation pattern
-            # Assumes agent_callable is the async method (e.g., invoke_async) and takes (task_input, full_context) or (inputs, full_context)
-            else:
-                # Default assumption: agent_callable is an async method that takes 'inputs' and 'full_context'
-                # If specific agents have different signatures (e.g. 'task_input'), they need elif blocks like CoreCodeGeneratorAgent_v1
+            else: # Generic agent invocation pattern
                 try:
                     raw_output = await agent_callable(inputs=resolved_inputs, full_context=self.shared_context)
                 except TypeError as te_invoke:
-                    # Attempt with task_input if 'inputs' failed, as a common alternative
                     if "got an unexpected keyword argument 'inputs'" in str(te_invoke) or \
                        "missing 1 required positional argument: 'task_input'" in str(te_invoke) or \
                        (hasattr(agent_callable, '__self__') and hasattr(agent_callable.__self__.__class__, 'INPUT_SCHEMA') and 'task_input' in agent_callable.__code__.co_varnames):
                         
                         self.logger.warning(f"Run {run_id}: Agent '{stage_spec.agent_id}' call with 'inputs' failed or agent expects 'task_input'. Retrying with 'task_input'. Error (if any): {te_invoke}")
                         try:
-                            agent_instance = getattr(agent_callable, '__self__', None)
-                            input_model_cls = getattr(agent_instance, 'INPUT_SCHEMA', None) if agent_instance else None
+                            # For retry, determine input model if possible for conversion
+                            input_model_cls_for_retry = None
+                            if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'INPUT_SCHEMA'):
+                                input_model_cls_for_retry = agent_instance_for_type_check.INPUT_SCHEMA
+                            elif hasattr(agent_callable, '__self__') and hasattr(agent_callable.__self__.__class__, 'INPUT_SCHEMA'): # Fallback if instance not resolved early
+                                input_model_cls_for_retry = agent_callable.__self__.__class__.INPUT_SCHEMA
                             
-                            processed_task_input = resolved_inputs
-                            if input_model_cls and isinstance(resolved_inputs, dict):
-                                self.logger.info(f"Run {run_id}: Attempting to parse resolved_inputs into {input_model_cls.__name__} for agent '{stage_spec.agent_id}'.")
+                            processed_task_input_for_retry = resolved_inputs
+                            if input_model_cls_for_retry and isinstance(resolved_inputs, dict) and not isinstance(resolved_inputs, input_model_cls_for_retry):
+                                self.logger.info(f"Run {run_id}: Attempting to parse resolved_inputs into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}' (retry with task_input).")
                                 try:
                                     actual_payload_dict = resolved_inputs
                                     if len(resolved_inputs) == 1:
@@ -738,13 +751,13 @@ class AsyncOrchestrator(BaseOrchestrator):
                                             temp_payload = temp_payload[first_key]
                                         if isinstance(temp_payload, dict):
                                             actual_payload_dict = temp_payload
-                                        elif first_key.lower() == input_model_cls.__name__.lower() and isinstance(resolved_inputs[first_key], dict):
+                                        elif first_key.lower() == input_model_cls_for_retry.__name__.lower() and isinstance(resolved_inputs[first_key], dict):
                                             actual_payload_dict = resolved_inputs[first_key]
 
-                                    processed_task_input = input_model_cls.model_validate(actual_payload_dict)
-                                    self.logger.info(f"Run {run_id}: Successfully parsed inputs into {input_model_cls.__name__}.")
+                                    processed_task_input_for_retry = input_model_cls_for_retry.model_validate(actual_payload_dict)
+                                    self.logger.info(f"Run {run_id}: Successfully parsed inputs into {input_model_cls_for_retry.__name__}.")
                                 except ValidationError as e_parse_validation:
-                                    self.logger.error(f"Run {run_id}: Pydantic ValidationError parsing resolved_inputs into {input_model_cls.__name__} for agent '{stage_spec.agent_id}': {e_parse_validation}", exc_info=True)
+                                    self.logger.error(f"Run {run_id}: Pydantic ValidationError parsing resolved_inputs into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}': {e_parse_validation}", exc_info=True)
                                     raise OrchestrationError(
                                         message=f"Input validation failed for agent {stage_spec.agent_id}: {e_parse_validation}",
                                         stage_name=stage_name,
@@ -752,14 +765,14 @@ class AsyncOrchestrator(BaseOrchestrator):
                                         run_id=run_id
                                     ) from e_parse_validation
                                 except (TypeError, AttributeError) as e_parse_other: # Catch other parsing/validation related errors
-                                    self.logger.error(f"Run {run_id}: Failed to parse resolved_inputs into {input_model_cls.__name__} for agent '{stage_spec.agent_id}' (non-ValidationError): {e_parse_other}. Passing dict as is.", exc_info=True)
-                                    processed_task_input = resolved_inputs
+                                    self.logger.error(f"Run {run_id}: Failed to parse resolved_inputs into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}' (non-ValidationError): {e_parse_other}. Passing dict as is.", exc_info=True)
+                                    processed_task_input_for_retry = resolved_inputs
                             elif not isinstance(resolved_inputs, BaseModel):
-                                self.logger.warning(f"Run {run_id}: Agent '{stage_spec.agent_id}' expects '{input_model_cls.__name__ if input_model_cls else 'Pydantic model'}' but received dict that could not be parsed, or non-dict. Passing as is.")
+                                self.logger.warning(f"Run {run_id}: Agent '{stage_spec.agent_id}' expects '{input_model_cls_for_retry.__name__ if input_model_cls_for_retry else 'Pydantic model'}' but received dict that could not be parsed, or non-dict. Passing as is.")
 
-                            raw_output = await agent_callable(task_input=processed_task_input, full_context=self.shared_context)
+                            raw_output = await agent_callable(task_input=processed_task_input_for_retry, full_context=self.shared_context)
                         except Exception as e_task_input_retry:
-                            self.logger.error(f"Run {run_id}: Agent '{stage_spec.agent_id}' call with 'task_input' (type: {type(processed_task_input).__name__}) also failed: {e_task_input_retry}", exc_info=True)
+                            self.logger.error(f"Run {run_id}: Agent '{stage_spec.agent_id}' call with 'task_input' (type: {type(processed_task_input_for_retry).__name__}) also failed: {e_task_input_retry}", exc_info=True)
                             raise OrchestrationError(f"Agent invocation failed for {stage_spec.agent_id} with both 'inputs' and 'task_input' parameters. Last error: {e_task_input_retry}", stage_name=stage_name, agent_id=stage_spec.agent_id, run_id=run_id) from e_task_input_retry
                     else:
                         raise # Re-raise original TypeError if not related to inputs/task_input mismatch
@@ -1093,6 +1106,34 @@ class AsyncOrchestrator(BaseOrchestrator):
                 if not resolved_inputs_for_error_handler: # If not set by criteria failure block
                     resolved_inputs_for_error_handler = self.shared_context.get_resolved_inputs_for_current_stage() or {}
                 
+                # MODIFIED: Selective deepcopy for shared_context_at_error
+                shared_context_at_error: Optional[SharedContext] = None
+                if self.shared_context:
+                    try:
+                        # Start with a shallow copy of the SharedContext object itself
+                        shared_context_at_error = self.shared_context.model_copy(deep=False)
+                        
+                        # Now, selectively deepcopy self.shared_context.data, excluding known manager objects
+                        # These manager keys are based on how build_shared_context_data in cli.py populates it.
+                        manager_keys = ['llm_manager', 'prompt_manager', 'agent_provider', 'state_manager', 'metrics_store']
+                        
+                        copied_data = {}
+                        for key, value in self.shared_context.data.items():
+                            if key in manager_keys:
+                                copied_data[key] = value  # Reference copy for managers
+                            else:
+                                copied_data[key] = copy.deepcopy(value) # Deepcopy for other data
+                        
+                        shared_context_at_error.data = copied_data
+                        
+                    except TypeError as e_pickle_retry:
+                        self.logger.warning(f"Run {run_id}: Selective deepcopy of shared_context.data also failed ({e_pickle_retry}). Falling back to shallow copy of SharedContext entirely for error reporting. Some context details might be mutable references.", exc_info=True)
+                        # Fallback: shallow copy the whole SharedContext object if selective deepcopy of .data also fails
+                        shared_context_at_error = self.shared_context.model_copy(deep=False)
+                    except Exception as e_copy_unexpected:
+                         self.logger.error(f"Run {run_id}: Unexpected error during custom shared_context copy: {e_copy_unexpected}. Using shallow copy.", exc_info=True)
+                         shared_context_at_error = self.shared_context.model_copy(deep=False)
+                
                 error_result: OrchestrationErrorResult = await self.error_handler_service.handle_stage_execution_error(
                     current_stage_name=current_stage_name,
                     flow_id=flow_id,
@@ -1101,7 +1142,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     error=e, # Pass the original exception `e`
                     agent_id_that_erred=stage_spec.agent_id,
                     attempt_number=current_attempt_number_for_stage,
-                    shared_context_at_error=self.shared_context.model_copy(deep=True),
+                    shared_context_at_error=shared_context_at_error, # Use the selectively copied context
                     resolved_inputs_at_failure=resolved_inputs_for_error_handler
                 )
 
@@ -1143,12 +1184,45 @@ class AsyncOrchestrator(BaseOrchestrator):
                 if error_result.next_stage_to_execute == current_stage_name and not (error_result.reviewer_output and error_result.reviewer_output.suggestion_type == ReviewerActionType.PROCEED_AS_IS):
                     self.logger.info(f"Run {run_id}, Flow {flow_id}: Retrying stage '{current_stage_name}' based on error handler result (next attempt: {current_attempt_number_for_stage + 1}).")
                     current_attempt_number_for_stage += 1 
+                    
                     if error_result.modified_stage_inputs is not None:
-                        if current_stage_name in self.current_plan.stages:
-                             self.current_plan.stages[current_stage_name].inputs = error_result.modified_stage_inputs
-                             self.logger.info(f"Run {run_id}: Applied modified inputs from reviewer for retry of stage '{current_stage_name}'.")
+                        actual_inputs_to_apply = None
+                        # Check if modified_stage_inputs has the nested structure {"inputs": {...}}
+                        if isinstance(error_result.modified_stage_inputs, dict) and \
+                           list(error_result.modified_stage_inputs.keys()) == ["inputs"] and \
+                           isinstance(error_result.modified_stage_inputs.get("inputs"), dict):
+                            
+                            actual_inputs_to_apply = error_result.modified_stage_inputs["inputs"]
+                            self.logger.info(f"Run {run_id}: Unwrapped reviewer modified inputs for stage '{current_stage_name}'. Applying: {actual_inputs_to_apply}")
                         else:
-                            self.logger.error(f"Run {run_id}: Could not find stage '{current_stage_name}' in plan to apply modified inputs. This is a bug.")
+                            # Assume modified_stage_inputs is already the flat dictionary of inputs
+                            actual_inputs_to_apply = error_result.modified_stage_inputs
+                            self.logger.info(f"Run {run_id}: Applying reviewer modified inputs (assumed flat) for stage '{current_stage_name}'. Applying: {actual_inputs_to_apply}")
+
+                        if actual_inputs_to_apply is not None:
+                            # Get the MasterStageSpec object for the current stage
+                            # Ensure we are modifying the actual plan's stage spec
+                            if self.current_plan and current_stage_name in self.current_plan.stages:
+                                stage_spec_to_modify = self.current_plan.stages[current_stage_name]
+                                stage_spec_to_modify.inputs = actual_inputs_to_apply.copy() # Use .copy() for safety
+                                self.logger.debug(f"Run {run_id}: Updated self.current_plan.stages['{current_stage_name}'].inputs to: {stage_spec_to_modify.inputs}")
+                                
+                                # Update shared context with the potentially modified inputs
+                                # This might be better placed after ContextResolutionService runs with new stage_spec.inputs,
+                                # but for direct agent calls that might bypass full re-resolution, this is safer.
+                                if self.shared_context:
+                                     # This might be too early if context resolver re-evaluates based on the new stage_spec.inputs.
+                                     # For now, let's assume this provides the most up-to-date view for the agent if it directly uses shared_context.outputs
+                                     # A cleaner way would be to ensure ContextResolutionService is always re-run or takes these pre-resolved.
+                                     # For now, this ensures the inputs are at least available in a known location.
+                                     # This specific update here might be redundant if ContextResolutionService is robustly called next.
+                                     # Consider if this needs to be a deeper update into shared_context structure for 'inputs' of this stage.
+                                     # The primary goal is that `stage_spec.inputs` is correct for the *next* call to `ContextResolutionService`.
+                                     pass # Let ContextResolutionService handle it based on modified stage_spec.inputs
+
+                            else:
+                                self.logger.warning(f"Run {run_id}: Could not update self.current_plan with modified inputs for stage '{current_stage_name}'. Plan or stage not found.")
+                    
                     agent_error_obj = None 
                     self.shared_context.current_stage_id = current_stage_name
                     self.shared_context.current_stage_status = StageStatus.PENDING 
@@ -1197,14 +1271,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 elif error_result.next_stage_to_execute is None and error_result.flow_pause_status == FlowPauseStatus.NOT_PAUSED:
                     self.logger.error(f"Run {run_id}, Flow {flow_id}: Error handler returned no next stage and no pause signal. This is a critical error in handler logic. Failing flow.")
                     final_error_obj_logic = agent_error_obj or AgentErrorDetails(stage_id=current_stage_name, agent_id="Orchestrator", error_type="ErrorHandlerLogicError", message="Error handler failed to provide clear next step.")
-                    # await self.state_manager.update_status(run_id, StageStatus.COMPLETED_FAILURE, error_details=final_error_obj_logic) # OLD CALL
-                    self.state_manager.record_flow_end( # MODIFIED: Removed await
-                        run_id=run_id, 
-                        flow_id=self._current_flow_id, # Assuming self._current_flow_id is accessible
-                        final_status=StageStatus.COMPLETED_FAILURE.value, 
-                        error_message=final_error_obj_logic.message if final_error_obj_logic else "Error handler failed to provide clear next step.",
-                        final_outputs=self.shared_context.data.get("outputs") # Add outputs
-                    )
+                    # REMOVED: await self.state_manager.update_run_status(run_id, StageStatus.COMPLETED_FAILURE, error_details=final_error_obj_logic)
                     return StageStatus.COMPLETED_FAILURE, final_error_obj_logic
                 
                 else: 
@@ -1321,15 +1388,15 @@ class AsyncOrchestrator(BaseOrchestrator):
                     try:
                         planner_output = MasterPlannerOutput(**planner_output_raw)
                     except Exception as e_parse_planner_out:
-                        self.logger.error(f"Run {run_id}: Failed to parse MasterPlannerAgent output dict: {e_parse_planner_out}", exc_info=True)
-                        raise OrchestratorError(f"MasterPlannerAgent output parsing failed: {e_parse_planner_out}", run_id=run_id, agent_id=planner_agent_id) from e_parse_planner_out
+                        self.logger.error(f"Run {run_id}: Failed to parse MasterPlannerAgent output dict: {e_parse_planner_out}")
+                        raise OrchestrationError(f"MasterPlannerAgent output parsing failed: {e_parse_planner_out}", run_id=run_id, agent_id=planner_agent_id) from e_parse_planner_out
                 else:
                     self.logger.error(f"Run {run_id}: MasterPlannerAgent returned unexpected output type: {type(planner_output_raw)}. Expected MasterPlannerOutput or dict.")
-                    raise OrchestratorError(f"MasterPlannerAgent returned unexpected output type: {type(planner_output_raw)}", run_id=run_id, agent_id=planner_agent_id)
+                    raise OrchestrationError(f"MasterPlannerAgent returned unexpected output type: {type(planner_output_raw)}", run_id=run_id, agent_id=planner_agent_id)
 
                 if not planner_output or not planner_output.master_plan_json:
                     self.logger.error(f"Run {run_id}: MasterPlannerAgent did not return a JSON plan.")
-                    raise OrchestratorError("MasterPlannerAgent failed to generate a plan JSON.", run_id=run_id, agent_id=planner_agent_id)
+                    raise OrchestrationError("MasterPlannerAgent failed to generate a plan JSON.", run_id=run_id, agent_id=planner_agent_id)
 
                 self.logger.info(f"Run {run_id}: MasterPlannerAgent generated JSON plan:\n{planner_output.master_plan_json[:500]}...")
                 

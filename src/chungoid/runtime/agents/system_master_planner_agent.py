@@ -76,37 +76,37 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "  - **Inputs Structure:**\\n"
     "    - `tool_name` (str): The specific file system operation to perform (e.g., \"create_directory\", \"write_to_file\", \"read_file\", \"delete_file\", \"path_exists\", \"list_directory_contents\", \"move_path\", \"copy_path\", \"write_artifact_to_file_tool\").\\n"
     "    - `tool_input` (dict): A dictionary containing the arguments for the specified `tool_name`. Refer to the `SystemFileSystemAgent_v1` definition for the exact input schema for each tool.\\n"
-    "  - **Example Stage (Create Directory):**\\n"
-    "    \`\`\`json\\n"
-    "    {\\n"
-    "      \"name\": \"create_src_directory\",\\n"
-    "      \"agent_id\": \"FileOperationAgent_v1\",\\n"
-    "      \"inputs\": {\\n"
-    "        \"tool_name\": \"create_directory\",\\n"
-    "        \"tool_input\": {\\n"
-    "          \"path\": \"src\"\\n"
-    "        }\\n"
-    "      },\\n"
-    "      \"next_stage\": \"...\"\\n"
-    "    }\\n"
-    "    \`\`\`\\n"
-    "  - **Example Stage (Write File):**\\n"
-    "    \`\`\`json\\n"
-    "    {\\n"
-    "      \"name\": \"write_main_py\",\\n"
-    "      \"agent_id\": \"FileOperationAgent_v1\",\\n"
-    "      \"inputs\": {\\n"
-    "        \"tool_name\": \"write_to_file\",\\n"
-    "        \"tool_input\": {\\n"
-    "          \"path\": \"src/main.py\",\\n"
-    "          \"content\": \"# Initial content\"\\n"
-    "        }\\n"
-    "      },\\n"
-    "      \"next_stage\": \"...\"\\n"
-    "    }\\n"
-    "    \`\`\`\\n"
-    "  - **Important:** Ensure `path` values in `tool_input` are relative to the project root.\\n"
-    "- `SystemTestRunnerAgent_v1`: Generates and runs test code. Requires `test_target_path` (str, relative to project root, can be a file or directory) in `inputs`. Optionally accepts `pytest_options` (str), `project_root_path` (str - usually derived from context).\\n"
+    "  - **Example Stage (Create Directory):**\n"
+    "    ```json\n"
+    "    {\n"
+    "      \"name\": \"create_src_directory\",\n"
+    "      \"agent_id\": \"FileOperationAgent_v1\",\n"
+    "      \"inputs\": {\n"
+    "        \"tool_name\": \"create_directory\",\n"
+    "        \"tool_input\": {\n"
+    "          \"path\": \"src\"\n"
+    "        }\n"
+    "      },\n"
+    "      \"next_stage\": \"...\"\n"
+    "    }\n"
+    "    ```\n"
+    "  - **Example Stage (Write File):**\n"
+    "    ```json\n"
+    "    {\n"
+    "      \"name\": \"write_main_py\",\n"
+    "      \"agent_id\": \"FileOperationAgent_v1\",\n"
+    "      \"inputs\": {\n"
+    "        \"tool_name\": \"write_to_file\",\n"
+    "        \"tool_input\": {\n"
+    "          \"path\": \"src/main.py\",\n"
+    "          \"content\": \"# Initial content\"\n"
+    "        }\n"
+    "      },\n"
+    "      \"next_stage\": \"...\"\n"
+    "    }\n"
+    "    ```\n"
+    "  - **Important:** Ensure `path` values in `tool_input` are relative to the project root.\n"
+    "- `SystemTestRunnerAgent_v1`: Generates and runs test code. Requires `test_target_path` (str, relative to project root, can be a file or directory) in `inputs`. Optionally accepts `pytest_options` (str), `project_root_path` (str - usually derived from context).\n"
     "- `SystemRequirementsGatheringAgent_v1`: Gathers and refines system requirements. Ensure its outputs distinguish between functional requirements of the app (e.g., 'app must accept zip code') and non-functional or build-time aspects.\\n"
     "- `SystemInterventionAgent_v1`: (Use VERY Sparingly) Requests specific input from a human operator for *system-level build intervention* or clarification when the autonomous build flow cannot proceed. This is NOT for application-level user interaction.\\n"
     "\\n\\n"
@@ -147,6 +147,33 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "      - The test generation stage **MUST** be aware of the exact entities (classes, functions, their names, and the module paths) generated in the preceding `src/` code generation stages and generate imports and test calls that precisely match them.\\n"
     "      - If the code being tested (e.g., in `src/my_module.py`) uses external libraries (e.g., `import scapy`), the generated test code will naturally also need to import those libraries if its mocks or test logic directly interact with types or functions from those libraries. Note this as a potential dependency to be managed.\\n"
     "      - **Do NOT use relative imports like `from ..src import ...` or `from . import ...` unless the test file itself is part of a package structure within `tests/` that mirrors `src/` (which is not the default assumption).**\\n"
+    "**CRITICAL: DEPENDENCY MANAGEMENT FOR TARGET PROJECT:**\\n"
+    "After all primary application code (e.g., in `src/`) has been generated and written to files, and BEFORE generating or running tests, you **MUST** include stages for managing the target project's Python dependencies:\\n"
+    "1.  **Generate `requirements.txt`:**\\n"
+    "    *   **Agent:** `SmartCodeGeneratorAgent_v1`.\\n"
+    "    *   **Purpose:** To analyze all previously generated Python source code in the project (typically in the `src/` directory) and create a comprehensive `requirements.txt` file listing all imported external libraries (e.g., `flask`, `sqlalchemy`, `requests`).\\n"
+    "    *   **Inputs:**\\n"
+    "        *   `task_description`: A clear instruction, e.g., \\\"Analyze all Python files in the 'src/' directory of the project '{context.project_id}'. Identify all unique external library imports (e.g., Flask, SQLAlchemy, pytest). Generate the content for a standard 'requirements.txt' file listing these dependencies, each on a new line. Ensure common libraries like Flask include version specifiers if appropriate (e.g., Flask>=2.0). If unsure about versions, list the library name only. Exclude standard Python libraries. The output should be only the content of the requirements.txt file.\\\"\\n"
+    "        *   `target_file_path`: `requirements.txt` (at the project root).\\n"
+    "        *   `project_id`: `\\\"{context.data.project_id}\\\"`\\n"
+    "    *   **Output Context Path:** Ensure this stage has an `output_context_path`, e.g., `outputs.generate_requirements_file`.\\n"
+    "2.  **Write `requirements.txt` to File:**\\n"
+    "    *   **Agent:** `FileOperationAgent_v1`.\\n"
+    "    *   **Purpose:** To write the generated `requirements.txt` content to the project root.\\n"
+    "    *   **Inputs (`tool_name`: `write_artifact_to_file_tool`):**\\n"
+    "        *   `artifact_doc_id`: `\\\"{context.outputs.generate_requirements_file.generated_code_artifact_doc_id}\\\"` (or the correct stage name).\\n"
+    "        *   `collection_name`: `\\\"{context.outputs.generate_requirements_file.stored_in_collection}\\\"` (or the correct stage name).\\n"
+    "        *   `target_file_path`: `requirements.txt`.\\n"
+    "        *   `overwrite`: `true`.\\n"
+    "3.  **Install Dependencies:**\\n"
+    "    *   **Agent:** `SystemTestRunnerAgent_v1` (leveraging its command execution capability).\\n"
+    "    *   **Purpose:** To install the dependencies listed in `requirements.txt` into the project's environment. This assumes a Python environment is active or that `pip` will install them into the environment used by `pytest` later.\\n"
+    "    *   **Inputs:**\\n"
+    "        *   `project_root_path`: `\\\"{context.project_root_path}\\\"` (to ensure the command runs in the correct directory).\\n"
+    "        *   `test_command_override`: `['pip', 'install', '-r', 'requirements.txt']`. (This tells the agent to run this command instead of pytest).\\n"
+    "        *   `test_command_args`: `[]` (empty list, as `test_command_override` is used).\\n"
+    "    *   **Important:** This stage must occur AFTER `requirements.txt` is written and BEFORE any tests are run or other actions that depend on these libraries.\\n"
+    "These dependency management stages are crucial for the successful execution of subsequent test and deployment stages.\\n\\\\n"
 )
 
 DEFAULT_USER_PROMPT_TEMPLATE = (
@@ -376,7 +403,8 @@ class MasterPlannerAgent(BaseAgent):
                 system_prompt=current_system_prompt,
                 prompt=current_user_prompt,
                 model_id="gpt-4-turbo-preview", # MODIFIED: Used a specific model ID
-                temperature=0.1       # Consistent temperature
+                temperature=0.1,       # Consistent temperature
+                response_format={"type": "json_object"}
             )
             logger.debug(f"Raw LLM JSON response: {llm_response_str}")
 
@@ -566,10 +594,10 @@ async def main_test():
             parsed_plan_1 = MasterExecutionPlan.model_validate_json(
                 output_1.master_plan_json
             )
-            print("\\nPlan 1 successfully parsed.")
+            print("\nPlan 1 successfully parsed.")
             print(f"Plan ID: {parsed_plan_1.id}, Name: {parsed_plan_1.name}")
         except Exception as e:
-            print(f"\\nError parsing generated plan 1: {e}")
+            print("\nError parsing generated plan 1: {e}")
 
     # Test 2: Another goal to ensure mock is not hardcoded to one specific input text
     test_goal_2 = UserGoalRequest(
@@ -587,13 +615,13 @@ async def main_test():
     if output_2.error_message:
         print(f"Error: {output_2.error_message}")
     else:
-        print("\\nGenerated Master Plan JSON (Test 2):")
+        print("\nGenerated Master Plan JSON (Test 2):")
         print(output_2.master_plan_json)
         try:
             parsed_plan_2 = MasterExecutionPlan.model_validate_json(
                 output_2.master_plan_json
             )
-            print("\\nPlan 2 successfully parsed.")
+            print("\nPlan 2 successfully parsed.")
             print(f"Plan ID: {parsed_plan_2.id}, Name: {parsed_plan_2.name}")
             if parsed_plan_2.original_request:
                 print(
@@ -606,7 +634,7 @@ async def main_test():
                 )
 
         except Exception as e:
-            print(f"\\nError parsing generated plan 2: {e}")
+            print("\nError parsing generated plan 2: {e}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ Both implement the `AgentProvider` protocol expected by the refactored
 `FlowExecutor`.
 """
 
-from typing import Callable, Dict, Protocol, runtime_checkable, Optional, List, Any, Tuple, Union, Type, cast
+from typing import Callable, Dict, Protocol, runtime_checkable, Optional, List, Any, Tuple, Union, Type, cast, Coroutine
 from pathlib import Path
 from semver import VersionInfo
 from .agent_registry import AgentCard, AgentRegistry
@@ -211,6 +211,10 @@ class RegistryAgentProvider:
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
         self._project_chroma_manager = project_chroma_manager
+        # ADDED: Store shared_context if provided, or initialize an empty one
+        # This is a slight change in approach: self._shared_context will be set by the orchestrator
+        # via a new method or during get() call, rather than __init__
+        self._orchestrator_shared_context: Optional[Dict[str, Any]] = None 
 
 
         # Lazy MCP client import to keep meta-layer optional in pure-core tests
@@ -229,18 +233,16 @@ class RegistryAgentProvider:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def get(self, identifier: str, category: Optional[str] = None, shared_context: Optional[SharedContext] = None) -> Callable[..., Coroutine[Any, Any, Any]]:
+    def get(self, identifier: str, category: Optional[str] = None, shared_context: Optional[Dict[str, Any]] = None) -> Callable[..., Coroutine[Any, Any, Any]]:
         """
         Retrieves an agent's callable (invoke_async method) by its ID or category.
-        It now also considers shared_context for passing project_root_path to agents.
-
-        Order of resolution:
-        1. Direct ID match in fallback map.
-        2. Direct ID match in AgentRegistry (ChromaDB) - (Not fully shown in this snippet, assumes leads to error or different path for now if not in fallback).
-        3. Category match in AgentRegistry (ChromaDB) - (Not fully shown in this snippet, assumes leads to error or different path for now if not in fallback).
+        It now also accepts shared_context to be passed to agents.
         """
-        logger.debug(f"RegistryAgentProvider GET: identifier='{identifier}', category='{category}', has_shared_context={shared_context is not None}") # MODIFIED Log
-        logger.info(f"RegistryAgentProvider GET: hasattr(self, '_registry'): {hasattr(self, '_registry')}") # DIAGNOSTIC
+        # Stash the shared_context for use during agent instantiation in helper methods
+        self._orchestrator_shared_context = shared_context
+        
+        logger.debug(f"RegistryAgentProvider GET: identifier='{identifier}', category='{category}', has_shared_context={shared_context is not None}")
+        logger.info(f"RegistryAgentProvider GET: hasattr(self, '_registry'): {hasattr(self, '_registry')}")
         if hasattr(self, '_registry'):
             logger.info(f"RegistryAgentProvider GET: self._registry type: {type(self._registry)}, id: {id(self._registry)}") # DIAGNOSTIC
 
@@ -259,7 +261,7 @@ class RegistryAgentProvider:
                     constructor_params = inspect.signature(potential_item.__init__).parameters
                     init_kwargs = {}
                     if 'llm_provider' in constructor_params and self._llm_provider:
-                        init_kwargs['llm_provider'] = self._llm_provider
+                        init_kwargs['llm_provider'] = self._llm_provider.actual_provider
                     if 'prompt_manager' in constructor_params and self._prompt_manager:
                         init_kwargs['prompt_manager'] = self._prompt_manager
                     
@@ -750,111 +752,252 @@ class RegistryAgentProvider:
         # 6. Return resolved agent_id and callable
         return selected_card.agent_id
 
-    def get_agent_callable(self, agent_id: str, shared_context: Optional[SharedContext] = None) -> AgentCallable:
+    def get_agent_callable(self, agent_id: str, shared_context: Optional[Dict[str, Any]] = None) -> AgentCallable:
         """
-        Main method used by Orchestrator to get an agent's primary callable (invoke_async).
-        This now passes shared_context to the underlying get() method.
+        Resolves an agent ID to its `invoke_async` callable.
+        Handles instantiation of BaseAgent subclasses and provides necessary context.
+        MODIFIED: Accepts shared_context and passes it for agent instantiation.
         """
-        logger.debug(f"RegistryAgentProvider: get_agent_callable called for agent_id='{agent_id}', has_shared_context={shared_context is not None}")
+        logger.debug(f"Attempting to get callable for agent_id: {agent_id}")
+        
+        # Stash/update shared_context for this call sequence
+        if shared_context:
+            self._orchestrator_shared_context = shared_context
+
+        if agent_id in self._cache:
+            logger.debug(f"Cache hit for agent_id: {agent_id}")
+            # TODO: Ensure cached instances are also updated with fresh shared_context if necessary,
+            # or that system_context is mutable and updated. For now, assumes direct callable is fine.
+            # If the cached item is an instance method, it will use its original system_context.
+            # This might be an issue if shared_context changes between calls for the same agent_id.
+            # For now, we are returning the invoke_async method of a NEW instance if it's a BaseAgent type.
+            # So, the cache here is more for direct callables than for BaseAgent classes.
+            # Let's refine caching for BaseAgent types.
+            
+            # If the cached item is a BaseAgent class, we need to instantiate it.
+            cached_item = self._cache[agent_id]
+            if inspect.isclass(cached_item) and issubclass(cached_item, BaseAgent):
+                logger.debug(f"Cache hit for {agent_id} is a BaseAgent class. Instantiating with current shared_context.")
+                agent_instance = self._instantiate_agent_class(cached_item, agent_id)
+                if agent_instance:
+                    return getattr(agent_instance, "invoke_async")
+                else:
+                    # Fall through if instantiation failed, should not happen if class is valid
+                    logger.error(f"Failed to re-instantiate cached BaseAgent class {agent_id}")
+            elif callable(cached_item): # It's a direct callable (function or method of an already instantiated object)
+                return cached_item
+            # else: fall through to standard resolution
+
+        # Try fallback map first (often contains system agents or mocks)
+        if agent_id in self._fallback:
+            potential_item = self._fallback[agent_id]
+            logger.debug(f"Found '{agent_id}' in fallback map. Type: {type(potential_item)}")
+
+            if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
+                agent_instance = self._instantiate_agent_class(potential_item, agent_id)
+                if agent_instance:
+                    # Cache the class itself for future re-instantiation
+                    # self._cache[agent_id] = potential_item # Caching class
+                    # Or cache the method of the new instance?
+                    # For now, let's not cache agent instances or their methods to ensure fresh context
+                    return getattr(agent_instance, "invoke_async")
+            elif callable(potential_item): # Direct callable
+                self._cache[agent_id] = potential_item
+                return potential_item
+            else:
+                logger.warning(f"Item for '{agent_id}' in fallback map is not a callable or BaseAgent class: {type(potential_item)}")
+
+        # If not in fallback or fallback item was not suitable, try AgentRegistry (Chroma)
+        # This part of the logic would involve querying self._registry
+        # For now, let's assume if it's not in fallback, we raise an error if it's a known core agent
+        # that should have been in fallback. This mimics current limited scope.
+        
+        # --- SIMULATED REGISTRY LOOKUP / ADVANCED INSTANTIATION ---
+        # In a full implementation, this would query self._registry:
+        # agent_card = self._registry.get_agent_card(agent_id)
+        # if agent_card and agent_card.fully_qualified_class_name:
+        #     try:
+        #         module_path, class_name = agent_card.fully_qualified_class_name.rsplit('.', 1)
+        #         module = importlib.import_module(module_path)
+        #         agent_class = getattr(module, class_name)
+        #         if inspect.isclass(agent_class) and issubclass(agent_class, BaseAgent):
+        #             agent_instance = self._instantiate_agent_class(agent_class, agent_id, agent_card=agent_card)
+        #             if agent_instance:
+        #                 return getattr(agent_instance, "invoke_async")
+        #     except Exception as e:
+        #         logger.error(f"Error dynamically importing or instantiating agent {agent_id} from card: {e}")
+        #         raise NoAgentFoundError(f"Agent {agent_id} found in registry but failed to load: {e}") from e
+
+        # If we reach here, the agent_id was not resolved by any means
+        raise NoAgentFoundError(f"Agent '{agent_id}' could not be resolved to a callable or instantiable class.")
+
+    def _instantiate_agent_class(
+        self, 
+        agent_class: Type[BaseAgent], 
+        agent_id: str,
+        agent_card: Optional[AgentCard] = None
+    ) -> Optional[BaseAgent]:
+        """
+        Helper to instantiate a BaseAgent subclass, injecting necessary dependencies.
+        It uses self._orchestrator_shared_context which should be set before calling this.
+        """
+        logger.debug(f"Instantiating agent class {agent_class.__name__} for agent_id '{agent_id}'")
+        
+        # Prepare system_context for the agent
+        agent_system_context = {}
+        if self._orchestrator_shared_context:
+            # Pass specific items from orchestrator's shared_context to agent's system_context
+            if 'logger' in self._orchestrator_shared_context:
+                agent_system_context['logger'] = self._orchestrator_shared_context['logger']
+            if 'llm_provider' in self._orchestrator_shared_context: # Agents might need this directly
+                 agent_system_context['llm_provider'] = self._orchestrator_shared_context['llm_provider']
+            if 'prompt_manager' in self._orchestrator_shared_context: # Agents might need this directly
+                 agent_system_context['prompt_manager'] = self._orchestrator_shared_context['prompt_manager']
+            # Add other necessary shared components if agents expect them in system_context
+        else:
+            logger.warning(f"Orchestrator shared_context not available while instantiating {agent_id}. Agent's system_context will be minimal.")
+            # Fallback: provide a default logger if none from shared_context
+            agent_system_context['logger'] = logging.getLogger(f"agent.{agent_class.__name__}")
+
+
+        # Prepare agent_init_params (e.g., from agent_card or defaults)
+        agent_init_params: Dict[str, Any] = {}
+        
+        # Example: If agent_card has specific init_params defined
+        # if agent_card and agent_card.agent_specific_config:
+        #     agent_init_params.update(agent_card.agent_specific_config.get("init_params", {}))
+
+        # Add dependencies if the agent's __init__ expects them and they are available in the provider
+        # This requires inspecting the agent_class.__init__ signature
+        init_signature = inspect.signature(agent_class.__init__)
+        constructor_params = init_signature.parameters
+
+        # Explicitly pass provider-held dependencies if agent expects them
+        if 'llm_provider' in constructor_params and self._llm_provider:
+            agent_init_params['llm_provider'] = self._llm_provider.actual_provider
+            logger.debug(f"Added self._llm_provider to init_params for {agent_class.__name__}")
+        if 'prompt_manager' in constructor_params and self._prompt_manager:
+            agent_init_params['prompt_manager'] = self._prompt_manager
+            logger.debug(f"Added self._prompt_manager to init_params for {agent_class.__name__}")
+
+        # MODIFIED: Correct injection of ProjectChromaManagerAgent
+        # Check if the agent's constructor expects 'pcma_agent' or 'project_chroma_manager'
+        # and if the provider has a ProjectChromaManagerAgent instance (self._project_chroma_manager)
+        pcma_param_name_in_agent_constructor = None
+        if 'pcma_agent' in constructor_params:
+            pcma_param_name_in_agent_constructor = 'pcma_agent'
+        elif 'project_chroma_manager' in constructor_params: # Fallback for alternative naming
+            pcma_param_name_in_agent_constructor = 'project_chroma_manager'
+
+        if pcma_param_name_in_agent_constructor and self._project_chroma_manager:
+            agent_init_params[pcma_param_name_in_agent_constructor] = self._project_chroma_manager
+            logger.debug(f"Added self._project_chroma_manager as '{pcma_param_name_in_agent_constructor}' to init_params for {agent_class.__name__}")
+        elif pcma_param_name_in_agent_constructor and not self._project_chroma_manager:
+            logger.warning(f"Agent {agent_class.__name__} expects '{pcma_param_name_in_agent_constructor}' but self._project_chroma_manager is not available in provider.")
+        
+        # Crucially, pass the prepared system_context
+        agent_init_params['system_context'] = agent_system_context
+        
+        # Add agent_id if the constructor expects it (some BaseAgent might)
+        if 'agent_id' in constructor_params:
+            agent_init_params['agent_id'] = agent_id # Pass the resolved agent_id
+
         try:
-            # Pass shared_context to the get method
-            return self.get(identifier=agent_id, shared_context=shared_context)
-        except NoAgentFoundError as e:
-            logger.error(f"RegistryAgentProvider: NoAgentFoundError in get_agent_callable for agent_id='{agent_id}'. Error: {e}")
-            raise
+            logger.debug(f"Final init params for {agent_class.__name__}: {list(agent_init_params.keys())}") # Log keys to avoid large values
+            if 'system_context' in agent_init_params:
+                 logger.debug(f"  system_context for {agent_class.__name__} will contain: {list(agent_init_params['system_context'].keys())}")
+
+            # Filter params to only those accepted by __init__ to avoid unexpected keyword arg errors
+            valid_params = {k: v for k, v in agent_init_params.items() if k in constructor_params or \
+                            any(p.kind == inspect.Parameter.VAR_KEYWORD for p in constructor_params.values())} # MODIFIED: Correct **kwargs check
+
+            # If 'self' is a param, remove it (it's for the method itself)
+            if 'self' in valid_params: del valid_params['self']
+
+            # ADDED: Diagnostic logging for system_context in valid_params
+            sc_in_vp = valid_params.get('system_context')
+            if sc_in_vp is not None:
+                logger.info(f"DIAGNOSTIC ({agent_class.__name__}): system_context IS in valid_params. Keys: {list(sc_in_vp.keys())}")
+            else:
+                logger.warning(f"DIAGNOSTIC ({agent_class.__name__}): system_context IS NOT in valid_params or is None.")
+            logger.info(f"DIAGNOSTIC ({agent_class.__name__}): All keys in valid_params before instantiation: {list(valid_params.keys())}")
+
+            agent_instance = agent_class(**valid_params)
+            logger.info(f"Successfully instantiated {agent_class.__name__} for agent_id '{agent_id}'")
+            
+            # Store the instance's invoke_async method in cache, associated with agent_id
+            # This ensures that subsequent calls to get() for this agent_id will use this instance
+            # if the shared_context hasn't changed in a way that requires re-instantiation.
+            # For now, let's NOT cache instances here to always get fresh context from orchestrator.
+            # Caching strategy needs refinement.
+            # self._cache[agent_id] = getattr(agent_instance, "invoke_async")
+            
+            return agent_instance
         except Exception as e:
-            logger.error(f"RegistryAgentProvider: Unexpected error in get_agent_callable for agent_id='{agent_id}'. Error: {e}")
-            # Optionally, re-raise as NoAgentFoundError or a more specific provider error
-            raise NoAgentFoundError(f"Failed to get agent callable for '{agent_id}' due to an unexpected error: {e}") from e
+            logger.error(f"Error instantiating agent class {agent_class.__name__} for agent_id '{agent_id}': {e}")
+            logger.error(traceback.format_exc())
+            return None
 
-    def get_raw_agent_instance(self, agent_id: str, shared_context: Optional[SharedContext] = None) -> Optional[BaseAgent]:
+    def get_raw_agent_instance(self, agent_id: str, shared_context: Optional[Dict[str, Any]] = None) -> Optional[BaseAgent]:
         """
-        Attempts to get a raw, instantiated agent object.
-        This is useful if direct interaction with agent methods other than invoke_async is needed.
-        Returns None if the agent identifier resolves to a direct callable that isn't a BaseAgent instance.
-        Passes shared_context to the underlying get() method for instantiation.
+        Retrieves or creates a raw instance of a BaseAgent.
+        MODIFIED: Accepts shared_context and passes it for agent instantiation.
         """
-        logger.debug(f"RegistryAgentProvider: get_raw_agent_instance called for agent_id='{agent_id}', has_shared_context={shared_context is not None}")
-        # This is a simplified version. The `get` method is designed to return a callable.
-        # To get the instance, we might need to adapt the `get` method's internal logic or
-        # have a separate path for instance retrieval.
+        logger.debug(f"Attempting to get raw instance for agent_id: {agent_id}")
 
-        # For now, let's assume we adapt the instantiation logic slightly or check the type
-        # of what `get` would prepare.
+        # Stash/update shared_context for this call sequence
+        if shared_context:
+            self._orchestrator_shared_context = shared_context
 
-        # Re-implementing part of `get` logic to ensure we capture the instance
-        potential_item: Optional[Union[Type[BaseAgent], BaseAgent, AgentCallable]] = None
-        agent_instance: Optional[BaseAgent] = None
-
+        # Check fallback (common for system agents that are classes)
         if agent_id in self._fallback:
             potential_item = self._fallback[agent_id]
             if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
-                constructor_params = inspect.signature(potential_item.__init__).parameters
-                init_kwargs = {}
-                if 'llm_provider' in constructor_params and self._llm_provider:
-                    init_kwargs['llm_provider'] = self._llm_provider
-                if 'prompt_manager' in constructor_params and self._prompt_manager:
-                    init_kwargs['prompt_manager'] = self._prompt_manager
-                if self._project_chroma_manager:
-                    if 'pcma_agent' in constructor_params:
-                        init_kwargs['pcma_agent'] = self._project_chroma_manager
-                    elif 'project_chroma_manager' in constructor_params:
-                         init_kwargs['project_chroma_manager'] = self._project_chroma_manager
-                
-                # ADDED: Pass project_root_path_override from shared_context
-                if 'project_root_path_override' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
-                    project_root_val = shared_context.data.get('project_root_path')
-                    init_kwargs['project_root_path_override'] = project_root_val
-                    logger.info(f"RegistryAgentProvider (get_raw_agent_instance): Passing project_root_path_override='{project_root_val}' to {agent_id}")
-                elif 'project_root_path' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
-                    project_root_val = shared_context.data.get('project_root_path')
-                    init_kwargs['project_root_path'] = project_root_val
-                    logger.info(f"RegistryAgentProvider (get_raw_agent_instance): Passing project_root_path='{project_root_val}' to {agent_id}")
-
-                agent_instance = potential_item(**init_kwargs)
-            elif isinstance(potential_item, BaseAgent):
-                agent_instance = potential_item
+                return self._instantiate_agent_class(potential_item, agent_id)
+            elif isinstance(potential_item, BaseAgent): # Already an instance
+                # TODO: Update system_context if necessary? For now, return as-is.
+                return potential_item
+            else:
+                logger.warning(f"Fallback item for {agent_id} is not a BaseAgent class or instance: {type(potential_item)}")
         
-        # Add logic for known system agents similar to the `get` method
-        elif agent_id == MasterPlannerAgent.AGENT_ID:
-            agent_instance = MasterPlannerAgent(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-        elif agent_id == CoreCodeGeneratorAgent_v1.AGENT_ID:
-            agent_instance = CoreCodeGeneratorAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-        elif agent_id == SystemRequirementsGatheringAgent_v1.AGENT_ID:
-            agent_instance = SystemRequirementsGatheringAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-        elif agent_id == SystemTestRunnerAgent_v1.AGENT_ID: # SystemTestRunnerAgent
-            init_kwargs_test_runner = {}
-            if shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
-                 init_kwargs_test_runner['project_root_path_override'] = shared_context.data.get('project_root_path')
-            agent_instance = SystemTestRunnerAgent_v1(**init_kwargs_test_runner)
-        elif agent_id == ArchitectAgent_v1.AGENT_ID:
-            agent_instance = ArchitectAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager, pcma_agent=self._project_chroma_manager) # Added pcma_agent
-        elif agent_id == ProjectChromaManagerAgent_v1.AGENT_ID: # ProjectChromaManagerAgent
-            init_kwargs_pcma = {}
-            # pcma might need project_id from context, or it might be configured globally or per-project via other means
-            if shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_id'):
-                 # Assuming its constructor might take project_id directly. This is speculative.
-                 # init_kwargs_pcma['project_id'] = shared_context.data.get('project_id')
-                 pass # PCMA is typically initialized with a chroma_client_provider or specific paths.
-                      # It is already passed to __init__ if configured.
-            agent_instance = self._project_chroma_manager # It's already an instance if provided.
-                                                        # Or, if it needs to be dynamically created based on context:
-                                                        # agent_instance = ProjectChromaManagerAgent_v1(**init_kwargs_pcma)
-        elif agent_id == MasterPlannerReviewerAgent.AGENT_ID: # MasterPlannerReviewerAgent
-            agent_instance = MasterPlannerReviewerAgent(llm_client=self._llm_provider) # Pass llm_provider as llm_client
-        # ADD MORE SYSTEM AGENTS HERE if instance retrieval is needed.
-        # This logic should ideally mirror the instantiation in `get` method.
+        # If not in fallback, try AgentRegistry (Chroma)
+        # This part of the logic would involve querying self._registry
+        # agent_card = self._registry.get_agent_card(agent_id)
+        # if agent_card and agent_card.fully_qualified_class_name:
+        #     try:
+        #         module_path, class_name = agent_card.fully_qualified_class_name.rsplit('.', 1)
+        #         module = importlib.import_module(module_path)
+        #         agent_class = getattr(module, class_name)
+        #         if inspect.isclass(agent_class) and issubclass(agent_class, BaseAgent):
+        #             return self._instantiate_agent_class(agent_class, agent_id, agent_card=agent_card)
+        #     except Exception as e:
+        #         logger.error(f"Error dynamically importing or instantiating agent {agent_id} from card for raw instance: {e}")
+        #         # Fall through or raise, depending on desired strictness
 
-        if not agent_instance:
-             logger.warning(f"RegistryAgentProvider: Could not get raw instance for '{agent_id}'. It might be a direct callable or not found.")
-        
-        return agent_instance
+        logger.warning(f"Could not get raw agent instance for agent_id: {agent_id}. Not found in fallback or registry (registry lookup not fully implemented here).")
+        return None
+            
+    # --- METHOD TO BE ADDED ---
+    def set_orchestrator_shared_context(self, shared_context: Dict[str, Any]):
+        """Allows the orchestrator to set its shared context on the provider instance."""
+        self._orchestrator_shared_context = shared_context
+        logger.debug(f"RegistryAgentProvider shared_context has been set/updated by orchestrator. Keys: {list(shared_context.keys())}")
+
 
     def get_agent_card(self, agent_id: str) -> Optional[AgentCard]:
         # This method is not provided in the original code or the new implementation
         # It's unclear what this method is supposed to do, so it's left unchanged
         # If you need to implement this method, you'll need to add the appropriate logic here
         # This is a placeholder and should be replaced with the actual implementation
+        # In a real scenario, this would be:
+        # return self._registry.get_agent_card(agent_id)
+        logger.warning(f"get_agent_card for '{agent_id}' called, but not fully implemented in RegistryAgentProvider beyond registry passthrough.")
+        if hasattr(self, '_registry') and self._registry:
+            try:
+                return self._registry.get_agent_card(agent_id=agent_id)
+            except Exception as e:
+                logger.error(f"Error calling self._registry.get_agent_card for {agent_id}: {e}")
+                return None
         return None
 
 

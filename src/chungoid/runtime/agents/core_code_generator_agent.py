@@ -213,8 +213,8 @@ class CoreCodeGeneratorAgent_v1(BaseAgent[SmartCodeGeneratorAgentInput, SmartCod
                 system_prompt=rendered_system_prompt, 
                 model_id=prompt_def.model_settings.model_name, 
                 temperature=prompt_def.model_settings.temperature,
-                max_tokens=prompt_def.model_settings.max_tokens
-                # OpenAILLMProvider.generate already sets response_format={\"type\": \"json_object\"}
+                max_tokens=prompt_def.model_settings.max_tokens,
+                response_format={"type": "json_object"}
             )
             
             if not llm_full_response_str:
