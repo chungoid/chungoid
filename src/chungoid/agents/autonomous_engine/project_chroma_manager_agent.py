@@ -241,7 +241,7 @@ class ProjectChromaManagerAgent_v1(BaseModel):
         # NEW: Define the actual project-specific workspace path
         # This is where project-specific subdirectories (like a subdirectory for its ChromaDB) will live.
         # It's constructed based on the overall workspace root and the project ID.
-        self._actual_project_workspace_path = self._project_root_workspace_path / "project_workspaces" / self.project_id
+        self._actual_project_workspace_path = self._project_root_workspace_path # NEW: Project workspace is the root path directly
         self._actual_project_workspace_path.mkdir(parents=True, exist_ok=True) # Ensure it exists
 
         # Initialize ChromaDB settings using this actual project workspace path

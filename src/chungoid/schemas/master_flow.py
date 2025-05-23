@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Literal, Union
+from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator # IMPORT model_validator
 import yaml # For from_yaml method
@@ -14,10 +15,10 @@ from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus # <<< REM
 # TODO: Potentially reference or reuse parts of StageSpec from orchestrator.py 
 # if there's significant overlap and it makes sense.
 
-class MasterStageFailurePolicyAction(BaseModel):
-    # Using a class for future extensibility if needed, though Literal directly in MasterStageFailurePolicy is fine too.
-    # For now, kept simple as a type alias essentially via Literal in MasterStageFailurePolicy.
-    pass # No fields needed if actions are just strings
+class ConditionalTransition(BaseModel):
+    """Defines a conditional transition to another stage."""
+    condition: str = Field(..., description="The condition string to evaluate.")
+    next_stage_id: str = Field(..., description="The ID of the stage to transition to if the condition is true.")
 
 class MasterStageFailurePolicy(BaseModel):
     """Defines the policy for handling failures within a master stage."""
@@ -72,6 +73,10 @@ class MasterStageSpec(BaseModel):
             "for user clarification."
         )
     )
+    conditional_transitions: Optional[List[ConditionalTransition]] = Field(
+        None,
+        description="A list of conditional transitions. If conditions are met, these take precedence over next_stage_id."
+    )
     on_failure: Optional[MasterStageFailurePolicy] = Field(
         None, 
         description="Optional policy to define behavior if this master stage fails (e.g., agent resolution error, or agent execution error not handled by reviewer)."
@@ -100,6 +105,26 @@ class MasterStageSpec(BaseModel):
             # Orchestrator prioritizes agent_id if both are present, so no specific validation needed for that case here.
         return data
 
+    @model_validator(mode='after')
+    def check_conditional_transitions_or_next_stage(cls, data: Any) -> Any:
+        if isinstance(data, MasterStageSpec): # Ensure it's already a model instance
+            has_conditional_transitions = bool(data.conditional_transitions)
+            has_simple_condition = bool(data.condition and (data.next_stage_true or data.next_stage_false))
+            has_direct_next = bool(data.next_stage)
+
+            # Warn if old (condition/next_stage_true/false) and new (conditional_transitions) are mixed
+            if has_conditional_transitions and has_simple_condition:
+                # Consider this a warning, orchestrator will prioritize conditional_transitions
+                # Ideally, plans should use one or the other for a given stage.
+                # logger.warning(f"Stage '{data.id}' mixes conditional_transitions with condition/next_stage_true/false. Prioritizing conditional_transitions.")
+                pass # For now, just allow, orchestrator handles precedence
+
+            # A stage should generally have some way to move forward unless it's explicitly an end stage.
+            # This validation might be too strict if null next_stage_id is a valid end-of-flow marker.
+            # if not has_conditional_transitions and not has_simple_condition and not has_direct_next:
+            #     logger.warning(f"Stage '{data.id}' has no defined next stage or conditional transitions. This might be an intended end of a path.")
+        return data
+
 class MasterExecutionPlan(BaseModel):
     """Validated, structured representation of a Master Flow YAML."""
     id: str = Field(..., description="Unique ID for this Master Execution Plan.")
@@ -110,6 +135,7 @@ class MasterExecutionPlan(BaseModel):
     start_stage: str = Field(..., description="The first stage to execute in the Master Flow.")
     stages: Dict[str, MasterStageSpec] = Field(..., description="Dictionary of stage definitions for the Master Flow.")
     original_request: Optional[UserGoalRequest] = Field(None, description="The original UserGoalRequest that initiated this plan.") # <<< ADD FIELD
+    file_path: Optional[Path] = Field(None, description="Optional path to the file from which this plan was loaded.") # ADDED
 
     @classmethod
     def from_yaml(cls, yaml_text: str) -> MasterExecutionPlan:
@@ -137,6 +163,13 @@ class MasterExecutionPlan(BaseModel):
         """Serializes the MasterExecutionPlan to a YAML string."""
         return yaml.dump(self.model_dump(exclude_none=True), sort_keys=False)
 
+__all__ = [
+    "MasterStageFailurePolicy",
+    "ClarificationCheckpointSpec",
+    "MasterStageSpec",
+    "MasterExecutionPlan",
+    "ConditionalTransition"
+]
 
 # Example Usage (for testing or reference)
 if __name__ == "__main__":

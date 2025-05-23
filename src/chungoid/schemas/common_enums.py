@@ -13,6 +13,7 @@ class StageStatus(Enum):
     RUNNING = "RUNNING" # Added for orchestrator to indicate active stage
     PENDING = "PENDING" # Added for initializing stage status
     ERROR = "ERROR"   # Added for fatal errors during execution
+    COMPLETED_WITH_WARNINGS = "COMPLETED_WITH_WARNINGS" # ADDED for PROCEED_AS_IS
     # Could add SKIPPED, etc. in the future 
 
 
@@ -72,10 +73,36 @@ class FlowStatus(Enum):
     PAUSED = "PAUSED"
     PAUSED_CRITICAL = "PAUSED_CRITICAL" # For pauses that require intervention and might not be resumable without changes
 
+class ResumeActionType(str, Enum):
+    """Defines the actions that can be taken when resuming a paused flow."""
+    RETRY_STAGE_AS_IS = "RETRY_STAGE_AS_IS"
+    RETRY_STAGE_WITH_CHANGES = "RETRY_STAGE_WITH_CHANGES"
+    SKIP_STAGE_AND_PROCEED = "SKIP_STAGE_AND_PROCEED"
+    BRANCH_TO_STAGE = "BRANCH_TO_STAGE"
+    ABORT_FLOW = "ABORT_FLOW"
+    PROVIDE_CLARIFICATION = "PROVIDE_CLARIFICATION" # User provides data for a clarification checkpoint
+    # Could add more specific actions like MODIFY_SHARED_CONTEXT_AND_RETRY, etc.
+
+class ReviewerActionType(str, Enum):
+    """Actions a reviewer agent can suggest after a stage failure or checkpoint."""
+    RETRY_STAGE_AS_IS = "RETRY_STAGE_AS_IS"
+    RETRY_STAGE_WITH_CHANGES = "RETRY_STAGE_WITH_CHANGES"
+    PROCEED_AS_IS = "PROCEED_AS_IS" # Mark current stage as completed with warning, and proceed
+    PROCEED_TO_NEXT_STAGE = "PROCEED_TO_NEXT_STAGE" # Equivalent to skipping the problematic part of current, and moving to its designated next
+    BRANCH_TO_NEW_STAGE = "BRANCH_TO_NEW_STAGE"
+    FAIL_THE_FLOW = "FAIL_THE_FLOW"
+    ESCALATE_TO_USER = "ESCALATE_TO_USER"
+    REQUEST_CLARIFICATION_FROM_USER = "REQUEST_CLARIFICATION_FROM_USER" # Suggests pausing for user input
+    ADD_CLARIFICATION_STAGE = "ADD_CLARIFICATION_STAGE" # ADDED MISSING MEMBER
+    MODIFY_MASTER_PLAN = "MODIFY_MASTER_PLAN" # Suggests a new master plan
+    NO_ACTION_SUGGESTED = "NO_ACTION_SUGGESTED" # ADDED MISSING MEMBER
+
 __all__ = [
     "StageStatus", 
     "FlowPauseStatus", 
     "OnFailureAction",
     "HumanReviewDecision", # Add new enum to __all__
-    "FlowStatus" # Add FlowStatus to __all__
+    "FlowStatus", # Add FlowStatus to __all__
+    "ResumeActionType",
+    "ReviewerActionType"
 ] 

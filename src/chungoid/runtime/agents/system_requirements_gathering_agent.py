@@ -211,28 +211,32 @@ class SystemRequirementsGatheringAgent_v1(BaseAgent[SystemRequirementsGatheringI
             
             await self.project_chroma_manager.ensure_collection_exists(LOPRD_ARTIFACTS_COLLECTION)
             
-            current_cycle_id: Optional[str] = None
-            if full_context and full_context.current_cycle_id: # Get cycle_id from full_context if available
-                current_cycle_id = full_context.current_cycle_id
+            if isinstance(loprd_content_json, dict):
+                store_input = StoreArtifactInput(
+                    project_id=self.project_chroma_manager.project_id,
+                    base_collection_name=LOPRD_ARTIFACTS_COLLECTION,
+                    artifact_content=loprd_content_json,
+                    metadata=loprd_metadata,
+                    cycle_id=full_context.data.get("current_cycle_id") if full_context and full_context.data else None,
+                    source_agent_id=self.AGENT_ID
+                )
+                store_result = await self.project_chroma_manager.store_artifact(store_input)
 
-            store_input = StoreArtifactInput(
-                base_collection_name=LOPRD_ARTIFACTS_COLLECTION,
-                artifact_content=loprd_content_json, 
-                metadata=loprd_metadata,
-                document_id=str(uuid.uuid4()), 
-                project_id=self.project_chroma_manager.project_id, # Use PCMA's project_id
-                cycle_id=current_cycle_id 
-            )
-            
-            logger.info(f"Attempting to store LOPRD artifact with ID: {store_input.document_id} using self.project_chroma_manager.")
-            store_output = await self.project_chroma_manager.store_artifact(args=store_input) # Use the instance directly
+                doc_id: Optional[str] = None
+                error_message_from_store: Optional[str] = None
 
-            if store_output and store_output.status == "SUCCESS":
-                stored_document_id = store_output.document_id
-                logger.info(f"LOPRD artifact stored successfully. Document ID: {stored_document_id}")
-            else:
-                error_msg = store_output.message if store_output else "Unknown error during storage."
-                logger.error(f"Failed to store LOPRD artifact. Status: {store_output.status if store_output else 'N/A'}. Message: {error_msg}")
+                if store_result and store_result.status == "SUCCESS":
+                    doc_id = store_result.document_id
+                    logger.info(f"LOPRD artifact stored successfully. Document ID: {doc_id}")
+                else:
+                    error_message_from_store = store_result.message or store_result.error_message if store_result else "Unknown error during artifact storage."
+                    logger.error(f"Failed to store LOPRD artifact. Message: {error_message_from_store}")
+                
+                if doc_id:
+                    stored_document_id = doc_id
+                    logger.info(f"LOPRD artifact stored successfully. Document ID: {stored_document_id}")
+                else:
+                    logger.error(f"Failed to store LOPRD artifact. Document ID: {stored_document_id or 'N/A'}. Message: {error_message_from_store}")
         
         except Exception as e:
             logger.error(f"Error storing LOPRD artifact: {e}", exc_info=True)

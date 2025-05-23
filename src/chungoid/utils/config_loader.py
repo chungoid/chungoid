@@ -33,6 +33,12 @@ DEFAULT_CONFIG = {
         "port": 8000,
         "persist_path": "./chroma",
     },
+    "orchestrator": {
+        "master_planner_reviewer_agent_id": "system.master_planner_reviewer_agent_v1",
+        "default_on_failure_action": "INVOKE_REVIEWER",
+        "default_agent_retries": 1,
+        "default_system_context_logger_name": "chungoid.runtime.system_context"
+    },
     # Add other default sections if needed
     # "server": {
     #     "host": "127.0.0.1",

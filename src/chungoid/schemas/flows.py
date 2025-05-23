@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from .errors import AgentErrorDetails # Import for use in PausedRunDetails
 from chungoid.schemas.common_enums import FlowPauseStatus # Added import
+from chungoid.schemas.master_flow import MasterExecutionPlan # Added for current_master_plan_snapshot
+from chungoid.schemas.orchestration import ClarificationCheckpointSpec # Assuming ClarificationCheckpointSpec will be in orchestration.py or similar
 
 class StageInput(BaseModel):
     """Represents input mapping for a stage."""
@@ -43,15 +45,28 @@ class PausedRunDetails(BaseModel):
     """Schema for data saved when a flow run is paused, typically on error."""
     run_id: str = Field(..., description="Unique identifier for this specific execution run.")
     flow_id: str = Field(..., description="Identifier of the FlowDefinition being executed.")
-    paused_at_stage_id: str = Field(..., description="The ID of the stage where execution paused.")
+    paused_stage_id: str = Field(..., description="The ID of the stage where execution paused.") # Renamed from paused_at_stage_id
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When the pause occurred.")
     status: FlowPauseStatus = Field(FlowPauseStatus.PAUSED_UNKNOWN, description="Structured status indicating why the flow is paused.")
+    reason: Optional[str] = Field(None, description="A brief, human-readable reason for the pause.") # Added
+    
     context_snapshot_ref: Optional[str] = Field(None, description="Reference to where the full context snapshot is stored, e.g., a file path or DB key.")
     error_details: Optional[AgentErrorDetails] = Field(None, description="Details of the error that caused the pause, if applicable.")
-    clarification_request: Optional[Dict[str, Any]] = Field(None, description="Details needed for user clarification if status indicates clarification is needed.")
+    # Changed clarification_request to use ClarificationCheckpointSpec
+    clarification_checkpoint_details: Optional[ClarificationCheckpointSpec] = Field(None, description="Details of the clarification checkpoint that triggered a pause, if applicable.")
 
-    class Config:
-        use_enum_values = True
+    # Added fields based on refactoring plan review
+    next_stage_options: Optional[List[str]] = Field(None, description="Suggested next stage IDs the user can choose from if resuming manually.")
+    current_master_plan_snapshot: Optional[MasterExecutionPlan] = Field(None, description="A snapshot of the MasterExecutionPlan at the time of pause.")
+    audit_trail: Optional[List[Dict[str, Any]]] = Field(None, description="A log of review and resume attempts related to this pause instance. Each entry could be an 'AuditEntry' model later.")
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        use_enum_values=True,
+        json_encoders = {
+            AgentErrorDetails: lambda v: v.to_dict() if v else None,
+        }
+    )
 
 class StageRunRecord(BaseModel):
     """Record of a single stage execution within a run."""

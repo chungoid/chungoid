@@ -46,14 +46,6 @@ class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema], ABC):
         self.config = data.get('config')
         self.system_context = data.get('system_context')
 
-        # Ensure core providers are present after super().__init__ has run
-        # Pydantic would have raised an error if they were missing and not Optional
-        if self.llm_provider is None: # Should be caught by Pydantic if not Optional
-            raise ValueError("LLMProvider instance is required upon BaseAgent initialization.")
-        if self.prompt_manager is None: # Should be caught by Pydantic if not Optional
-            raise ValueError("PromptManager instance is required upon BaseAgent initialization.")
-        # project_chroma_manager is Optional, so no check needed here unless a subclass requires it.
-
     @abstractmethod
     async def invoke_async(self, task_input: InputSchema, full_context: Optional[Dict[str, Any]] = None) -> OutputSchema:
         """Asynchronously processes the input and returns the output. This is the primary method for agent execution."""

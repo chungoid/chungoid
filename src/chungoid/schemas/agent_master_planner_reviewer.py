@@ -2,22 +2,11 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Literal, Annotated
 
 import pydantic
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, ConfigDict
 
-from chungoid.schemas.common_enums import FlowPauseStatus
+from chungoid.schemas.common_enums import FlowPauseStatus, ReviewerActionType
 from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
-
-
-class ReviewerActionType(Enum):
-    """Defines actions the MasterPlannerReviewerAgent can suggest."""
-    RETRY_STAGE_AS_IS = "RETRY_STAGE_AS_IS"
-    RETRY_STAGE_WITH_CHANGES = "RETRY_STAGE_WITH_CHANGES"
-    ADD_CLARIFICATION_STAGE = "ADD_CLARIFICATION_STAGE"
-    MODIFY_MASTER_PLAN = "MODIFY_MASTER_PLAN"
-    ESCALATE_TO_USER = "ESCALATE_TO_USER"
-    PROCEED_AS_IS = "PROCEED_AS_IS"
-    NO_ACTION_SUGGESTED = "NO_ACTION_SUGGESTED"
 
 
 class ReviewerModifyPlanAction(Enum):
@@ -40,6 +29,8 @@ class MasterPlannerReviewerInput(BaseModel):
     paused_stage_id: str = Field(..., description="The ID of the master stage where the pause occurred.")
     triggering_error_details: Optional[AgentErrorDetails] = Field(None, description="Error details from the agent that triggered the pause, if applicable.")
     full_context_at_pause: Dict[str, Any] = Field(..., description="The full execution context snapshot at the time of pause.")
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # --- Details models for suggestion_details ---
@@ -99,6 +90,8 @@ class MasterPlannerReviewerOutput(BaseModel):
     ]] = Field(None, description="Specific details for the suggested action. Structure depends on suggestion_type.")
     confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Reviewer's confidence in the suggestion (0.0 to 1.0).")
     reasoning: Optional[str] = Field(None, description="Explanation from the reviewer for their suggestion.")
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @pydantic.validator("suggestion_details", pre=True, always=True)
     def check_suggestion_details_type(cls, v, values):

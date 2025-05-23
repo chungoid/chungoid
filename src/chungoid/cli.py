@@ -4,6 +4,9 @@ from chungoid.utils.config_loader import get_config, ConfigError, load_config
 import click
 import uuid # ADDED FOR PROJECT ID GENERATION
 
+from dotenv import load_dotenv # ADDED
+load_dotenv() # ADDED: Load .env file at the start
+
 """Command-line interface for Chungoid-core.
 
 This Click-based CLI provides a friendlier wrapper around the existing
@@ -34,7 +37,7 @@ from rich.logging import RichHandler
 import chungoid
 from chungoid.constants import (DEFAULT_MASTER_FLOWS_DIR, DEFAULT_SERVER_STAGES_DIR, MIN_PYTHON_VERSION,
                               PROJECT_CHUNGOID_DIR, STATE_FILE_NAME)
-from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus, HumanReviewDecision
+from chungoid.schemas.common_enums import FlowPauseStatus, StageStatus, HumanReviewDecision, OnFailureAction
 from chungoid.core_utils import get_project_root_or_raise, init_project_structure
 from chungoid.schemas.master_flow import MasterExecutionPlan
 from chungoid.schemas.metrics import MetricEventType
@@ -1797,52 +1800,96 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             logger.info(f"MetricsStore initialized for project root: {metrics_store_root}")
             # --- End Metrics Store Setup ---
 
+            # Now, initialize the orchestrator with the loaded/defaulted config
+            # and other necessary components.
+            raw_on_failure_action = config.get("orchestrator", {}).get("default_on_failure_action")
+            try:
+                default_on_failure_action_enum = OnFailureAction(raw_on_failure_action) if raw_on_failure_action else None
+            except ValueError:
+                logger.error(f"Invalid default_on_failure_action value '{raw_on_failure_action}' in config. Falling back to INVOKE_REVIEWER.")
+                default_on_failure_action_enum = OnFailureAction.INVOKE_REVIEWER
+
             orchestrator = AsyncOrchestrator(
                 config=config, # Pass the dict
-                state_manager=state_manager,
                 agent_provider=agent_provider,
-                metrics_store=metrics_store, # ADDED metrics_store
-                # llm_provider and prompt_manager are now accessed via agent_provider if agents need them,
-                # or directly by orchestrator if it's doing its own LLM calls (e.g. for plan generation).
-                # For plan generation from a goal, the orchestrator will use its own LLMManager.
-                # llm_manager=llm_manager, # REMOVED: This was causing the TypeError
-                # master_flow_registry=master_flow_registry # Not strictly needed if generating from goal or loading single file
+                state_manager=state_manager,
+                metrics_store=metrics_store,
+                # llm_manager=llm_manager, # REMOVED - Not an expected argument
+                master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id"),
+                default_on_failure_action=default_on_failure_action_enum
             )
-            logger.info("AsyncOrchestrator initialized.")
 
-            # Generate a unique run ID
-            run_id = run_id_override_opt or f"build_run_{uuid.uuid4()}"
-            logger.info(f"Build Run ID: {run_id}")
+            # Generate a unique run ID (already done as current_run_id from outer scope)
+            logger.info(f"Build Run ID: {current_run_id}")
+
 
             # Run the orchestrator with the user goal
             # The orchestrator's `run` method should handle plan generation if goal_str is provided
             logger.info(f"Executing orchestrator with user goal: {user_goal[:100]}...")
-            final_context: Dict[str, Any] = await orchestrator.run(
+            
+            # final_context: Dict[str, Any] = await orchestrator.run( # OLD, incorrect type
+            final_status, final_shared_context, final_error_details = await orchestrator.run(
                 goal_str=user_goal, 
                 initial_context=parsed_initial_context, 
-                run_id_override=run_id
+                run_id_override=current_run_id 
             )
 
-            # Extract results from the final_context dictionary
-            # These keys are assumptions based on typical orchestrator output structures.
-            # final_status_val = final_context.get("status", "UNKNOWN") # OLD KEY
-            # final_output = final_context.get("outputs", {})
-            # metrics_summary_dict = final_context.get("metrics_summary", {})
+            # Extract results from the final context
+            # This part needs careful consideration based on what `run` actually returns
+            # and what 'final_context' is expected to hold for summarization.
+            # Assuming final_shared_context holds the relevant data for now.
+            
+            # Log the final status and any error details
+            logger.info(f"Orchestrator finished with status: {final_status}")
+            if final_error_details:
+                # logger.error(f"Orchestrator final error details: {final_error_details.model_dump_json(indent=2)}") # OLD
+                try:
+                    error_dict = final_error_details.to_dict() # Use to_dict()
+                    logger.error(f"Orchestrator final error details: {py_json.dumps(error_dict, indent=2)}")
+                except AttributeError:
+                    # Fallback if to_dict() is also missing for some reason, or final_error_details is not what we expect
+                    logger.error(f"Orchestrator final error details (raw): {final_error_details}")
+            
+            output_summary = "Build process completed."
+            if final_shared_context and final_shared_context.data:
+                output_summary += f" Final context keys: {list(final_shared_context.data.keys())}"
+                # You might want to serialize part of final_shared_context.data if it's useful
+                # For example, if there's a specific output key you expect:
+                # final_result_data = final_shared_context.data.get("final_output_data", "No specific output found.")
+                # logger.info(f"Final result data: {final_result_data}")
+            else:
+                output_summary += " No final shared context data available."
+            
+            print(f"\n{output_summary}")
+            # Example of accessing specific fields if needed, adapt as per actual SharedContext structure
+            # final_status_val = final_context.get("_orchestrator_final_status", "ERROR_STATUS_NOT_FOUND") # OLD
+            final_status_val = final_status.value # Accessing the value of the Enum
 
-            final_status_val = final_context.get("_orchestrator_final_status", "ERROR_STATUS_NOT_FOUND") # NEW KEY
-            final_output_val = final_context.get("_orchestrator_final_output", {}) # Assuming a general output key if needed
-            final_error_details_val = final_context.get("_orchestrator_flow_error_details", None)
-
-            logger.info(f"Orchestrator finished. Final Status: {final_status_val}")
-            if final_error_details_val:
-                logger.error(f"Build Error Details: {final_error_details_val}")
-
-            # Example of how to print some output if needed
-            # if final_output_val:
-            #     logger.info(f"Final output from build: {py_json.dumps(final_output_val, indent=2)}")
-
-            # Print a concluding message
-            click.echo(f"Build process completed with status: {final_status_val}")
+            if final_status in [StageStatus.COMPLETED_SUCCESS, StageStatus.COMPLETED_WITH_WARNINGS]:
+                logger.info("Build process completed successfully.")
+                click.echo("Build process completed successfully.")
+                if final_shared_context and final_shared_context.data:
+                    click.echo(f"Final context keys: {list(final_shared_context.data.keys())}")
+                else:
+                    click.echo("No final shared context data available.")
+            elif final_status == StageStatus.COMPLETED_FAILURE:
+                logger.error("Build process failed.")
+                click.echo("Build process failed.")
+                if final_error_details:
+                    click.echo(f"Final error details: {final_error_details}")
+                else:
+                    click.echo("No final error details available.")
+            else:
+                logger.warning("Build process completed with warnings.")
+                click.echo("Build process completed with warnings.")
+                if final_shared_context and final_shared_context.data:
+                    click.echo(f"Final context keys: {list(final_shared_context.data.keys())}")
+                else:
+                    click.echo("No final shared context data available.")
+                if final_error_details:
+                    click.echo(f"Final error details: {final_error_details}")
+                else:
+                    click.echo("No final error details available.")
 
         except Exception as e:
             logger.error(f"An error occurred during the build process: {e}", exc_info=True)

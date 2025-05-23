@@ -96,8 +96,9 @@ class SystemFileSystemAgent_v1(BaseAgent):
 
     _logger: Any # Declare _logger as an instance variable, not a Pydantic field
     _pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None # ADDED: PCMA agent instance
+    _project_root_override: Optional[Path] = None # ADDED: To store project_root_path_override from init
 
-    def __init__(self, pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None, **data: Any): # MODIFIED: Added pcma_agent, made it optional for now to avoid breaking CLI immediately
+    def __init__(self, pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None, project_root_path_override: Optional[Path] = None, **data: Any): # MODIFIED: Added project_root_path_override
         super().__init__(**data)
         # BaseAgent's __init__ will store 'system_context' in self.system_context if passed via **data
         # Initialize _logger from self.system_context
@@ -105,20 +106,27 @@ class SystemFileSystemAgent_v1(BaseAgent):
         if self.system_context and "logger" in self.system_context:
             current_logger = self.system_context.get("logger")
         
-        self._logger = current_logger if current_logger else logger # MODIFIED: use self._logger
-        self._pcma_agent = pcma_agent # Store PCMA agent
+        self._logger = current_logger if current_logger else logger
+        self._pcma_agent = pcma_agent
         if not self._pcma_agent:
             self._logger.warning(f"{self.AGENT_ID} initialized WITHOUT a ProjectChromaManagerAgent. Artifact-related tools will fail.")
 
+        if project_root_path_override: # ADDED: Store the override if provided
+            self._project_root_override = project_root_path_override
+            self._logger.info(f"{self.AGENT_ID} initialized with project_root_path_override: {self._project_root_override}")
+
         self._logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
-    def _resolve_and_sandbox_path(self, relative_path_arg: Union[str, Path], project_root_override: Optional[Union[str,Path]] = None) -> Tuple[Path, Optional[str]]:
+    def _resolve_and_sandbox_path(self, relative_path_arg: Union[str, Path], project_root_override_from_invoke_async: Optional[Union[str,Path]] = None) -> Tuple[Path, Optional[str]]: # RENAMED project_root_override to be specific
         # Determine the effective project root
         base_path_arg: Union[str, Path, None]
-        if project_root_override is not None:
-            base_path_arg = project_root_override
-            self._logger.info(f"RESOLVE_PATH_DEBUG: Using project_root_override: {base_path_arg} (type: {type(base_path_arg)})")
-        elif hasattr(self, 'project_root') and self.project_root:
+        if project_root_override_from_invoke_async is not None: # MODIFIED: Parameter name change
+            base_path_arg = project_root_override_from_invoke_async # MODIFIED: Parameter name change
+            self._logger.info(f"RESOLVE_PATH_DEBUG: Using project_root_override_from_invoke_async: {base_path_arg} (type: {type(base_path_arg)})")
+        elif self._project_root_override is not None: # ADDED: Prioritize instance override from __init__
+            base_path_arg = self._project_root_override
+            self._logger.info(f"RESOLVE_PATH_DEBUG: Using self._project_root_override: {base_path_arg} (type: {type(base_path_arg)})")
+        elif hasattr(self, 'project_root') and self.project_root: # This might be from BaseAgent if set
             base_path_arg = self.project_root
             self._logger.info(f"RESOLVE_PATH_DEBUG: Using self.project_root: {base_path_arg} (type: {type(base_path_arg)})")
         else: # Fallback: Try to get from system_context if available (should be less common)
@@ -212,9 +220,19 @@ class SystemFileSystemAgent_v1(BaseAgent):
             if actual_tool_input is None and "tool_input" in inputs:
                 actual_tool_input = inputs["tool_input"]
 
-        if not actual_project_root and full_context and full_context.project_root_path:
-            actual_project_root = Path(full_context.project_root_path)
-            self._logger.debug(f"Retrieved project_root from full_context: {actual_project_root}")
+        # MODIFIED: More robust retrieval of project_root from full_context.data
+        if not actual_project_root and full_context and hasattr(full_context, 'data') and isinstance(full_context.data, dict):
+            project_root_from_context_str = full_context.data.get('mcp_root_workspace_path') or full_context.data.get('project_root_path')
+            if project_root_from_context_str:
+                try:
+                    actual_project_root = Path(project_root_from_context_str)
+                    self._logger.debug(f"Retrieved project_root from full_context.data ('mcp_root_workspace_path' or 'project_root_path'): {actual_project_root}")
+                except (TypeError, ValueError) as e: # Added ValueError for robustness
+                    self._logger.warning(f"Could not convert project_root ('{project_root_from_context_str}') from full_context.data to Path: {e}")
+            else:
+                self._logger.debug("Neither 'mcp_root_workspace_path' nor 'project_root_path' found in full_context.data.")
+        elif not actual_project_root:
+             self._logger.debug("actual_project_root not set and full_context or full_context.data is not available/suitable for project_root retrieval.")
 
         if not actual_tool_name:
             return {"success": False, "error": f"'tool_name' is required but was not provided directly or in 'inputs' for {self.AGENT_NAME}."}

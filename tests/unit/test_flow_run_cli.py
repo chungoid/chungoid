@@ -1,13 +1,19 @@
 import textwrap
 from pathlib import Path
+import subprocess
+import sys
 
 from typer.testing import CliRunner
 
 from importlib import util
 
-# Dynamically load CLI module from dev scripts
-_cli_path = Path(__file__).resolve().parents[3] / "chungoid-core" / "dev" / "scripts" / "flow_run.py"
-spec = util.spec_from_file_location("flow_run_cli", _cli_path)
+# Determine the path to the script dynamically
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
+FLOW_RUN_SCRIPT_PATH = SCRIPTS_DIR / "flow_run.py"
+
+# Dynamically load CLI module
+# _cli_path = Path(__file__).resolve().parents[3] / "chungoid-core" / "dev" / "scripts" / "flow_run.py" # OLD INCORRECT PATH
+spec = util.spec_from_file_location("flow_run_cli", FLOW_RUN_SCRIPT_PATH) # USE CORRECT PATH
 cli_mod = util.module_from_spec(spec)
 spec.loader.exec_module(cli_mod)  # type: ignore
 

@@ -32,7 +32,7 @@ ARCHITECT_AGENT_PROMPT_NAME = "architect_agent_v1_prompt.yaml" # In server_promp
 
 class ArchitectAgentInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this Blueprint generation task.")
-    project_id: str = Field(..., description="Identifier for the current project.")
+    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
     loprd_doc_id: str = Field(..., description="ChromaDB ID of the LOPRD (JSON artifact) to be used as input.")
     existing_blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of an existing Blueprint to refine, if any.")
     refinement_instructions: Optional[str] = Field(None, description="Specific instructions for refining an existing Blueprint.")
@@ -106,6 +106,29 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
         logger_instance = self._logger
         pcma_agent = self._project_chroma_manager
 
+        # Robustly determine project_id
+        current_project_id: Optional[str] = task_input.project_id
+        if not current_project_id:
+            logger_instance.warning(f"project_id missing from task_input for ArchitectAgent (task_id: {task_input.task_id}). Attempting to find in full_context.")
+            if full_context:
+                if hasattr(full_context, 'project_id') and full_context.project_id:
+                    current_project_id = full_context.project_id
+                    logger_instance.info(f"Found project_id ('{current_project_id}') in full_context.project_id.")
+                elif hasattr(full_context, 'data') and isinstance(full_context.data, dict) and full_context.data.get('project_id'):
+                    current_project_id = full_context.data.get('project_id')
+                    logger_instance.info(f"Found project_id ('{current_project_id}') in full_context.data['project_id'].")
+        
+        if not current_project_id:
+            err_msg = "project_id is missing and could not be resolved from context. Cannot proceed with ArchitectAgent."
+            logger_instance.error(err_msg)
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id="UNKNOWN_PROJECT_ID", status="FAILURE_INPUT_MISSING", message=err_msg, error_message=err_msg)
+        
+        # Use current_project_id for the rest of the agent logic
+        # Ensure task_input is updated if it's used directly later for project_id, or just use current_project_id variable
+        # For safety, let's update the Pydantic model if it's mutable, or create a new one if needed.
+        # However, task_input is used for other fields like loprd_doc_id, so be careful.
+        # Best to use current_project_id variable consistently where project_id is needed.
+
         if full_context:
             if "llm_provider" in full_context and full_context["llm_provider"] != llm_provider:
                  llm_provider = full_context["llm_provider"]
@@ -154,14 +177,14 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
         except Exception as e_pcma_fetch:
             msg = f"Failed to retrieve input artifacts via PCMA: {e_pcma_fetch}"
             logger_instance.error(msg, exc_info=True)
-            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_INPUT_RETRIEVAL", message=msg, error_message=str(e_pcma_fetch))
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=current_project_id, status="FAILURE_INPUT_RETRIEVAL", message=msg, error_message=str(e_pcma_fetch))
         
         # --- Prompt Rendering ---
         prompt_render_data = {
             "loprd_json_content": loprd_json_content_str,
             "existing_blueprint_markdown_string": existing_blueprint_md_str,
             "previous_blueprint_feedback_md": task_input.refinement_instructions,
-            "project_name": task_input.project_id,
+            "project_name": current_project_id,
             "current_date_iso": datetime.datetime.utcnow().isoformat()
         }
         try:
@@ -176,7 +199,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
                 raise PromptRenderError("Missing system or main prompt content after rendering for ArchitectAgent.")
         except PromptRenderError as e_prompt:
             logger_instance.error(f"Prompt rendering failed for {self.PROMPT_TEMPLATE_NAME}: {e_prompt}", exc_info=True)
-            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=current_project_id, status="FAILURE_PROMPT_RENDERING", message=str(e_prompt), error_message=str(e_prompt))
 
         # --- LLM Interaction using generate_text_async_with_prompt_manager ---
         generated_blueprint_md: Optional[str] = None
@@ -206,7 +229,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
             logger_instance.info("Successfully received Blueprint content from LLM.")
         except Exception as e_llm: # Catch other LLM call related errors
             logger_instance.error(f"LLM interaction failed: {e_llm}", exc_info=True)
-            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=task_input.project_id, status="FAILURE_LLM", message=str(e_llm), error_message=str(e_llm), llm_full_response=str(e_llm) if not generated_blueprint_md else generated_blueprint_md) # Store what we have
+            return ArchitectAgentOutput(task_id=task_input.task_id, project_id=current_project_id, status="FAILURE_LLM", message=str(e_llm), error_message=str(e_llm), llm_full_response=str(e_llm) if not generated_blueprint_md else generated_blueprint_md) # Store what we have
 
         # --- Store Blueprint in ChromaDB (via PCMA) ---
         blueprint_doc_id: Optional[str] = None
@@ -219,7 +242,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
                 "loprd_source_doc_id": task_input.loprd_doc_id,
                 "generated_by_agent": self.AGENT_ID,
                 "task_id": task_input.task_id,
-                "project_id": task_input.project_id,
+                "project_id": current_project_id,
                 "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
             # Assuming 'generated_blueprint_md' contains the LLM's confidence score as part of its output,
@@ -261,7 +284,7 @@ class ArchitectAgent_v1(BaseAgent[ArchitectAgentInput, ArchitectAgentOutput]):
 
         return ArchitectAgentOutput(
             task_id=task_input.task_id,
-            project_id=task_input.project_id,
+            project_id=current_project_id,
             blueprint_document_id=blueprint_doc_id,
             status=final_status,
             message=final_message,

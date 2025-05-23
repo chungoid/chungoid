@@ -103,15 +103,18 @@ class SystemTestRunnerAgent_v1(BaseAgent[SystemTestRunnerAgentInput, SystemTestR
 
         # Prepare environment for subprocess
         env = os.environ.copy()
-        if cwd_path:
-            src_path = (Path(cwd_path) / "src").resolve()
-            if 'PYTHONPATH' in env:
-                env['PYTHONPATH'] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
-            else:
-                env['PYTHONPATH'] = str(src_path)
-            logger.info(f"Modified PYTHONPATH for subprocess: {env['PYTHONPATH']}")
+        # Correctly set PYTHONPATH to include the workspace's src directory
+        workspace_root_path_str = None
+        if full_context and hasattr(full_context, 'data') and isinstance(full_context.data, dict):
+            workspace_root_path_str = full_context.data.get('mcp_root_workspace_path')
+
+        if workspace_root_path_str:
+            workspace_src_path = (Path(workspace_root_path_str) / "src").resolve()
+            current_python_path = env.get('PYTHONPATH', '')
+            env['PYTHONPATH'] = f"{workspace_src_path}{os.pathsep}{current_python_path}" if current_python_path else str(workspace_src_path)
+            logger.info(f"PYTHONPATH for subprocess set to: {env['PYTHONPATH']}")
         else:
-            logger.info("CWD for pytest is not set, PYTHONPATH not modified for src.")
+            logger.warning("Could not determine MCP workspace root; PYTHONPATH for src not added. Test imports might fail.")
 
         try:
             logger.info(f"Running pytest command: {' '.join(command)} in CWD: {cwd_path if cwd_path else 'default'}")

@@ -12,6 +12,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # class ARCAOutput(BaseModel): ...
 
 
+class ArtifactDetails(BaseModel):
+    """Represents details of a stored artifact, primarily for context resolution."""
+    artifact_id: str = Field(..., description="Unique ID of the artifact.")
+    name: Optional[str] = Field(None, description="Display name of the artifact.")
+    path_on_disk: Optional[str] = Field(None, description="Absolute or relative path to the artifact's content on disk.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary metadata associated with the artifact.")
+    description: Optional[str] = Field(None, description="A brief description of the artifact.")
+    content_type: Optional[str] = Field(None, description="MIME type of the artifact, e.g., 'application/json', 'text/plain'.")
+
+
 class ProjectOverallStatus(str, Enum):
     """Overall status of the project."""
     NOT_STARTED = "NOT_STARTED"
@@ -164,6 +174,8 @@ class ProjectStateV2(BaseModel):
     # --- Configuration & Metadata ---
     project_configuration_doc_id: Optional[str] = Field(None, description="ChromaDB ID of project-specific configurations used by agents.")
     tags: Optional[List[str]] = Field(None, description="User-defined tags for categorizing or filtering projects.")
+
+    artifacts: Dict[str, ArtifactDetails] = Field(default_factory=dict, description="Registry of all known artifacts in the project, keyed by artifact_id.")
 
     @model_validator(mode='before')
     @classmethod

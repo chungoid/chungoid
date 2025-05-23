@@ -29,3 +29,11 @@ __all__ = [
     # Allow wild-card exports for known sub-modules that tests expect.
     "utils",
 ]
+
+# Try explicitly importing schemas to see if it helps discovery
+from . import schemas
+from . import utils # Keep utils as it was in __all__
+# from . import engine # If ChungoidEngine is needed directly via chungoid.ChungoidEngine
+
+# For testing, let's see if this minimal __init__ works
+pass

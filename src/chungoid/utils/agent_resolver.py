@@ -27,6 +27,7 @@ import importlib
 import sys
 import inspect
 import traceback
+import re
 
 # ADDED: Moved import to module level
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
@@ -41,6 +42,9 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import Proje
 
 # REMOVED: Incorrect import for SmartCodeGeneratorAgent_v1
 # from chungoid.runtime.agents.smart_code_generator_agent import SmartCodeGeneratorAgent_v1
+
+# ADDED: Import for SystemMasterPlannerReviewerAgent_v1
+from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent # MODIFIED CLASS NAME
 
 # Define logger at the module level
 logger = logging.getLogger(__name__)
@@ -225,22 +229,23 @@ class RegistryAgentProvider:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def get(self, identifier: str, category: Optional[str] = None) -> Callable[..., Coroutine[Any, Any, Any]]:
+    def get(self, identifier: str, category: Optional[str] = None, shared_context: Optional[SharedContext] = None) -> Callable[..., Coroutine[Any, Any, Any]]:
         """
         Retrieves an agent's callable (invoke_async method) by its ID or category.
+        It now also considers shared_context for passing project_root_path to agents.
 
         Order of resolution:
         1. Direct ID match in fallback map.
         2. Direct ID match in AgentRegistry (ChromaDB) - (Not fully shown in this snippet, assumes leads to error or different path for now if not in fallback).
         3. Category match in AgentRegistry (ChromaDB) - (Not fully shown in this snippet, assumes leads to error or different path for now if not in fallback).
         """
-        logger.debug(f"RegistryAgentProvider GET: identifier='{identifier}', category='{category}'") # Changed log level
+        logger.debug(f"RegistryAgentProvider GET: identifier='{identifier}', category='{category}', has_shared_context={shared_context is not None}") # MODIFIED Log
         logger.info(f"RegistryAgentProvider GET: hasattr(self, '_registry'): {hasattr(self, '_registry')}") # DIAGNOSTIC
         if hasattr(self, '_registry'):
             logger.info(f"RegistryAgentProvider GET: self._registry type: {type(self._registry)}, id: {id(self._registry)}") # DIAGNOSTIC
 
         agent_instance: Optional[BaseAgent] = None
-        potential_item: Optional[Union[Type[BaseAgent], BaseAgent]] = None
+        potential_item: Optional[Union[Type[BaseAgent], BaseAgent, AgentCallable]] = None # Allow AgentCallable here
 
         try:
             # Check if the agent is in the fallback map first
@@ -248,118 +253,168 @@ class RegistryAgentProvider:
                 potential_item = self._fallback[identifier]
                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' FOUND in fallback map.")
                 logger.info(f"RegistryAgentProvider: Fallback item type: {type(potential_item)}, name: {getattr(potential_item, '__name__', 'N/A')}")
-                logger.info(f"RegistryAgentProvider: BaseAgent module in resolver: {BaseAgent.__module__}, id: {id(BaseAgent)}")
-                if hasattr(potential_item, '__bases__') and potential_item.__bases__:
-                    logger.info(f"RegistryAgentProvider: Fallback item's BaseAgent module: {potential_item.__bases__[0].__module__}, id: {id(potential_item.__bases__[0])}")
 
-                # --- Begin specific agent instantiation logic ---
-                if isinstance(potential_item, type) and issubclass(potential_item, BaseAgent):
-                    logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is a BaseAgent subclass. Attempting instantiation.")
-                    # Special handling for agents requiring dependencies like LLMProvider, PromptManager, or ProjectChromaManager
+                if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
+                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is a BaseAgent class. Instantiating...")
+                    constructor_params = inspect.signature(potential_item.__init__).parameters
+                    init_kwargs = {}
+                    if 'llm_provider' in constructor_params and self._llm_provider:
+                        init_kwargs['llm_provider'] = self._llm_provider
+                    if 'prompt_manager' in constructor_params and self._prompt_manager:
+                        init_kwargs['prompt_manager'] = self._prompt_manager
                     
-                    # MODIFIED: Use self._llm_provider, self._prompt_manager, self._project_chroma_manager
-                    if potential_item.__name__ == "CoreCodeGeneratorAgent_v1" or potential_item.__name__ == "SmartCodeGeneratorAgent_v1":
-                        logger.info(f"RegistryAgentProvider: Special instantiation for {potential_item.__name__} with llm_provider, prompt_manager, and pcma_agent (was project_chroma_manager).")
-                        agent_instance = potential_item(
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager,
-                            pcma_agent=self._project_chroma_manager
-                        )
-                    elif potential_item.__name__ == "MasterPlannerAgent":
-                        logger.info(f"RegistryAgentProvider: Special instantiation for MasterPlannerAgent with llm_provider and prompt_manager.")
-                        agent_instance = potential_item(
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager,
-                            project_chroma_manager=self._project_chroma_manager # Also needs PCMA
-                        )
-                    elif potential_item.__name__ == "SystemFileSystemAgent_v1":
-                        logger.info(f"RegistryAgentProvider: Special instantiation for SystemFileSystemAgent_v1 with pcma_agent, llm_provider, and prompt_manager.")
-                        agent_instance = potential_item(
-                            pcma_agent=self._project_chroma_manager,
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager
-                        )
-                    elif potential_item.__name__ == "SystemTestRunnerAgent_v1":
-                        logger.info(f"RegistryAgentProvider: Special instantiation for SystemTestRunnerAgent_v1 with llm_provider, prompt_manager, and project_chroma_manager.")
-                        agent_instance = potential_item(
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager,
-                            project_chroma_manager=self._project_chroma_manager
-                        )
-                    # ADDED: Ensure ArchitectAgent_v1 also gets its dependencies
-                    elif potential_item.__name__ == "ArchitectAgent_v1":
-                        logger.info(f"RegistryAgentProvider: Special instantiation for ArchitectAgent_v1 with llm_provider, prompt_manager, and project_chroma_manager.")
-                        agent_instance = potential_item(
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager,
-                            project_chroma_manager=self._project_chroma_manager
-                        )
-                    elif potential_item.__name__ == "SystemRequirementsGatheringAgent_v1":
-                        logger.info(f"RegistryAgentProvider: Special instantiation for SystemRequirementsGatheringAgent_v1 with llm_provider, prompt_manager, and project_chroma_manager.")
-                        agent_instance = potential_item(
-                            llm_provider=self._llm_provider,
-                            prompt_manager=self._prompt_manager,
-                            project_chroma_manager=self._project_chroma_manager
-                        )
+                    if self._project_chroma_manager:
+                        if 'pcma_agent' in constructor_params:
+                            init_kwargs['pcma_agent'] = self._project_chroma_manager
+                        elif 'project_chroma_manager' in constructor_params:
+                            init_kwargs['project_chroma_manager'] = self._project_chroma_manager
+                    
+                    # ADDED: Pass project_root_path_override if agent accepts it and context provides it
+                    if 'project_root_path_override' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
+                        project_root_val = shared_context.data.get('project_root_path')
+                        init_kwargs['project_root_path_override'] = project_root_val
+                        logger.info(f"RegistryAgentProvider: Passing project_root_path_override='{project_root_val}' to {identifier}")
+                    elif 'project_root_path' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'): # Alternative common name
+                        project_root_val = shared_context.data.get('project_root_path')
+                        init_kwargs['project_root_path'] = project_root_val
+                        logger.info(f"RegistryAgentProvider: Passing project_root_path='{project_root_val}' to {identifier}")
+
+
+                    agent_instance = potential_item(**init_kwargs)
+                    logger.info(f"RegistryAgentProvider: Instantiated fallback agent '{identifier}' of type {type(agent_instance)}.")
+                elif isinstance(potential_item, BaseAgent):
+                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is already an instantiated BaseAgent.")
+                    agent_instance = potential_item
+                elif callable(potential_item): # Could be a direct function or an already wrapped callable
+                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is a direct callable.")
+                    # If it's a BaseAgent method or a function that needs to be wrapped for async,
+                    # this might need more specific handling if not already an AgentCallable.
+                    # For now, assume it's ready or will be handled by the return logic.
+                    # The protocol expects an AgentCallable (async (inputs, context) -> output)
+                    # If potential_item is a sync function, it needs wrapping.
+                    # However, our AgentCallable is defined as Callable[..., Coroutine[Any, Any, Any]]
+                    # so the fallback item should already conform or be an async method of a BaseAgent.
+                    if hasattr(potential_item, 'invoke_async') and asyncio.iscoroutinefunction(potential_item.invoke_async):
+                         return potential_item.invoke_async
+                    elif asyncio.iscoroutinefunction(potential_item): # Check if it's an async function itself
+                         return potential_item 
                     else:
-                        logger.info(f"RegistryAgentProvider: Standard instantiation for fallback agent {potential_item.__name__}.")
-                        try:
-                            agent_instance = potential_item() # Standard instantiation
-                        except TypeError as e_type:
-                            logger.error(f"TypeError during standard instantiation of {potential_item.__name__}: {e_type}. This might mean it needs specific dependencies not handled here.", exc_info=True)
-                            raise NoAgentFoundError(f"Failed to instantiate agent '{identifier}' ({potential_item.__name__}) due to TypeError: {e_type}. Check agent constructor and resolver logic.") from e_type
+                        logger.warning(f"RegistryAgentProvider: Fallback callable for '{identifier}' is not directly an async function or BaseAgent.invoke_async. Returning as is, may cause issues.")
+                        return potential_item # This might be problematic if not conforming
 
-                elif inspect.isfunction(potential_item) or inspect.ismethod(potential_item):
-                    logger.info(f"RegistryAgentProvider: Fallback item '{identifier}' is a function or method. Wrapping in a callable.")
-                    agent_instance = BaseAgent(identifier, potential_item)
-                else:
-                    raise NoAgentFoundError(f"Fallback item for '{identifier}' is not a valid BaseAgent class or instance.")
-                # --- End specific agent instantiation logic ---
-
-            # If not in fallback, try AgentRegistry by ID (Simplified for this example)
-            # In a real scenario, this would involve querying ChromaDB / self._registry
-            # and then potentially instantiating based on the AgentCard, including pcma_agent if needed.
-            elif self._registry and not category:
-                logger.warning(f"RegistryAgentProvider: ID-based registry lookup for '{identifier}' not fully implemented in this example. Assuming not found for now if not in fallback.")
-                # Placeholder: agent_card = self._registry.get_agent_by_id(identifier)
-                # if agent_card: ... instantiate based on card ...
-                pass
-
-            # If category is provided, try AgentRegistry by category (Simplified for this example)
-            elif self._registry and category:
-                logger.warning(f"RegistryAgentProvider: Category-based registry lookup for '{category}' not fully implemented in this example. Assuming not found for now if not in fallback.")
-                # Placeholder: agent_cards = self._registry.get_agents_by_category(category)
-                # if agent_cards: ... select and instantiate ...
-                pass
-            
-            if agent_instance:
-                logger.info(f"RegistryAgentProvider: Returning 'invoke_async' method for instantiated agent '{identifier or category}'.")
-                # Cache the invoke_async method
-                self._cache[identifier] = agent_instance.invoke_async
-                return agent_instance.invoke_async
+            # If not in fallback, try to instantiate known system agents by ID
+            # This section is for agents that are part of the core system and imported directly.
+            elif identifier == MasterPlannerAgent.AGENT_ID: # Direct comparison with class attribute
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches MasterPlannerAgent. Instantiating...")
+                agent_instance = MasterPlannerAgent(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+            elif identifier == CoreCodeGeneratorAgent_v1.AGENT_ID:
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches CoreCodeGeneratorAgent_v1. Instantiating...")
+                agent_instance = CoreCodeGeneratorAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+            elif identifier == SystemRequirementsGatheringAgent_v1.AGENT_ID:
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches SystemRequirementsGatheringAgent_v1. Instantiating...")
+                agent_instance = SystemRequirementsGatheringAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+            elif identifier == SystemTestRunnerAgent_v1.AGENT_ID: # ADDED FOR SYSTEM TEST RUNNER
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches SystemTestRunnerAgent_v1. Instantiating...")
+                agent_instance = SystemTestRunnerAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+            elif identifier == ArchitectAgent_v1.AGENT_ID: # ADDED FOR ArchitectAgent_v1
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches ArchitectAgent_v1. Instantiating...")
+                agent_instance = ArchitectAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+            elif identifier == ProjectChromaManagerAgent_v1.AGENT_ID: # ADDED FOR ProjectChromaManagerAgent_v1
+                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches ProjectChromaManagerAgent_v1. Instantiating...")
+                 # Assuming ProjectChromaManager doesn't need LLM/PromptManager directly but a chroma_client_provider if anything
+                 # For now, pass common ones if its __init__ accepts them, or handle specific deps.
+                 # Based on its typical role, it might not need LLM deps. Let's assume a simple init or one with common deps.
+                 # If it has a specific constructor, that needs to be matched.
+                 # For now, try with common ones for consistency if constructor allows.
+                 init_kwargs_pcm = {}
+                 constructor_params_pcm = inspect.signature(ProjectChromaManagerAgent_v1.__init__).parameters
+                 if 'llm_provider' in constructor_params_pcm and self._llm_provider:
+                     init_kwargs_pcm['llm_provider'] = self._llm_provider
+                 if 'prompt_manager' in constructor_params_pcm and self._prompt_manager:
+                     init_kwargs_pcm['prompt_manager'] = self._prompt_manager
+                 # It's more likely to need something like `chroma_root_path` or `project_id` if it's managing Chroma instances
+                 # This dependency needs to be properly injected or configured.
+                 # For the purpose of this fix, we assume it can be instantiated or its dependencies are handled.
+                 # A real ProjectChromaManager would likely take `project_id` and `chroma_server_uri`/`chroma_root_path`.
+                 # This is a placeholder instantiation until its dependencies are clarified in this context.
+                 # For now, if it's simple:
+                 if not init_kwargs_pcm and len(constructor_params_pcm) == 1 and 'self' in constructor_params_pcm: # Only self
+                     agent_instance = ProjectChromaManagerAgent_v1()
+                 elif 'project_id' in constructor_params_pcm and 'chroma_client_provider' in constructor_params_pcm:
+                     # This is a more realistic scenario, but these values aren't directly available in RegistryAgentProvider
+                     # This highlights a potential dependency injection issue for complex agents not in fallback.
+                     # For now, this path will likely fail if ProjectChromaManager has these required args.
+                     logger.warning(f"RegistryAgentProvider: ProjectChromaManagerAgent_v1 has specific dependencies (project_id, chroma_client_provider) not directly available here. Instantiation might fail or be incorrect.")
+                     # Attempting a generic instantiation for now, which might fail if args are required.
+                     try:
+                        agent_instance = ProjectChromaManagerAgent_v1(**init_kwargs_pcm) # This will fail if required args missing
+                     except TypeError as te:
+                        logger.error(f"RegistryAgentProvider: TypeError instantiating ProjectChromaManagerAgent_v1: {te}. Check dependencies.")
+                        raise NoAgentFoundError(f"Failed to instantiate ProjectChromaManagerAgent_v1 '{identifier}' due to missing dependencies: {te}") from te
+                 else: # Try with whatever common deps were gathered
+                     try:
+                        agent_instance = ProjectChromaManagerAgent_v1(**init_kwargs_pcm)
+                     except TypeError as te:
+                        logger.error(f"RegistryAgentProvider: TypeError instantiating ProjectChromaManagerAgent_v1 with generic args: {te}")
+                        raise NoAgentFoundError(f"Failed to instantiate ProjectChromaManagerAgent_v1 '{identifier}' due to constructor mismatch: {te}") from te
+            elif identifier == MasterPlannerReviewerAgent.AGENT_ID: # MODIFIED CLASS NAME
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches MasterPlannerReviewerAgent. Instantiating...") # MODIFIED LOG
+                # Assuming MasterPlannerReviewerAgent also takes llm_provider and prompt_manager
+                # If its constructor is different, this needs adjustment.
+                # Based on its file, it takes llm_client (which can be LLMProvider) and config.
+                # For now, pass llm_provider as llm_client.
+                agent_instance = MasterPlannerReviewerAgent(llm_client=self._llm_provider) # MODIFIED Instantiation
+            # ADD MORE SYSTEM AGENTS HERE
             else:
-                logger.error(f"RegistryAgentProvider: Agent not found via fallback for identifier '{identifier}'. Registry logic simplified in this example.")
-                raise NoAgentFoundError(f"Agent '{identifier or category}' not found in fallback map or registry (registry logic simplified in this example).")
+                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' not found in fallback or known system agents. Trying registry...")
+                # At this point, identifier was not in fallback, and not a known system agent to instantiate directly.
+                # Try to load from agent registry (e.g., ChromaDB)
+                # This part of the logic is simplified in the provided snippet.
+                # A real implementation would query self._registry.get_agent_card(identifier)
+                # and then instantiate the class from card.module_path and card.class_name.
+                
+                # --- SIMPLIFIED REGISTRY LOGIC PLACEHOLDER ---
+                # In a full system, you'd do:
+                # agent_card = self._registry.get_agent_card(identifier)
+                # if agent_card:
+                #     module = importlib.import_module(agent_card.module_path)
+                #     AgentClass = getattr(module, agent_card.class_name)
+                #     # Instantiate AgentClass with dependencies (llm_provider, prompt_manager, etc.)
+                #     # This requires a consistent way to pass dependencies or a factory.
+                #     agent_instance = AgentClass(...) # Simplified
+                # else:
+                #     raise NoAgentFoundError(f"Agent '{identifier}' not found in fallback map or registry.")
+                # --- END SIMPLIFIED REGISTRY LOGIC ---
+                
+                # For this example, if not in fallback or known system list, assume not found if registry is not fully implemented here.
+                logger.warning(f"RegistryAgentProvider: ID-based registry lookup for '{identifier}' not fully implemented in this example. Assuming not found for now if not in fallback or known system list.")
+                raise NoAgentFoundError(f"Agent '{identifier}' not found in fallback map, known system agents, or registry (registry lookup simplified).")
 
-        except NoAgentFoundError:
-            logger.error(f"Agent '{identifier or category}' not found by RegistryAgentProvider.")
-            raise
-        except AmbiguousAgentCategoryError:
-            logger.error(f"Agent category '{category}' is ambiguous.")
-            raise
-        except Exception as e:
-            logger.error(f"RegistryAgentProvider: Unexpected error resolving agent '{identifier or category}': {e}")
-            logger.debug(traceback.format_exc()) # Log full traceback for unexpected errors
-            raise NoAgentFoundError(f"Unexpected error resolving agent '{identifier or category}': {e}")
 
-        except NoAgentFoundForCategoryError:
+            if agent_instance:
+                logger.info(f"RegistryAgentProvider: Agent instance {type(agent_instance).__name__} created for id '{identifier}'. Returning invoke_async.")
+                if hasattr(agent_instance, 'invoke_async') and asyncio.iscoroutinefunction(agent_instance.invoke_async):
+                    return agent_instance.invoke_async
+                else:
+                    # This should ideally not happen if BaseAgent defines invoke_async properly
+                    logger.error(f"RegistryAgentProvider: Agent instance for '{identifier}' of type {type(agent_instance)} does not have a valid async invoke_async method.")
+                    raise NoAgentFoundError(f"Instantiated agent for '{identifier}' does not have a valid async invoke_async method.")
+
+            # If potential_item was a direct callable from fallback and not a BaseAgent class/instance
+            # This path is less likely if fallbacks are BaseAgent classes or instances, but included for robustness.
+            # The check for callable(potential_item) and returning it or its invoke_async was handled earlier.
+            # If we reach here, it means potential_item was None or not a recognized type from fallback,
+            # and it wasn't a known system agent.
+
+            # Fallback to original error if nothing resolved.
+            # This should ideally be caught by the NoAgentFoundError from the registry lookup if it gets there.
+            raise NoAgentFoundError(f"Agent '{identifier}' could not be resolved or instantiated.")
+
+        except NoAgentFoundError: # Re-raise specific error
             raise
-        except AmbiguousAgentCategoryError:
-            raise
-        except Exception as e:
-            logger.error(f"RegistryAgentProvider: Unexpected error resolving agent '{identifier or category}': {e}")
-            logger.debug(traceback.format_exc())
-            raise NoAgentFoundForCategoryError(f"Unexpected error resolving agent '{identifier or category}': {e}")
+        except Exception as exc: # Catch-all for other unexpected issues during resolution/instantiation
+            logger.error(f"RegistryAgentProvider: Unexpected error resolving/instantiating agent '{identifier}': {exc}", exc_info=True)
+            raise NoAgentFoundError(f"Unexpected error resolving/instantiating agent '{identifier}': {exc}") from exc
 
     def search_agents(self, query_text: str, n_results: int = 3, where_filter: Optional[Dict[str, Any]] = None) -> List[AgentCard]:
         """Performs semantic search for agents via the underlying AgentRegistry."""
@@ -694,6 +749,113 @@ class RegistryAgentProvider:
 
         # 6. Return resolved agent_id and callable
         return selected_card.agent_id
+
+    def get_agent_callable(self, agent_id: str, shared_context: Optional[SharedContext] = None) -> AgentCallable:
+        """
+        Main method used by Orchestrator to get an agent's primary callable (invoke_async).
+        This now passes shared_context to the underlying get() method.
+        """
+        logger.debug(f"RegistryAgentProvider: get_agent_callable called for agent_id='{agent_id}', has_shared_context={shared_context is not None}")
+        try:
+            # Pass shared_context to the get method
+            return self.get(identifier=agent_id, shared_context=shared_context)
+        except NoAgentFoundError as e:
+            logger.error(f"RegistryAgentProvider: NoAgentFoundError in get_agent_callable for agent_id='{agent_id}'. Error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"RegistryAgentProvider: Unexpected error in get_agent_callable for agent_id='{agent_id}'. Error: {e}")
+            # Optionally, re-raise as NoAgentFoundError or a more specific provider error
+            raise NoAgentFoundError(f"Failed to get agent callable for '{agent_id}' due to an unexpected error: {e}") from e
+
+    def get_raw_agent_instance(self, agent_id: str, shared_context: Optional[SharedContext] = None) -> Optional[BaseAgent]:
+        """
+        Attempts to get a raw, instantiated agent object.
+        This is useful if direct interaction with agent methods other than invoke_async is needed.
+        Returns None if the agent identifier resolves to a direct callable that isn't a BaseAgent instance.
+        Passes shared_context to the underlying get() method for instantiation.
+        """
+        logger.debug(f"RegistryAgentProvider: get_raw_agent_instance called for agent_id='{agent_id}', has_shared_context={shared_context is not None}")
+        # This is a simplified version. The `get` method is designed to return a callable.
+        # To get the instance, we might need to adapt the `get` method's internal logic or
+        # have a separate path for instance retrieval.
+
+        # For now, let's assume we adapt the instantiation logic slightly or check the type
+        # of what `get` would prepare.
+
+        # Re-implementing part of `get` logic to ensure we capture the instance
+        potential_item: Optional[Union[Type[BaseAgent], BaseAgent, AgentCallable]] = None
+        agent_instance: Optional[BaseAgent] = None
+
+        if agent_id in self._fallback:
+            potential_item = self._fallback[agent_id]
+            if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
+                constructor_params = inspect.signature(potential_item.__init__).parameters
+                init_kwargs = {}
+                if 'llm_provider' in constructor_params and self._llm_provider:
+                    init_kwargs['llm_provider'] = self._llm_provider
+                if 'prompt_manager' in constructor_params and self._prompt_manager:
+                    init_kwargs['prompt_manager'] = self._prompt_manager
+                if self._project_chroma_manager:
+                    if 'pcma_agent' in constructor_params:
+                        init_kwargs['pcma_agent'] = self._project_chroma_manager
+                    elif 'project_chroma_manager' in constructor_params:
+                         init_kwargs['project_chroma_manager'] = self._project_chroma_manager
+                
+                # ADDED: Pass project_root_path_override from shared_context
+                if 'project_root_path_override' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
+                    project_root_val = shared_context.data.get('project_root_path')
+                    init_kwargs['project_root_path_override'] = project_root_val
+                    logger.info(f"RegistryAgentProvider (get_raw_agent_instance): Passing project_root_path_override='{project_root_val}' to {agent_id}")
+                elif 'project_root_path' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
+                    project_root_val = shared_context.data.get('project_root_path')
+                    init_kwargs['project_root_path'] = project_root_val
+                    logger.info(f"RegistryAgentProvider (get_raw_agent_instance): Passing project_root_path='{project_root_val}' to {agent_id}")
+
+                agent_instance = potential_item(**init_kwargs)
+            elif isinstance(potential_item, BaseAgent):
+                agent_instance = potential_item
+        
+        # Add logic for known system agents similar to the `get` method
+        elif agent_id == MasterPlannerAgent.AGENT_ID:
+            agent_instance = MasterPlannerAgent(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+        elif agent_id == CoreCodeGeneratorAgent_v1.AGENT_ID:
+            agent_instance = CoreCodeGeneratorAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+        elif agent_id == SystemRequirementsGatheringAgent_v1.AGENT_ID:
+            agent_instance = SystemRequirementsGatheringAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
+        elif agent_id == SystemTestRunnerAgent_v1.AGENT_ID: # SystemTestRunnerAgent
+            init_kwargs_test_runner = {}
+            if shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
+                 init_kwargs_test_runner['project_root_path_override'] = shared_context.data.get('project_root_path')
+            agent_instance = SystemTestRunnerAgent_v1(**init_kwargs_test_runner)
+        elif agent_id == ArchitectAgent_v1.AGENT_ID:
+            agent_instance = ArchitectAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager, pcma_agent=self._project_chroma_manager) # Added pcma_agent
+        elif agent_id == ProjectChromaManagerAgent_v1.AGENT_ID: # ProjectChromaManagerAgent
+            init_kwargs_pcma = {}
+            # pcma might need project_id from context, or it might be configured globally or per-project via other means
+            if shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_id'):
+                 # Assuming its constructor might take project_id directly. This is speculative.
+                 # init_kwargs_pcma['project_id'] = shared_context.data.get('project_id')
+                 pass # PCMA is typically initialized with a chroma_client_provider or specific paths.
+                      # It is already passed to __init__ if configured.
+            agent_instance = self._project_chroma_manager # It's already an instance if provided.
+                                                        # Or, if it needs to be dynamically created based on context:
+                                                        # agent_instance = ProjectChromaManagerAgent_v1(**init_kwargs_pcma)
+        elif agent_id == MasterPlannerReviewerAgent.AGENT_ID: # MasterPlannerReviewerAgent
+            agent_instance = MasterPlannerReviewerAgent(llm_client=self._llm_provider) # Pass llm_provider as llm_client
+        # ADD MORE SYSTEM AGENTS HERE if instance retrieval is needed.
+        # This logic should ideally mirror the instantiation in `get` method.
+
+        if not agent_instance:
+             logger.warning(f"RegistryAgentProvider: Could not get raw instance for '{agent_id}'. It might be a direct callable or not found.")
+        
+        return agent_instance
+
+    def get_agent_card(self, agent_id: str) -> Optional[AgentCard]:
+        # This method is not provided in the original code or the new implementation
+        # It's unclear what this method is supposed to do, so it's left unchanged
+        # If you need to implement this method, you'll need to add the appropriate logic here
+        # This is a placeholder and should be replaced with the actual implementation
+        return None
 
 
 # Convenient alias used by FlowExecutor refactor
