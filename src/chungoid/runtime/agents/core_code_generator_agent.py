@@ -207,23 +207,66 @@ class CoreCodeGeneratorAgent_v1(BaseAgent[SmartCodeGeneratorAgentInput, SmartCod
             if not rendered_user_prompt:
                 raise PromptRenderError("PromptManager did not return a user_prompt after rendering.")
 
-            # Step 3: Call the LLMProvider with the rendered prompts and model settings from definition
-            llm_full_response_str = await self._llm_provider.generate(
-                prompt=rendered_user_prompt,
-                system_prompt=rendered_system_prompt, 
-                model_id=prompt_def.model_settings.model_name, 
-                temperature=prompt_def.model_settings.temperature,
-                max_tokens=prompt_def.model_settings.max_tokens,
-                response_format={"type": "json_object"}
-            )
+            # Step 3: Call the LLMProvider with enhanced JSON enforcement
+            max_json_retries = 3
+            llm_response_data = None
             
-            if not llm_full_response_str:
-                raise ValueError("LLM returned an empty response.")
-
-            # We expect the LLM to return a JSON string that matches SmartCodeGeneratorAgentOutput's structure, 
-            # or at least contains the key fields like 'generated_code_string'
-            llm_response_data = json.loads(llm_full_response_str)
+            for attempt in range(max_json_retries):
+                try:
+                    logger_instance.debug(f"LLM generation attempt {attempt + 1}/{max_json_retries} for {parsed_inputs.target_file_path}")
+                    
+                    llm_full_response_str = await self._llm_provider.generate(
+                        prompt=rendered_user_prompt,
+                        system_prompt=rendered_system_prompt, 
+                        model_id=prompt_def.model_settings.model_name, 
+                        temperature=prompt_def.model_settings.temperature,
+                        max_tokens=prompt_def.model_settings.max_tokens,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    if not llm_full_response_str:
+                        raise ValueError("LLM returned an empty response.")
+                    
+                    # Try to parse the JSON response
+                    llm_response_data = json.loads(llm_full_response_str)
+                    logger_instance.debug(f"Successfully parsed JSON response on attempt {attempt + 1}")
+                    break
+                    
+                except json.JSONDecodeError as e_json:
+                    logger_instance.warning(f"Attempt {attempt + 1}/{max_json_retries} failed to parse JSON: {e_json}. Response: {llm_full_response_str[:200] if llm_full_response_str else 'N/A'}")
+                    
+                    if attempt == max_json_retries - 1:  # Last attempt
+                        logger_instance.error(f"All {max_json_retries} attempts failed to produce valid JSON. Final response: {llm_full_response_str[:500] if llm_full_response_str else 'N/A'}")
+                        # Try one last fallback: extract content between braces if possible
+                        if llm_full_response_str:
+                            first_brace = llm_full_response_str.find('{')
+                            last_brace = llm_full_response_str.rfind('}')
+                            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                                potential_json = llm_full_response_str[first_brace:last_brace+1]
+                                try:
+                                    llm_response_data = json.loads(potential_json)
+                                    logger_instance.info("Successfully extracted JSON from raw response using brace fallback")
+                                    break
+                                except json.JSONDecodeError:
+                                    pass
+                        
+                        # If all attempts fail, return error response
+                        return SmartCodeGeneratorAgentOutput(
+                            task_id=parsed_inputs.task_id, 
+                            target_file_path=parsed_inputs.target_file_path, 
+                            status="FAILURE_LLM_GENERATION", 
+                            error_message=f"LLM failed to return valid JSON after {max_json_retries} attempts: {e_json}", 
+                            llm_full_response=llm_full_response_str
+                        )
+                except Exception as e_gen:
+                    logger_instance.warning(f"Attempt {attempt + 1}/{max_json_retries} failed with exception: {e_gen}")
+                    if attempt == max_json_retries - 1:  # Last attempt
+                        raise  # Re-raise the last exception
             
+            # Validate required fields in the JSON response
+            if not llm_response_data:
+                raise ValueError("Failed to obtain valid JSON response from LLM")
+                
             # --- Extract core fields from LLM response based on the prompt's output_schema ---
             generated_code_string = llm_response_data.get("generated_code") # Corrected field name
             confidence_score_data = llm_response_data.get("confidence_score")
@@ -240,12 +283,6 @@ class CoreCodeGeneratorAgent_v1(BaseAgent[SmartCodeGeneratorAgentInput, SmartCod
         except PromptRenderError as e_prompt:
             logger_instance.error(f"Prompt rendering failed for {PROMPT_ID}: {e_prompt}", exc_info=True)
             return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=f"Prompt rendering error: {e_prompt}", llm_full_response=llm_full_response_str)
-        except json.JSONDecodeError as e_json:
-            logger_instance.error(f"Failed to decode LLM JSON response: {e_json}. Response: {llm_full_response_str[:500] if llm_full_response_str else 'N/A'}", exc_info=True)
-            return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=f"LLM response not valid JSON: {e_json}", llm_full_response=llm_full_response_str)
-        except ValueError as e_val:
-            logger_instance.error(f"Error processing LLM output: {e_val}. Response: {llm_full_response_str[:500] if llm_full_response_str else 'N/A'}", exc_info=True)
-            return SmartCodeGeneratorAgentOutput(task_id=parsed_inputs.task_id, target_file_path=parsed_inputs.target_file_path, status="FAILURE_LLM_GENERATION", error_message=str(e_val), llm_full_response=llm_full_response_str)
         except Exception as e_gen:
             logger_instance.error(f"General error during LLM call or processing for {parsed_inputs.target_file_path}: {e_gen}", exc_info=True)
             return SmartCodeGeneratorAgentOutput(

@@ -138,7 +138,7 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "`initial_stage` must be a valid stage name. Every stage must have a "
     "`next_stage`.\\n"
     "Example `success_criteria` using a specific output key: "
-    "`[\\\"'{context.outputs.some_stage.refined_requirements_document_id}' != None\\\"]`\\n"
+    "`[\"{context.outputs.some_stage.refined_requirements_document_id} != None\"]`\\n"
     "Example `inputs` using context and a specific output key from a previous stage: "
     "`{\"loprd_doc_id\": \"{context.outputs.goal_analysis_stage_name.refined_requirements_document_id}\"}`"
     "- For stages that generate artifacts (like code or documents) that subsequent stages will consume, you MUST define an `output_context_path` field for that stage. "

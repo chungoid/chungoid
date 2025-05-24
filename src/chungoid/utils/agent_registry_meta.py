@@ -31,7 +31,7 @@ class AgentVisibility(str, Enum):
 
 # System Agents
 SYSTEM_MASTER_PLANNER_AGENT_V1 = "SystemMasterPlannerAgent_v1"
-SYSTEM_MASTER_PLANNER_REVIEWER_AGENT_V1 = "SystemMasterPlannerReviewerAgent_v1"
+SYSTEM_MASTER_PLANNER_REVIEWER_AGENT_V1 = "system.master_planner_reviewer_agent_v1"
 CORE_STAGE_EXECUTOR_AGENT_V1 = "CoreStageExecutorAgent_v1"
 
 # Core Functional Agents

@@ -180,70 +180,135 @@ class ContextResolutionService:
 
     def _get_value_from_container(self, container: Any, accessors: List[str]) -> Any:
         """
-        Recursively (iteratively) gets a value from a nested structure (dict, list, object)
-        using a list of accessors (attribute names, dict keys, or list indices as strings like "[0]").
+        Traverses a nested structure (dict, list, object) using a list of accessors.
+        Supports list indices, dict keys (with quotes), and object attributes.
         """
         current = container
-        for accessor in accessors:
-            # Clean accessor if it's a quoted key like ["key-name"] or ['key-name']
-            # This step is crucial because the regex might pass these through.
-            # Regex captures: .key, [\'key\'], [\"key\"], [0]
-            # We need to ensure that when current is a dict, we use the unquoted key.
-            # For getattr, the original accessor (if it's a valid attribute name) is fine.
-
-            is_list_index = False
-            actual_accessor = accessor # Default to using it as is (for getattr)
-
-            if isinstance(accessor, str) and accessor.startswith('['):
-                inner_accessor = accessor[1:-1]
-                if inner_accessor.isdigit(): # Integer index like [0]
-                    is_list_index = True
-                    actual_accessor = int(inner_accessor)
-                elif (inner_accessor.startswith("'") and inner_accessor.endswith("'")) or \
-                     (inner_accessor.startswith('"') and inner_accessor.endswith('"')): # Quoted key like ["my-key"]
-                    actual_accessor = inner_accessor[1:-1] # Unquote for dict key access
-                else:
-                    # This case should ideally not be hit if the regex is precise and
-                    # subsequent logic correctly parses its groups.
-                    # It implies an unquoted string within brackets not matching other patterns, e.g., [my_key_without_quotes]
-                    # which is ambiguous. For safety, we might treat it as a potential dict key.
-                    actual_accessor = inner_accessor
-
-            if is_list_index:
-                if not isinstance(current, list):
-                    self.logger.error(f"Attempted to index a non-list type ({type(current)}) with index '{actual_accessor}'. Path part: {accessor}")
-                    raise TypeError(f"Attempted to index a non-list type ({type(current)}) with index '{actual_accessor}'. Path part: {accessor}")
+        
+        # DEBUG: Add comprehensive logging
+        self.logger.debug(f"_get_value_from_container called with container type: {type(container)}, accessors: {accessors}")
+        if hasattr(container, '__dict__'):
+            self.logger.debug(f"Container attributes: {list(container.__dict__.keys()) if container.__dict__ else 'No __dict__'}")
+        if isinstance(container, BaseModel):
+            self.logger.debug(f"Pydantic model fields: {list(container.model_fields.keys())}")
+            self.logger.debug(f"Pydantic model values: {container.model_dump()}")
+        
+        for i, accessor in enumerate(accessors):
+            self.logger.debug(f"Processing accessor[{i}]: '{accessor}' on current type: {type(current)}")
+            
+            # Check for list index notation like [0], [1], etc.
+            if accessor.startswith('[') and accessor.endswith(']'):
+                index_str = accessor[1:-1]
                 try:
-                    current = current[actual_accessor]
-                except IndexError:
-                    self.logger.error(f"List index {actual_accessor} out of range for list of length {len(current)}. Path part: {accessor}")
-                    raise IndexError(f"List index {actual_accessor} out of range. Path part: {accessor}")
-            elif isinstance(current, dict):
-                # Use the potentially unquoted actual_accessor for dict key lookup
-                if actual_accessor not in current:
-                    self.logger.error(f"Key '{actual_accessor}' not found in dictionary {list(current.keys())}. Path part: {accessor}")
-                    raise KeyError(f"Key '{actual_accessor}' not found in dictionary. Path part: {accessor}")
-                current = current[actual_accessor]
-            elif isinstance(current, BaseModel): # ADDED Pydantic BaseModel check
-                if hasattr(current, accessor):
-                    current = getattr(current, accessor)
-                else:
-                    try:
-                        current_dump = current.model_dump()
-                        if accessor in current_dump:
-                            current = current_dump[accessor]
+                    if index_str.startswith('"') and index_str.endswith('"'):
+                        # Dict key with quotes like ["my-key"]
+                        actual_accessor = index_str[1:-1]
+                        self.logger.debug(f"Dict key access with quotes: '{actual_accessor}' on {type(current)}")
+                        if isinstance(current, dict):
+                            if actual_accessor in current:
+                                current = current[actual_accessor]
+                                self.logger.debug(f"Successfully accessed dict key '{actual_accessor}', result type: {type(current)}")
+                            else:
+                                self.logger.error(f"Dict key '{actual_accessor}' not found in dict with keys: {list(current.keys())}")
+                                raise KeyError(f"Key '{actual_accessor}' not found in dict")
                         else:
-                            self.logger.error(f"Attribute/field '{accessor}' not found on Pydantic model {type(current)} via direct access or in model_dump(). Path part: {accessor}")
-                            raise AttributeError(f"Attribute/field '{accessor}' not found on Pydantic model {type(current)}. Path part: {accessor}")
-                    except Exception as e_pydantic_fallback:
-                        self.logger.error(f"Error during Pydantic model_dump() fallback for '{accessor}' on {type(current)}: {e_pydantic_fallback}. Path part: {accessor}")
-                        raise AttributeError(f"Attribute/field '{accessor}' not found on Pydantic model {type(current)} or fallback failed. Path part: {accessor}")
-            else: # General object attribute access
-                # Use original accessor for getattr
-                if not hasattr(current, accessor):
-                    self.logger.error(f"Object of type {type(current)} has no attribute '{accessor}'. Path part: {accessor}")
-                    raise AttributeError(f"Object of type {type(current)} has no attribute '{accessor}'. Path part: {accessor}")
-                current = getattr(current, accessor)
+                            self.logger.error(f"Attempted dict key access on non-dict type: {type(current)}")
+                            raise TypeError(f"Cannot access key '{actual_accessor}' on non-dict object of type {type(current)}")
+                    elif index_str.startswith("'") and index_str.endswith("'"):
+                        # Dict key with single quotes like ['my-key']
+                        actual_accessor = index_str[1:-1]
+                        self.logger.debug(f"Dict key access with single quotes: '{actual_accessor}' on {type(current)}")
+                        if isinstance(current, dict):
+                            if actual_accessor in current:
+                                current = current[actual_accessor]
+                                self.logger.debug(f"Successfully accessed dict key '{actual_accessor}', result type: {type(current)}")
+                            else:
+                                self.logger.error(f"Dict key '{actual_accessor}' not found in dict with keys: {list(current.keys())}")
+                                raise KeyError(f"Key '{actual_accessor}' not found in dict")
+                        else:
+                            self.logger.error(f"Attempted dict key access on non-dict type: {type(current)}")
+                            raise TypeError(f"Cannot access key '{actual_accessor}' on non-dict object of type {type(current)}")
+                    else:
+                        # Numeric index for list
+                        actual_accessor = int(index_str)
+                        self.logger.debug(f"List index access: [{actual_accessor}] on {type(current)}")
+                        if isinstance(current, (list, tuple)):
+                            if 0 <= actual_accessor < len(current):
+                                current = current[actual_accessor]
+                                self.logger.debug(f"Successfully accessed list index [{actual_accessor}], result type: {type(current)}")
+                            else:
+                                self.logger.error(f"List index [{actual_accessor}] out of range for list of length {len(current)}")
+                                raise IndexError(f"List index [{actual_accessor}] out of range")
+                        else:
+                            self.logger.error(f"Attempted list index access on non-list type: {type(current)}")
+                            raise TypeError(f"Cannot access index [{actual_accessor}] on non-list object of type {type(current)}")
+                except (ValueError, KeyError, IndexError, TypeError) as e:
+                    self.logger.error(f"Error accessing container with accessor '[{index_str}]': {e}")
+                    raise
+            else:
+                # Regular attribute/key access
+                # Remove quotes if present for dict access
+                if accessor.startswith('"') and accessor.endswith('"'):
+                    actual_accessor = accessor[1:-1]
+                elif accessor.startswith("'") and accessor.endswith("'"):
+                    actual_accessor = accessor[1:-1]
+                else:
+                    actual_accessor = accessor
+                
+                self.logger.debug(f"Regular access: accessor='{accessor}', actual_accessor='{actual_accessor}' on {type(current)}")
+                
+                if isinstance(current, dict):
+                    self.logger.debug(f"Dict access: looking for key '{actual_accessor}' in dict with keys: {list(current.keys())}")
+                    if actual_accessor in current:
+                        current = current[actual_accessor]
+                        self.logger.debug(f"Successfully accessed dict key '{actual_accessor}', result type: {type(current)}")
+                    else:
+                        self.logger.error(f"Dict key '{actual_accessor}' not found in dict with keys: {list(current.keys())}")
+                        raise KeyError(f"Key '{actual_accessor}' not found in dict")
+                elif isinstance(current, (list, tuple)):
+                    self.logger.debug(f"List/tuple access: looking for index '{actual_accessor}' in {type(current)} of length {len(current)}")
+                    try:
+                        index = int(actual_accessor)
+                        if 0 <= index < len(current):
+                            current = current[index]
+                            self.logger.debug(f"Successfully accessed list index [{index}], result type: {type(current)}")
+                        else:
+                            self.logger.error(f"List index [{index}] out of range for list of length {len(current)}")
+                            raise IndexError(f"List index [{index}] out of range")
+                    except ValueError:
+                        self.logger.error(f"Cannot convert '{actual_accessor}' to integer for list access")
+                        raise ValueError(f"Cannot convert '{actual_accessor}' to integer for list access")
+                elif isinstance(current, BaseModel): # Pydantic BaseModel check
+                    self.logger.debug(f"Pydantic model access: looking for field '{actual_accessor}' in model {type(current)}")
+                    self.logger.debug(f"Available Pydantic fields: {list(current.model_fields.keys())}")
+                    if hasattr(current, actual_accessor):
+                        current = getattr(current, actual_accessor)
+                        self.logger.debug(f"Successfully accessed Pydantic field '{actual_accessor}', result type: {type(current)}, value: {current}")
+                    else:
+                        try:
+                            current_dump = current.model_dump()
+                            self.logger.debug(f"Fallback to model_dump(): {current_dump}")
+                            if actual_accessor in current_dump:
+                                current = current_dump[actual_accessor]
+                                self.logger.debug(f"Successfully accessed via model_dump() key '{actual_accessor}', result type: {type(current)}, value: {current}")
+                            else:
+                                self.logger.error(f"Attribute/field '{actual_accessor}' not found on Pydantic model {type(current)} via direct access or in model_dump(). Available fields: {list(current.model_fields.keys())}, model_dump keys: {list(current_dump.keys())}")
+                                raise AttributeError(f"Attribute/field '{actual_accessor}' not found on Pydantic model {type(current)}. Path part: {accessor}")
+                        except Exception as e_pydantic_fallback:
+                            self.logger.error(f"Error during Pydantic model_dump() fallback for '{actual_accessor}' on {type(current)}: {e_pydantic_fallback}. Path part: {accessor}")
+                            raise AttributeError(f"Attribute/field '{actual_accessor}' not found on Pydantic model {type(current)} or fallback failed. Path part: {accessor}")
+                else: # General object attribute access
+                    self.logger.debug(f"General object access: looking for attribute '{accessor}' on {type(current)}")
+                    if hasattr(current, '__dict__'):
+                        self.logger.debug(f"Object attributes: {list(current.__dict__.keys()) if current.__dict__ else 'No __dict__'}")
+                    # Use original accessor for getattr
+                    if not hasattr(current, accessor):
+                        self.logger.error(f"Object of type {type(current)} has no attribute '{accessor}'. Path part: {accessor}")
+                        raise AttributeError(f"Object of type {type(current)} has no attribute '{accessor}'. Path part: {accessor}")
+                    current = getattr(current, accessor)
+                    self.logger.debug(f"Successfully accessed object attribute '{accessor}', result type: {type(current)}")
+        
+        self.logger.debug(f"Final resolution result: type={type(current)}, value={current}")
         return current
 
     def _resolve_path_value_from_base_and_parts(
@@ -387,6 +452,8 @@ class ContextResolutionService:
         if path_expression.startswith("{") and path_expression.endswith("}"):
             clean_path = path_expression[1:-1]
         
+        self.logger.debug(f"Resolving path '{original_path_expression_for_logging}', clean_path='{clean_path}'")
+        
         if not clean_path:
             self.logger.warning(f"Path expression '{original_path_expression_for_logging}' became empty after cleaning.")
             if allow_partial: return None
@@ -407,6 +474,8 @@ class ContextResolutionService:
         base_object_name = path_parts_split[0]
         remaining_path_str = path_parts_split[1] if len(path_parts_split) > 1 else None
         
+        self.logger.debug(f"base_object_name='{base_object_name}', remaining_path_str='{remaining_path_str}'")
+        
         base_object: Any = None
 
         if base_object_name == "context":
@@ -419,6 +488,7 @@ class ContextResolutionService:
             # and a data dict, so this approach handles both cases correctly
             base_object = effective_shared_context
             # `parts_to_resolve` will be parsed from `remaining_path_str`
+            self.logger.debug(f"Using SharedContext as base_object for path starting with 'context'")
 
         elif base_object_name == "outputs":
             if not hasattr(effective_shared_context, 'data') or not isinstance(effective_shared_context.data.get("outputs"), dict):
@@ -461,31 +531,24 @@ class ContextResolutionService:
 
         if remaining_path_str is None:
             # Path was just a base name like "{context}", "{outputs}", or "{run_id}" (if run_id is direct attr)
+            self.logger.debug(f"No remaining path, returning base_object: {type(base_object)}")
             return base_object # Return the base object itself
 
         parts_to_resolve = self._parse_accessors(remaining_path_str)
-        if not parts_to_resolve: # If parsing remaining_path_str yields no further accessors
-             # This can happen if remaining_path_str was a simple key that _parse_accessors didn't break down further
-             # but _get_value_from_container expects a list.
-             # However, _get_value_from_container should handle a single string in parts if it's a direct key/attr.
-             # Let's reconsider: _parse_accessors should return [remaining_path_str] if it's a simple attribute.
-             # For now, if it's empty, but remaining_path_str was not None, it might be an issue with _parse_accessors or path.
-             # This case should ideally be covered by _get_value_from_container if `parts_to_resolve` is `[remaining_path_str]`
-             # If `remaining_path_str` was "foo" and `_parse_accessors` returns `["foo"]`, then `_get_value_from_container` works.
-             # If `_parse_accessors` returns `[]` for non-empty `remaining_path_str`, that's a bug in `_parse_accessors`.
-             # Assuming _parse_accessors correctly returns e.g. ["project_id"] for "project_id"
-             pass
+        self.logger.debug(f"parts_to_resolve={parts_to_resolve}")
 
-
-        # Crucial: Pass effective_shared_context for the fallback mechanism
-        return self._resolve_path_value_from_base_and_parts(
-            base_object_name, 
-            base_object, 
-            parts_to_resolve, 
-            original_path_expression_for_logging, # Pass original for logging
-            effective_shared_context,
-            allow_partial
+        # Use the enhanced resolution method that includes fallback logic
+        resolved_value = self._resolve_path_value_from_base_and_parts(
+            base_object_name=base_object_name,
+            base_object=base_object,
+            parts=parts_to_resolve,
+            path_expression=original_path_expression_for_logging,
+            shared_context_for_fallback=effective_shared_context,
+            allow_partial=allow_partial
         )
+        
+        self.logger.debug(f"Final resolved_value type={type(resolved_value)}, value={resolved_value}")
+        return resolved_value
 
     def resolve_path_value_from_context(
         self,

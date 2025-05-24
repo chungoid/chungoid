@@ -38,22 +38,45 @@ class SuccessCriteriaService:
         if path_str.startswith("{context.") and path_str.endswith("}"):
             # Explicit context path
             path_expression_in_braces = path_str[len("{context."):-1]
+            self.logger.debug(f"Resolving context path '{path_expression_in_braces}' from path '{path_str}'")
             try:
-                resolved_value = await self.context_resolver.resolve_single_path(
-                    path_expression_in_braces, shared_context_for_stage
-                )
-                self.logger.debug(f"Resolved '{path_str}' from shared_context to: {resolved_value}")
+                # Fix: If the path starts with "outputs.", we need to prepend "data." to make it resolve correctly
+                # against the SharedContext structure where outputs are stored in shared_context.data['outputs']
+                if path_expression_in_braces.startswith("outputs."):
+                    corrected_path = "data." + path_expression_in_braces
+                    self.logger.debug(f"Correcting context path from '{path_expression_in_braces}' to '{corrected_path}'")
+                    resolved_value = self.context_resolver.resolve_single_path(
+                        corrected_path, shared_context_for_stage
+                    )
+                else:
+                    resolved_value = self.context_resolver.resolve_single_path(
+                        path_expression_in_braces, shared_context_for_stage
+                    )
+                self.logger.debug(f"Context path resolution result: {resolved_value}")
                 return resolved_value
             except Exception as e:
                 self.logger.error(f"Unexpected error resolving context path '{path_str}': {e}", exc_info=True)
                 return _SENTINEL
         
+        # Fix: If path starts with "outputs.", resolve against shared context, not stage_outputs
+        if path_str.startswith("outputs."):
+            self.logger.debug(f"Path '{path_str}' starts with 'outputs.', resolving against shared context")
+            try:
+                # Resolve against shared_context.data['outputs']
+                corrected_path = "data." + path_str
+                self.logger.debug(f"Resolving outputs path '{path_str}' as context path '{corrected_path}'")
+                resolved_value = self.context_resolver.resolve_single_path(
+                    corrected_path, shared_context_for_stage
+                )
+                self.logger.debug(f"Outputs path resolution result: {resolved_value}")
+                return resolved_value
+            except Exception as e:
+                self.logger.error(f"Error resolving outputs path '{path_str}': {e}", exc_info=True)
+                return _SENTINEL
+        
+        # For other paths, resolve against stage_outputs directly
         current_obj = stage_outputs
         parts = path_str.split('.')
-        
-        if path_str.startswith("outputs.") and isinstance(stage_outputs, dict):
-            actual_path_in_outputs = path_str[len("outputs."):]
-            parts = actual_path_in_outputs.split('.')
 
         for part in parts:
             if isinstance(current_obj, dict):

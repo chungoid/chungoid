@@ -61,7 +61,7 @@ def get_router(api_key_checker):
             agent_provider=agent_provider, 
             state_manager=state_manager,
             metrics_store=metrics_store,
-            master_planner_reviewer_agent_id="SystemMasterPlannerReviewerAgent_v1" # Use a placeholder string ID
+            master_planner_reviewer_agent_id="system.master_planner_reviewer_agent_v1" # Use a placeholder string ID
         )
         # result_context = await orch.run(plan=plan, context=context) # OLD WAY
         result_context = await orch.run(master_plan_id=master_plan_id_to_pass, initial_context=context) # NEW WAY

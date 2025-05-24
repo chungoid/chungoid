@@ -1469,7 +1469,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             state_manager=state_manager,
             agent_provider=agent_provider,
             metrics_store=metrics_store,
-            master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "SystemMasterPlannerReviewerAgent_v1"),
+            master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "system.master_planner_reviewer_agent_v1"),
             default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
         )
 
