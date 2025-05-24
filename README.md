@@ -1,615 +1,403 @@
 # Chungoid
 
-**An autonomous AI development toolkit that orchestrates intelligent workflows through specialized agents and sophisticated CLI commands.**
+**Transform ideas into production-ready software with one command.**
 
-[![Tests](https://github.com/chungoid/metachungoid/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/chungoid/metachungoid/actions/workflows/test.yml)
-![Coverage](https://img.shields.io/badge/coverage-80%25%2B-brightgreen)
-![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-
----
-
-## What is Chungoid?
-
-Chungoid is a sophisticated **autonomous development toolkit** that transforms high-level project goals into working software through intelligent orchestration of specialized AI agents. It operates primarily through a powerful CLI operations.
-
-**Core Components:**
-- **CLI**: Comprehensive command-line tools for project management and workflow execution
-- **AI Agents**: Specialized agents for planning, coding, testing, and architecture tasks
-- **Workflow Orchestration**: Master flow system for complex multi-stage development processes
-- **ChromaDB Integration**: Persistent memory and learning from past executions
-- **MCP Tools**: Optional Model Context Protocol integration for IDE usage
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Python 3.11+**
-- **Git** for cloning the repository
-
-### Install via pipx (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/chungoid/chungoid.git
-cd chungoid/
-
-# Install globally with pipx
-pipx install .
-
-# Verify installation
-chungoid --help
-chungoid-server --version
-```
-
-### Install via pip
-
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or venv\\Scripts\\activate  # Windows
-
-# Install package
-pip install -e .
-```
-
----
-
-## Quick Start
-
-### 1. Initialize a Project
-
-```bash
-# Create and initialize a new project
-mkdir my-project
-cd my-project
-chungoid init .
-
-# Or initialize an existing directory
-chungoid init /path/to/existing/project
-```
-
-### 2. Check Project Status
-
-```bash
-# Basic status
-chungoid status
-
-# JSON output for scripting
-chungoid status --json
-
-# Check specific project directory
-chungoid status /path/to/project --json
-```
-
-### 3. Build from a Goal
+Chungoid is an autonomous AI development toolkit that converts natural language goals into complete, working projects. Using coordinated AI agents and intelligent automation, it handles everything from architecture decisions to dependency management, letting you focus on what you want to build rather than how to build it.
 
 ```bash
 # Create a goal file
-echo \"Build a REST API for task management with authentication\" > goal.txt
+echo "Build a Python FastAPI REST API with user authentication" > goal.txt
 
-# Build the project
-chungoid build --goal-file <filename> --project-dir <project-path>
+# Generate complete project
+chungoid build --goal-file goal.txt --project-dir ./my-api
 
-# Build with additional context
-chungoid build --goal-file goal.txt --project-dir . --initial-context '{\"language\": \"python\", \"framework\": \"fastapi\"}'
+# Result: A production-ready FastAPI application with auth, tests, and documentation
 ```
 
-### 4. Run Master Flows
+## Key Features
+
+- **One-Command Project Generation**: From goal to working code in minutes
+- **Autonomous Development**: AI agents handle architecture, coding, testing, and deployment
+- **Intelligent Dependency Management**: Automatically resolves and installs requirements
+- **Adaptive Learning**: Learns from past executions to improve future builds
+- **Multi-Language Support**: Python, JavaScript, TypeScript, and more
+- **State Persistence**: Resume interrupted builds, track project evolution
+- **Production-Ready**: Generates deployment configs, tests, and documentation
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.10 or higher
+- Git (for project initialization)
+
+### Installation
+
+Currently available as development installation:
 
 ```bash
-# Run from a goal description
-chungoid flow run --goal \"Create a web scraping tool\" --project-dir .
+# Clone the repository
+git clone https://github.com/your-org/chungoid-core.git
+cd chungoid-core
 
-# Run a specific master flow
-chungoid flow run --master-flow-id my-flow-123 --project-dir .
+# Install in development mode
+pip install -e .
 
-# Run from YAML file with custom settings
-chungoid flow run --flow-yaml ./workflows/api-dev.yaml --project-dir . --llm-provider anthropic --llm-model claude-3-5-sonnet-20241022
+# Verify installation
+chungoid --help
 ```
 
-### 5. Resume Interrupted Flows
+### Your First Project
+
+1. **Create a goal file**:
+```bash
+echo "Create a Python CLI tool using Click with hello and goodbye commands" > my-goal.txt
+```
+
+2. **Initialize project directory** (optional):
+```bash
+chungoid init my-cli-tool
+cd my-cli-tool
+```
+
+3. **Build your project**:
+```bash
+chungoid build --goal-file ../my-goal.txt --project-dir .
+```
+
+4. **Check the results**:
+```bash
+# View project status
+chungoid status
+
+# Your working CLI tool is ready!
+python -m your_cli hello
+```
+
+## Writing Effective Goals
+
+The quality of your goal description directly impacts the generated project. Here are examples of effective goals:
+
+### Good Goals
+
+```text
+Create a Python FastAPI REST API with:
+- User registration and JWT authentication
+- CRUD operations for a blog post model
+- SQLAlchemy with PostgreSQL
+- Automatic API documentation
+- Docker containerization
+- Pytest test suite
+```
+
+```text
+Build a React TypeScript web app that:
+- Displays a dashboard with charts using Chart.js
+- Fetches data from a REST API
+- Has responsive design with Tailwind CSS
+- Includes user login with session management
+- Uses Vite for build tooling
+```
+
+### Avoid Vague Goals
+
+```text
+Make a website  # Too vague
+Build something cool  # No specific requirements
+Create an app  # Missing technology and functionality details
+```
+
+### Goal Writing Tips
+
+- **Be specific about technology stack**: "Python Flask" vs "Python"
+- **Define core features clearly**: List the main functionality needed
+- **Include deployment preferences**: Docker, cloud platform, etc.
+- **Specify testing requirements**: Unit tests, integration tests
+- **Mention UI/UX preferences**: Responsive, specific frameworks
+
+## Core Commands
+
+### `chungoid build` - Primary Command
+
+Build a complete project from a goal description.
 
 ```bash
-# Resume a paused flow
-chungoid flow resume abc-123-def --action retry --project-dir .
-
-# Resume with additional inputs
-chungoid flow resume abc-123-def --action retry_with_inputs --inputs '{\"new_requirement\": \"add logging\"}' --project-dir .
-
-# Skip problematic stage
-chungoid flow resume abc-123-def --action skip_stage --project-dir .
+chungoid build --goal-file GOAL_FILE [OPTIONS]
 ```
 
----
+**Required:**
+- `--goal-file FILE`: Path to your goal description file
 
-## Command Reference
+**Options:**
+- `--project-dir DIR`: Target directory (default: current directory)
+- `--initial-context JSON`: Additional context as JSON string
+- `--tags TAGS`: Comma-separated tags for organization
+- `--run-id ID`: Custom run identifier
 
-#### Build Command
+**Examples:**
 
 ```bash
-chungoid build --goal-file <path> [OPTIONS]
+# Basic usage
+chungoid build --goal-file goal.txt
 
-Options:
-  --goal-file PATH        Path to file containing the user goal (required)
-  --project-dir PATH      Target project directory (default: current directory)
-  --run-id TEXT          Custom run ID for this execution
-  --initial-context TEXT JSON string with initial context variables
-  --tags TEXT            Comma-separated tags (e.g., 'dev,release')
+# Specify target directory
+chungoid build --goal-file goal.txt --project-dir ./new-project
+
+# Add context for better results
+chungoid build --goal-file goal.txt --initial-context '{"framework": "fastapi", "database": "postgresql"}'
+
+# Tag for organization
+chungoid build --goal-file goal.txt --tags "api,microservice,production"
 ```
 
-#### Flow Commands
+### `chungoid init` - Project Setup
+
+Initialize a new Chungoid project structure.
 
 ```bash
-# Run flows
-chungoid flow run [OPTIONS]
-
-Options:
-  --master-flow-id TEXT   ID of master flow to run
-  --flow-yaml PATH        Path to specific master flow YAML file
-  --goal TEXT             High-level user goal (generates new flow)
-  --project-dir PATH      Project directory (default: current directory)
-  --initial-context TEXT JSON string with initial context variables
-  --run-id TEXT          Custom run ID
-  --tags TEXT            Comma-separated tags
-  --llm-provider TEXT    Override LLM provider
-  --llm-model TEXT       Override LLM model
-  --llm-api-key TEXT     Override LLM API key
-  --llm-base-url TEXT    Override LLM base URL
-
-# Resume flows
-chungoid flow resume <run_id> --action <action> [OPTIONS]
-
-Actions: retry, retry_with_inputs, skip_stage, force_branch, abort, provide_clarification
-
-Options:
-  --project-dir PATH      Project directory (default: current directory)
-  --inputs TEXT          JSON string with inputs to merge
-  --target-stage TEXT    Stage ID to jump to (for force_branch)
-  --llm-provider TEXT    Override LLM provider
-  --llm-model TEXT       Override LLM model
-  --llm-api-key TEXT     Override LLM API key
-  --llm-base-url TEXT    Override LLM base URL
+chungoid init PROJECT_DIR
 ```
 
-#### Project Review
+Creates a `.chungoid/` directory with configuration files and project tracking.
+
+### `chungoid status` - Project Inspection
+
+Check the status of a Chungoid project.
 
 ```bash
-chungoid project review --cycle-id <id> --reviewer-id <id> --comments <text> --decision <decision> [OPTIONS]
-
-Options:
-  --project-dir PATH              Project directory (default: current directory)
-  --cycle-id TEXT                Cycle ID being reviewed (required)
-  --reviewer-id TEXT             Reviewer identifier (required)
-  --comments TEXT                Review comments (required)
-  --decision [approved|rejected] Review decision (required)
-  --next-objective TEXT          Next cycle objective
-  --linked-feedback-doc-id TEXT  ChromaDB document ID for detailed feedback
+chungoid status [PROJECT_DIR] [--json]
 ```
 
-#### Utility Commands
+Shows build progress, run history, and project metadata.
 
-```bash
-# Show configuration
-chungoid utils show-config [--project-dir PATH] [--raw]
+### Advanced Commands
 
-# Show available modules
-chungoid utils show-modules
-```
+For complex workflows and automation:
 
-### Global Options
-
-```bash
-chungoid [--log-level LEVEL] <command>
-
-Log Levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
-```
-
----
+- `chungoid flow run`: Execute custom workflow definitions
+- `chungoid flow resume`: Resume interrupted executions
+- `chungoid metrics`: View execution analytics
+- `chungoid utils show-config`: Display current configuration
 
 ## Configuration
 
 ### Environment Variables
 
+Configure your LLM provider:
+
 ```bash
-# Core configuration
-export CHUNGOID_PROJECT_DIR=\"/path/to/project\"
-export CHUNGOID_LOG_LEVEL=\"INFO\"
+# OpenAI (recommended)
+export CHUNGOID_LLM_PROVIDER=openai
+export CHUNGOID_LLM_API_KEY=your_openai_api_key
 
-# LLM Provider configuration
-export ANTHROPIC_API_KEY=\"your-api-key\"
-export OPENAI_API_KEY=\"your-api-key\"
+# Optional: Custom model
+export CHUNGOID_LLM_MODEL=gpt-4
 
-# ChromaDB configuration  
-export CHROMA_CLIENT_TYPE=\"persistent\"
-export CHROMA_DB_PATH=\"./.chungoid/chroma_db\"
+# Optional: Custom base URL
+export CHUNGOID_LLM_BASE_URL=https://api.openai.com/v1
 ```
 
 ### Project Configuration
 
-Create `.chungoid/chungoid_config.yaml` in your project:
+Each project can have custom settings in `.chungoid/chungoid_config.yaml`:
 
 ```yaml
-# Project identification
-project_id: \"unique-project-id\"
+# .chungoid/chungoid_config.yaml
+llm:
+  provider: openai
+  model: gpt-4-turbo
+  api_key: ${CHUNGOID_LLM_API_KEY}
 
-# LLM settings
-project_settings:
-  llm_config:
-    provider: \"anthropic\"
-    model: \"claude-3-5-sonnet-20241022\"
-    api_key: \"${ANTHROPIC_API_KEY}\"
-
-# Agent settings
-agents:
-  default_timeout: 300
+orchestrator:
   max_retries: 3
-  
-# Workflow settings
-workflow:
-  auto_stage_progression: false
-  enable_reflection: true
+  failure_recovery: true
+
+agents:
+  enable_learning: true
+  fallback_strategy: "graceful_degradation"
 ```
 
-### Master Flow Configuration
+## How It Works
 
-Master flows define complex multi-stage workflows:
-
-```yaml
-# Example: .chungoid/master_flows/api-development.yaml
-name: \"REST API Development Flow\"
-description: \"Complete API development with testing\"
-start_stage: \"planning\"
-
-stages:
-  planning:
-    agent_id: \"master_planner_agent\"
-    inputs:
-      project_type: \"api\"
-      requirements: \"${user_goal}\"
-    next: \"architecture\"
-    
-  architecture:
-    agent_id: \"architect_agent_v1\"
-    inputs:
-      design_requirements: \"${planning.output}\"
-    next: \"implementation\"
-    
-  implementation:
-    agent_id: \"code_generator_agent\"
-    dependencies: [\"planning\", \"architecture\"]
-    next: \"testing\"
-    
-  testing:
-    agent_id: \"test_generator_agent\"
-    inputs:
-      code_base: \"${implementation.output}\"
-    next: null
-```
-
----
-
-## Architecture
-
-### System Components
+Chungoid uses a sophisticated autonomous development pipeline:
 
 ```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│   CLI Commands  │────│ AsyncOrchest │────│   AI Agents     │
-│                 │    │    rator     │    │                 │
-│• chungoid build │    │              │    │• MasterPlanner  │
-│• chungoid flow  │    │              │    │• CodeGenerator  │
-│• chungoid init  │    │              │    │• TestGenerator  │
-└─────────────────┘    └──────────────┘    │• ArchitectAgent │
-                                           └─────────────────┘
-                              │                       │
-                    ┌─────────▼─────────┐   ┌─────────▼─────────┐
-                    │  State Manager   │   │   Tool Manifest   │
-                    │                   │   │                   │
-                    │• Project Status   │   │• 45+ MCP Tools    │
-                    │• Workflow State   │   │• Performance      │
-                    │• Reflection Data  │   │  Analytics        │
-                    └───────────────────┘   └───────────────────┘
-                              │
-                    ┌─────────▼─────────┐
-                    │    ChromaDB       │
-                    │                   │
-                    │• Execution History│
-                    │• Code Context     │
-                    │• Learning Data    │
-                    └───────────────────┘
+Goal File → Master Planner → Execution Plan → Specialized Agents → Working Project
 ```
 
-### Agent System
+### 1. **Goal Analysis**
+The Master Planner Agent analyzes your goal and creates a detailed execution plan
 
-**Production Agents:**
-- **MasterPlannerAgent** - High-level project planning and workflow orchestration
-- **CodeGeneratorAgent** - Context-aware code generation with best practices
-- **TestGeneratorAgent** - Comprehensive test suite generation
-- **ArchitectAgent** - System architecture design and validation
-- **ProjectChromaManagerAgent** - Knowledge management and retrieval
+### 2. **Agent Orchestration** 
+Specialized agents execute the plan:
 
-**Autonomous Engine Agents:**
-- **EnvironmentBootstrapAgent** - Multi-language environment setup
-- **DependencyManagementAgent** - Smart dependency analysis and management
-- **TestFailureAnalysisAgent** - Intelligent test failure diagnosis and resolution
+**Planning & Coordination Agents:**
+- **MasterPlannerAgent**: Creates detailed execution plans from user goals
+- **MasterPlannerReviewerAgent**: Reviews and adjusts plans when issues arise
+- **ArchitectAgent**: Makes system architecture and design decisions
 
-### Tool Ecosystem
+**Development Agents:**
+- **EnvironmentBootstrapAgent**: Sets up project structure and multi-language environments
+- **DependencyManagementAgent_v1**: Intelligent dependency resolution and installation
+- **CodeGeneratorAgent**: Writes application code following best practices
+- **TestGeneratorAgent**: Creates comprehensive test suites
+- **SystemFileSystemAgent**: Handles file operations and project structure
 
-**45+ MCP Tools across categories:**
-- **ChromaDB Tools (17)**: Vector operations, semantic search, knowledge storage
-- **File System Tools (12)**: Project-aware file operations, template expansion
-- **Terminal Tools (8)**: Secure command execution, environment management
-- **Content Tools (8)**: Dynamic generation, web fetching, caching
+**Quality Assurance Agents:**
+- **SystemTestRunnerAgent**: Executes tests and manages test workflows
+- **TestFailureAnalysisAgent_v1**: Sophisticated analysis and automated fixing of test failures
 
----
+**Knowledge Management:**
+- **ProjectChromaManagerAgent**: Manages knowledge storage and retrieval using ChromaDB
 
-## Advanced Usage
+### 3. **Tool Integration**
+Agents use 45+ specialized tools:
+- **Filesystem Suite**: Smart file operations and project scanning
+- **Terminal Suite**: Safe command execution and dependency management
+- **ChromaDB Suite**: Learning and context management
+- **Content Suite**: Documentation and template processing
 
-### Custom Goal Files
+### 4. **Continuous Learning**
+ChromaDB integration enables the system to learn from each build, improving future projects.
 
-```json
-{
-  \"goal\": \"Build a microservice for user authentication\",
-  \"requirements\": [
-    \"JWT token-based authentication\",
-    \"PostgreSQL database integration\",
-    \"RESTful API endpoints\",
-    \"Comprehensive test coverage\"
-  ],
-  \"constraints\": {
-    \"language\": \"python\",
-    \"framework\": \"fastapi\",
-    \"database\": \"postgresql\"
-  },
-  \"success_criteria\": [
-    \"All tests pass\",
-    \"API documentation generated\",
-    \"Security best practices implemented\"
-  ]
-}
+## Examples
+
+### Python FastAPI Microservice
+
+**Goal**: `Create a FastAPI microservice with PostgreSQL, Docker, and comprehensive testing`
+
+**Generated Project Structure**:
+```
+my-api/
+├── app/
+│   ├── __init__.py
+│   ├── main.py              # FastAPI application
+│   ├── models.py            # SQLAlchemy models
+│   ├── database.py          # Database configuration
+│   └── routes/              # API endpoints
+├── tests/                   # Pytest test suite
+├── docker-compose.yml       # Development environment
+├── Dockerfile               # Production container
+├── requirements.txt         # Dependencies
+└── README.md               # Project documentation
 ```
 
-### Workflow Automation
+### React TypeScript Dashboard
 
-```bash
-#!/bin/bash
-# Automated development pipeline
+**Goal**: `Build a React TypeScript dashboard with charts, responsive design, and API integration`
 
-PROJECT_DIR=\"./my-microservice\"
-GOAL_FILE=\"./goals/auth-service.json\"
-
-# Initialize project
-chungoid init \"$PROJECT_DIR\"
-
-# Run development flow
-chungoid build --goal-file \"$GOAL_FILE\" --project-dir \"$PROJECT_DIR\" --tags \"automated,production\"
-
-# Check results
-chungoid status \"$PROJECT_DIR\" --json | jq '.current_stage'
-```
-
-### Integration with CI/CD
-
-```yaml
-# .github/workflows/chungoid-build.yml
-name: Chungoid Autonomous Build
-on: 
-  push:
-    paths: ['goals/*.json']
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install Chungoid
-        run: |
-          pip install -e ./chungoid-core
-          
-      - name: Run Build
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          chungoid build --goal-file goals/feature.json --project-dir ./output
-          
-      - name: Upload Results
-        uses: actions/upload-artifact@v3
-        with:
-          name: generated-code
-          path: ./output
-```
-
----
-
-## Optional: MCP Server Mode
-
-While Chungoid is primarily a CLI tool, it can also operate as an MCP server for IDE integration:
-
-### MCP Integration (Optional)
-
-Add to your Cursor `mcp.json` settings:
-
-```json
-{
-  \"mcpServers\": {
-    \"chungoid\": {
-      \"command\": \"chungoid-server\",
-      \"transportType\": \"stdio\",
-      \"args\": [],
-      \"env\": {
-        \"CHUNGOID_PROJECT_DIR\": \"${workspaceFolder}\",
-        \"CHUNGOID_LOG_LEVEL\": \"INFO\"
-      }
-    }
-  }
-}
-```
-
-**MCP Commands:**
-```
-@chungoid initialize_project
-@chungoid get_project_status
-@chungoid prepare_next_stage
-@chungoid submit_stage_artifacts
-```
-
----
+**Generated Features**:
+- Vite build configuration
+- TypeScript setup with strict mode
+- Chart.js integration for data visualization
+- Tailwind CSS for responsive design
+- Axios for API communication
+- Jest and Testing Library for testing
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Command not found: chungoid**
+**Installation Problems:**
 ```bash
-# Ensure installation completed
-pipx list | grep chungoid
-
-# Reinstall if necessary
-pipx reinstall chungoid-mcp-server
+# If installation fails, try upgrading pip
+pip install --upgrade pip
+pip install -e .
 ```
 
-**Project initialization fails**
+**Build Failures:**
 ```bash
-# Check permissions
-ls -la .chungoid/
-
-# Reinitialize with debug logging
-chungoid --log-level DEBUG init .
-```
-
-**Flow execution errors**
-```bash
-# Check project status
+# Check project status for detailed error information
 chungoid status --json
 
-# Resume with different action
-chungoid flow resume <run-id> --action skip_stage --project-dir .
+# View logs
+cat .chungoid/chungoid_status.json
 ```
 
-**ChromaDB connection issues**
+**LLM Provider Issues:**
 ```bash
-# Clear ChromaDB cache
-rm -rf .chungoid/chroma_db
+# Verify your API key is set
+echo $CHUNGOID_LLM_API_KEY
 
-# Reinitialize project
-chungoid init .
+# Test with mock provider (development only)
+chungoid build --goal-file goal.txt --use-mock-llm-provider
 ```
 
-### Debug Commands
+### Getting Help
 
-```bash
-# Show detailed configuration
-chungoid utils show-config --raw
+- **Issues**: Report bugs and request features on GitHub Issues
+- **Discussions**: Join community discussions for usage questions
+- **Documentation**: Check `/docs` directory for detailed guides
 
-# Check available modules
-chungoid utils show-modules
+## Optional: MCP Server Integration
 
-# Enable debug logging
-export CHUNGOID_LOG_LEVEL=DEBUG
-chungoid flow run --goal \"test project\" --project-dir .
-```
-
----
-
-## Development
-
-### Setting Up Development Environment
+Chungoid can optionally run as an MCP (Model Context Protocol) server for integration with AI development environments:
 
 ```bash
-# Clone repository
-git clone https://github.com/your-org/chungoid-mcp.git
-cd chungoid-mcp/chungoid-core
+# Start MCP server (advanced usage)
+chungoid-server
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Install with development dependencies
-pip install -e \".[dev,test]\"
-
-# Run tests
-pytest
+# Configure in your AI tool
+{
+  "mcpServers": {
+    "chungoid": {
+      "command": "chungoid-server",
+      "args": []
+    }
+  }
+}
 ```
 
-### Project Structure
-
-```
-chungoid-core/
-├── src/chungoid/
-│   ├── agents/                 # AI agent implementations
-│   ├── mcp_tools/             # MCP tool suite (45+ tools)
-│   ├── runtime/               # Workflow orchestration
-│   ├── schemas/               # Data models and validation
-│   ├── utils/                 # Core utilities and services
-│   ├── cli.py                 # Main CLI interface
-│   ├── engine.py              # Core ChungoidEngine
-│   └── mcp.py                 # MCP server entry point
-├── tests/                     # Test suites
-├── docs/                      # Documentation
-└── pyproject.toml            # Package configuration
-```
-
----
+> **Note**: Most users should focus on the CLI commands above. MCP integration is for advanced workflows and AI tool integrations.
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Here's how to get started:
 
-### Quick Start for Contributors
+### Development Setup
 
 ```bash
-# Fork and clone
-git clone https://github.com/your-username/chungoid-mcp.git
-cd chungoid-mcp/chungoid-core
-
-# Set up development environment
-python -m venv .venv
-source .venv/bin/activate
-pip install -e \".[dev,test]\"
+# Clone and install for development
+git clone https://github.com/your-org/chungoid-core.git
+cd chungoid-core
+pip install -e ".[dev]"
 
 # Run tests
 pytest
 
-# Submit changes
-git checkout -b feature/amazing-feature
-# ... make changes ...
-git commit -m \"Add amazing feature\"
-git push origin feature/amazing-feature
-# Create Pull Request
+# Run linting
+flake8 src/ tests/
 ```
 
----
+### Areas for Contribution
+
+- **New Agents**: Specialized agents for different domains
+- **MCP Tools**: Additional tool integrations
+- **Language Support**: Support for new programming languages
+- **Templates**: Project templates for common use cases
+- **Documentation**: Examples, guides, and tutorials
+
+### Code Standards
+
+- Follow PEP 8 style guidelines
+- Add type hints for all functions
+- Include docstrings for public APIs
+- Write tests for new functionality
+- Update documentation for user-facing changes
 
 ## License
 
-Licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0).
-
-See [LICENSE](LICENSE) for full details.
-
----
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
 Built with:
-- **[ChromaDB](https://www.trychroma.com/)** - Vector database for semantic memory
-- **[Click](https://click.palletsprojects.com/)** - Command-line interface framework
-- **[FastMCP](https://github.com/jlowin/fastmcp)** - MCP server framework
-- **[Pydantic](https://pydantic.dev/)** - Data validation and serialization
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
+- [ChromaDB](https://www.trychroma.com/) - AI-native vector database
+- [FastMCP](https://github.com/jlowin/fastmcp) - MCP protocol implementation
+- [Rich](https://rich.readthedocs.io/) - Beautiful terminal output
+- [Pydantic](https://pydantic-docs.helpmanual.io/) - Data validation and settings
 
 ---
 
-<div align=\"center\">
-
-**Transform your development workflow with autonomous AI-powered tools**
-
-[Get Started](#installation) • [Documentation](docs/) • [GitHub](https://github.com/your-org/chungoid-mcp)
-
-</div>
+**Ready to transform your ideas into code? [Get started](#quick-start) with your first Chungoid project!**
