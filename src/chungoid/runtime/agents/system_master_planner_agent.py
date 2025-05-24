@@ -295,6 +295,60 @@ class MasterPlannerAgent(BaseAgent):
         # as Pydantic would have raised a ValidationError if project_chroma_manager
         # (a non-optional field) was None after super().__init__.
 
+    def _attempt_json_repair(self, malformed_json: str) -> Optional[str]:
+        """
+        Attempt to repair common JSON formatting issues that can occur with LLM responses.
+        
+        Args:
+            malformed_json: The potentially malformed JSON string from LLM
+            
+        Returns:
+            Repaired JSON string if successful, None if repair failed
+        """
+        if not malformed_json or not malformed_json.strip():
+            return None
+            
+        try:
+            # Common repair strategies
+            repaired = malformed_json.strip()
+            
+            # 1. Handle unterminated strings by closing them
+            if repaired.count('"') % 2 != 0:
+                # Odd number of quotes - add closing quote at the end
+                logger.debug("Attempting to fix unterminated string by adding closing quote")
+                repaired = repaired + '"'
+            
+            # 2. Handle missing closing braces/brackets
+            open_braces = repaired.count('{') - repaired.count('}')
+            open_brackets = repaired.count('[') - repaired.count(']')
+            
+            if open_braces > 0:
+                logger.debug(f"Adding {open_braces} missing closing braces")
+                repaired = repaired + '}' * open_braces
+                
+            if open_brackets > 0:
+                logger.debug(f"Adding {open_brackets} missing closing brackets")
+                repaired = repaired + ']' * open_brackets
+            
+            # 3. Handle trailing commas before closing braces/brackets
+            repaired = repaired.replace(',}', '}').replace(',]', ']')
+            
+            # 4. Try to extract valid JSON if the response has extra text
+            if not repaired.startswith('{'):
+                # Look for the first '{' character
+                start_idx = repaired.find('{')
+                if start_idx != -1:
+                    repaired = repaired[start_idx:]
+                    logger.debug("Extracted JSON from response with extra prefix text")
+            
+            # Test if the repair worked
+            json.loads(repaired)
+            return repaired
+            
+        except (json.JSONDecodeError, Exception) as e:
+            logger.debug(f"JSON repair attempt failed: {e}")
+            return None
+
     async def invoke_async(
         self,
         inputs: MasterPlannerInput,
@@ -408,8 +462,18 @@ class MasterPlannerAgent(BaseAgent):
             )
             logger.debug(f"Raw LLM JSON response: {llm_response_str}")
 
-            # Step 2: Parse the string response as JSON.
-            llm_generated_plan_dict = json.loads(llm_response_str)
+            # Step 2: Parse the string response as JSON with error recovery
+            try:
+                llm_generated_plan_dict = json.loads(llm_response_str)
+            except json.JSONDecodeError as json_error:
+                logger.warning(f"Initial JSON parse failed: {json_error}. Attempting to repair JSON...")
+                # Try to repair common JSON issues
+                repaired_json = self._attempt_json_repair(llm_response_str)
+                if repaired_json:
+                    llm_generated_plan_dict = json.loads(repaired_json)
+                    logger.info("Successfully repaired and parsed JSON response")
+                else:
+                    raise json_error  # Re-raise original error if repair failed
 
             # --- ADDED: Ensure 'id' is present, a non-empty string ---
             current_id = llm_generated_plan_dict.get("id")
