@@ -550,11 +550,11 @@ class AsyncOrchestrator(BaseOrchestrator):
             
         result = inputs_dict.copy()
         
-        # Keep unwrapping while we have nested 'inputs' dicts
-        while (isinstance(result, dict) and 
-               "inputs" in result and 
-               isinstance(result["inputs"], dict) and 
-               len(result) == 1):  # Only unwrap if 'inputs' is the only key
+        # Handle nested 'inputs' structures (commonly from reviewer modifications)
+        # If we have an 'inputs' key with a dict value, unwrap it
+        if (isinstance(result, dict) and 
+            "inputs" in result and 
+            isinstance(result["inputs"], dict)):
             
             self.logger.debug(f"Unwrapping nested 'inputs' layer: {result}")
             result = result["inputs"]
@@ -624,9 +624,9 @@ class AsyncOrchestrator(BaseOrchestrator):
 
             # ENHANCED: Use InputValidationService for ALL agents - generic input validation and injection
             # First, unwrap any nested input structures
-            self.logger.debug(f"Run {run_id}: Before unwrapping, resolved_inputs = {resolved_inputs}")
+            self.logger.info(f"Run {run_id}: Before unwrapping, resolved_inputs = {resolved_inputs}")
             unwrapped_inputs = self._unwrap_inputs_if_needed(resolved_inputs)
-            self.logger.debug(f"Run {run_id}: After unwrapping, unwrapped_inputs = {unwrapped_inputs}")
+            self.logger.info(f"Run {run_id}: After unwrapping, unwrapped_inputs = {unwrapped_inputs}")
             
             # Prepare injection context for default value injection
             injection_context = {
@@ -659,6 +659,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             
             # Use the validated inputs for agent invocation
             final_inputs_for_agent = validation_result.final_inputs
+            self.logger.info(f"Run {run_id}: final_inputs_for_agent (after validation) = {final_inputs_for_agent}")
             
             # Agent-specific invocation logic using validated inputs
             if isinstance(agent_instance_for_type_check, MasterPlannerAgent):
