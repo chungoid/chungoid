@@ -37,7 +37,10 @@ from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAge
 from chungoid.agents.autonomous_engine.project_chroma_manager_agent import EXECUTION_PLANS_COLLECTION, ProjectChromaManagerAgent_v1
 from chungoid.schemas.project_state import ProjectStateV2, RunRecord, StageRecord
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 # For checking agent_id
-from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1 # ADDED
+from chungoid.runtime.agents.system_requirements_gathering_agent import (
+    SystemRequirementsGatheringAgent_v1,
+    SystemRequirementsGatheringInput
+) # ADDED
 from chungoid.runtime.agents.agent_base import BaseAgent # ADDED for type annotations
 from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput # MODIFIED
 from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput # ADDED
@@ -48,6 +51,7 @@ from chungoid.runtime.services.context_resolution_service import ContextResoluti
 from chungoid.runtime.services.condition_evaluation_service import ConditionEvaluationService, ConditionEvaluationError # ADDED IMPORT
 from chungoid.runtime.services.success_criteria_service import SuccessCriteriaService # ADDED IMPORT
 from chungoid.runtime.services.orchestration_error_handler_service import OrchestrationErrorHandlerService, OrchestrationErrorResult, NEXT_STAGE_END_FAILURE, NEXT_STAGE_END_SUCCESS # MODIFIED: Added constants
+from chungoid.runtime.services.input_validation_service import InputValidationService # ADDED IMPORT
 from chungoid.schemas.flows import PausedRunDetails # ADDED
 
 # Constants for next_stage signals (these are now also in error handler, ensure consistency or import from one source)
@@ -429,6 +433,7 @@ class AsyncOrchestrator(BaseOrchestrator):
     context_resolver: ContextResolutionService # ADDED
     condition_evaluator: ConditionEvaluationService # ADDED
     success_criteria_evaluator: SuccessCriteriaService # ADDED
+    input_validator: InputValidationService # ADDED
 
     def __init__(
         self,
@@ -452,6 +457,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         self.context_resolver = ContextResolutionService(shared_context=self.shared_context) # Pass None initially
         self.condition_evaluator = ConditionEvaluationService(logger=self.logger, context_resolver=self.context_resolver)
         self.success_criteria_evaluator = SuccessCriteriaService(logger=self.logger, context_resolver=self.context_resolver) # Initialize here
+        self.input_validator = InputValidationService(logger=self.logger) # ADDED
         
         # Initialize OrchestrationErrorHandlerService
         self.error_handler_service = OrchestrationErrorHandlerService(
@@ -668,25 +674,44 @@ class AsyncOrchestrator(BaseOrchestrator):
                     smart_input_for_core_gen = resolved_inputs
                 raw_output = await agent_callable(task_input=smart_input_for_core_gen, full_context=self.shared_context) # Use agent_callable
             
-            elif isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
-                req_gathering_input_data = resolved_inputs.copy()
-                
-                # ADDED: Enhanced debug logging
-                self.logger.info(f"Run {run_id}: [DEBUG] SystemRequirementsGatheringAgent_v1 detected. Processing inputs...")
-                self.logger.info(f"Run {run_id}: [DEBUG] Original resolved_inputs: {resolved_inputs}")
-                self.logger.info(f"Run {run_id}: [DEBUG] resolved_inputs type: {type(resolved_inputs)}")
-                self.logger.info(f"Run {run_id}: [DEBUG] resolved_inputs keys: {list(resolved_inputs.keys()) if isinstance(resolved_inputs, dict) else 'N/A'}")
-                
-                # Use the new unwrapping helper method to fix double-wrapping bug
-                req_gathering_input_data = self._unwrap_inputs_if_needed(req_gathering_input_data)
-                self.logger.info(f"Run {run_id}: [DEBUG] After unwrapping: {req_gathering_input_data}")
-
-                if ("user_goal" not in req_gathering_input_data or req_gathering_input_data.get("user_goal") is None) and self.initial_goal_str:
-                    self.logger.info(f"Run {run_id}: Injecting initial_goal_str as user_goal for SystemRequirementsGatheringAgent_v1.")
-                    req_gathering_input_data["user_goal"] = self.initial_goal_str
-                
-                self.logger.info(f"Run {run_id}: [DEBUG] Final inputs being passed to agent: {req_gathering_input_data}")
-                raw_output = await agent_callable(inputs=req_gathering_input_data, full_context=self.shared_context)
+            # ENHANCED: Use InputValidationService for generic input validation and injection
+            # First, unwrap any nested input structures
+            unwrapped_inputs = self._unwrap_inputs_if_needed(resolved_inputs)
+            
+            # Prepare injection context for default value injection
+            injection_context = {
+                "initial_goal_str": self.initial_goal_str,
+                "project_id": self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
+            }
+            
+            # Use InputValidationService to validate and inject defaults
+            validation_result = self.input_validator.validate_and_inject_inputs(
+                agent_id=stage_spec.agent_id,
+                agent_instance=agent_instance_for_type_check,
+                resolved_inputs=unwrapped_inputs,
+                injection_context=injection_context,
+                run_id=run_id
+            )
+            
+            # Log validation results
+            if validation_result.injected_fields:
+                self.logger.info(f"Run {run_id}: Injected default values for agent '{stage_spec.agent_id}': {validation_result.injected_fields}")
+            
+            if validation_result.warnings:
+                for warning in validation_result.warnings:
+                    self.logger.warning(f"Run {run_id}: {warning}")
+            
+            if not validation_result.is_valid:
+                self.logger.error(f"Run {run_id}: Input validation failed for agent '{stage_spec.agent_id}': {validation_result.validation_errors}")
+                # Continue anyway - let the agent handle the validation error, or it might be handled by error handler
+            
+            # Use the validated inputs for agent invocation
+            final_inputs_for_agent = validation_result.final_inputs
+            
+            # Agent-specific invocation logic
+            if isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
+                self.logger.debug(f"Run {run_id}: Invoking SystemRequirementsGatheringAgent_v1 with final inputs: {final_inputs_for_agent}")
+                raw_output = await agent_callable(inputs=final_inputs_for_agent, full_context=self.shared_context)
             
             elif isinstance(agent_instance_for_type_check, SystemFileSystemAgent_v1):
                 # Determine the effective project root for file system operations
@@ -728,7 +753,8 @@ class AsyncOrchestrator(BaseOrchestrator):
             
             else: # Generic agent invocation pattern
                 try:
-                    raw_output = await agent_callable(inputs=resolved_inputs, full_context=self.shared_context)
+                    self.logger.debug(f"Run {run_id}: Invoking generic agent '{stage_spec.agent_id}' with final inputs")
+                    raw_output = await agent_callable(inputs=final_inputs_for_agent, full_context=self.shared_context)
                 except TypeError as te_invoke:
                     if "got an unexpected keyword argument 'inputs'" in str(te_invoke) or \
                        "missing 1 required positional argument: 'task_input'" in str(te_invoke) or \
@@ -743,20 +769,20 @@ class AsyncOrchestrator(BaseOrchestrator):
                             elif hasattr(agent_callable, '__self__') and hasattr(agent_callable.__self__.__class__, 'INPUT_SCHEMA'): # Fallback if instance not resolved early
                                 input_model_cls_for_retry = agent_callable.__self__.__class__.INPUT_SCHEMA
                             
-                            processed_task_input_for_retry = resolved_inputs
-                            if input_model_cls_for_retry and isinstance(resolved_inputs, dict) and not isinstance(resolved_inputs, input_model_cls_for_retry):
-                                self.logger.info(f"Run {run_id}: Attempting to parse resolved_inputs into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}' (retry with task_input).")
+                            processed_task_input_for_retry = final_inputs_for_agent
+                            if input_model_cls_for_retry and isinstance(final_inputs_for_agent, dict) and not isinstance(final_inputs_for_agent, input_model_cls_for_retry):
+                                self.logger.info(f"Run {run_id}: Attempting to parse final_inputs_for_agent into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}' (retry with task_input).")
                                 try:
-                                    actual_payload_dict = resolved_inputs
-                                    if len(resolved_inputs) == 1:
-                                        first_key = next(iter(resolved_inputs))
-                                        temp_payload = resolved_inputs[first_key]
+                                    actual_payload_dict = final_inputs_for_agent
+                                    if len(final_inputs_for_agent) == 1:
+                                        first_key = next(iter(final_inputs_for_agent))
+                                        temp_payload = final_inputs_for_agent[first_key]
                                         while isinstance(temp_payload, dict) and len(temp_payload) == 1 and next(iter(temp_payload)) == first_key:
                                             temp_payload = temp_payload[first_key]
                                         if isinstance(temp_payload, dict):
                                             actual_payload_dict = temp_payload
-                                        elif first_key.lower() == input_model_cls_for_retry.__name__.lower() and isinstance(resolved_inputs[first_key], dict):
-                                            actual_payload_dict = resolved_inputs[first_key]
+                                        elif first_key.lower() == input_model_cls_for_retry.__name__.lower() and isinstance(final_inputs_for_agent[first_key], dict):
+                                            actual_payload_dict = final_inputs_for_agent[first_key]
 
                                     processed_task_input_for_retry = input_model_cls_for_retry.model_validate(actual_payload_dict)
                                     self.logger.info(f"Run {run_id}: Successfully parsed inputs into {input_model_cls_for_retry.__name__}.")
@@ -769,9 +795,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                                         run_id=run_id
                                     ) from e_parse_validation
                                 except (TypeError, AttributeError) as e_parse_other: # Catch other parsing/validation related errors
-                                    self.logger.error(f"Run {run_id}: Failed to parse resolved_inputs into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}' (non-ValidationError): {e_parse_other}. Passing dict as is.", exc_info=True)
-                                    processed_task_input_for_retry = resolved_inputs
-                            elif not isinstance(resolved_inputs, BaseModel):
+                                    self.logger.error(f"Run {run_id}: Failed to parse final_inputs_for_agent into {input_model_cls_for_retry.__name__} for agent '{stage_spec.agent_id}' (non-ValidationError): {e_parse_other}. Passing dict as is.", exc_info=True)
+                                    processed_task_input_for_retry = final_inputs_for_agent
+                            elif not isinstance(final_inputs_for_agent, BaseModel):
                                 self.logger.warning(f"Run {run_id}: Agent '{stage_spec.agent_id}' expects '{input_model_cls_for_retry.__name__ if input_model_cls_for_retry else 'Pydantic model'}' but received dict that could not be parsed, or non-dict. Passing as is.")
 
                             raw_output = await agent_callable(task_input=processed_task_input_for_retry, full_context=self.shared_context)
@@ -788,7 +814,7 @@ class AsyncOrchestrator(BaseOrchestrator):
             self.logger.warning(f"Run {run_id}: Agent for stage '{stage_name}' raised AgentErrorDetails: {agent_err_details.message}")
             # Ensure resolved_inputs are attached if missing
             if agent_err_details.resolved_inputs_at_failure is None:
-                agent_err_details.resolved_inputs_at_failure = resolved_inputs or {}
+                agent_err_details.resolved_inputs_at_failure = final_inputs_for_agent if 'final_inputs_for_agent' in locals() else resolved_inputs or {}
             raise agent_err_details # Re-raise to be caught by the main loop's error handler
         
         except Exception as e_invoke:
@@ -807,7 +833,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 message=str(e_invoke),
                 traceback=traceback.format_exc(),
                 can_retry=can_retry_flag,
-                resolved_inputs_at_failure=resolved_inputs or {}
+                resolved_inputs_at_failure=final_inputs_for_agent if 'final_inputs_for_agent' in locals() else resolved_inputs or {}
             )
             raise agent_error # Raise the standardized error
 
