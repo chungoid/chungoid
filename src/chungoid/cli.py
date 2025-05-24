@@ -75,49 +75,7 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import Proje
 import subprocess
 import json as py_json # Avoid conflict with click.json
 
-# --- DIAGNOSTIC CODE AT THE TOP OF cli.py ---
-print("--- DIAGNOSTING chungoid.cli (Top of cli.py) ---")
-print(f"Python Executable: {sys.executable}")
-print(f"Initial sys.path: {sys.path}")
-print(f"os.getcwd(): {os.getcwd()}")
-print(f"__file__ (cli.py): {__file__}")
-
-# Try to see where 'chungoid' itself is found from
-try:
-    print("Relevant sys.path entries for 'chungoid' (in CLI):")
-    for p in sys.path:
-        if 'chungoid' in p.lower() or 'site-packages' in p.lower() or p == os.getcwd() or '.local/pipx/venvs' in p.lower():
-            print(f"  - {p}")
-
-    import chungoid
-    print(f"Found chungoid (in cli.py): {chungoid.__file__ if hasattr(chungoid, '__file__') else 'Namespace package'}")
-    if hasattr(chungoid, '__path__'):
-        print(f"chungoid.__path__ (in cli.py): {chungoid.__path__}")
-        for p_item_chungoid in chungoid.__path__:
-            print(f"  Contents of chungoid path item {p_item_chungoid}: {os.listdir(p_item_chungoid) if os.path.exists(p_item_chungoid) and os.path.isdir(p_item_chungoid) else 'Not a dir or does not exist'}")
-            utils_dir_path = Path(p_item_chungoid) / 'utils'
-            print(f"    Looking for {utils_dir_path} (from CLI): Exists? {utils_dir_path.exists()}, IsDir? {utils_dir_path.is_dir()}")
-            if utils_dir_path.is_dir():
-                 print(f"    Contents of {utils_dir_path} (from CLI): {os.listdir(utils_dir_path)}")
-
-    # Now try importing chungoid.utils directly here for diagnostics
-    try:
-        import chungoid.utils
-        print(f"Found chungoid.utils (in cli.py): {chungoid.utils.__file__ if hasattr(chungoid.utils, '__file__') else 'Namespace package'}")
-        if hasattr(chungoid.utils, '__path__'):
-            print(f"chungoid.utils.__path__ (in cli.py): {chungoid.utils.__path__}")
-            for p_item_utils in chungoid.utils.__path__:
-                print(f"  Contents of chungoid.utils path item {p_item_utils}: {os.listdir(p_item_utils) if os.path.exists(p_item_utils) and os.path.isdir(p_item_utils) else 'Not a dir or does not exist'}")
-    except ModuleNotFoundError as e_utils_diag_cli:
-        print(f"DIAGNOSTIC (CLI): Failed to import chungoid.utils in cli.py: {e_utils_diag_cli}")
-
-except ModuleNotFoundError as e_chungoid_diag_cli:
-    print(f"DIAGNOSTIC (CLI): Failed to import top-level 'chungoid' in cli.py: {e_chungoid_diag_cli}")
-except Exception as e_diag_general_cli:
-    print(f"DIAGNOSTIC (CLI): General error during diagnostic imports in cli.py: {e_diag_general_cli}")
-
-print("--- END DIAGNOSTIC (Top of cli.py) ---\n")
-# --- END DIAGNOSTIC CODE ---
+# Diagnostic code has been removed for cleaner user experience
 
 # Original application imports
 from chungoid.utils.state_manager import StateManager # StatusFileError was used here but not defined, assume from StateManager or custom exceptions

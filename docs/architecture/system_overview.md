@@ -1,18 +1,11 @@
 <!-- 
 This file was automatically synchronized from dev/docs/core_architecture_overview.md
-Last sync: 2025-05-23T18:46:08.927393
-Transform: replace
-Description: Replace outdated autonomous project engine with current architecture
+Last sync: 2025-05-23T18:46:08.924283
+Transform: adapt
+Description: Update core architecture documentation with current system design
 -->
 
-# Autonomous Project Engine: Updated Architecture & Operational Model
-
-
-> **Migration Note**: This document has been updated to reflect the current 
-> system architecture. The previous autonomous project engine concepts have 
-> evolved into the current agent-based orchestration system with ChromaDB 
-> integration and MCP tool suites.
-
+# Chungoid Core – System Architecture Overview
 
 > **Status:** Stable – last updated 2025-05-10.
 >

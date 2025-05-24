@@ -1,0 +1,8 @@
+{
+  "sync_info": {
+    "source_file": "core_architecture_overview.md",
+    "sync_timestamp": "2025-05-23T18:46:08.929398",
+    "transform_type": "replace",
+    "description": "Replace outdated autonomous project engine with current architecture"
+  }
+}

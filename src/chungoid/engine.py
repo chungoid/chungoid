@@ -131,6 +131,54 @@ class ChungoidEngine:
         class MCPToolArgsCreateMasterPlan(BaseModel): # New schema
             user_goal: Dict[str, Any] = Field(description="A dictionary representing the UserGoalRequest schema.")
 
+        # ChromaDB MCP Tools Schemas
+        class MCPToolArgsChromaListCollections(BaseModel):
+            project_path: Optional[str] = Field(None, description="Path to project directory (optional)")
+            project_id: Optional[str] = Field(None, description="Project identifier for context (optional)")
+            limit: Optional[int] = Field(None, description="Maximum number of collections to return")
+            offset: Optional[int] = Field(None, description="Number of collections to skip")
+            include_metadata: bool = Field(True, description="Whether to include collection metadata")
+
+        class MCPToolArgsChromaCreateCollection(BaseModel):
+            collection_name: str = Field(..., description="Name of the collection to create")
+            project_path: Optional[str] = Field(None, description="Path to project directory (optional)")
+            project_id: Optional[str] = Field(None, description="Project identifier for context (optional)")
+            embedding_function: Optional[str] = Field(None, description="Embedding function to use (optional)")
+            metadata: Optional[Dict[str, Any]] = Field(None, description="Collection metadata (optional)")
+            get_or_create: bool = Field(True, description="Whether to get existing collection if it exists")
+
+        class MCPToolArgsChromaQueryDocuments(BaseModel):
+            collection_name: str = Field(..., description="Name of the collection to query")
+            query_texts: Optional[List[str]] = Field(None, description="List of query texts for semantic search")
+            n_results: int = Field(10, description="Maximum number of results to return")
+            where: Optional[Dict[str, Any]] = Field(None, description="Metadata filter conditions")
+            where_document: Optional[Dict[str, Any]] = Field(None, description="Document content filter conditions")
+            include: Optional[List[str]] = Field(None, description="What to include in results")
+            project_path: Optional[str] = Field(None, description="Path to project directory (optional)")
+            project_id: Optional[str] = Field(None, description="Project identifier for context (optional)")
+
+        class MCPToolArgsChromaAddDocuments(BaseModel):
+            collection_name: str = Field(..., description="Name of the collection")
+            documents: List[str] = Field(..., description="List of document contents to add")
+            metadatas: Optional[List[Dict[str, Any]]] = Field(None, description="Optional list of metadata dictionaries")
+            ids: Optional[List[str]] = Field(None, description="Optional list of document IDs")
+            project_path: Optional[str] = Field(None, description="Path to project directory (optional)")
+            project_id: Optional[str] = Field(None, description="Project identifier for context (optional)")
+            auto_generate_ids: bool = Field(True, description="Whether to auto-generate IDs if not provided")
+
+        class MCPToolArgsChromaInitializeProjectCollections(BaseModel):
+            project_path: Optional[str] = Field(None, description="Path to project directory (optional)")
+            project_id: Optional[str] = Field(None, description="Project identifier for context (optional)")
+            collections: Optional[List[str]] = Field(None, description="Optional list of specific collections to initialize")
+            embedding_function: Optional[str] = Field(None, description="Embedding function to use for collections (optional)")
+            force_recreate: bool = Field(False, description="Whether to recreate existing collections")
+
+        class MCPToolArgsChromaGetProjectStatus(BaseModel):
+            project_path: Optional[str] = Field(None, description="Path to project directory (optional)")
+            project_id: Optional[str] = Field(None, description="Project identifier for context (optional)")
+            include_collection_details: bool = Field(True, description="Whether to include detailed collection information")
+            include_document_counts: bool = Field(True, description="Whether to include document counts")
+
         # Define synchronous wrappers for StateManager/other methods called by tools
         # These handle calling the potentially async StateManager methods appropriately
         # Note: If StateManager methods become sync, these wrappers might simplify.
@@ -257,6 +305,37 @@ class ChungoidEngine:
                 # Return a structured error that execute_mcp_tool will handle
                 raise RuntimeError(f"MasterPlannerAgent execution failed: {e}")
 
+        # ChromaDB MCP Tools Handlers
+        def _chroma_list_collections_sync_wrapper(**kwargs):
+            import asyncio
+            from chungoid.mcp_tools.chromadb import chroma_list_collections
+            return asyncio.run(chroma_list_collections(**kwargs))
+
+        def _chroma_create_collection_sync_wrapper(**kwargs):
+            import asyncio
+            from chungoid.mcp_tools.chromadb import chroma_create_collection
+            return asyncio.run(chroma_create_collection(**kwargs))
+
+        def _chroma_query_documents_sync_wrapper(**kwargs):
+            import asyncio
+            from chungoid.mcp_tools.chromadb import chroma_query_documents
+            return asyncio.run(chroma_query_documents(**kwargs))
+
+        def _chroma_add_documents_sync_wrapper(**kwargs):
+            import asyncio
+            from chungoid.mcp_tools.chromadb import chroma_add_documents
+            return asyncio.run(chroma_add_documents(**kwargs))
+
+        def _chroma_initialize_project_collections_sync_wrapper(**kwargs):
+            import asyncio
+            from chungoid.mcp_tools.chromadb import chroma_initialize_project_collections
+            return asyncio.run(chroma_initialize_project_collections(**kwargs))
+
+        def _chroma_get_project_status_sync_wrapper(**kwargs):
+            import asyncio
+            from chungoid.mcp_tools.chromadb import chroma_get_project_status
+            return asyncio.run(chroma_get_project_status(**kwargs))
+
         # === TOOL REGISTRY ===
         # Moved registry initialization to __init__ and assigned to self.TOOL_REGISTRY
         self.TOOL_REGISTRY = {
@@ -314,6 +393,37 @@ class ChungoidEngine:
                 "description": "Generates a multi-stage MasterExecutionPlan from a user goal.",
                 "args_schema": MCPToolArgsCreateMasterPlan,
                 "handler_sync": _create_master_plan_sync_wrapper,
+            },
+            # ChromaDB MCP Tools Registry Entries
+            "chroma_list_collections": {
+                "description": "Lists all collections in the project-specific ChromaDB instance with optional filtering.",
+                "args_schema": MCPToolArgsChromaListCollections,
+                "handler_sync": _chroma_list_collections_sync_wrapper,
+            },
+            "chroma_create_collection": {
+                "description": "Creates a new collection in the project-specific ChromaDB instance with project context awareness.",
+                "args_schema": MCPToolArgsChromaCreateCollection,
+                "handler_sync": _chroma_create_collection_sync_wrapper,
+            },
+            "chroma_query_documents": {
+                "description": "Queries documents in a collection using semantic search and filtering with project context awareness.",
+                "args_schema": MCPToolArgsChromaQueryDocuments,
+                "handler_sync": _chroma_query_documents_sync_wrapper,
+            },
+            "chroma_add_documents": {
+                "description": "Adds multiple documents to a collection in the project-specific ChromaDB instance with automatic project metadata.",
+                "args_schema": MCPToolArgsChromaAddDocuments,
+                "handler_sync": _chroma_add_documents_sync_wrapper,
+            },
+            "chroma_initialize_project_collections": {
+                "description": "Initializes all standard project collections for a Chungoid project, replacing ProjectChromaManagerAgent_v1 functionality.",
+                "args_schema": MCPToolArgsChromaInitializeProjectCollections,
+                "handler_sync": _chroma_initialize_project_collections_sync_wrapper,
+            },
+            "chroma_get_project_status": {
+                "description": "Gets comprehensive status information for a project's ChromaDB setup including health score and missing collections.",
+                "args_schema": MCPToolArgsChromaGetProjectStatus,
+                "handler_sync": _chroma_get_project_status_sync_wrapper,
             },
         }
         # === End Tool Handling Components ===
@@ -424,6 +534,102 @@ class ChungoidEngine:
                  "inputSchema": {
                     "type": "object",
                     "properties": {},
+                    "required": []
+                }
+            },
+            # ChromaDB MCP Tools - Enhanced project-aware versions
+            {
+                "name": "chroma_list_collections",
+                "description": "Lists all collections in the project-specific ChromaDB instance with optional filtering.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "Path to project directory (optional)"},
+                        "project_id": {"type": "string", "description": "Project identifier for context (optional)"},
+                        "limit": {"type": "integer", "description": "Maximum number of collections to return"},
+                        "offset": {"type": "integer", "description": "Number of collections to skip"},
+                        "include_metadata": {"type": "boolean", "default": True, "description": "Whether to include collection metadata"}
+                    },
+                    "required": []
+                }
+            },
+            {
+                "name": "chroma_create_collection",
+                "description": "Creates a new collection in the project-specific ChromaDB instance with project context awareness.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "collection_name": {"type": "string", "description": "Name of the collection to create"},
+                        "project_path": {"type": "string", "description": "Path to project directory (optional)"},
+                        "project_id": {"type": "string", "description": "Project identifier for context (optional)"},
+                        "embedding_function": {"type": "string", "description": "Embedding function to use (optional)"},
+                        "metadata": {"type": "object", "description": "Collection metadata (optional)"},
+                        "get_or_create": {"type": "boolean", "default": True, "description": "Whether to get existing collection if it exists"}
+                    },
+                    "required": ["collection_name"]
+                }
+            },
+            {
+                "name": "chroma_query_documents",
+                "description": "Queries documents in a collection using semantic search and filtering with project context awareness.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "collection_name": {"type": "string", "description": "Name of the collection to query"},
+                        "query_texts": {"type": "array", "items": {"type": "string"}, "description": "List of query texts for semantic search"},
+                        "n_results": {"type": "integer", "default": 10, "description": "Maximum number of results to return"},
+                        "where": {"type": "object", "description": "Metadata filter conditions"},
+                        "where_document": {"type": "object", "description": "Document content filter conditions"},
+                        "include": {"type": "array", "items": {"type": "string"}, "description": "What to include in results"},
+                        "project_path": {"type": "string", "description": "Path to project directory (optional)"},
+                        "project_id": {"type": "string", "description": "Project identifier for context (optional)"}
+                    },
+                    "required": ["collection_name"]
+                }
+            },
+            {
+                "name": "chroma_add_documents",
+                "description": "Adds multiple documents to a collection in the project-specific ChromaDB instance with automatic project metadata.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "collection_name": {"type": "string", "description": "Name of the collection"},
+                        "documents": {"type": "array", "items": {"type": "string"}, "description": "List of document contents to add"},
+                        "metadatas": {"type": "array", "items": {"type": "object"}, "description": "Optional list of metadata dictionaries"},
+                        "ids": {"type": "array", "items": {"type": "string"}, "description": "Optional list of document IDs"},
+                        "project_path": {"type": "string", "description": "Path to project directory (optional)"},
+                        "project_id": {"type": "string", "description": "Project identifier for context (optional)"},
+                        "auto_generate_ids": {"type": "boolean", "default": True, "description": "Whether to auto-generate IDs if not provided"}
+                    },
+                    "required": ["collection_name", "documents"]
+                }
+            },
+            {
+                "name": "chroma_initialize_project_collections",
+                "description": "Initializes all standard project collections for a Chungoid project, replacing ProjectChromaManagerAgent_v1 functionality.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "Path to project directory (optional)"},
+                        "project_id": {"type": "string", "description": "Project identifier for context (optional)"},
+                        "collections": {"type": "array", "items": {"type": "string"}, "description": "Optional list of specific collections to initialize"},
+                        "embedding_function": {"type": "string", "description": "Embedding function to use for collections (optional)"},
+                        "force_recreate": {"type": "boolean", "default": False, "description": "Whether to recreate existing collections"}
+                    },
+                    "required": []
+                }
+            },
+            {
+                "name": "chroma_get_project_status",
+                "description": "Gets comprehensive status information for a project's ChromaDB setup including health score and missing collections.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "Path to project directory (optional)"},
+                        "project_id": {"type": "string", "description": "Project identifier for context (optional)"},
+                        "include_collection_details": {"type": "boolean", "default": True, "description": "Whether to include detailed collection information"},
+                        "include_document_counts": {"type": "boolean", "default": True, "description": "Whether to include document counts"}
+                    },
                     "required": []
                 }
             }
