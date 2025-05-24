@@ -119,6 +119,8 @@ class SystemRequirementsGatheringAgent_v1(BaseAgent[SystemRequirementsGatheringI
 
         # ----->>> ADD DIAGNOSTIC LOGGING HERE <<<-----
         self.logger.info(f"AGENT DIAGNOSTIC: About to validate inputs. Type: {type(inputs)}, Value: {inputs}, ID: {id(inputs)}")
+        self.logger.info(f"AGENT DIAGNOSTIC: Keys in inputs: {list(inputs.keys()) if isinstance(inputs, dict) else 'Not a dict'}")
+        self.logger.info(f"AGENT DIAGNOSTIC: user_goal present: {'user_goal' in inputs if isinstance(inputs, dict) else 'Not a dict'}")
 
         try:
             parsed_inputs = SystemRequirementsGatheringInput(**inputs)

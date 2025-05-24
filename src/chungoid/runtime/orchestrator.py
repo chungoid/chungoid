@@ -38,6 +38,7 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import EXECU
 from chungoid.schemas.project_state import ProjectStateV2, RunRecord, StageRecord
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 # For checking agent_id
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1 # ADDED
+from chungoid.runtime.agents.agent_base import BaseAgent # ADDED for type annotations
 from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput # MODIFIED
 from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput # ADDED
 
@@ -670,6 +671,12 @@ class AsyncOrchestrator(BaseOrchestrator):
             
             elif isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
                 req_gathering_input_data = resolved_inputs.copy()
+                
+                # Check for and unwrap extra 'inputs' wrapper if present
+                if isinstance(req_gathering_input_data, dict) and list(req_gathering_input_data.keys()) == ["inputs"] and isinstance(req_gathering_input_data.get("inputs"), dict):
+                    self.logger.info(f"Run {run_id}: Unwrapping {{'inputs': <dict>}} structure from resolved_inputs for SystemRequirementsGatheringAgent_v1. Original: {req_gathering_input_data}")
+                    req_gathering_input_data = req_gathering_input_data["inputs"]
+                
                 self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: self.initial_goal_str is: '{self.initial_goal_str}' (type: {type(self.initial_goal_str)})")
                 self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: 'user_goal' not in req_gathering_input_data is: {"user_goal" not in req_gathering_input_data}")
                 self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: bool(self.initial_goal_str) is: {bool(self.initial_goal_str)}")
