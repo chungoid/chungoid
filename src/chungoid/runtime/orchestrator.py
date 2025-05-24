@@ -622,67 +622,18 @@ class AsyncOrchestrator(BaseOrchestrator):
                     stage_name=stage_name, agent_id=stage_spec.agent_id, run_id=run_id
                 )
 
-            # Dispatch based on instance type
-            if isinstance(agent_instance_for_type_check, MasterPlannerAgent):
-                if not isinstance(resolved_inputs, MasterPlannerInput):
-                     self.logger.info(f"Run {run_id}: Constructing MasterPlannerInput for stage '{stage_name}'")
-                     current_plan_id = self.current_plan.id if self.current_plan else f"unknown_plan_for_run_{run_id}"
-                     user_goal_for_planner = resolved_inputs.get("user_goal", self.initial_goal_str or f"Execute plan {current_plan_id}")
-                     
-                     # Get project_id from shared_context to fix the warning
-                     project_id_for_planner = self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
-                     
-                     master_plan_input = MasterPlannerInput(
-                         master_plan_id=current_plan_id,
-                         flow_id=flow_id,
-                         run_id=run_id,
-                         user_goal=user_goal_for_planner,
-                         project_id=project_id_for_planner,
-                     )
-                     raw_output = await agent_callable(inputs=master_plan_input, full_context=self.shared_context) # Still use agent_callable
-                else:
-                    raw_output = await agent_callable(inputs=resolved_inputs, full_context=self.shared_context)
-            
-            elif isinstance(agent_instance_for_type_check, CoreCodeGeneratorAgent_v1):
-                smart_input_for_core_gen: SmartCodeGeneratorAgentInput
-                if not isinstance(resolved_inputs, SmartCodeGeneratorAgentInput):
-                    self.logger.warning(f"Run {run_id}: Stage '{stage_name}' uses agent '{stage_spec.agent_id}' (resolved to CoreCodeGeneratorAgent_v1) but inputs are not SmartCodeGeneratorAgentInput. Attempting conversion.")
-                    actual_inputs_for_conversion = resolved_inputs
-                    if isinstance(resolved_inputs, dict) and list(resolved_inputs.keys()) == ["inputs"] and isinstance(resolved_inputs.get("inputs"), dict):
-                        self.logger.info(f"Orchestrator (Run {run_id}): Unwrapping {{'inputs': <dict>}} structure from resolved_inputs for {stage_spec.agent_id}. Original: {resolved_inputs}")
-                        actual_inputs_for_conversion = resolved_inputs["inputs"]
-                    
-                    # ADDED: Ensure project_id is present for CoreCodeGeneratorAgent_v1 or its aliases
-                    # Check instance type OR agent_id string
-                    is_code_generator_variant = isinstance(agent_instance_for_type_check, CoreCodeGeneratorAgent_v1) or \
-                                                (stage_spec and stage_spec.agent_id == "SmartCodeGeneratorAgent_v1")
-
-                    if is_code_generator_variant and isinstance(actual_inputs_for_conversion, dict) and "project_id" not in actual_inputs_for_conversion:
-                        project_id_from_context = self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
-                        if project_id_from_context:
-                            self.logger.info(f"Run {run_id}: Injecting project_id '{project_id_from_context}' into inputs for {stage_spec.agent_id} stage '{stage_name}'.")
-                            actual_inputs_for_conversion["project_id"] = project_id_from_context
-                        else:
-                            self.logger.warning(f"Run {run_id}: project_id missing for {stage_spec.agent_id} stage '{stage_name}' and could not be sourced from shared_context.data.")
-
-                    try:
-                        smart_input_for_core_gen = SmartCodeGeneratorAgentInput(**actual_inputs_for_conversion)
-                    except Exception as e_conv_smart:
-                        self.logger.error(f"Run {run_id}: Failed to convert inputs to SmartCodeGeneratorAgentInput for '{stage_name}': {e_conv_smart}. Raising error.")
-                        raise OrchestrationError(f"Input conversion failed for {stage_spec.agent_id}: {e_conv_smart}", stage_name=stage_name, agent_id=stage_spec.agent_id, run_id=run_id) from e_conv_smart
-                else:
-                    smart_input_for_core_gen = resolved_inputs
-                raw_output = await agent_callable(task_input=smart_input_for_core_gen, full_context=self.shared_context) # Use agent_callable
-            
-            # ENHANCED: Use InputValidationService for generic input validation and injection
+            # ENHANCED: Use InputValidationService for ALL agents - generic input validation and injection
             # First, unwrap any nested input structures
+            self.logger.debug(f"Run {run_id}: Before unwrapping, resolved_inputs = {resolved_inputs}")
             unwrapped_inputs = self._unwrap_inputs_if_needed(resolved_inputs)
+            self.logger.debug(f"Run {run_id}: After unwrapping, unwrapped_inputs = {unwrapped_inputs}")
             
             # Prepare injection context for default value injection
             injection_context = {
                 "initial_goal_str": self.initial_goal_str,
                 "project_id": self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
             }
+            self.logger.debug(f"Run {run_id}: Injection context = {injection_context}")
             
             # Use InputValidationService to validate and inject defaults
             validation_result = self.input_validator.validate_and_inject_inputs(
@@ -692,6 +643,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                 injection_context=injection_context,
                 run_id=run_id
             )
+            self.logger.debug(f"Run {run_id}: Validation result: is_valid={validation_result.is_valid}, final_inputs={validation_result.final_inputs}")
             
             # Log validation results
             if validation_result.injected_fields:
@@ -708,9 +660,44 @@ class AsyncOrchestrator(BaseOrchestrator):
             # Use the validated inputs for agent invocation
             final_inputs_for_agent = validation_result.final_inputs
             
-            # Agent-specific invocation logic
-            if isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
-                self.logger.debug(f"Run {run_id}: Invoking SystemRequirementsGatheringAgent_v1 with final inputs: {final_inputs_for_agent}")
+            # Agent-specific invocation logic using validated inputs
+            if isinstance(agent_instance_for_type_check, MasterPlannerAgent):
+                if not isinstance(final_inputs_for_agent, MasterPlannerInput):
+                     self.logger.info(f"Run {run_id}: Constructing MasterPlannerInput for stage '{stage_name}'")
+                     current_plan_id = self.current_plan.id if self.current_plan else f"unknown_plan_for_run_{run_id}"
+                     user_goal_for_planner = final_inputs_for_agent.get("user_goal", self.initial_goal_str or f"Execute plan {current_plan_id}")
+                     
+                     # Get project_id from shared_context to fix the warning
+                     project_id_for_planner = self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
+                     
+                     master_plan_input = MasterPlannerInput(
+                         master_plan_id=current_plan_id,
+                         flow_id=flow_id,
+                         run_id=run_id,
+                         user_goal=user_goal_for_planner,
+                         project_id=project_id_for_planner,
+                     )
+                     raw_output = await agent_callable(inputs=master_plan_input, full_context=self.shared_context)
+                else:
+                    raw_output = await agent_callable(inputs=final_inputs_for_agent, full_context=self.shared_context)
+            
+            elif isinstance(agent_instance_for_type_check, CoreCodeGeneratorAgent_v1):
+                smart_input_for_core_gen: SmartCodeGeneratorAgentInput
+                if not isinstance(final_inputs_for_agent, SmartCodeGeneratorAgentInput):
+                    self.logger.warning(f"Run {run_id}: Stage '{stage_name}' uses agent '{stage_spec.agent_id}' (resolved to CoreCodeGeneratorAgent_v1) but final inputs are not SmartCodeGeneratorAgentInput. Attempting conversion.")
+                    try:
+                        smart_input_for_core_gen = SmartCodeGeneratorAgentInput(**final_inputs_for_agent)
+                    except Exception as e_conv_smart:
+                        self.logger.error(f"Run {run_id}: Failed to convert final inputs to SmartCodeGeneratorAgentInput for '{stage_name}': {e_conv_smart}. Raising error.")
+                        raise OrchestrationError(f"Input conversion failed for {stage_spec.agent_id}: {e_conv_smart}", stage_name=stage_name, agent_id=stage_spec.agent_id, run_id=run_id) from e_conv_smart
+                else:
+                    smart_input_for_core_gen = final_inputs_for_agent
+                raw_output = await agent_callable(task_input=smart_input_for_core_gen, full_context=self.shared_context)
+            
+            elif isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
+                self.logger.info(f"Run {run_id}: About to invoke SystemRequirementsGatheringAgent_v1")
+                self.logger.info(f"Run {run_id}: final_inputs_for_agent = {final_inputs_for_agent}")
+                self.logger.info(f"Run {run_id}: type(final_inputs_for_agent) = {type(final_inputs_for_agent)}")
                 raw_output = await agent_callable(inputs=final_inputs_for_agent, full_context=self.shared_context)
             
             elif isinstance(agent_instance_for_type_check, SystemFileSystemAgent_v1):
@@ -745,8 +732,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                                  f"with calculated explicit project_root for its invoke_async: '{effective_project_root_for_fs_agent}'")
                 
                 # SystemFileSystemAgent.invoke_async has a 'project_root' parameter
+                # FIXED: Use final_inputs_for_agent instead of resolved_inputs
                 raw_output = await agent_callable( # Use agent_callable
-                    inputs=resolved_inputs,
+                    inputs=final_inputs_for_agent,
                     project_root=effective_project_root_for_fs_agent, # Pass it explicitly
                     shared_context=self.shared_context # Pass full shared context
                 )

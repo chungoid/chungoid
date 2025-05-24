@@ -94,27 +94,23 @@ class InputValidationService:
         
         result = InputValidationResult(is_valid=True, final_inputs=resolved_inputs.copy())
         input_schema = agent_rules.get("input_schema")
-        
-        # First, try to validate with current inputs
-        if input_schema:
-            try:
-                input_schema(**result.final_inputs)
-                self.logger.debug(f"Run {run_id}: Agent '{agent_id}' inputs are valid")
-                return result
-            except ValidationError as ve:
-                self.logger.debug(f"Run {run_id}: Agent '{agent_id}' input validation failed: {ve}")
-                result.validation_errors = [str(ve)]
-                result.is_valid = False
-        
-        # Try to inject missing required fields
         injection_rules = agent_rules.get("injection_rules", {})
         injection_context = injection_context or {}
         
+        # FIRST: Check for injection needs (before validation)
         for field_name, injection_source in injection_rules.items():
             field_value = result.final_inputs.get(field_name)
             
-            # Check if field is missing or None
-            if field_name not in result.final_inputs or field_value is None:
+            # Check if field is missing, None, or contains placeholder values
+            should_inject = (
+                field_name not in result.final_inputs or 
+                field_value is None or
+                (isinstance(field_value, str) and field_value.startswith("TODO_REPLACE_WITH_ACTUAL_"))
+            )
+            
+            self.logger.debug(f"Run {run_id}: Checking injection for field '{field_name}': value='{field_value}', should_inject={should_inject}")
+            
+            if should_inject:
                 # Try to inject from context
                 injected_value = injection_context.get(injection_source)
                 if injected_value is not None:
@@ -124,16 +120,16 @@ class InputValidationService:
                 else:
                     self.logger.warning(f"Run {run_id}: Cannot inject '{field_name}' for agent '{agent_id}' - '{injection_source}' not available in context")
         
-        # Re-validate after injection
-        if input_schema and result.injected_fields:
+        # SECOND: Validate with final inputs (after injection)
+        if input_schema:
             try:
                 input_schema(**result.final_inputs)
                 result.is_valid = True
                 result.validation_errors = []
                 self.logger.debug(f"Run {run_id}: Agent '{agent_id}' inputs are valid after injection")
-            except ValidationError as ve_after:
-                self.logger.warning(f"Run {run_id}: Agent '{agent_id}' inputs still invalid after injection: {ve_after}")
-                result.validation_errors = [str(ve_after)]
+            except ValidationError as ve:
+                self.logger.warning(f"Run {run_id}: Agent '{agent_id}' input validation failed: {ve}")
+                result.validation_errors = [str(ve)]
                 result.is_valid = False
         
         return result
