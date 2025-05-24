@@ -133,10 +133,12 @@ class ContextResolutionService:
             raise ValueError(f"Invalid @artifact path format: '{path_expression}'. Item ID cannot be empty.")
 
         if at_type == "artifact":
-            if not shared_context.project_status or not hasattr(shared_context.project_status, 'artifacts'):
-                raise ValueError("project_status.artifacts not found in SharedContext")
+            # Modern SharedContext stores project_status in data
+            project_status = shared_context.data.get("project_status") if shared_context.data else None
+            if not project_status or not hasattr(project_status, 'artifacts'):
+                raise ValueError("project_status.artifacts not found in SharedContext.data")
             
-            artifact = shared_context.project_status.artifacts.get(item_id)
+            artifact = project_status.artifacts.get(item_id)
             if not artifact:
                 raise KeyError(f"Artifact '{item_id}' not found in project_status.artifacts")
 
@@ -157,11 +159,13 @@ class ContextResolutionService:
                 
                 file_path = Path(artifact.path_on_disk)
                 if not file_path.is_absolute():
-                    if shared_context.project_root_path is None:
+                    # Modern SharedContext stores project_root_path in data
+                    project_root_path = shared_context.data.get("project_root_path") if shared_context.data else None
+                    if project_root_path is None:
                         raise ValueError(
-                            f"project_root_path must be set in SharedContext to resolve relative artifact content path: {file_path}"
+                            f"project_root_path must be set in SharedContext.data to resolve relative artifact content path: {file_path}"
                         )
-                    file_path = shared_context.project_root_path / file_path
+                    file_path = Path(project_root_path) / file_path
                 
                 if not file_path.exists():
                     raise FileNotFoundError(f"Artifact content file not found at {file_path} for artifact '{item_id}'")
@@ -248,7 +252,8 @@ class ContextResolutionService:
         base_object: Any,
         parts: List[str],
         path_expression: str, # For logging
-        shared_context_for_fallback: Optional[SharedContext] = None # ADDED for fallback
+        shared_context_for_fallback: Optional[SharedContext] = None, # ADDED for fallback
+        allow_partial: bool = False # ADDED for partial resolution
     ) -> Any:
         """
         Core private method to resolve path parts starting from a base object.
@@ -296,6 +301,8 @@ class ContextResolutionService:
                     return shared_context_for_fallback.data.get("project_root_path")
 
             self.logger.warning(f"Error resolving path part in '{path_expression}': {e}. Base object: {base_object_name}, Parts: {parts}")
+            if allow_partial:
+                return None
             raise # Re-raise the original error if no fallback handled it
 
     def _parse_accessors(self, path_str: str) -> List[str]:
@@ -476,7 +483,8 @@ class ContextResolutionService:
             base_object, 
             parts_to_resolve, 
             original_path_expression_for_logging, # Pass original for logging
-            effective_shared_context
+            effective_shared_context,
+            allow_partial
         )
 
     def resolve_path_value_from_context(

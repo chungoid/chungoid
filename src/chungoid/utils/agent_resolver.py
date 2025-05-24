@@ -46,6 +46,9 @@ from chungoid.agents.autonomous_engine.project_chroma_manager_agent import Proje
 # ADDED: Import for SystemMasterPlannerReviewerAgent_v1
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent # MODIFIED CLASS NAME
 
+# ADDED: Import CodeDebuggingAgent_v1
+from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
+
 # Define logger at the module level
 logger = logging.getLogger(__name__)
 # --- TEMPORARY DEBUGGING CODE HAS BEEN REMOVED ---
@@ -1032,10 +1035,14 @@ from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAge
 from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
+from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
+from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
 BaseAgent.model_rebuild()
 # CoreCodeGeneratorAgent_v1.model_rebuild() # REMOVED: Not a Pydantic model
+ProjectChromaManagerAgent_v1.model_rebuild()  # MOVED FIRST - dependencies before dependents
 MasterPlannerAgent.model_rebuild()
 SystemTestRunnerAgent_v1.model_rebuild()
 ArchitectAgent_v1.model_rebuild()
-SystemRequirementsGatheringAgent_v1.model_rebuild() 
+SystemRequirementsGatheringAgent_v1.model_rebuild()
+CodeDebuggingAgent_v1.model_rebuild()  # MOVED AFTER ProjectChromaManagerAgent_v1 

@@ -32,7 +32,7 @@ class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema], ABC):
     
     # System context can hold things like logger instances, shared configuration, etc.
     # Passed down from the environment where the agent is run.
-    system_context: Dict[str, Any] = Field(default_factory=dict, description="System-level context dictionary.")
+    system_context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="System-level context dictionary.")
 
     # Agent-specific configuration, can be overridden by subclasses or at instantiation.
     config: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Agent-specific configuration dictionary.")
@@ -90,7 +90,7 @@ class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema], ABC):
         _logger: Optional[logging.Logger] = None
         
         # Attempt to get logger from system_context first
-        if self.system_context: # This should be a dict
+        if self.system_context and isinstance(self.system_context, dict): # Handle None case
             _logger = self.system_context.get('logger')
             if _logger and not isinstance(_logger, logging.Logger):
                 # Log a warning if what we got isn't a Logger instance

@@ -35,7 +35,8 @@ class ConditionEvaluationService:
     # Regex to capture LHS, operator, and RHS. Allows for quoted strings on RHS.
     # It captures: (LHS_path) (OPERATOR) (RHS_literal_or_path)
     # RHS can be quoted (single or double) or unquoted.
-    CONDITION_REGEX = re.compile(r"^\s*([@{}.\\w\\-]+)\s*(" + "|".join(re.escape(op) for op in COMPARATOR_MAP.keys()) + r")\s*(?:(['\"])(.*?)\3|(.*?))\s*$")
+    # IMPORTANT: Sort operators by length descending to match longer operators first (>= before >)
+    CONDITION_REGEX = re.compile(r"^\s*([@{}.\w\-]+)\s*(" + "|".join(re.escape(op) for op in sorted(COMPARATOR_MAP.keys(), key=len, reverse=True)) + r")\s*(?:(['\"])(.*?)\3|(.*?))\s*$")
 
     def __init__(self, context_resolver: ContextResolutionService, logger: Optional[logging.Logger] = None):
         self.context_resolver = context_resolver

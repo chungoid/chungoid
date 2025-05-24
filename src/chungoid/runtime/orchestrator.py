@@ -608,6 +608,12 @@ class AsyncOrchestrator(BaseOrchestrator):
             else: # Fallback for other providers, may not support raw instance easily
                  agent_instance_for_type_check = None # Or try a more generic way if available
 
+            # ADDED: Debug logging for agent instance detection
+            self.logger.info(f"Run {run_id}: [DEBUG] Agent instance detection for '{stage_spec.agent_id}':")
+            self.logger.info(f"Run {run_id}: [DEBUG] - agent_instance_for_type_check: {agent_instance_for_type_check}")
+            self.logger.info(f"Run {run_id}: [DEBUG] - agent_instance_for_type_check type: {type(agent_instance_for_type_check)}")
+            self.logger.info(f"Run {run_id}: [DEBUG] - isinstance(SystemRequirementsGatheringAgent_v1): {isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1) if agent_instance_for_type_check else 'agent_instance is None'}")
+
             if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
                 agent_callable = agent_instance_for_type_check.invoke_async
             else: # Fallback if raw instance not available or no invoke_async
@@ -672,15 +678,31 @@ class AsyncOrchestrator(BaseOrchestrator):
             elif isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1):
                 req_gathering_input_data = resolved_inputs.copy()
                 
+                # ADDED: Enhanced debug logging
+                self.logger.info(f"Run {run_id}: [DEBUG] SystemRequirementsGatheringAgent_v1 detected. Processing inputs...")
+                self.logger.info(f"Run {run_id}: [DEBUG] Original resolved_inputs: {resolved_inputs}")
+                self.logger.info(f"Run {run_id}: [DEBUG] resolved_inputs type: {type(resolved_inputs)}")
+                self.logger.info(f"Run {run_id}: [DEBUG] resolved_inputs keys: {list(resolved_inputs.keys()) if isinstance(resolved_inputs, dict) else 'N/A'}")
+                
                 # Check for and unwrap extra 'inputs' wrapper if present
                 if isinstance(req_gathering_input_data, dict) and list(req_gathering_input_data.keys()) == ["inputs"] and isinstance(req_gathering_input_data.get("inputs"), dict):
                     self.logger.info(f"Run {run_id}: Unwrapping {{'inputs': <dict>}} structure from resolved_inputs for SystemRequirementsGatheringAgent_v1. Original: {req_gathering_input_data}")
                     req_gathering_input_data = req_gathering_input_data["inputs"]
-                
-                if "user_goal" not in req_gathering_input_data and self.initial_goal_str:
+                    self.logger.info(f"Run {run_id}: [DEBUG] After unwrapping: {req_gathering_input_data}")
+                else:
+                    self.logger.warning(f"Run {run_id}: [DEBUG] Unwrapping condition NOT met. Checking why...")
+                    self.logger.warning(f"Run {run_id}: [DEBUG] - isinstance(dict): {isinstance(req_gathering_input_data, dict)}")
+                    if isinstance(req_gathering_input_data, dict):
+                        self.logger.warning(f"Run {run_id}: [DEBUG] - keys == ['inputs']: {list(req_gathering_input_data.keys()) == ['inputs']}")
+                        self.logger.warning(f"Run {run_id}: [DEBUG] - actual keys: {list(req_gathering_input_data.keys())}")
+                        self.logger.warning(f"Run {run_id}: [DEBUG] - 'inputs' value is dict: {isinstance(req_gathering_input_data.get('inputs'), dict) if 'inputs' in req_gathering_input_data else 'No inputs key'}")
+
+                if ("user_goal" not in req_gathering_input_data or req_gathering_input_data.get("user_goal") is None) and self.initial_goal_str:
                     self.logger.info(f"Run {run_id}: Injecting initial_goal_str as user_goal for SystemRequirementsGatheringAgent_v1.")
                     req_gathering_input_data["user_goal"] = self.initial_goal_str
-                raw_output = await agent_callable(inputs=req_gathering_input_data, full_context=self.shared_context) # Use agent_callable
+                
+                self.logger.info(f"Run {run_id}: [DEBUG] Final inputs being passed to agent: {req_gathering_input_data}")
+                raw_output = await agent_callable(inputs=req_gathering_input_data, full_context=self.shared_context)
             
             elif isinstance(agent_instance_for_type_check, SystemFileSystemAgent_v1):
                 # Determine the effective project root for file system operations

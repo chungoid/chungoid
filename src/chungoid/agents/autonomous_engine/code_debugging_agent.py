@@ -5,7 +5,7 @@ import uuid
 import json
 import asyncio
 import datetime
-from typing import Any, Dict, Optional, List, Literal, ClassVar, get_args
+from typing import Any, Dict, Optional, List, Literal, ClassVar, get_args, Type
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -171,8 +171,17 @@ class CodeDebuggingAgent_v1(BaseAgent[DebuggingTaskInput, DebuggingTaskOutput]):
             elif llm_output_data["proposed_solution_type"] == "NEEDS_MORE_CONTEXT":
                 output_status_str = "FAILURE_NEEDS_CLARIFICATION"
             
-            valid_statuses = get_args(DebuggingTaskOutput.__annotations__['status'])
-            if output_status_str not in valid_statuses: # type: ignore
+            # FIXED: Use hardcoded list instead of get_args to avoid model rebuild issues
+            valid_statuses = [
+                "SUCCESS_FIX_PROPOSED", 
+                "FAILURE_NO_FIX_IDENTIFIED", 
+                "FAILURE_NEEDS_CLARIFICATION", 
+                "ERROR_INTERNAL", 
+                "FAILURE_LLM", 
+                "FAILURE_LLM_OUTPUT_PARSING", 
+                "FAILURE_PROMPT_RENDERING"
+            ]
+            if output_status_str not in valid_statuses:
                  logger_instance.error(f"Derived status '{output_status_str}' is not a valid status literal. Defaulting to ERROR_INTERNAL.")
                  output_status_str = "ERROR_INTERNAL"
 
@@ -185,7 +194,7 @@ class CodeDebuggingAgent_v1(BaseAgent[DebuggingTaskInput, DebuggingTaskOutput]):
                 confidence_score=confidence_score_val,
                 areas_of_uncertainty=llm_output_data.get("areas_of_uncertainty"),
                 suggestions_for_ARCA=llm_output_data.get("suggestions_for_ARCA"),
-                status=output_status_str, # type: ignore
+                status=output_status_str,
                 message=f"Debugging analysis completed. Solution type: {llm_output_data['proposed_solution_type']}",
                 llm_full_response=llm_response_str,
             )
