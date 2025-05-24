@@ -623,11 +623,15 @@ class AsyncOrchestrator(BaseOrchestrator):
                      current_plan_id = self.current_plan.id if self.current_plan else f"unknown_plan_for_run_{run_id}"
                      user_goal_for_planner = resolved_inputs.get("user_goal", self.initial_goal_str or f"Execute plan {current_plan_id}")
                      
+                     # Get project_id from shared_context to fix the warning
+                     project_id_for_planner = self.shared_context.data.get('project_id') if self.shared_context and self.shared_context.data else None
+                     
                      master_plan_input = MasterPlannerInput(
                          master_plan_id=current_plan_id,
                          flow_id=flow_id,
                          run_id=run_id,
                          user_goal=user_goal_for_planner,
+                         project_id=project_id_for_planner,
                      )
                      raw_output = await agent_callable(inputs=master_plan_input, full_context=self.shared_context) # Still use agent_callable
                 else:
@@ -895,7 +899,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                             # Fallback to a generic error pause if checkpoint details are missing
                             # This is an unexpected state.
                             generic_error_for_missing_clarif = AgentErrorDetails(
-                                error_type="OrchestratorError",
+                                error_type="OrchestrationError", 
                                 message=f"Clarification checkpoint missing for stage {current_stage_name}",
                                 stage_id=current_stage_name,
                                 agent_id=stage_spec.agent_id
