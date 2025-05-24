@@ -181,6 +181,8 @@ For complex workflows and automation:
 
 ## Configuration
 
+Chungoid uses a **modern hierarchical configuration system** with automatic environment variable integration and validation. The system supports both global and project-specific configurations with intelligent merging.
+
 ### LLM Provider Setup
 
 Chungoid uses **LiteLLM** to support a wide variety of LLM providers with a unified interface. This means you can use OpenAI, Anthropic, Ollama, Azure, Google, and many other providers.
@@ -205,47 +207,19 @@ ollama serve
 # No API key needed for local Ollama
 ```
 
-#### Configuration File
+#### Configuration Files
 
-Create `.chungoid/project_config.yaml` in your project or update global `config.yaml`:
-
+**Project-specific configuration** (`.chungoid/config.yaml`):
 ```yaml
-llm_manager:
-  provider_type: "litellm"
-  # OpenAI models
-  default_model: "gpt-4-turbo-preview"
-  # Or Anthropic models  
-  # default_model: "claude-3-opus-20240229"
-  # Or local Ollama models
-  # default_model: "ollama/mistral"
-  # base_url: "http://localhost:11434"  # For Ollama
-```
-
-#### Supported Providers & Models
-
-| Provider | Model Examples | Setup |
-|----------|-----------------|--------|
-| **OpenAI** | `gpt-4-turbo-preview`, `gpt-3.5-turbo` | Set `OPENAI_API_KEY` |
-| **Anthropic** | `claude-3-opus-20240229`, `claude-3-sonnet-20240229` | Set `ANTHROPIC_API_KEY` |
-| **Ollama** | `ollama/mistral`, `ollama/llama2`, `ollama/codellama` | Local server, no API key |
-| **Azure OpenAI** | `azure/your-deployment-name` | Set `AZURE_API_KEY`, `AZURE_API_BASE` |
-| **Google** | `gemini-pro`, `gemini-pro-vision` | Set `GOOGLE_API_KEY` |
-| **HuggingFace** | `huggingface/model-name` | Set `HF_TOKEN` (for private models) |
-
-> **📖 Detailed Setup Guide**: See `docs/guides/litellm_setup.md` for comprehensive configuration instructions for all providers.
-
-### Environment Variables (Legacy)
-
-### Project Configuration
-
-Each project can have custom settings in `.chungoid/chungoid_config.yaml`:
-
-```yaml
-# .chungoid/chungoid_config.yaml
+# .chungoid/config.yaml
 llm:
-  provider: openai
-  model: gpt-4-turbo
-  api_key: ${CHUNGOID_LLM_API_KEY}
+  provider: "litellm"
+  default_model: "gpt-4o-mini-2024-07-18"  # Cost-effective option
+  # Or use other models:
+  # default_model: "claude-3-sonnet-20240229"  # Anthropic
+  # default_model: "ollama/mistral"             # Local Ollama
+  max_tokens_per_request: 8000
+  temperature: 0.1
 
 orchestrator:
   max_retries: 3
@@ -254,6 +228,92 @@ orchestrator:
 agents:
   enable_learning: true
   fallback_strategy: "graceful_degradation"
+
+chromadb:
+  host: "localhost"
+  port: 8000
+  # For persistent mode, these settings are automatically configured
+  default_collection_prefix: "chungoid"
+```
+
+**Global configuration** (`~/.chungoid/config.yaml`):
+```yaml
+# Global defaults - applies to all projects
+llm:
+  provider: "litellm" 
+  default_model: "gpt-4o-mini-2024-07-18"
+  max_tokens_per_request: 8000
+
+logging:
+  level: "INFO"
+  enable_structured_logging: true  # Use JSON logging
+  enable_file_logging: true
+  log_directory: "logs"
+  
+chromadb:
+  host: "localhost"
+  port: 8000
+  default_collection_prefix: "chungoid"
+```
+
+#### Environment Variables
+
+The configuration system automatically reads environment variables with the `CHUNGOID_` prefix:
+
+```bash
+# LLM Configuration
+export CHUNGOID_LLM_PROVIDER="litellm"
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
+
+# For specific providers, use standard variables:
+export OPENAI_API_KEY="sk-your-key"              # OpenAI
+export ANTHROPIC_API_KEY="sk-ant-your-key"       # Anthropic  
+export OLLAMA_BASE_URL="http://localhost:11434"  # Ollama
+
+# Logging
+export CHUNGOID_LOG_LEVEL="INFO"
+export CHUNGOID_ENABLE_DEBUG="false"
+
+# ChromaDB
+export CHUNGOID_CHROMADB_HOST="localhost"
+export CHUNGOID_CHROMADB_PORT="8000"
+```
+
+#### Configuration Priority Order
+
+The system merges configuration from multiple sources (highest priority first):
+
+1. **Environment variables** (`CHUNGOID_*`)
+2. **Project configuration** (`.chungoid/config.yaml`)
+3. **Global configuration** (`~/.chungoid/config.yaml`)
+4. **Built-in defaults**
+
+#### Supported Providers & Models
+
+| Provider | Model Examples | Setup |
+|----------|-----------------|--------|
+| **OpenAI** | `gpt-4o-mini-2024-07-18`, `gpt-4-turbo-preview` | Set `OPENAI_API_KEY` |
+| **Anthropic** | `claude-3-opus-20240229`, `claude-3-sonnet-20240229` | Set `ANTHROPIC_API_KEY` |
+| **Ollama** | `ollama/mistral`, `ollama/llama2`, `ollama/codellama` | Local server, no API key |
+| **Azure OpenAI** | `azure/your-deployment-name` | Set `AZURE_API_KEY`, `AZURE_API_BASE` |
+| **Google** | `gemini-pro`, `gemini-pro-vision` | Set `GOOGLE_API_KEY` |
+| **HuggingFace** | `huggingface/model-name` | Set `HF_TOKEN` (for private models) |
+
+> **📖 Detailed Setup Guide**: See `docs/guides/litellm_setup.md` for comprehensive configuration instructions for all providers.
+
+#### Viewing Current Configuration
+
+Check your current configuration settings:
+
+```bash
+# Show effective configuration (merged from all sources)
+chungoid utils show-config
+
+# Show raw project configuration file
+chungoid utils show-config --raw
+
+# Show configuration for specific project
+chungoid utils show-config --project-dir /path/to/project
 ```
 
 ## How It Works
@@ -349,17 +409,38 @@ pip install -e .
 # Check project status for detailed error information
 chungoid status --json
 
-# View logs
+# View logs in project status
 cat .chungoid/chungoid_status.json
+
+# Check configuration
+chungoid utils show-config
+```
+
+**Configuration Issues:**
+```bash
+# Verify your configuration is loaded correctly
+chungoid utils show-config
+
+# Check environment variables
+env | grep CHUNGOID
+
+# Test with specific model
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
+chungoid build --goal-file goal.txt
 ```
 
 **LLM Provider Issues:**
 ```bash
 # Verify your API key is set
-echo $CHUNGOID_LLM_API_KEY
+echo $OPENAI_API_KEY
+# or
+echo $ANTHROPIC_API_KEY
 
-# Test with mock provider (development only)
-chungoid build --goal-file goal.txt --use-mock-llm-provider
+# Check provider configuration
+chungoid utils show-config | grep -A 10 "llm"
+
+# Test with different model
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-3.5-turbo"
 ```
 
 ### Getting Help

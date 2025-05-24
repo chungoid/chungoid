@@ -69,8 +69,23 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "The output MUST be a single JSON object.\\n\\n"
     "**Code Generation Style for `src/` Modules:**\\n"
     "When directing `SmartCodeGeneratorAgent_v1` to generate application modules (e.g., files within the `src/` directory), instruct it to encapsulate the primary functionalities within classes. For instance, if a module is responsible for network scanning, it should define classes like `ARPHostDiscovery`, `TCPSYNScanner`, etc., rather than standalone functions like `arp_scan` or `tcp_scan`. This class-based approach will facilitate better organization and testability.\\n\\n"
+    "**CRITICAL: PROGRAMMING LANGUAGE DETECTION AND SPECIFICATION:**\\n"
+    "Before defining any code generation stages, you **MUST** analyze the user goal to determine the target programming language(s) and technology stack. Look for explicit mentions of:\\n"
+    "- Programming languages (e.g., 'Python', 'JavaScript', 'TypeScript', 'Java', 'C++')\\n"
+    "- Frameworks (e.g., 'React', 'Angular', 'Vue', 'Django', 'Flask', 'Express', 'Spring')\\n"
+    "- Runtime environments (e.g., 'Node.js', '.NET', 'JVM')\\n"
+    "- Technology stack descriptions (e.g., 'MERN stack', 'LAMP stack', 'JAM stack')\\n"
+    "\\n"
+    "**LANGUAGE DETECTION EXAMPLES:**\\n"
+    "- Goal mentions 'React' or 'Node.js' → JavaScript/TypeScript\\n"
+    "- Goal mentions 'Django' or 'Flask' → Python\\n"
+    "- Goal mentions 'Spring Boot' or 'Maven' → Java\\n"
+    "- Goal mentions 'Express server' or 'npm' → JavaScript/Node.js\\n"
+    "- Goal mentions '.NET' or 'C#' → C#\\n"
+    "\\n"
+    "For **EVERY** stage that generates code, you **MUST** include the detected `programming_language` in the stage's `inputs`.\\n\\n"
     "Available Agents for the Master Plan:\\n"
-    "- `SmartCodeGeneratorAgent_v1`: Generates code for a single file. Requires `task_description` (str) and `target_file_path` (str, relative to project root) in `inputs`. Optionally accepts `code_specification_doc_id` (str).\\n"
+    "- `SmartCodeGeneratorAgent_v1`: Generates code for a single file. **REQUIRES** `task_description` (str), `target_file_path` (str, relative to project root), and `programming_language` (str) in `inputs`. Optionally accepts `code_specification_doc_id` (str). The `programming_language` field is **MANDATORY** and must match the detected target language from the user goal (e.g., 'javascript', 'python', 'typescript', 'java', 'csharp').\\n"
     "- `FileOperationAgent_v1` (alias for `SystemFileSystemAgent_v1`): Performs individual file system operations.\\n"
     "  - **Usage:** Each stage using `FileOperationAgent_v1` MUST target a SINGLE file system operation.\\n"
     "  - **Inputs Structure:**\\n"
@@ -106,8 +121,8 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     r"    }\n"
     r"    ```\n"
     "  - **Important:** Ensure `path` values in `tool_input` are relative to the project root.\n"
-    "- `SystemTestRunnerAgent_v1`: Generates and runs test code. Requires `test_target_path` (str, relative to project root, can be a file or directory) in `inputs`. Optionally accepts `pytest_options` (str), `project_root_path` (str - usually derived from context).\n"
-    "- `SystemRequirementsGatheringAgent_v1`: Gathers and refines system requirements. Ensure its outputs distinguish between functional requirements of the app (e.g., 'app must accept zip code') and non-functional or build-time aspects.\\n"
+    "- `SystemTestRunnerAgent_v1`: Generates and runs test code. Requires `test_target_path` (str, relative to project root, can be a file or directory) in `inputs`. Optionally accepts `pytest_options` (str), `project_root_path` (str - usually derived from context), `programming_language` (str - should match the detected target language).\n"
+    "- `SystemRequirementsGatheringAgent_v1`: Gathers and refines system requirements. **REQUIRES** `user_goal` (str) in `inputs`. Optionally accepts `project_context_summary` (str). Example: `{\"agent_id\": \"SystemRequirementsGatheringAgent_v1\", \"inputs\": {\"user_goal\": \"{context.data.user_goal}\"}}`. Ensure its outputs distinguish between functional requirements of the app (e.g., 'app must accept zip code') and non-functional or build-time aspects.\\n"
     "- `SystemInterventionAgent_v1`: (Use VERY Sparingly) Requests specific input from a human operator for *system-level build intervention* or clarification when the autonomous build flow cannot proceed. This is NOT for application-level user interaction.\\n"
     "\\n\\n"
     "Key Schema Fields:\\n"
@@ -148,13 +163,43 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "      - If the code being tested (e.g., in `src/my_module.py`) uses external libraries (e.g., `import scapy`), the generated test code will naturally also need to import those libraries if its mocks or test logic directly interact with types or functions from those libraries. Note this as a potential dependency to be managed.\\n"
     "      - **Do NOT use relative imports like `from ..src import ...` or `from . import ...` unless the test file itself is part of a package structure within `tests/` that mirrors `src/` (which is not the default assumption).**\\n"
     "**CRITICAL: DEPENDENCY MANAGEMENT FOR TARGET PROJECT:**\\n"
-    "After all primary application code (e.g., in `src/`) has been generated and written to files, and BEFORE generating or running tests, you **MUST** include stages for managing the target project's Python dependencies:\\n"
+    "After all primary application code (e.g., in `src/`) has been generated and written to files, and BEFORE generating or running tests, you **MUST** include stages for managing the target project's dependencies based on the detected programming language:\\n"
+    "\\n"
+    "**For JavaScript/Node.js Projects:**\\n"
+    "1.  **Generate `package.json`:**\\n"
+    "    *   **Agent:** `SmartCodeGeneratorAgent_v1`.\\n"
+    "    *   **Purpose:** To analyze all previously generated JavaScript/TypeScript source code and create a comprehensive `package.json` file with dependencies, scripts, and project metadata.\\n"
+    "    *   **Inputs:**\\n"
+    "        *   `task_description`: \\\"Analyze all JavaScript/TypeScript files in the project '{context.project_id}'. Create a complete package.json file with all required dependencies (e.g., express, react, mongoose), development dependencies (e.g., nodemon, jest), and appropriate scripts (start, test, build). Include project metadata like name, version, description.\\\"\\n"
+    "        *   `target_file_path`: `package.json`\\n"
+    "        *   `programming_language`: `javascript`\\n"
+    "        *   `project_id`: `\\\"{context.data.project_id}\\\"`\\n"
+    "    *   **Output Context Path:** Ensure this stage has an `output_context_path`, e.g., `outputs.generate_package_json`.\\n"
+    "2.  **Write `package.json` to File:**\\n"
+    "    *   **Agent:** `FileOperationAgent_v1`.\\n"
+    "    *   **Purpose:** To write the generated `package.json` content to the project root.\\n"
+    "    *   **Inputs (`tool_name`: `write_artifact_to_file_tool`):**\\n"
+    "        *   `artifact_doc_id`: `\\\"{context.outputs.generate_package_json.generated_code_artifact_doc_id}\\\"` (or the correct stage name).\\n"
+    "        *   `collection_name`: `\\\"{context.outputs.generate_package_json.stored_in_collection}\\\"` (or the correct stage name).\\n"
+    "        *   `target_file_path`: `package.json`.\\n"
+    "        *   `overwrite`: `true`.\\n"
+    "3.  **Install Dependencies:**\\n"
+    "    *   **Agent:** `SystemTestRunnerAgent_v1` (leveraging its command execution capability).\\n"
+    "    *   **Purpose:** To install the dependencies listed in `package.json` using npm.\\n"
+    "    *   **Inputs:**\\n"
+    "        *   `project_root_path`: `\\\"{context.project_root_path}\\\"` (to ensure the command runs in the correct directory).\\n"
+    "        *   `test_command_override`: `['npm', 'install']`. (This tells the agent to run this command instead of tests).\\n"
+    "        *   `test_command_args`: `[]` (empty list, as `test_command_override` is used).\\n"
+    "    *   **Important:** This stage must occur AFTER `package.json` is written and BEFORE any tests are run or other actions that depend on these libraries.\\n"
+    "\\n"
+    "**For Python Projects:**\\n"
     "1.  **Generate `requirements.txt`:**\\n"
     "    *   **Agent:** `SmartCodeGeneratorAgent_v1`.\\n"
     "    *   **Purpose:** To analyze all previously generated Python source code in the project (typically in the `src/` directory) and create a comprehensive `requirements.txt` file listing all imported external libraries (e.g., `flask`, `sqlalchemy`, `requests`).\\n"
     "    *   **Inputs:**\\n"
     "        *   `task_description`: A clear instruction, e.g., \\\"Analyze all Python files in the 'src/' directory of the project '{context.project_id}'. Identify all unique external library imports (e.g., Flask, SQLAlchemy, pytest). Generate the content for a standard 'requirements.txt' file listing these dependencies, each on a new line. Ensure common libraries like Flask include version specifiers if appropriate (e.g., Flask>=2.0). If unsure about versions, list the library name only. Exclude standard Python libraries. The output should be only the content of the requirements.txt file.\\\"\\n"
     "        *   `target_file_path`: `requirements.txt` (at the project root).\\n"
+    "        *   `programming_language`: `python`\\n"
     "        *   `project_id`: `\\\"{context.data.project_id}\\\"`\\n"
     "    *   **Output Context Path:** Ensure this stage has an `output_context_path`, e.g., `outputs.generate_requirements_file`.\\n"
     "2.  **Write `requirements.txt` to File:**\\n"
@@ -312,13 +357,37 @@ class MasterPlannerAgent(BaseAgent):
             # Common repair strategies
             repaired = malformed_json.strip()
             
-            # 1. Handle unterminated strings by closing them
+            # 1. Handle truncated responses by removing incomplete JSON elements
+            # Look for the last complete stage or section
+            if repaired.endswith('"'):
+                # Remove the trailing incomplete quote
+                repaired = repaired[:-1]
+                logger.debug("Removed trailing incomplete quote")
+            
+            # Find the last complete stage entry by looking for complete stage blocks
+            # Remove any incomplete final stage entry
+            lines = repaired.split('\n')
+            complete_lines = []
+            in_stage = False
+            stage_depth = 0
+            
+            for line in lines:
+                stripped = line.strip()
+                if '"write_' in stripped and not stripped.endswith('",'):
+                    # This is likely the start of an incomplete stage - truncate here
+                    logger.debug("Found incomplete stage entry, truncating at this point")
+                    break
+                complete_lines.append(line)
+            
+            repaired = '\n'.join(complete_lines)
+            
+            # 2. Handle unterminated strings by closing them
             if repaired.count('"') % 2 != 0:
                 # Odd number of quotes - add closing quote at the end
                 logger.debug("Attempting to fix unterminated string by adding closing quote")
                 repaired = repaired + '"'
             
-            # 2. Handle missing closing braces/brackets
+            # 3. Handle missing closing braces/brackets
             open_braces = repaired.count('{') - repaired.count('}')
             open_brackets = repaired.count('[') - repaired.count(']')
             
@@ -330,16 +399,41 @@ class MasterPlannerAgent(BaseAgent):
                 logger.debug(f"Adding {open_brackets} missing closing brackets")
                 repaired = repaired + ']' * open_brackets
             
-            # 3. Handle trailing commas before closing braces/brackets
+            # 4. Handle trailing commas before closing braces/brackets
             repaired = repaired.replace(',}', '}').replace(',]', ']')
             
-            # 4. Try to extract valid JSON if the response has extra text
+            # 5. Try to extract valid JSON if the response has extra text
             if not repaired.startswith('{'):
                 # Look for the first '{' character
                 start_idx = repaired.find('{')
                 if start_idx != -1:
                     repaired = repaired[start_idx:]
                     logger.debug("Extracted JSON from response with extra prefix text")
+            
+            # 6. Handle incomplete stage entries by removing trailing commas and unclosed content
+            # This is a more aggressive approach for truncated responses
+            if '"stages"' in repaired:
+                try:
+                    # Find the stages section and ensure it's properly closed
+                    stages_start = repaired.find('"stages"')
+                    stages_content = repaired[stages_start:]
+                    
+                    # Look for incomplete stage definitions (missing closing braces)
+                    # and truncate before them
+                    import re
+                    # Remove any incomplete stage at the end
+                    repaired = re.sub(r',\s*"[^"]+"\s*:\s*{\s*[^}]*$', '', repaired)
+                    
+                    # Ensure stages section is properly closed
+                    if not repaired.rstrip().endswith('}'):
+                        # Count open braces in stages section to determine how many to close
+                        stages_section = repaired[stages_start:]
+                        open_in_stages = stages_section.count('{') - stages_section.count('}')
+                        if open_in_stages > 0:
+                            repaired += '}' * open_in_stages
+                            
+                except Exception as regex_error:
+                    logger.debug(f"Advanced repair failed, falling back to basic repair: {regex_error}")
             
             # Test if the repair worked
             json.loads(repaired)
@@ -452,12 +546,12 @@ class MasterPlannerAgent(BaseAgent):
         )
 
         try:
-            # MODIFIED: Use self.llm_provider
+            # MODIFIED: Use self.llm_provider with higher token limit
             llm_response_str = await self.llm_provider.generate(
                 system_prompt=current_system_prompt,
                 prompt=current_user_prompt,
-                model_id="gpt-4-turbo-preview", # MODIFIED: Used a specific model ID
                 temperature=0.1,       # Consistent temperature
+                max_tokens=4000,       # Reduced for gpt-3.5-turbo compatibility (max 4096)
                 response_format={"type": "json_object"}
             )
             logger.debug(f"Raw LLM JSON response: {llm_response_str}")

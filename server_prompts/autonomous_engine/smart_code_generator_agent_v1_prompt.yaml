@@ -74,7 +74,7 @@ output_schema:
     - contextual_adherence_explanation
 
 model_settings:
-  model_name: "gpt-4-turbo-preview" # Or a model specialized for code
+  # model_name: "gpt-4-turbo-preview" # Or a model specialized for code
   temperature: 0.2 # Lower temperature for more deterministic code generation
   max_tokens: 4000 # Allow for large code outputs + JSON overhead
   # response_format: { "type": "json_object" } # Enable if model reliably supports it for the full structure

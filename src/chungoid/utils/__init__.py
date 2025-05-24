@@ -10,7 +10,7 @@ Utility modules for chungoid
 # Re-export key helpers
 from .prompt_manager import PromptManager
 from .logger_setup import setup_logging  # noqa: F401
-from .config_loader import load_config  # noqa: F401
+from .config_manager import get_config, ConfigurationManager  # noqa: F401
 
 # Reflection store
 from .reflection_store import ReflectionStore, Reflection
@@ -24,7 +24,8 @@ __all__ = [
     # "copy_templates_to_project",
     # "extract_stage_prompts"
     "setup_logging",
-    "load_config",
+    "get_config",
+    "ConfigurationManager",
     "ReflectionStore",
     "Reflection",
     "FeedbackStore",

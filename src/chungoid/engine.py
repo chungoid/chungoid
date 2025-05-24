@@ -16,7 +16,7 @@ from pydantic.json import pydantic_encoder # <<< ADD IMPORT
 # Absolute imports – sys.path hacks removed
 from chungoid.utils.state_manager import StateManager, StatusFileError, ChromaOperationError
 from chungoid.utils.prompt_manager import PromptManager, PromptLoadError, PromptRenderError
-from chungoid.utils.config_loader import get_config, ConfigError
+from chungoid.utils.config_manager import get_config, ConfigurationError
 from chungoid.utils.llm_provider import LLMProvider # Added LLMProvider
 from chungoid.schemas.user_goal_schemas import UserGoalRequest # Added UserGoalRequest
 from chungoid.schemas.master_flow import MasterExecutionPlan # Added MasterExecutionPlan
@@ -54,7 +54,7 @@ class ChungoidEngine:
         # --- Load Configuration ---
         try:
             self.config = get_config() # Load central config
-        except ConfigError as e:
+        except ConfigurationError as e:
             logger.exception("Failed to load configuration.")
             raise RuntimeError("Configuration error prevented engine initialization.") from e
 
@@ -928,7 +928,7 @@ if __name__ == "__main__":
              print(json.dumps(stage_result_2, indent=2))
 
 
-    except (ValueError, RuntimeError, ConfigError) as e:
+    except (ValueError, RuntimeError, ConfigurationError) as e:
         print(f"\nEngine Initialization/Runtime Error: {e}")
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")

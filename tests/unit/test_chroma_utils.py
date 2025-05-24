@@ -9,7 +9,7 @@ import pytest
 
 # Correct import path assuming tests are run from the project root or configured PYTHONPATH
 from chungoid.utils import chroma_utils
-from chungoid.utils import config_loader
+from chungoid.utils import config_manager
 import chromadb
 
 # Configure logging for tests

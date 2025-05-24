@@ -106,7 +106,7 @@ output_schema:
     - assessment_confidence
 
 model_settings:
-  model_name: "gpt-4-turbo-preview" # Needs strong analytical and report generation skills
+  # model_name: "gpt-4-turbo-preview" # Needs strong analytical and report generation skills
   temperature: 0.25
   max_tokens: 3500
   # response_format: { "type": "json_object" } # Strongly recommended

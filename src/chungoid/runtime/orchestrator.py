@@ -1201,8 +1201,7 @@ class AsyncOrchestrator(BaseOrchestrator):
 
                 # If not paused, proceed based on next_stage_to_execute
                 if error_result.next_stage_to_execute == current_stage_name and not (error_result.reviewer_output and error_result.reviewer_output.suggestion_type == ReviewerActionType.PROCEED_AS_IS):
-                    self.logger.info(f"Run {run_id}, Flow {flow_id}: Retrying stage '{current_stage_name}' based on error handler result (next attempt: {current_attempt_number_for_stage + 1}).")
-                    current_attempt_number_for_stage += 1 
+                    self.logger.info(f"Run {run_id}, Flow {flow_id}: Retrying stage '{current_stage_name}' based on error handler result (next attempt: {current_attempt_number_for_stage}).")
                     
                     if error_result.modified_stage_inputs is not None:
                         actual_inputs_to_apply = None
@@ -1224,21 +1223,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                             if self.current_plan and current_stage_name in self.current_plan.stages:
                                 stage_spec_to_modify = self.current_plan.stages[current_stage_name]
                                 stage_spec_to_modify.inputs = actual_inputs_to_apply.copy() # Use .copy() for safety
-                                self.logger.debug(f"Run {run_id}: Updated self.current_plan.stages['{current_stage_name}'].inputs to: {stage_spec_to_modify.inputs}")
-                                
-                                # Update shared context with the potentially modified inputs
-                                # This might be better placed after ContextResolutionService runs with new stage_spec.inputs,
-                                # but for direct agent calls that might bypass full re-resolution, this is safer.
-                                if self.shared_context:
-                                     # This might be too early if context resolver re-evaluates based on the new stage_spec.inputs.
-                                     # For now, let's assume this provides the most up-to-date view for the agent if it directly uses shared_context.outputs
-                                     # A cleaner way would be to ensure ContextResolutionService is always re-run or takes these pre-resolved.
-                                     # For now, this ensures the inputs are at least available in a known location.
-                                     # This specific update here might be redundant if ContextResolutionService is robustly called next.
-                                     # Consider if this needs to be a deeper update into shared_context structure for 'inputs' of this stage.
-                                     # The primary goal is that `stage_spec.inputs` is correct for the *next* call to `ContextResolutionService`.
-                                     pass # Let ContextResolutionService handle it based on modified stage_spec.inputs
-
+                                self.logger.info(f"Run {run_id}: Applied modified inputs to stage spec for '{current_stage_name}': {stage_spec_to_modify.inputs}")
                             else:
                                 self.logger.warning(f"Run {run_id}: Could not update self.current_plan with modified inputs for stage '{current_stage_name}'. Plan or stage not found.")
                     
@@ -1247,7 +1232,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     self.shared_context.current_stage_status = StageStatus.PENDING 
                     self.shared_context.current_attempt_number_for_stage = current_attempt_number_for_stage
                     continue 
-                
+
                 elif error_result.next_stage_to_execute == NEXT_STAGE_END_FAILURE:
                     self.logger.error(f"Run {run_id}, Flow {flow_id}: Error handler determined flow should fail. Error: {agent_error_obj.message if agent_error_obj else 'N/A'}")
                     await self.state_manager.update_status(run_id, StageStatus.COMPLETED_FAILURE, error_details=agent_error_obj)

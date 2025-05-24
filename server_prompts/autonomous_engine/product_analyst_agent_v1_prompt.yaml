@@ -132,7 +132,7 @@ output_schema:
     - confidence_score
 
 model_settings:
-  model_name: "gpt-4-turbo-preview" # Or a suitable model
+  # model_name: "gpt-4-turbo-preview" # Or a suitable model
   temperature: 0.2 # Slightly lower for more deterministic structured output
   max_tokens: 4000 
   # top_p: ...

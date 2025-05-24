@@ -9,7 +9,7 @@ class TestGeneratorAgentInput(BaseModel):
     target_test_file_path: str = Field(description="The intended relative path where the generated test file should eventually be written.")
     test_framework_preference: Optional[str] = Field("pytest", description="Preferred testing framework, e.g., 'pytest', 'unittest'.")
     related_files_context: Optional[Dict[str, str]] = Field(None, description="Content of other relevant files as context for the LLM, e.g., {'models.py': '<content of models.py>'}.")
-    programming_language: str = Field("python", description="The programming language of the code to be tested and the tests to be generated.")
+    programming_language: str = Field(..., description="The programming language of the code to be tested and the tests to be generated (e.g., 'python', 'javascript', 'typescript', 'java', 'csharp'). This field is required and must be explicitly provided.")
     project_root_path: Optional[str] = Field(None, description="Absolute path to the project root, for LLM context if needed.")
     
     # Added for richer context from PCMA

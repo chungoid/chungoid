@@ -27,7 +27,7 @@ class PromptRenderError(PromptLoadError):
 # --- Pydantic Models for Prompt Structure ---
 class PromptModelSettings(BaseModel):
     """Defines settings for the LLM model to be used with the prompt."""
-    model_name: Optional[str] = "gpt-4-turbo-preview" # Default model
+    model_name: Optional[str] = None  # No default - use project config or LLMProvider default
     temperature: float = 0.7
     max_tokens: Optional[int] = 2048
     # Can add other OpenAI compatible settings like top_p, presence_penalty, etc.

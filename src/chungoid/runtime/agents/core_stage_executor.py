@@ -9,14 +9,14 @@ import copy # For deepcopying context
 # This assumes a certain directory structure. Adjust if necessary.
 try:
     from ...engine import ChungoidEngine # Corrected relative import
-    from ...utils.config_loader import ConfigError
+    from ...utils.config_manager import ConfigurationError
     from ...utils.state_manager import StatusFileError # For engine init errors
     from ...utils.prompt_manager import PromptLoadError # For engine init errors
 except ImportError as e:
     logging.getLogger(__name__).error(f"Failed to import engine components: {e}. Check relative paths.")
     # Define dummy classes if import fails to allow AgentCard definition below
     class ChungoidEngine: pass 
-    class ConfigError(Exception): pass
+    class ConfigurationError(Exception): pass
     class StatusFileError(Exception): pass
     class PromptLoadError(Exception): pass
 
@@ -149,7 +149,7 @@ async def core_stage_executor_agent(context: Dict[str, Any]) -> Dict[str, Any]:
     except NameError: # If ChungoidEngine import failed
         logger.error("ChungoidEngine class not available. Cannot execute sub-stage.")
         return {"status":"error", "message": "Engine components not loaded."}
-    except (ConfigError, StatusFileError, PromptLoadError, RuntimeError, ValueError) as engine_init_err:
+    except (ConfigurationError, StatusFileError, PromptLoadError, RuntimeError, ValueError) as engine_init_err:
         logger.error(f"Failed to initialize temporary ChungoidEngine for project {current_project_root}: {engine_init_err}")
         return {"status": "error", "message": f"Failed to initialize engine for sub-stage: {engine_init_err}"}
     

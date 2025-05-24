@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, cast
 import asyncio
 import json
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
 # Project-specific imports (adjust paths as necessary)
 from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus, OnFailureAction, ReviewerActionType
@@ -547,9 +547,25 @@ class OrchestrationErrorHandlerService:
                     
                     self.logger.info(
                         f"Run {run_id}, Flow {flow_id}: Applying reviewer changes to inputs for stage "
-                        f"'{current_stage_name}': {suggestion_details.changes_to_stage_spec}"
+                        f"'{current_stage_name}': {modified_inputs_from_reviewer}"
                     )
-                    modified_inputs_from_reviewer = suggestion_details.changes_to_stage_spec
+                    
+                    # Extract the actual agent inputs from changes_to_stage_spec
+                    # changes_to_stage_spec may contain {"inputs": {...}} but we need just the {...} part
+                    if "inputs" in suggestion_details.changes_to_stage_spec:
+                        modified_inputs_from_reviewer = suggestion_details.changes_to_stage_spec["inputs"]
+                        self.logger.info(
+                            f"Run {run_id}, Flow {flow_id}: Extracted agent inputs from changes_to_stage_spec: "
+                            f"{modified_inputs_from_reviewer}"
+                        )
+                    else:
+                        # Fallback: assume the entire changes_to_stage_spec is the inputs
+                        modified_inputs_from_reviewer = suggestion_details.changes_to_stage_spec
+                        self.logger.warning(
+                            f"Run {run_id}, Flow {flow_id}: No 'inputs' key found in changes_to_stage_spec, "
+                            f"using entire dict as agent inputs: {modified_inputs_from_reviewer}"
+                        )
+                    
                     # The orchestrator loop will apply these inputs to stage_spec if this result is returned.
                     return OrchestrationErrorResult(
                         next_stage_to_execute=current_stage_name, # Retry current stage

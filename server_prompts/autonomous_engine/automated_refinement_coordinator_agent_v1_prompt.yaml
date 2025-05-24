@@ -150,7 +150,7 @@ output_schema:
     - feedback_for_refinement_agents # Even if empty array
 
 model_settings:
-  model_name: "gpt-4-turbo-preview" # Needs strong reasoning capabilities
+  # model_name: "gpt-4-turbo-preview" # Needs strong reasoning capabilities
   temperature: 0.3
   max_tokens: 3000
   # response_format: { "type": "json_object" } # To enforce JSON output

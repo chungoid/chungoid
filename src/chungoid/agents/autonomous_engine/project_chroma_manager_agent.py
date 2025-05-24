@@ -23,7 +23,7 @@ from chungoid.utils.chroma_utils import (
     add_documents, # If batch adding is used
     # get_chroma_client # PCMA might not need to call this directly if other utils use it
 )
-from chungoid.utils.config_loader import get_config # For default embedding function name
+from chungoid.utils.config_manager import get_config, ConfigurationError # For default embedding function name
 
 from chungoid.schemas.agent_logs import ARCALogEntry
 

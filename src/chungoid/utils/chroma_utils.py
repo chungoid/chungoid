@@ -4,7 +4,7 @@ import logging
 from typing import List, Dict, Any, Optional, Union
 import chromadb
 from chromadb.config import Settings # Ensure Settings is imported
-from .config_loader import get_config
+from .config_manager import get_config, ConfigurationError
 from pathlib import Path
 import os
 import subprocess
@@ -57,10 +57,18 @@ def get_chroma_client() -> chromadb.ClientAPI:
     # Detailed logging at the beginning of the function
     logger.debug(f"Enter get_chroma_client. Current state before any logic: _client is {{'NOT None' if _client else 'None'}}, _client_mode='{_client_mode}', _client_project_context='{_client_project_context}', _current_project_directory='{_current_project_directory}'")
 
-    # Core configuration loading directly using the imported get_config
-    app_config = get_config() 
-    chroma_config = app_config.get("chromadb", {})
-    mode = chroma_config.get("mode", "in-memory") # Default to in-memory
+    # Core configuration loading using the new configuration manager
+    try:
+        system_config = get_config()
+        chroma_config = system_config.chromadb
+    except ConfigurationError as e:
+        logger.error(f"Failed to load configuration for ChromaDB: {e}")
+        # Fall back to in-memory mode
+        chroma_config = None
+        mode = "in-memory"
+    else:
+        mode = chroma_config.mode  # Default is handled by the Pydantic model
+    
     logger.debug(f"  Determined mode from config: '{mode}'")
 
     # Determine the effective project directory for persistent mode
@@ -90,7 +98,7 @@ def get_chroma_client() -> chromadb.ClientAPI:
             logger.debug("Initializing in-memory ChromaDB client.")
             _client = chromadb.Client(Settings(is_persistent=False)) # Explicitly non-persistent
         elif mode == "http":
-            server_url = chroma_config.get("url")
+            server_url = chroma_config.url if chroma_config else None
             if not server_url:
                 logger.error("ChromaDB mode is 'http' but no URL is configured.")
                 raise ChromaOperationError("ChromaDB HTTP URL not configured.")
@@ -419,7 +427,7 @@ def get_client(cls, db_path: Optional[str] = None) -> Union[chromadb.HttpClient,
 
         if cls._client is None:  # Should not happen if logic above is correct
             logger.error("CRITICAL: ChromaDB client is None after get_client logic. THIS SHOULD NOT HAPPEN.")
-            raise ChromaDBNotInitializedError("ChromaDB client is not initialized after get_client logic.")
+            raise ChromaOperationError("ChromaDB client is not initialized after get_client logic.")
         
         logger.debug(f"  Exit ChromaUtils.get_client inside lock: Returning client. _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")
     logger.debug(f"Exit ChromaUtils.get_client after lock: _client is {'NOT None' if cls._client else 'None'}, _current_db_path='{cls._current_db_path}'")

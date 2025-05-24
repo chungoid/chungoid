@@ -162,7 +162,7 @@ output_schema:
   # The detailed schema for MasterExecutionPlan and MasterStageSpec is provided in the system_prompt_template.
 
 model_settings:
-  model_name: "gpt-4-turbo-preview" # Model capable of complex JSON generation and logical decomposition
+  # model_name: "gpt-4-turbo-preview" # Model capable of complex JSON generation and logical decomposition
   temperature: 0.15 # Low temperature for more deterministic and structured plan generation
   max_tokens: 4000   # Allow for very large and detailed plans
   # response_format: { "type": "json_object" } # Strongly recommended if model supports it reliably for complex nested JSON

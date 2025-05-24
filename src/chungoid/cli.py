@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from chungoid.utils.config_loader import get_config, ConfigError, load_config
+from chungoid.utils.config_manager import ConfigurationManager, ConfigurationError
 import click
 import uuid # ADDED FOR PROJECT ID GENERATION
 
@@ -28,6 +28,7 @@ from pathlib import Path
 import logging
 import sys
 import os
+import yaml
 from typing import Any, Optional, Dict, List, cast, Union, Type
 
 import click
@@ -79,7 +80,7 @@ import json as py_json # Avoid conflict with click.json
 
 # Original application imports
 from chungoid.utils.state_manager import StateManager # StatusFileError was used here but not defined, assume from StateManager or custom exceptions
-from chungoid.utils.config_loader import load_config, ConfigError # MODIFIED_LINE
+from chungoid.utils.config_manager import ConfigurationManager, ConfigurationError # Use new system
 from chungoid.utils.logger_setup import setup_logging
 from chungoid.schemas.user_goal_schemas import UserGoalRequest # <<< ADD THIS IMPORT
 
@@ -94,7 +95,7 @@ from chungoid.utils.master_flow_registry import MasterFlowRegistry
 from chungoid.utils.agent_registry import AgentRegistry # Import AgentRegistry
 from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card, core_stage_executor_agent # <<< For registration
 from chungoid.schemas.flows import PausedRunDetails # Ensure this is imported
-from chungoid.utils.config_loader import get_config # For default config
+from chungoid.utils.config_manager import get_config # For default config
 # <<< Import patch and AsyncMock >>>
 from unittest.mock import patch, AsyncMock
 # import chungoid.server_prompts as server_prompts_pkg # REMOVED IMPORT
@@ -1210,354 +1211,287 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
         # nonlocal parsed_initial_context # No longer needed as it's passed correctly or reconstructed
 
         try:
-            # Configuration loading
+            # Configuration loading using new ConfigurationManager system
             logger.info(f"Attempting to load configuration for project: {abs_project_dir}")
             
-            project_specific_config_path = abs_project_dir / PROJECT_CHUNGOID_DIR / "project_config.yaml"
-            if project_specific_config_path.is_file(): # Check if it's a file
-                logger.info(f"Found project-specific config file at: {project_specific_config_path}")
-                try:
-                    config = load_config(str(project_specific_config_path))
-                    logger.info(f"Successfully loaded project-specific configuration. Project ID from config: {config.get('project_id', 'Not set')}")
-                except ConfigError as e: # Catch specific ConfigError from load_config
-                    logger.warning(f"ConfigError loading {project_specific_config_path}: {e}. Falling back to default config.")
-                    config = get_config() # Use default config from load_config() without path
-                    logger.info("Using default configuration due to ConfigError in project-specific file.")
-            else:
-                logger.info(f"Project-specific config file not found at {project_specific_config_path}. Attempting to load default/global config.")
-                try:
-                    config = get_config() # load_config() without path, uses its internal default logic
-                    logger.info("Successfully loaded default/global configuration.")
-                    # If using default, ensure project_root related paths are set based on abs_project_dir
-                    config['project_root_dir'] = str(abs_project_dir) # Store the actual project root
-                    config['project_root_path'] = str(abs_project_dir) # ADDED for AsyncOrchestrator
-                    config['project_root'] = str(abs_project_dir)      # ADDED for consistency/other uses
-                    config['dot_chungoid_path'] = str(abs_project_dir / PROJECT_CHUNGOID_DIR)
-                except ConfigError as e:
-                    logger.error(f"Critical ConfigError during default config load: {e}. Cannot proceed.")
-                    click.echo(f"Error: Critical configuration error: {e}", err=True)
-                    raise ValueError(f"Critical configuration error: {e}") # Re-raise as ValueError to be caught by outer
+            # Initialize the new configuration manager with project context
+            config_manager = ConfigurationManager()
+            config_manager.set_project_root(abs_project_dir)
             
-            # Ensure 'project_id' is in the config or generate one
-            # Also ensure project_root_path is set before StateManager might need it indirectly,
-            # or before Orchestrator needs it.
-            if 'project_root_path' not in config or not config['project_root_path']:
-                 config['project_root_path'] = str(abs_project_dir)
-                 config['project_root'] = str(abs_project_dir) # Keep consistent
-                 logger.info(f"Ensured project_root_path is set in config: {config['project_root_path']}")
+            # Get configuration - this will automatically load project-specific config
+            system_config = config_manager.get_config()
+            logger.info(f"Successfully loaded project configuration using ConfigurationManager")
             
-            if "project_id" not in config or not config["project_id"]:
-                # Try to load from state manager first if it exists
-                # script_dir, core_root_dir, server_prompts_dir are defined below, 
-                # ensure they are defined before this block or pass a sensible default to StateManager here.
-                # For now, this instantiation was moved down after server_prompts_dir is defined.
-                # temp_state_manager_for_pid = StateManager(target_directory=abs_project_dir)
-                # existing_project_id = temp_state_manager_for_pid.get_project_id_from_status()
-                # This block is being moved after server_prompts_dir is defined.
-                pass # Placeholder, actual logic moved down.
+            # Debug logging for configuration
+            logger.info(f"DEBUG: LLM config from new system: provider={system_config.llm.provider_type}, model={system_config.llm.default_model}")
             
-            # current_project_id = config["project_id"] # This is also moved down
+        except ConfigurationError as e:
+            logger.error(f"Configuration error: {e}")
+            click.echo(f"Configuration error: {e}", err=True)
+            return
+        except Exception as e:
+            logger.error(f"Unexpected error loading configuration: {e}")
+            click.echo(f"Error loading configuration: {e}", err=True)
+            return
 
-            # Prompt Manager Setup
-            # Determine prompt directories relative to the script or a known structure
-            # This assumes cli.py is at <some_root>/chungoid-core/src/chungoid/cli.py
-            # And server_prompts are at <some_root>/chungoid-core/server_prompts/
-            script_dir = Path(__file__).parent.resolve() # chungoid-core/src/chungoid/
-            core_root_dir = script_dir.parent.parent # chungoid-core/
-            server_prompts_dir = core_root_dir / "server_prompts"
-            
-            prompt_manager = PromptManager(prompt_directory_paths=[server_prompts_dir])
-            logger.info(f"PromptManager initialized with directory: {server_prompts_dir}")
+        # Convert to dictionary format for compatibility with existing code
+        config = system_config.model_dump()
+        config['project_root_path'] = str(abs_project_dir)
+        config['project_root'] = str(abs_project_dir)
+        config['project_id'] = config.get('project_id') or abs_project_dir.name
+        
+        logger.info(f"Configuration loaded with LLM settings: {system_config.llm.model_dump()}")
+        
+        # Ensure 'project_id' is in the config or generate one
+        # Also ensure project_root_path is set before StateManager might need it indirectly,
+        # or before Orchestrator needs it.
+        if 'project_root_path' not in config or not config['project_root_path']:
+             config['project_root_path'] = str(abs_project_dir)
+             config['project_root'] = str(abs_project_dir) # Keep consistent
+             logger.info(f"Ensured project_root_path is set in config: {config['project_root_path']}")
+        
+        if "project_id" not in config or not config["project_id"]:
+            # Try to load from state manager first if it exists
+            # script_dir, core_root_dir, server_prompts_dir are defined below, 
+            # ensure they are defined before this block or pass a sensible default to StateManager here.
+            # For now, this instantiation was moved down after server_prompts_dir is defined.
+            # temp_state_manager_for_pid = StateManager(target_directory=abs_project_dir)
+            # existing_project_id = temp_state_manager_for_pid.get_project_id_from_status()
+            # This block is being moved after server_prompts_dir is defined.
+            pass # Placeholder, actual logic moved down.
+        
+        # current_project_id = config["project_id"] # This is also moved down
 
-            # State Manager must be initialized to potentially load an existing project_id
-            # from its state file before we decide if we need to generate a new one.
-            state_manager = StateManager(
-                target_directory=abs_project_dir,
-                server_stages_dir=server_prompts_dir # Use the defined server_prompts_dir
-            )
-            logger.info(f"StateManager initialized for project directory: {abs_project_dir} (pre-project_id check)")
+        # Prompt Manager Setup
+        # Determine prompt directories relative to the script or a known structure
+        # This assumes cli.py is at <some_root>/chungoid-core/src/chungoid/cli.py
+        # And server_prompts are at <some_root>/chungoid-core/server_prompts/
+        script_dir = Path(__file__).parent.resolve() # chungoid-core/src/chungoid/
+        core_root_dir = script_dir.parent.parent # chungoid-core/
+        server_prompts_dir = core_root_dir / "server_prompts"
+        
+        prompt_manager = PromptManager(prompt_directory_paths=[server_prompts_dir])
+        logger.info(f"PromptManager initialized with directory: {server_prompts_dir}")
 
-            # Now that server_prompts_dir is defined, handle project_id loading/generation
-            if "project_id" not in config or not config["project_id"]:
-                try:
-                    # Attempt to get project_id from the loaded state within StateManager
-                    # _project_state should be populated by StateManager's __init__
-                    # via _load_or_initialize_project_state
-                    if hasattr(state_manager, '_project_state') and state_manager._project_state and state_manager._project_state.project_id:
-                        existing_project_id = state_manager._project_state.project_id
-                        config["project_id"] = existing_project_id
-                        logger.info(f"Using existing project_id from StateManager's loaded state: {existing_project_id}")
-                    else:
-                        # This case means StateManager initialized a new (default/placeholder) state
-                        # or the existing file was truly empty/corrupt regarding project_id.
-                        # So, we generate a new one and it will be set in the config.
-                        # The subsequent call to state_manager.initialize_project will then use this new ID
-                        # and if it was a fresh default state, it will get updated, or it might
-                        # still raise an error if a *different* valid ID was already there, which initialize_project handles.
-                        new_project_id = str(uuid.uuid4())
-                        config["project_id"] = new_project_id
-                        logger.info(f"Generated new project_id: {new_project_id} (as it was not in config or initial StateManager state) and added to config.")
-                except Exception as e_sm_init_for_id:
-                    logger.warning(f"Could not reliably get existing project_id from StateManager: {e_sm_init_for_id}. Generating new project_id.")
+        # State Manager must be initialized to potentially load an existing project_id
+        # from its state file before we decide if we need to generate a new one.
+        state_manager = StateManager(
+            target_directory=abs_project_dir,
+            server_stages_dir=server_prompts_dir # Use the defined server_prompts_dir
+        )
+        logger.info(f"StateManager initialized for project directory: {abs_project_dir} (pre-project_id check)")
+
+        # Now that server_prompts_dir is defined, handle project_id loading/generation
+        if "project_id" not in config or not config["project_id"]:
+            try:
+                # Attempt to get project_id from the loaded state within StateManager
+                # _project_state should be populated by StateManager's __init__
+                # via _load_or_initialize_project_state
+                if hasattr(state_manager, '_project_state') and state_manager._project_state and state_manager._project_state.project_id:
+                    existing_project_id = state_manager._project_state.project_id
+                    config["project_id"] = existing_project_id
+                    logger.info(f"Using existing project_id from StateManager's loaded state: {existing_project_id}")
+                else:
+                    # This case means StateManager initialized a new (default/placeholder) state
+                    # or the existing file was truly empty/corrupt regarding project_id.
+                    # So, we generate a new one and it will be set in the config.
+                    # The subsequent call to state_manager.initialize_project will then use this new ID
+                    # and if it was a fresh default state, it will get updated, or it might
+                    # still raise an error if a *different* valid ID was already there, which initialize_project handles.
                     new_project_id = str(uuid.uuid4())
                     config["project_id"] = new_project_id
-                    logger.info(f"Generated new project_id due to StateManager access issue: {new_project_id} and added to config.")
-            
-            current_project_id = config.get("project_id") 
-            if not current_project_id: 
-                logger.error("Critical error: project_id is still not set in config after attempted load/generation. Aborting.")
-                raise ValueError("project_id could not be determined or generated.")
-            logger.info(f"Confirmed current_project_id to be used: {current_project_id}")
+                    logger.info(f"Generated new project_id: {new_project_id} (as it was not in config or initial StateManager state) and added to config.")
+            except Exception as e_sm_init_for_id:
+                logger.warning(f"Could not reliably get existing project_id from StateManager: {e_sm_init_for_id}. Generating new project_id.")
+                new_project_id = str(uuid.uuid4())
+                config["project_id"] = new_project_id
+                logger.info(f"Generated new project_id due to StateManager access issue: {new_project_id} and added to config.")
+        
+        current_project_id = config.get("project_id") 
+        if not current_project_id: 
+            logger.error("Critical error: project_id is still not set in config after attempted load/generation. Aborting.")
+            raise ValueError("project_id could not be determined or generated.")
+        logger.info(f"Confirmed current_project_id to be used: {current_project_id}")
 
-            # --- MODIFIED LLM SETUP FOR BUILD COMMAND START ---
-            llm_manager: Optional[LLMManager] = None
-            try:
-                # Parameters for _get_llm_config specific to the build command
-                # For build, there are no explicit --llm-model, --llm-api-key etc. flags directly on `chungoid build`
-                # So, these will typically be None, relying on env vars or project_config.
-                # The --use-mock-llm-provider flag IS available on `build`.
-                build_command_llm_cli_params = {
-                    "llm_provider": None, # No specific CLI flag for provider on 'build'
-                    "llm_model": None,    # No specific CLI flag for model on 'build'
-                    "llm_api_key": None,  # No specific CLI flag for api key on 'build'
-                    "llm_base_url": None  # No specific CLI flag for base url on 'build'
-                }
-                
-                # Project config LLM settings would come from the 'config' dict loaded earlier
-                project_config_llm_settings = config.get("project_settings", {}).get("llm_config", {})
-                if not project_config_llm_settings: # Ensure it's a dict even if missing
-                     project_config_llm_settings = {}
-                
-                effective_llm_config = _get_llm_config(
-                    cli_params=build_command_llm_cli_params,
-                    project_config_llm_settings=project_config_llm_settings
-                    # REMOVED use_mock_override=use_mock_llm_provider
-                )
-                
-                llm_manager = LLMManager(
-                    llm_config=effective_llm_config, 
-                    prompt_manager=prompt_manager # Re-use the already initialized prompt_manager
-                )
-                logger.info(f"LLMManager initialized for build command with provider: {effective_llm_config.get('provider_type')}")
-
-            except Exception as e_llm_build_init:
-                logger.error(f"Build Command: Failed to initialize LLMManager: {e_llm_build_init}", exc_info=True)
-                # Depending on strictness, you might want to raise an error or allow proceeding if LLM isn't critical
-                # For a build process, LLM is likely critical for plan generation.
-                click.echo(f"Error: Failed to initialize LLM services for build: {e_llm_build_init}", err=True)
-                raise ValueError(f"LLM Initialization failed for build: {e_llm_build_init}")
-            # --- MODIFIED LLM SETUP FOR BUILD COMMAND END ---
-            
-            # State Manager Setup (already initialized above to get project_id, ensure it's the same instance)
-            # Re-initializing would be problematic. We just ensure the config has the right ID now.
-            # The state_manager instance created before the project_id logic block is the one we use.
-            # project_internal_dir = abs_project_dir / PROJECT_CHUNGOID_DIR # Already defined
-            # state_manager = StateManager( # DO NOT RE-INITIALIZE HERE
-            #     target_directory=abs_project_dir, 
-            #     server_stages_dir=server_prompts_dir 
-            # )
-            # logger.info(f"StateManager initialized for project directory: {abs_project_dir}") # Already logged
-            
-            # Initialize project state and get/confirm project_id
-            # This will create .chungoid/chungoid_status.json if it doesn't exist
-            # And ensure the project_id in the config matches or is set from state.
-            logger.info(f"Calling state_manager.initialize_project with project_id: {current_project_id}, project_name: {abs_project_dir.name}, goal: {user_goal[:50]}...") # Log goal snippet
-            # initialize_project returns a ProjectStateV2 object; extract the authoritative project_id from it
-            initialized_project_state = state_manager.initialize_project(
-                project_id=current_project_id,
-                project_name=abs_project_dir.name,
-                initial_user_goal_summary=user_goal
-            )
-
-            authoritative_project_id: str = initialized_project_state.project_id
-
-            if authoritative_project_id != current_project_id:
-                logger.warning(
-                    f"Project ID mismatch or update: Config had {current_project_id}, StateManager initialized with {authoritative_project_id}. Using {authoritative_project_id}."
-                )
-                config["project_id"] = authoritative_project_id  # Update config with the authoritative ID
-                current_project_id = authoritative_project_id
-
-            # Agent Registry Setup
-            agent_registry = AgentRegistry(project_root=abs_project_dir) # MODIFIED to use abs_project_dir
-            agent_registry.add(core_stage_executor_card, overwrite=True)
-            # Remove mock agent card registrations
-            # agent_registry.add_agent_card(get_mock_system_intervention_agent_card()) # REMOVE
-            # agent_registry.add_agent_card(get_mock_code_generator_agent_card()) # REMOVE
-            # agent_registry.add_agent_card(get_mock_test_generation_agent_v1_card()) # REMOVE
-            agent_registry = AgentRegistry(project_root=abs_project_dir) # MODIFIED: Added project_root
-            # Register essential system agents (example, adapt as needed)
-            agent_registry.add(core_stage_executor_card, overwrite=True) # MODIFIED: Added overwrite=True
-            # agent_registry.add_agent_card(get_master_planner_agent_card()) # Removed for now, to be added via fallback or other mechanism
-            # agent_registry.add_agent_card(get_master_planner_reviewer_agent_card())
-
-            # Add mock agents for testing if needed (or make this conditional)
-            # agent_registry.add_agent_card(get_mock_system_intervention_agent_card())
-            # agent_registry.add_agent_card(get_mock_code_generator_agent_card())
-            # agent_registry.add_agent_card(get_mock_test_generation_agent_card())
-            # agent_registry.add_agent_card(get_mock_system_requirements_gathering_agent_card())
-
-            # Fallback agents map - these are classes, not cards.
-            # RegistryAgentProvider will instantiate them if they are not in the AgentRegistry (cards).
-            
-            # Project Chroma Manager - needed for many core flows if not using mocks for it
-            project_chroma_manager = ProjectChromaManagerAgent_v1(
-                project_root_workspace_path=str(abs_project_dir), # MODIFIED: Renamed project_root_path and ensured it's a string
-                project_id=current_project_id # ADDED: Pass the project_id
-                # llm_provider=llm_provider_instance, # If it needs LLM # This would now come via LLMManager
-                # prompt_manager=prompt_manager    # If it needs prompts # This would now come via LLMManager
-            )
-            # No card needed if we are directly instantiating and passing,
-            # but if plan references by ID, it MUST be in fallback or registry.
-            
-            core_system_agent_classes = {
-                # "SystemMasterPlannerAgent_v1": MasterPlannerAgent, # Provided directly by Orchestrator if not in registry/fallback
-                # "SystemMasterPlannerReviewerAgent_v1": MasterPlannerReviewerAgent,
-                SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,
-                ProjectChromaManagerAgent_v1.AGENT_ID: project_chroma_manager, # Pass the instance
+        # --- MODIFIED LLM SETUP FOR BUILD COMMAND START ---
+        llm_manager: Optional[LLMManager] = None
+        try:
+            # Parameters for _get_llm_config specific to the build command
+            # For build, there are no explicit --llm-model, --llm-api-key etc. flags directly on `chungoid build`
+            # So, these will typically be None, relying on env vars or project_config.
+            # The --use-mock-llm-provider flag IS available on `build`.
+            build_command_llm_cli_params = {
+                "llm_provider": None, # No specific CLI flag for provider on 'build'
+                "llm_model": None,    # No specific CLI flag for model on 'build'
+                "llm_api_key": None,  # No specific CLI flag for api key on 'build'
+                "llm_base_url": None  # No specific CLI flag for base url on 'build'
             }
-
-            # Determine final fallback map
-            final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = {} # MODIFIED: Allow AgentFallbackItem
             
-            # Option 1: Always use mock fallback map if `use_mock_fallback_agents` is true (add this flag if needed)
-            # For build, let's be more explicit or rely on a slim set of core agents.
-            # if config.get("developer_settings", {}).get("use_mock_fallback_agents", False): # Example flag
-            #    logger.info("Using mock agent fallback map from testing_mock_agents.")
-            #    final_fallback_map.update(get_mock_agent_fallback_map()) # This returns a map of ID to CLASS
-
-            # Option 2: Selective fallback for core agents
-            # These are agent CLASSES that the provider will instantiate if needed
-            # The orchestrator primarily needs the MasterPlannerAgent. Others are plan-dependent.
-            final_fallback_map.update({
-                MasterPlannerAgent.AGENT_ID: MasterPlannerAgent, # ADDED: Ensure MasterPlannerAgent is in fallback
-                ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
-                CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Original CoreCodeGeneratorAgent_v1
-                TestGeneratorAgent.AGENT_ID: TestGeneratorAgent, # Original CoreTestGeneratorAgent_v1
-                SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
-                "FileOperationAgent_v1": SystemFileSystemAgent_v1, # ADDED: Map FileOperationAgent_v1 to SystemFileSystemAgent_v1
-                SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1, # Ensure this is here
-                # "NoOpAgent_v1": MockNoOpAgent,  # <<< REMOVE THIS LINE
-                # "SystemInterventionAgent_v1": MockSystemInterventionAgent, # <<< REMOVE THIS LINE
-            })
-            final_fallback_map.update(core_system_agent_classes) # type: ignore[arg-type] # project_chroma_manager instance is fine
-
-            # ADD HumanInputAgent_v1 to the fallback map explicitly as the mock planner uses it.
-            # This ensures it's available even if use_mock_fallback_agents is false.
-            # The mock plan specifically requests "HumanInputAgent_v1".
-            # human_input_agent_id_from_plan = "HumanInputAgent_v1" # AGENT_ID of MockHumanInputAgent
-            # if human_input_agent_id_from_plan not in final_fallback_map:
-            #     final_fallback_map[human_input_agent_id_from_plan] = MockSystemInterventionAgent # The class # CORRECTED
-            #     logger.info(f"Explicitly added '{human_input_agent_id_from_plan}' (maps to MockSystemInterventionAgent class) to fallback map.")
-
-            # --- DIAGNOSTIC LOGGING for final_fallback_map in do_build ---
-            logger.info(f"FINAL_FALLBACK_MAP_KEYS (do_build): {list(final_fallback_map.keys())}")
-            if "NoOpAgent_v1" in final_fallback_map:
-                logger.info("DIAGNOSTIC (do_build): 'NoOpAgent_v1' IS PRESENT in final_fallback_map keys.")
-                logger.info(f"DIAGNOSTIC (do_build): Value for 'NoOpAgent_v1' is {final_fallback_map['NoOpAgent_v1']}")
-            else: 
-                logger.error("DIAGNOSTIC (do_build): 'NoOpAgent_v1' IS MISSING from final_fallback_map keys.")
-            # --- END DIAGNOSTIC LOGGING ---
-            
-            agent_provider = RegistryAgentProvider( # Align this block with the `if/else` above
-                registry=agent_registry,
-                fallback=final_fallback_map,  # RENAMED from fallback_agents_map
-                llm_provider=llm_manager, # RENAMED from llm_manager
-                prompt_manager=prompt_manager, # Pass the existing prompt_manager
-                project_chroma_manager=project_chroma_manager # ADDED: Pass the instantiated PCMA here
-            )
-            logger.info("RegistryAgentProvider initialized.") # Align this with agent_provider
-
-            # Orchestrator Setup
-            # The orchestrator will now use the goal string to generate a plan via the LLMManager
-            
-            # --- Metrics Store Setup --- ADDED THIS BLOCK
-            metrics_store_root = abs_project_dir # Use the absolute project directory path
-            metrics_store = MetricsStore(project_root=metrics_store_root)
-            logger.info(f"MetricsStore initialized for project root: {metrics_store_root}")
-            # --- End Metrics Store Setup ---
-
-            # Now, initialize the orchestrator with the loaded/defaulted config
-            # and other necessary components.
-            raw_on_failure_action = config.get("orchestrator", {}).get("default_on_failure_action")
-            try:
-                default_on_failure_action_enum = OnFailureAction(raw_on_failure_action) if raw_on_failure_action else None
-            except ValueError:
-                logger.error(f"Invalid default_on_failure_action value '{raw_on_failure_action}' in config. Falling back to INVOKE_REVIEWER.")
-                default_on_failure_action_enum = OnFailureAction.INVOKE_REVIEWER
-
-            # Create the shared context for this build run
-            build_shared_context_data = {
-                "project_id": current_project_id,
-                "run_id": current_run_id,
-                "project_root_path": str(abs_project_dir),
-                "llm_manager": llm_manager, # Make LLMManager available in shared context
-                "prompt_manager": prompt_manager,
-                "agent_provider": agent_provider,
-                "state_manager": state_manager,
-                "metrics_store": metrics_store,
+            # Project config LLM settings come from the new SystemConfiguration structure
+            project_config_llm_settings = {
+                "provider_type": system_config.llm.provider_type,
+                "default_model": system_config.llm.default_model,
+                "api_key": system_config.llm.api_key,
+                "base_url": system_config.llm.base_url,
+                "max_tokens": system_config.llm.max_tokens,
+                "temperature": system_config.llm.temperature,
+                "timeout": system_config.llm.timeout,
+                "max_retries": system_config.llm.max_retries
             }
-            if parsed_initial_context: # Merge CLI initial context
-                build_shared_context_data.update(parsed_initial_context)
-
-
-            orchestrator = AsyncOrchestrator(
-                config=config, # MODIFIED: Pass the config dictionary
-                # project_root_path_override=str(abs_project_dir), # REMOVED: Incorrect parameter
-                state_manager=state_manager,
-                agent_provider=agent_provider,
-                # llm_manager=llm_manager, # REMOVED: Not a direct constructor arg, accessed via agent_provider or context
-                # prompt_manager=prompt_manager, # REMOVED: Not a direct constructor arg, accessed via agent_provider or context
-                metrics_store=metrics_store,
-                master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "SystemMasterPlannerReviewerAgent_v1"),
-                default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
-                # initial_shared_context_override=build_shared_context_data # REMOVED: Not a constructor arg, handled by run() method
-            )
-
-            # Generate a unique run ID (already done as current_run_id from outer scope)
-            logger.info(f"Build Run ID: {current_run_id}")
-
-            # Run the orchestrator with the user goal
-            # The orchestrator's `run` method should handle plan generation if goal_str is provided
-            logger.info(f"Executing orchestrator with user goal: {user_goal[:100]}...")
             
+            logger.info(f"DEBUG: Extracted LLM settings: {project_config_llm_settings}")
+            
+            effective_llm_config = _get_llm_config(
+                cli_params=build_command_llm_cli_params,
+                project_config_llm_settings=project_config_llm_settings
+            )
+            
+            logger.info(f"DEBUG: Final effective LLM config: {effective_llm_config}")
+            
+            llm_manager = LLMManager(
+                llm_config=effective_llm_config, 
+                prompt_manager=prompt_manager # Re-use the already initialized prompt_manager
+            )
+            logger.info(f"LLMManager initialized for build command with provider: {effective_llm_config.get('provider_type')}")
+
+        except Exception as e_llm_build_init:
+            logger.error(f"Build Command: Failed to initialize LLMManager: {e_llm_build_init}", exc_info=True)
+            # Depending on strictness, you might want to raise an error or allow proceeding if LLM isn't critical
+            # For a build process, LLM is likely critical for plan generation.
+            click.echo(f"Error: Failed to initialize LLM services for build: {e_llm_build_init}", err=True)
+            raise ValueError(f"LLM Initialization failed for build: {e_llm_build_init}")
+        # --- MODIFIED LLM SETUP FOR BUILD COMMAND END ---
+        
+        # Initialize project state and get/confirm project_id
+        # This will create .chungoid/chungoid_status.json if it doesn't exist
+        # And ensure the project_id in the config matches or is set from state.
+        logger.info(f"Calling state_manager.initialize_project with project_id: {current_project_id}, project_name: {abs_project_dir.name}, goal: {user_goal[:50]}...") # Log goal snippet
+        # initialize_project returns a ProjectStateV2 object; extract the authoritative project_id from it
+        initialized_project_state = state_manager.initialize_project(
+            project_id=current_project_id,
+            project_name=abs_project_dir.name,
+            initial_user_goal_summary=user_goal
+        )
+
+        authoritative_project_id: str = initialized_project_state.project_id
+
+        if authoritative_project_id != current_project_id:
+            logger.warning(
+                f"Project ID mismatch or update: Config had {current_project_id}, StateManager initialized with {authoritative_project_id}. Using {authoritative_project_id}."
+            )
+            config["project_id"] = authoritative_project_id  # Update config with the authoritative ID
+            current_project_id = authoritative_project_id
+
+        # Agent Registry Setup
+        agent_registry = AgentRegistry(project_root=abs_project_dir)
+        agent_registry.add(core_stage_executor_card, overwrite=True)
+
+        # Project Chroma Manager - needed for many core flows if not using mocks for it
+        project_chroma_manager = ProjectChromaManagerAgent_v1(
+            project_root_workspace_path=str(abs_project_dir),
+            project_id=current_project_id
+        )
+        
+        core_system_agent_classes = {
+            SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,
+            ProjectChromaManagerAgent_v1.AGENT_ID: project_chroma_manager, # Pass the instance
+        }
+
+        # Determine final fallback map
+        final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = {}
+        
+        # Option 2: Selective fallback for core agents
+        # These are agent CLASSES that the provider will instantiate if needed
+        # The orchestrator primarily needs the MasterPlannerAgent. Others are plan-dependent.
+        final_fallback_map.update({
+            MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
+            ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
+            CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Original CoreCodeGeneratorAgent_v1
+            TestGeneratorAgent.AGENT_ID: TestGeneratorAgent, # Original CoreTestGeneratorAgent_v1
+            SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
+            "FileOperationAgent_v1": SystemFileSystemAgent_v1,
+            SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
+        })
+        final_fallback_map.update(core_system_agent_classes)
+        
+        agent_provider = RegistryAgentProvider(
+            registry=agent_registry,
+            fallback=final_fallback_map,
+            llm_provider=llm_manager,
+            prompt_manager=prompt_manager,
+            project_chroma_manager=project_chroma_manager
+        )
+        logger.info("RegistryAgentProvider initialized.")
+
+        # Metrics Store Setup
+        metrics_store_root = abs_project_dir
+        metrics_store = MetricsStore(project_root=metrics_store_root)
+        logger.info(f"MetricsStore initialized for project root: {metrics_store_root}")
+
+        # Now, initialize the orchestrator with the loaded/defaulted config
+        # and other necessary components.
+        raw_on_failure_action = config.get("orchestrator", {}).get("default_on_failure_action")
+        try:
+            default_on_failure_action_enum = OnFailureAction(raw_on_failure_action) if raw_on_failure_action else None
+        except ValueError:
+            logger.error(f"Invalid default_on_failure_action value '{raw_on_failure_action}' in config. Falling back to INVOKE_REVIEWER.")
+            default_on_failure_action_enum = OnFailureAction.INVOKE_REVIEWER
+
+        # Create the shared context for this build run
+        build_shared_context_data = {
+            "project_id": current_project_id,
+            "run_id": current_run_id,
+            "project_root_path": str(abs_project_dir),
+            "llm_manager": llm_manager,
+            "prompt_manager": prompt_manager,
+            "agent_provider": agent_provider,
+            "state_manager": state_manager,
+            "metrics_store": metrics_store,
+        }
+        if parsed_initial_context: # Merge CLI initial context
+            build_shared_context_data.update(parsed_initial_context)
+
+        orchestrator = AsyncOrchestrator(
+            config=config,
+            state_manager=state_manager,
+            agent_provider=agent_provider,
+            metrics_store=metrics_store,
+            master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "SystemMasterPlannerReviewerAgent_v1"),
+            default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
+        )
+
+        # Generate a unique run ID (already done as current_run_id from outer scope)
+        logger.info(f"Build Run ID: {current_run_id}")
+
+        # Run the orchestrator with the user goal
+        # The orchestrator's `run` method should handle plan generation if goal_str is provided
+        logger.info(f"Executing orchestrator with user goal: {user_goal[:100]}...")
+        
+        try:
             # final_context: Dict[str, Any] = await orchestrator.run( # OLD, incorrect type
             final_status, final_shared_context, final_error_details = await orchestrator.run(
                 goal_str=user_goal, 
-                initial_context=build_shared_context_data, # MODIFIED: Pass the comprehensive build_shared_context_data
+                initial_context=build_shared_context_data,
                 run_id_override=current_run_id 
             )
 
-            # Extract results from the final context
-            # This part needs careful consideration based on what `run` actually returns
-            # and what 'final_context' is expected to hold for summarization.
-            # Assuming final_shared_context holds the relevant data for now.
-            
             # Log the final status and any error details
             logger.info(f"Orchestrator finished with status: {final_status}")
             if final_error_details:
-                # logger.error(f"Orchestrator final error details: {final_error_details.model_dump_json(indent=2)}") # OLD
                 try:
-                    error_dict = final_error_details.to_dict() # Use to_dict()
+                    error_dict = final_error_details.to_dict()
                     logger.error(f"Orchestrator final error details: {py_json.dumps(error_dict, indent=2)}")
                 except AttributeError:
-                    # Fallback if to_dict() is also missing for some reason, or final_error_details is not what we expect
                     logger.error(f"Orchestrator final error details (raw): {final_error_details}")
             
             output_summary = "Build process completed."
             if final_shared_context and final_shared_context.data:
                 output_summary += f" Final context keys: {list(final_shared_context.data.keys())}"
-                # You might want to serialize part of final_shared_context.data if it's useful
-                # For example, if there's a specific output key you expect:
-                # final_result_data = final_shared_context.data.get("final_output_data", "No specific output found.")
-                # logger.info(f"Final result data: {final_result_data}")
             else:
                 output_summary += " No final shared context data available."
             
             print(f"\n{output_summary}")
-            # Example of accessing specific fields if needed, adapt as per actual SharedContext structure
-            # final_status_val = final_context.get("_orchestrator_final_status", "ERROR_STATUS_NOT_FOUND") # OLD
-            final_status_val = final_status.value # Accessing the value of the Enum
+            final_status_val = final_status.value
 
             if final_status in [StageStatus.COMPLETED_SUCCESS, StageStatus.COMPLETED_WITH_WARNINGS]:
                 logger.info("Build process completed successfully.")
@@ -1587,27 +1521,21 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
 
         except Exception as e:
             logger.error(f"An error occurred during the build process: {e}", exc_info=True)
-            # rich.traceback.Console().print_exception() # Already logged with exc_info
             click.echo(f"An unexpected error occurred: {e}", err=True)
-            # No sys.exit(1) here
             raise # Re-raise
         finally:
             # Ensure LLM client (if any) is closed
-            if 'llm_manager' in locals() and llm_manager is not None and hasattr(llm_manager, 'close_client'): # Check llm_manager directly
-                 logger.info(f"Attempting to close LLM provider client via LLMManager in build command.")
-                 await llm_manager.close_client()
+            if llm_manager is not None and hasattr(llm_manager, 'close_client'):
+                logger.info(f"Attempting to close LLM provider client via LLMManager in build command.")
+                await llm_manager.close_client()
 
     try:
         asyncio.run(do_build())
         # Successful completion, exit code 0 is implicit
     except Exception:
          # Errors are logged within do_build. We re-raise them to allow a non-zero exit code.
-         # click.echo("Build failed. See logs for details.", err=True) # Already echoed
+         click.echo("Build failed. See logs for details.", err=True)
          sys.exit(1) # Ensure non-zero exit code on any exception from do_build
-
-# Ensure the main CLI entry point is correct
-if __name__ == "__main__":
-    cli()
 
 @utils.command(name="show-config")
 @click.option(
@@ -1630,41 +1558,31 @@ def show_config(ctx: click.Context, project_dir_opt: Path, raw: bool):
     config_source_info = "Defaults"
 
     try:
-        # Attempt to load project-specific config first
-        # Ensure PROJECT_CHUNGOID_DIR and constants are available
-        # from chungoid.constants import PROJECT_CHUNGOID_DIR # Should be imported at top
-        project_config_file = abs_project_dir / PROJECT_CHUNGOID_DIR / "chungoid_config.yaml" 
-        # Ensure py_json is available for dumps
-        # import json as py_json # Should be imported at top
-        # Ensure yaml is imported for yaml.safe_load
-        import yaml # Added import here, ideally should be at top of file
-
-        if project_config_file.exists() and project_config_file.is_file():
-            try:
-                if raw:
-                    with open(project_config_file, 'r') as f_raw_proj:
-                        raw_project_cfg_content = yaml.safe_load(f_raw_proj)
-                    config_to_display = raw_project_cfg_content if isinstance(raw_project_cfg_content, dict) else {"error": "Raw project config is not a dict."}
-                    config_source_info = f"Raw content of {project_config_file}"
-                else:
-                    config_to_display = load_config(str(project_config_file))
-                    config_source_info = f"Loaded from {project_config_file} (merged with defaults)"
-            except ConfigError as ce:
-                click.secho(f"ConfigError trying to load from {project_config_file}: {ce}", fg="yellow")
+        # Use the new configuration system
+        config_manager = ConfigurationManager()
+        if abs_project_dir != Path.cwd():
+            config_manager.set_project_root(abs_project_dir)
         
-        if config_to_display is None:
-            if raw:
-                from chungoid.utils.config_loader import DEFAULT_CONFIG as CL_DEFAULT_CONFIG
-                config_to_display = CL_DEFAULT_CONFIG
-                config_source_info = "Raw DEFAULT_CONFIG (from config_loader.py)"
+        if raw:
+            # For raw mode, try to load the actual config file if it exists
+            project_config_file = abs_project_dir / PROJECT_CHUNGOID_DIR / "config.yaml"
+            if project_config_file.exists():
+                with open(project_config_file, 'r') as f:
+                    config_to_display = yaml.safe_load(f) or {}
+                config_source_info = f"Raw content of {project_config_file}"
             else:
-                config_to_display = get_config()
-                config_source_info = "Default configuration (no project-specific config found/loaded)"
+                # Show raw defaults from the Pydantic model
+                system_config = config_manager.get_config()
+                config_to_display = system_config.model_dump()
+                config_source_info = "Default configuration (Pydantic model defaults)"
+        else:
+            # Show effective merged configuration
+            system_config = config_manager.get_config()
+            config_to_display = system_config.model_dump()
+            config_source_info = "Effective configuration (merged from all sources)"
         
         click.echo(f"Configuration Source: {config_source_info}")
         if config_to_display:
-            # Ensure py_json is available
-            import json as py_json # Added import here, ideally at top
             click.echo(py_json.dumps(config_to_display, indent=2, default=str))
         else:
             click.secho("No configuration loaded or available.", fg="red")
@@ -1673,4 +1591,21 @@ def show_config(ctx: click.Context, project_dir_opt: Path, raw: bool):
         click.secho(f"An unexpected error occurred while retrieving configuration: {e}", fg="red")
         logger.error(f"Error in show_config: {e}", exc_info=True)
 
-# Ensure registration is done correctly.
+# Add helper functions for backward compatibility
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Temporary compatibility function for loading config files directly."""
+    try:
+        if Path(config_path).exists():
+            with open(config_path, 'r') as f:
+                file_config = yaml.safe_load(f) or {}
+            return file_config
+        return {}
+    except Exception as e:
+        raise ConfigurationError(f"Failed to load config from {config_path}: {e}")
+
+# Define ConfigError as alias for ConfigurationError for backward compatibility
+ConfigError = ConfigurationError
+
+# Ensure the main CLI entry point is correct
+if __name__ == "__main__":
+    cli()

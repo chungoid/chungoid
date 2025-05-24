@@ -4,7 +4,7 @@ import logging
 import json
 import os
 from logging.handlers import RotatingFileHandler
-from .config_loader import get_config
+from .config_manager import get_config, ConfigurationError
 from pathlib import Path
 
 # Environment Variable Defaults
@@ -73,19 +73,33 @@ def setup_logging(
     #    max_bytes: Maximum size of the log file before rotation.
     #    backup_count: Number of backup log files to keep.
     """
-    # Get configuration using the loader
-    config = get_config()
-    log_config = config.get("logging", {})
+    # Get configuration using the new ConfigurationManager
+    try:
+        system_config = get_config()
+        log_config = system_config.logging
+    except ConfigurationError as e:
+        # Fall back to basic logging if config fails
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger(__name__).error(f"Failed to load configuration, using basic logging: {e}")
+        return
 
     # Use provided level if given, otherwise use config
-    effective_level = level if level is not None else log_config.get("level", "INFO")
-    log_format_type = log_config.get("format", "text").lower()
-    # Default to "logs/chungoid_mcp_server.log" if not in config, ensuring a subdirectory
-    log_file_path_from_config = log_config.get("file", "logs/chungoid_mcp_server.log") 
-    max_bytes = log_config.get("max_bytes", 10 * 1024 * 1024)
-    backup_count = log_config.get("backup_count", 5)
-
-    use_json_formatter = log_format_type == "json"
+    effective_level = level if level is not None else log_config.level
+    
+    # Use enable_structured_logging to determine if JSON format should be used
+    use_json_formatter = log_config.enable_structured_logging
+    
+    # Configure log file path - use log_directory and construct default filename
+    if log_config.enable_file_logging:
+        log_file_path_from_config = f"{log_config.log_directory}/chungoid.log"
+    else:
+        log_file_path_from_config = None
+    
+    # Convert max_log_size_mb to bytes for RotatingFileHandler
+    max_bytes = log_config.max_log_size_mb * 1024 * 1024
+    
+    # Use log_retention_days to estimate backup count (roughly 1 backup per day)
+    backup_count = min(log_config.log_retention_days, 30)  # Cap at 30 backups
 
     try:
         log_level_val = getattr(logging, effective_level.upper(), logging.INFO) # Use effective_level
@@ -121,11 +135,28 @@ def setup_logging(
     # Rotating File Handler (optional)
     if log_file_path_from_config: # Check the original config value
         try:
-            # Determine project root from this file's location:
-            # logger_setup.py is in chungoid-core/src/chungoid/utils/
-            # utils -> chungoid -> src -> chungoid-core -> chungoid-mcp (project root)
-            project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
-
+            # NEW: Use current working directory as project root instead of calculating from __file__
+            # This is more reliable when the package is installed in editable mode
+            project_root = Path.cwd()
+            
+            # Look for indicators that we're in the right project directory
+            # Check if we can find the chungoid-core directory or config.yaml
+            if (project_root / "chungoid-core" / "config.yaml").exists():
+                # We're in the main project directory
+                pass
+            elif (project_root / "config.yaml").exists():
+                # We might be in chungoid-core subdirectory, go up one level
+                project_root = project_root.parent
+            elif "chungoid-core" in str(project_root):
+                # We might be inside chungoid-core, navigate to the main project
+                parts = project_root.parts
+                try:
+                    chungoid_index = parts.index("chungoid-core")
+                    if chungoid_index > 0:
+                        project_root = Path(*parts[:chungoid_index])
+                except ValueError:
+                    pass
+            
             # If the configured path is not absolute, make it relative to project_root
             if not Path(log_file_path_from_config).is_absolute():
                 resolved_log_file_path = project_root / log_file_path_from_config
@@ -171,11 +202,14 @@ if __name__ == "__main__":
     # os.environ['LOG_FILE'] = './test_app.log' # This would now be CHUNGOID_LOGGING_FILE
 
     # Get config for display purposes in example
-    config = get_config().get("logging", {})
-    print("Configuring logger using settings from config_loader. Example values:")
-    print(
-        f"  Level: {config.get('level', 'N/A')}, Format: {config.get('format', 'N/A')}, File: {config.get('file', 'N/A')}"
-    )
+    try:
+        system_config = get_config()
+        log_config = system_config.logging
+        print("Configuring logger using settings from ConfigurationManager. Example values:")
+        print(f"  Level: {log_config.level}, Structured: {log_config.enable_structured_logging}, Directory: {log_config.log_directory}")
+    except ConfigurationError as e:
+        print(f"Failed to load configuration: {e}")
+        print("Using default logging setup")
 
     setup_logging()
 

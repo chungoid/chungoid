@@ -14,7 +14,7 @@ class SmartCodeGeneratorAgentInput(BaseModel):
 
     code_specification_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the detailed code specification document (e.g., from a plan stage). Content expected to be Markdown or structured text.")
     target_file_path: str = Field(..., description="Intended relative path of the file to be created or modified.")
-    programming_language: str = Field("python", description="Target programming language.")
+    programming_language: str = Field(..., description="Target programming language (e.g., 'python', 'javascript', 'typescript', 'java', 'csharp'). This field is required and must be explicitly provided.")
 
     existing_code_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the current content of target_file_path if modifying. From live_codebase_collection.")
     blueprint_context_doc_id: Optional[str] = Field(None, description="ChromaDB ID of relevant Project Blueprint section(s). From planning_artifacts collection.")
@@ -43,7 +43,7 @@ class CodeGeneratorAgentInput(BaseModel):
     target_file_path: str = Field(description="The intended relative path of the file to be created or modified within the project.")
     code_to_modify: Optional[str] = Field(None, description="The existing relevant code snippet if the task is a modification.")
     related_files_context: Optional[Dict[str, str]] = Field(None, description="Content of other relevant files as context for the LLM, e.g., {'utils.py': '<content of utils.py>'}.")
-    programming_language: str = Field("python", description="The programming language of the code to be generated.")
+    programming_language: str = Field(..., description="The programming language of the code to be generated (e.g., 'python', 'javascript', 'typescript', 'java', 'csharp'). This field is required and must be explicitly provided.")
     project_root_path: Optional[str] = Field(None, description="Absolute path to the project root, if available and needed for context by the agent/LLM (though agent should primarily use relative paths for output).")
 
 class CodeGeneratorAgentOutput(BaseModel):

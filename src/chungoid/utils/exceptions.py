@@ -1,7 +1,5 @@
 """Custom exceptions for the Chungoid MCP Core system."""
 
-from .chroma_utils import ChromaOperationError  # Re-export for convenience and backward compatibility
-
 class ChungoidError(Exception):
     """Base class for custom exceptions in Chungoid Core."""
     pass
@@ -20,7 +18,11 @@ class PromptRenderError(ChungoidError):
     """Indicates an error rendering a Jinja2 prompt template."""
     pass
 
-# Note: ChromaOperationError is defined in chroma_utils.py 
+class ChromaOperationError(ChungoidError):
+    """Custom exception for errors during ChromaDB operations."""
+    pass
+
+# Note: ChromaOperationError is also defined in chroma_utils.py for backward compatibility
 
 __all__ = [
     "ChungoidError",
