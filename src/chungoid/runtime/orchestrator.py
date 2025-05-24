@@ -26,7 +26,7 @@ import re
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider, NoAgentFoundForCategoryError, AmbiguousAgentCategoryError
 from chungoid.utils.state_manager import StateManager
 from chungoid.schemas.common_enums import StageStatus, FlowPauseStatus, OnFailureAction
-from chungoid.schemas.errors import AgentErrorDetails
+from chungoid.schemas.errors import AgentErrorDetails, OrchestratorError
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec, ClarificationCheckpointSpec, MasterStageFailurePolicy, UserGoalRequest
 from chungoid.schemas.orchestration import SharedContext, ResumeContext # ADDED ResumeContext
 from chungoid.schemas.agent_master_planner_reviewer import MasterPlannerReviewerInput, MasterPlannerReviewerOutput, ReviewerActionType, RetryStageWithChangesDetails
