@@ -10,19 +10,41 @@ Even without explicit pause points, after an end-to-end run (like the `flask_app
 
 ## 2. Initiating an Autonomous Run
 
-An autonomous project generation cycle is typically initiated using the `chungoid flow run` CLI command. You provide either a pre-defined `MasterExecutionPlan.yaml` or a high-level goal from which a plan is generated.
+An autonomous project generation cycle is typically initiated using the `chungoid build` CLI command (primary usage) or `chungoid flow run` for advanced workflows. You provide either a goal file or a pre-defined `MasterExecutionPlan.yaml`.
 
-**Example (using the Flask App MVP plan):**
+### Primary Method: `chungoid build`
+
+**Recommended for most users (99% of use cases):**
 ```bash
-# Ensure you are in a directory where you want the dummy_project to be, or navigate to it.
-# Initialize the project if it doesn't exist:
-# chungoid init ./dummy_project 
+# Create your goal file
+echo "Build a Python Flask web application with user authentication and SQLite database" > goal.txt
 
-chungoid flow run --flow-yaml dev/examples/master_plans/flask_app_full_cycle_v1.yaml --project-dir ./dummy_project --tags "flask_mvp_test,p3m5_demo"
+# Initialize the project directory (optional)
+chungoid init ./my-flask-app
+
+# Build the complete project
+chungoid build --goal-file goal.txt --project-dir ./my-flask-app --tags "flask,webapp,auth"
 ```
-*   `--flow-yaml`: Specifies the master plan to execute.
-*   `--project-dir`: Specifies the target project directory where `.chungoid` state will be managed.
-*   `--tags`: Optional tags for easier identification of the run in logs/metrics.
+
+### Advanced Method: `chungoid flow run`
+
+**For complex workflows or predefined execution plans:**
+```bash
+# Using a predefined master plan
+chungoid flow run --flow-yaml dev/examples/master_plans/flask_app_full_cycle_v1.yaml --project-dir ./dummy_project --tags "flask_mvp_test,p3m5_demo"
+
+# Using a goal with specific initial context
+chungoid flow run --goal "Build a React dashboard" --project-dir ./dashboard --initial-context '{"framework": "react", "typescript": true}'
+```
+
+### Command Options
+
+*   `--goal-file FILE` / `--goal "text"`: The user goal (required for `build`, optional for `flow run`)
+*   `--project-dir DIR`: Target project directory where `.chungoid` state will be managed (default: current directory)
+*   `--flow-yaml FILE`: Specifies a pre-defined master plan to execute (advanced usage)
+*   `--initial-context JSON`: Additional context as JSON string
+*   `--tags TAGS`: Comma-separated tags for easier identification of the run in logs/metrics
+*   `--run-id ID`: Custom run identifier (auto-generated if not provided)
 
 ## 3. Monitoring and Reviewing a Run
 

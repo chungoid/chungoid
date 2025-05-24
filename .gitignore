@@ -7,3 +7,6 @@ chungoid_mcp_server.egg-info/
 llms-txt/
 offline_library_docs/
 dummy_projects/
+
+dev_chroma_db/chroma.sqlite3
+.chungoid

@@ -1,171 +1,205 @@
-# Autonomous System Architecture Overview
+# Autonomous System Architecture Diagram
 
-This document provides a visual overview of the autonomous project generation system, as detailed in `dev/planning/lifecycle.md`. It illustrates the major phases, key components, agents, artifacts, and their interactions.
+This document provides a comprehensive visual overview of Chungoid's current autonomous development system, showing the actual agents, MCP tools, and workflows as implemented in the codebase.
 
 ```mermaid
 graph TD
     %% Style Definitions
-    classDef phase fill:#f9f,stroke:#333,stroke-width:2px,color:#333;
-    classDef coreComp fill:#lightgrey,stroke:#333,stroke-width:2px;
-    classDef newAgent fill:#ccf,stroke:#333,stroke-width:2px;
-    classDef artifact fill:#fff,stroke:#333,stroke-width:1px,color:#333;
-    classDef datastore fill:#cfc,stroke:#333,stroke-width:2px;
+    classDef userInput fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000;
+    classDef cliCommand fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000;
+    classDef coreInfra fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000;
+    classDef orchestrator fill:#e8f5e8,stroke:#388e3c,stroke-width:3px,color:#000;
+    classDef agent fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000;
+    classDef mcpTools fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
+    classDef datastore fill:#f1f8e9,stroke:#689f38,stroke-width:2px,color:#000;
+    classDef output fill:#fff8e1,stroke:#ffa000,stroke-width:2px,color:#000;
 
-    %% Central Data Stores & Core Orchestration
-    subgraph CoreInfrastructure [Chungoid Core Infrastructure]
-        direction LR
-        FlowExecutor[Flow Executor]:::coreComp
-        AgentRegistry[Agent Registry]:::coreComp
-        StateManager["State Manager (.json)"]:::coreComp
-        ChromaDB["ChromaDB Project Context Repository"]:::datastore
-        PromptManager["Prompt Manager"]:::coreComp
+    %% User Input
+    UserGoal["User Goal File\n(goal.txt)"]:::userInput
+    CLICommand["chungoid build\n--goal-file goal.txt\n--project-dir ."]:::cliCommand
+    
+    %% Core Infrastructure
+    subgraph CoreInfra ["Chungoid Core Infrastructure"]
+        CLI["CLI Handler\n(cli.py)"]:::coreInfra
+        Engine["ChungoidEngine\n(engine.py)"]:::coreInfra
+        StateManager["StateManager\n(.chungoid/chungoid_status.json)"]:::coreInfra
+        AgentProvider["AgentProvider\n(agent_resolver.py)"]:::coreInfra
+        PromptManager["PromptManager"]:::coreInfra
+        LLMProvider["LLMProvider"]:::coreInfra
     end
 
-    ChromaDB --> AgentRegistry
-    StateManager --> FlowExecutor
-    AgentRegistry --> FlowExecutor
-    PromptManager --> FlowExecutor
+    %% Central Orchestrator
+    AsyncOrch["AsyncOrchestrator\n(Primary Execution Engine)"]:::orchestrator
 
+    %% ChromaDB Context & Learning
+    ChromaDB["ChromaDB Instance\n(Project Context & Learning)"]:::datastore
 
-    %% Input
-    UserInput["User Goal Request (.txt/.json)"]:::artifact
-
-    %% Phase 1: Goal Understanding & Architectural Design
-    subgraph Phase1 ["Phase 1: Goal Understanding & Design"]
-        direction TB
-        P1_ArchitectAgent["ArchitectAgent (New)"]:::newAgent
-        P1_RefinedGoal["refined_user_goal.md"]:::artifact
-        P1_Assumptions["assumptions_and_ambiguities.md"]:::artifact
-        P1_TechRationale["technology_rationale.md"]:::artifact
-        P1_Blueprint["ProjectBlueprint.md"]:::artifact
+    %% Planning & Coordination Agents
+    subgraph PlanningAgents ["Planning & Coordination Agents"]
+        MasterPlanner["MasterPlannerAgent\n(SystemMasterPlannerAgent_v1)"]:::agent
+        PlannerReviewer["MasterPlannerReviewerAgent\n(Error Analysis & Recovery)"]:::agent
+        ArchitectAgent["ArchitectAgent_v1\n(System Design Decisions)"]:::agent
     end
-    class Phase1 phase;
-    UserInput --> P1_ArchitectAgent;
-    P1_ArchitectAgent --> P1_RefinedGoal;
-    P1_ArchitectAgent --> P1_Assumptions;
-    P1_ArchitectAgent --> P1_TechRationale;
-    P1_ArchitectAgent --> P1_Blueprint;
-    P1_RefinedGoal --> ChromaDB;
-    P1_Assumptions --> ChromaDB;
-    P1_TechRationale --> ChromaDB;
-    P1_Blueprint --> ChromaDB;
 
-    %% Phase 2: Detailed Planning & Workflow Generation
-    subgraph Phase2 ["Phase 2: Detailed Planning"]
-        direction TB
-        P2_BlueprintReviewer["BlueprintReviewerAgent (New)"]:::newAgent
-        P2_BlueprintToFlow["BlueprintToFlowAgent (New)"]:::newAgent
-        P2_MasterPlan["MasterExecutionPlan.yaml"]:::artifact
+    %% Development Agents
+    subgraph DevAgents ["Development Agents"]
+        EnvBootstrap["EnvironmentBootstrapAgent\n(Multi-language Setup)"]:::agent
+        DepMgmt["DependencyManagementAgent_v1\n(Intelligent Dependencies)"]:::agent
+        CodeGen["CodeGeneratorAgent\n(CoreCodeGeneratorAgent_v1)"]:::agent
+        SystemFS["SystemFileSystemAgent_v1\n(File Operations)"]:::agent
+        RequirementsAgent["SystemRequirementsGatheringAgent_v1\n(Requirements Analysis)"]:::agent
     end
-    class Phase2 phase;
-    P1_Blueprint --> P2_BlueprintReviewer;
-    %% Refinement loop implied
-    P2_BlueprintReviewer --> P1_Blueprint;
-    P1_Blueprint --> P2_BlueprintToFlow;
-    P2_BlueprintToFlow --> P2_MasterPlan;
-    %% Stored/tracked by StateManager
-    P2_MasterPlan --> StateManager;
-    %% Also context for other agents
-    P2_MasterPlan --> ChromaDB;
 
-    %% Connection to Flow Executor
-    P2_MasterPlan --> FlowExecutor;
-
-    %% Phase 3: Code Generation, Integration & Initial Setup
-    subgraph Phase3 ["Phase 3: Code Generation & Setup"]
-        direction TB
-        P3_FileSystemAgent["SystemFileSystemAgent (New/Core)"]:::newAgent
-        P3_SmartCodeGen["SmartCodeGeneratorAgent (New/Core)"]:::newAgent
-        P3_SmartCodeInteg["SmartCodeIntegrationAgent (New/Core)"]:::newAgent
-        P3_LiveCode["Live Codebase Collection (ChromaDB)"]:::datastore
-        P3_ExternalMCP["External MCP Servers Tools Doc (ChromaDB)"]:::datastore
-        P3_LibDoc["Library Documentation (ChromaDB)"]:::datastore
+    %% Quality Assurance Agents
+    subgraph QAAgents ["Quality Assurance Agents"]
+        TestGen["TestGeneratorAgent\n(CoreTestGeneratorAgent_v1)"]:::agent
+        TestRunner["SystemTestRunnerAgent_v1\n(Test Execution)"]:::agent
+        TestFailAnalysis["TestFailureAnalysisAgent_v1\n(Failure Analysis & Fixes)"]:::agent
     end
-    class Phase3 phase;
-    FlowExecutor --> P3_FileSystemAgent;
-    FlowExecutor --> P3_SmartCodeGen;
-    P3_SmartCodeGen --> P3_LiveCode;
-    P3_SmartCodeGen --> P3_ExternalMCP;
-    P3_SmartCodeGen --> P3_LibDoc;
-    P3_SmartCodeGen --> P3_SmartCodeInteg;
-    P3_SmartCodeInteg -- "writes code" --> P3_LiveCode;
-    ChromaDB -- "provides context" --> P3_SmartCodeGen
 
-    %% Phase 4: Testing & Refinement
-    subgraph Phase4 ["Phase 4: Testing & Refinement"]
-        direction TB
-        P4_SmartTestGen["SmartTestGeneratorAgent (New/Core)"]:::newAgent
-        P4_SystemTestRunner["SystemTestRunnerAgent (Core)"]:::coreComp
-        P4_BugFixerAgent["BugFixerAgent (New)"]:::newAgent
-        P4_TestReports["Test Reports (ChromaDB)"]:::artifact
+    %% Knowledge Management
+    subgraph KnowledgeAgents ["Knowledge Management"]
+        ChromaManager["ProjectChromaManagerAgent_v1\n(Context & Learning)"]:::agent
     end
-    class Phase4 phase;
-    P3_LiveCode --> P4_SmartTestGen;
-    FlowExecutor --> P4_SmartTestGen;
-    %% Tests are also code
-    P4_SmartTestGen -- "writes tests" --> P3_LiveCode;
-    FlowExecutor --> P4_SystemTestRunner;
-    P3_LiveCode --> P4_SystemTestRunner;
-    P4_SystemTestRunner --> P4_TestReports;
-    P4_TestReports --> ChromaDB;
-    P4_TestReports --> P4_BugFixerAgent;
-    FlowExecutor --> P4_BugFixerAgent;
-    P4_BugFixerAgent -- "fixes code" --> P3_LiveCode;
 
-    %% Phase 5: Documentation & Packaging
-    subgraph Phase5 ["Phase 5: Documentation & Packaging"]
-        direction TB
-        P5_ProjectDocAgent["ProjectDocumentationAgent (New)"]:::newAgent
-        P5_SmartCodeGenPack["SmartCodeGeneratorAgent (for Packaging)"]:::newAgent
-        P5_Readme["README.md"]:::artifact
-        P5_Deps["Dependency Files (e.g., requirements.txt)"]:::artifact
+    %% MCP Tool Suites (45+ Tools)
+    subgraph MCPTools ["MCP Tool Ecosystem (45+ Tools)"]
+        ChromaTools["ChromaDB Suite (17 tools)\n• chroma_list_collections\n• chroma_create_collection\n• chroma_add_documents\n• chroma_query_documents\n• chromadb_reflection_query\n• chroma_get_project_status\n• etc."]:::mcpTools
+        
+        FSTools["Filesystem Suite (12 tools)\n• filesystem_read_file\n• filesystem_write_file\n• filesystem_project_scan\n• filesystem_batch_operations\n• filesystem_template_expansion\n• etc."]:::mcpTools
+        
+        TerminalTools["Terminal Suite (8 tools)\n• tool_run_terminal_command\n• terminal_execute_batch\n• terminal_sandbox_status\n• terminal_classify_command\n• etc."]:::mcpTools
+        
+        ContentTools["Content Suite (8 tools)\n• mcptool_get_named_content\n• content_generate_dynamic\n• tool_fetch_web_content\n• web_content_summarize\n• etc."]:::mcpTools
     end
-    class Phase5 phase;
-    P3_LiveCode --> P5_ProjectDocAgent;
-    ChromaDB -- "Uses full project context" --> P5_ProjectDocAgent;
-    FlowExecutor --> P5_ProjectDocAgent;
-    P5_ProjectDocAgent --> P5_Readme;
-    %% Docs added to codebase
-    P5_Readme --> P3_LiveCode;
-    FlowExecutor --> P5_SmartCodeGenPack;
-    P3_LiveCode --> P5_SmartCodeGenPack;
-    P5_SmartCodeGenPack --> P5_Deps;
-    %% Deps added to codebase
-    P5_Deps --> P3_LiveCode;
 
-    %% Phase 6: Finalization & Release Preparation
-    subgraph Phase6 ["Phase 6: Finalization & Release"]
-        direction TB
-        P6_SystemCommand["SystemCommandAgent (New/Core)"]:::newAgent
-        P6_CodeReviewer["CodeReviewerAgent (New, Future)"]:::newAgent
-        P6_FinalCode["Final Formatted Code (LiveCode Collection)"]:::datastore
-        P6_Release["Project Archive/Release"]:::artifact
-    end
-    class Phase6 phase;
-    %% Linting/Formatting
-    P3_LiveCode --> P6_SystemCommand;
-    FlowExecutor --> P6_SystemCommand;
-    P3_LiveCode --> P6_CodeReviewer;
-    ChromaDB --> P6_CodeReviewer;
-    FlowExecutor --> P6_CodeReviewer;
-    P6_SystemCommand --> P6_FinalCode;
-    P6_CodeReviewer --> P6_FinalCode;
-    P6_FinalCode --> P6_Release;
+    %% Project Output
+    CompleteProject["Complete Working Project\n• Source code\n• Tests\n• Documentation\n• Dependencies\n• Deployment configs"]:::output
 
-    %% General Linkages
-    Phase1 --> Phase2;
-    Phase2 --> Phase3;
-    Phase3 --> Phase4;
-    Phase4 --> Phase5;
-    Phase5 --> Phase6;
-
+    %% Main Flow Connections
+    UserGoal --> CLICommand
+    CLICommand --> CLI
+    CLI --> Engine
+    Engine --> AsyncOrch
+    
+    %% Core Infrastructure Connections
+    Engine --> StateManager
+    Engine --> AgentProvider
+    Engine --> PromptManager
+    Engine --> LLMProvider
+    
+    %% Orchestrator to Agent Communication
+    AsyncOrch --> AgentProvider
+    AgentProvider --> PlanningAgents
+    AgentProvider --> DevAgents
+    AgentProvider --> QAAgents
+    AgentProvider --> KnowledgeAgents
+    
+    %% Agent to Tool Communication
+    PlanningAgents --> MCPTools
+    DevAgents --> MCPTools
+    QAAgents --> MCPTools
+    KnowledgeAgents --> MCPTools
+    
+    %% ChromaDB Integration
+    ChromaManager --> ChromaDB
+    ChromaTools --> ChromaDB
+    
+    %% State Management
+    AsyncOrch --> StateManager
+    StateManager --> ChromaDB
+    
+    %% Final Output
+    AsyncOrch --> CompleteProject
+    
+    %% Execution Plan Flow
+    MasterPlanner -.->|"Creates MasterExecutionPlan"| AsyncOrch
+    PlannerReviewer -.->|"Reviews & Adjusts Plans"| AsyncOrch
+    
+    %% Error Handling Flow
+    AsyncOrch -.->|"On Error"| PlannerReviewer
+    PlannerReviewer -.->|"Recovery Actions"| AsyncOrch
 ```
 
-This diagram outlines:
-- The progression through the six major phases.
-- Key `chungoid-core` infrastructure components like `FlowExecutor`, `AgentRegistry`, `StateManager`, and `ChromaDB` and their central roles.
-- The introduction of new conceptual agents (e.g., `ArchitectAgent`, `BlueprintToFlowAgent`, `SmartCodeGeneratorAgent`) at different stages, noting that these would be built upon or are specializations of existing `chungoid-core` agent capabilities.
-- Critical artifacts generated and consumed (e.g., `ProjectBlueprint.md`, `MasterExecutionPlan.yaml`, `live_codebase_collection`).
-- The central role of ChromaDB as the Project Context Repository.
+## System Components Overview
 
-This Mermaid code can be pasted into any Markdown viewer or editor that supports Mermaid to render the visual diagram. 
+### 🎯 **Primary Workflow**
+1. **User Input**: `chungoid build --goal-file goal.txt --project-dir .`
+2. **Plan Creation**: MasterPlannerAgent generates detailed execution plan
+3. **Autonomous Execution**: AsyncOrchestrator coordinates specialized agents
+4. **Tool Integration**: Agents use 45+ MCP tools for actual work
+5. **State Persistence**: All progress tracked in ChromaDB and status files
+6. **Complete Project**: Working, tested, documented software delivered
+
+### 🤖 **Agent Ecosystem**
+
+#### **Planning & Coordination (3 agents)**
+- **MasterPlannerAgent**: Converts goals into detailed execution plans
+- **MasterPlannerReviewerAgent**: Analyzes failures and suggests recovery actions
+- **ArchitectAgent_v1**: Makes high-level system architecture decisions
+
+#### **Development (5 agents)**
+- **EnvironmentBootstrapAgent**: Sets up multi-language development environments
+- **DependencyManagementAgent_v1**: Intelligent dependency resolution and installation
+- **CoreCodeGeneratorAgent_v1**: LLM-powered code generation
+- **SystemFileSystemAgent_v1**: File operations and project structure management
+- **SystemRequirementsGatheringAgent_v1**: Requirements analysis and refinement
+
+#### **Quality Assurance (3 agents)**
+- **CoreTestGeneratorAgent_v1**: Generates comprehensive test suites
+- **SystemTestRunnerAgent_v1**: Executes tests and manages test workflows
+- **TestFailureAnalysisAgent_v1**: Analyzes test failures and implements fixes
+
+#### **Knowledge Management (1 agent)**
+- **ProjectChromaManagerAgent_v1**: Manages project context and learning via ChromaDB
+
+### 🛠️ **MCP Tool Suites (45+ Tools)**
+
+#### **ChromaDB Suite (17 tools)**
+- **Collection Management**: `chroma_list_collections`, `chroma_create_collection`, `chroma_delete_collection`
+- **Document Operations**: `chroma_add_documents`, `chroma_query_documents`, `chroma_update_documents`
+- **Project Integration**: `chroma_set_project_context`, `chroma_get_project_status`
+- **Advanced Features**: `chromadb_reflection_query`, `chromadb_batch_operations`
+
+#### **Filesystem Suite (12 tools)**
+- **File Operations**: `filesystem_read_file`, `filesystem_write_file`, `filesystem_copy_file`
+- **Directory Management**: `filesystem_create_directory`, `filesystem_list_directory`
+- **Project Features**: `filesystem_project_scan`, `filesystem_template_expansion`
+- **Advanced Operations**: `filesystem_batch_operations`, `filesystem_backup_restore`
+
+#### **Terminal Suite (8 tools)**
+- **Command Execution**: `tool_run_terminal_command`, `terminal_execute_batch`
+- **Environment Management**: `terminal_get_environment`, `terminal_set_working_directory`
+- **Security Features**: `terminal_classify_command`, `terminal_sandbox_status`
+
+#### **Content Suite (8 tools)**
+- **Content Generation**: `mcptool_get_named_content`, `content_generate_dynamic`
+- **Web Integration**: `tool_fetch_web_content`, `web_content_summarize`
+- **Management**: `content_cache_management`, `content_version_control`
+
+### 🔄 **Execution Flow**
+
+1. **Goal Processing**: User provides natural language goal → MasterPlannerAgent creates structured execution plan
+2. **Dynamic Orchestration**: AsyncOrchestrator executes plan stages using appropriate agents
+3. **Tool Integration**: Agents invoke MCP tools for actual implementation work
+4. **State Management**: Progress tracked in `chungoid_status.json` and ChromaDB
+5. **Error Recovery**: PlannerReviewerAgent analyzes failures and suggests recovery actions
+6. **Continuous Learning**: ChromaDB captures context for improving future builds
+
+### 📊 **Data & State Management**
+
+- **Primary State**: `.chungoid/chungoid_status.json` (project execution state)
+- **Context & Learning**: ChromaDB collections for project context and historical learning
+- **Tool Discovery**: Dynamic tool manifest system for intelligent tool selection
+- **Execution Plans**: YAML-based MasterExecutionPlan for structured workflow definition
+
+### 🚀 **Key Capabilities**
+
+- **Autonomous Development**: End-to-end project generation with minimal human intervention
+- **Multi-Language Support**: Python, JavaScript, TypeScript, and expanding
+- **Intelligent Recovery**: Automatic error analysis and recovery plan generation
+- **Context Awareness**: Full project context maintained throughout execution
+- **Tool Composition**: Dynamic tool chaining for complex operations
+- **Continuous Learning**: Improves performance based on historical execution data
+
+This autonomous system represents a complete paradigm shift from traditional development tools to AI-driven, context-aware autonomous development that learns and improves with each project. 

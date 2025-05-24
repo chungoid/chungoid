@@ -181,21 +181,60 @@ For complex workflows and automation:
 
 ## Configuration
 
-### Environment Variables
+### LLM Provider Setup
 
-Configure your LLM provider:
+Chungoid uses **LiteLLM** to support a wide variety of LLM providers with a unified interface. This means you can use OpenAI, Anthropic, Ollama, Azure, Google, and many other providers.
 
+#### Quick Setup
+
+**OpenAI (recommended for cloud):**
 ```bash
-# OpenAI (recommended)
-export CHUNGOID_LLM_PROVIDER=openai
-export CHUNGOID_LLM_API_KEY=your_openai_api_key
-
-# Optional: Custom model
-export CHUNGOID_LLM_MODEL=gpt-4
-
-# Optional: Custom base URL
-export CHUNGOID_LLM_BASE_URL=https://api.openai.com/v1
+export OPENAI_API_KEY="sk-your-openai-api-key"
 ```
+
+**Anthropic (Claude):**
+```bash
+export ANTHROPIC_API_KEY="sk-ant-your-anthropic-key"
+```
+
+**Ollama (local models):**
+```bash
+# Start Ollama server first
+ollama serve
+
+# No API key needed for local Ollama
+```
+
+#### Configuration File
+
+Create `.chungoid/project_config.yaml` in your project or update global `config.yaml`:
+
+```yaml
+llm_manager:
+  provider_type: "litellm"
+  # OpenAI models
+  default_model: "gpt-4-turbo-preview"
+  # Or Anthropic models  
+  # default_model: "claude-3-opus-20240229"
+  # Or local Ollama models
+  # default_model: "ollama/mistral"
+  # base_url: "http://localhost:11434"  # For Ollama
+```
+
+#### Supported Providers & Models
+
+| Provider | Model Examples | Setup |
+|----------|-----------------|--------|
+| **OpenAI** | `gpt-4-turbo-preview`, `gpt-3.5-turbo` | Set `OPENAI_API_KEY` |
+| **Anthropic** | `claude-3-opus-20240229`, `claude-3-sonnet-20240229` | Set `ANTHROPIC_API_KEY` |
+| **Ollama** | `ollama/mistral`, `ollama/llama2`, `ollama/codellama` | Local server, no API key |
+| **Azure OpenAI** | `azure/your-deployment-name` | Set `AZURE_API_KEY`, `AZURE_API_BASE` |
+| **Google** | `gemini-pro`, `gemini-pro-vision` | Set `GOOGLE_API_KEY` |
+| **HuggingFace** | `huggingface/model-name` | Set `HF_TOKEN` (for private models) |
+
+> **📖 Detailed Setup Guide**: See `docs/guides/litellm_setup.md` for comprehensive configuration instructions for all providers.
+
+### Environment Variables (Legacy)
 
 ### Project Configuration
 
