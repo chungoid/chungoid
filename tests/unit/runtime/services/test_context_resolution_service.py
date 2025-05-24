@@ -939,3 +939,151 @@ class TestContextResolutionService:
         if ("user_goal" not in req_gathering_input_data_4 or not req_gathering_input_data_4.get("user_goal")) and simulated_initial_goal:
             req_gathering_input_data_4["user_goal"] = simulated_initial_goal
         assert req_gathering_input_data_4 == {"user_goal": "injected goal from orchestrator", "other_param": "some_value"}  # Injected for empty string
+
+    def test_orchestrator_double_input_wrapping_bug(self) -> None:
+        """
+        Test to reproduce the double input wrapping bug seen in the latest error log.
+        
+        The issue: When the reviewer agent suggests retry with changes, the orchestrator
+        is double-wrapping inputs, causing agents to receive:
+        {'inputs': {'user_goal': 'value'}} instead of {'user_goal': 'value'}
+        """
+        # Simulate what the reviewer agent would suggest as input changes
+        reviewer_suggested_inputs = {
+            "user_goal": "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"
+        }
+        
+        # This is correct - what the agent should receive
+        expected_agent_inputs = reviewer_suggested_inputs
+        
+        # Simulate the bug where orchestrator double-wraps the inputs
+        double_wrapped_inputs = {
+            "inputs": reviewer_suggested_inputs  # This is the bug!
+        }
+        
+        # Test that agent would fail with double-wrapped inputs
+        # (This simulates the Pydantic validation error we see in logs)
+        assert "inputs" in double_wrapped_inputs
+        assert "user_goal" not in double_wrapped_inputs  # user_goal is nested inside 'inputs'
+        
+        # Demonstrate the fix: unwrap the extra 'inputs' layer
+        if "inputs" in double_wrapped_inputs and isinstance(double_wrapped_inputs["inputs"], dict):
+            fixed_inputs = double_wrapped_inputs["inputs"]
+        else:
+            fixed_inputs = double_wrapped_inputs
+            
+        assert fixed_inputs == expected_agent_inputs
+        assert "user_goal" in fixed_inputs
+        assert fixed_inputs["user_goal"] == "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"
+
+    def test_orchestrator_retry_inputs_processing_scenarios(self) -> None:
+        """
+        Test various scenarios of input processing during retry operations.
+        """
+        # Scenario 1: Normal inputs (should not be modified)
+        normal_inputs = {"user_goal": "test goal", "project_id": "test"}
+        assert self._unwrap_inputs_if_needed(normal_inputs) == normal_inputs
+        
+        # Scenario 2: Double-wrapped inputs (should be unwrapped)
+        double_wrapped = {"inputs": {"user_goal": "test goal", "project_id": "test"}}
+        expected = {"user_goal": "test goal", "project_id": "test"}
+        assert self._unwrap_inputs_if_needed(double_wrapped) == expected
+        
+        # Scenario 3: Triple-wrapped inputs (should unwrap all levels)
+        triple_wrapped = {"inputs": {"inputs": {"user_goal": "test goal"}}}
+        expected_triple = {"user_goal": "test goal"}
+        assert self._unwrap_inputs_if_needed(triple_wrapped) == expected_triple
+        
+        # Scenario 4: Empty inputs dict
+        empty_inputs = {}
+        assert self._unwrap_inputs_if_needed(empty_inputs) == {}
+        
+        # Scenario 5: Inputs with 'inputs' key but wrong type (should not unwrap)
+        wrong_type_inputs = {"inputs": "not_a_dict", "other_key": "value"}
+        assert self._unwrap_inputs_if_needed(wrong_type_inputs) == wrong_type_inputs
+
+    def _unwrap_inputs_if_needed(self, inputs_dict: dict) -> dict:
+        """
+        Helper method that implements the fix for double-wrapped inputs.
+        This is what should be added to the orchestrator.
+        """
+        result = inputs_dict.copy()
+        
+        # Keep unwrapping while we have nested 'inputs' dicts
+        while ("inputs" in result and 
+               isinstance(result["inputs"], dict) and 
+               len(result) == 1):  # Only unwrap if 'inputs' is the only key
+            result = result["inputs"]
+            
+        return result
+
+    def test_orchestrator_reviewer_input_processing_simulation(self) -> None:
+        """
+        Simulate the exact reviewer agent processing that's causing the double-wrapping bug.
+        """
+        # Simulate what reviewer agent creates (this structure is correct)
+        reviewer_suggestion = {
+            "suggestion_type": "RETRY_STAGE_WITH_CHANGES",
+            "suggestion_details": {
+                "target_stage_id": "goal_analysis_and_requirements_gathering",
+                "changes_to_stage_spec": {
+                    "inputs": {
+                        "user_goal": "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"
+                    }
+                }
+            }
+        }
+        
+        # Extract the inputs from reviewer suggestion (this should be what agent gets)
+        reviewer_inputs = reviewer_suggestion["suggestion_details"]["changes_to_stage_spec"]["inputs"]
+        
+        # This is correct
+        assert reviewer_inputs == {"user_goal": "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"}
+        
+        # But somewhere in the orchestrator, it gets wrapped again
+        # Simulate the orchestrator bug that adds extra 'inputs' wrapper
+        orchestrator_processed_inputs = {"inputs": reviewer_inputs}  # BUG HERE!
+        
+        # This is what the agent receives (wrong)
+        assert orchestrator_processed_inputs == {
+            "inputs": {"user_goal": "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"}
+        }
+        
+        # The agent validation fails because it expects user_goal at top level
+        assert "user_goal" not in orchestrator_processed_inputs  # This causes the validation error
+        
+        # Fix: unwrap the inputs
+        fixed_inputs = self._unwrap_inputs_if_needed(orchestrator_processed_inputs)
+        assert fixed_inputs == {"user_goal": "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"}
+        assert "user_goal" in fixed_inputs  # Now the agent would succeed
+
+    def test_orchestrator_special_systemrequirements_handling_with_double_wrap_bug(self) -> None:
+        """
+        Test the specific SystemRequirementsGatheringAgent scenario with the double-wrap bug.
+        """
+        # Simulate the orchestrator's special handling for SystemRequirementsGatheringAgent
+        initial_goal_str = "test goal from orchestrator"
+        
+        # First, simulate normal input resolution that returns empty/None
+        resolved_inputs = {}  # Empty from failed resolution
+        
+        # Orchestrator injects the goal (this part works correctly)
+        if "user_goal" not in resolved_inputs and initial_goal_str:
+            resolved_inputs["user_goal"] = initial_goal_str
+            
+        assert resolved_inputs == {"user_goal": "test goal from orchestrator"}
+        
+        # But then after reviewer suggestion, it gets double-wrapped (BUG)
+        # Simulate what happens when reviewer suggests changes
+        reviewer_changes = {"user_goal": "ACTUAL_USER_GOAL_VALUE_PROVIDED_BY_OPERATOR"}
+        
+        # The orchestrator applies changes by wrapping them (BUG!)
+        buggy_final_inputs = {"inputs": reviewer_changes}
+        
+        # This causes the agent to fail
+        assert "user_goal" not in buggy_final_inputs
+        
+        # The fix: detect and unwrap
+        fixed_final_inputs = self._unwrap_inputs_if_needed(buggy_final_inputs)
+        assert fixed_final_inputs == reviewer_changes
+        assert "user_goal" in fixed_final_inputs

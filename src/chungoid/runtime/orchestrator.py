@@ -503,68 +503,57 @@ class AsyncOrchestrator(BaseOrchestrator):
             )
 
     def _get_next_stage(self, current_stage_name: str) -> Optional[str]:
-        """Determines the next stage based on the current plan and stage name.
-
-        This method evaluates conditions for branching and returns the next stage.
-        Priority:
-        1. conditional_transitions (new)
-        2. condition / next_stage_true / next_stage_false (legacy)
-        3. next_stage (default)
-
-        Args:
-            current_stage_name: The name of the current stage.
-
-        Returns:
-            The next stage name, or one of NEXT_STAGE_END_SUCCESS/FAILURE, or None if end of path.
-        """
-        if not self.current_plan or current_stage_name not in self.current_plan.stages:
-            self.logger.error(f"Run {self._current_run_id}: Current stage '{current_stage_name}' not found in plan or plan missing.")
-            return NEXT_STAGE_END_FAILURE 
+        """Returns the next stage to execute after current_stage_name, or None if terminating."""
+        if current_stage_name not in self.current_plan.stages:
+            self.logger.error(f"Stage '{current_stage_name}' not found in plan. No next stage can be determined.")
+            return None
 
         stage_spec = self.current_plan.stages[current_stage_name]
 
-        # 1. Evaluate conditional_transitions (new and preferred)
-        if stage_spec.conditional_transitions:
-            for transition in stage_spec.conditional_transitions:
-                try:
-                    # Assuming stage_spec.outputs is the correct place to pass for context related to the current stage's output
-                    if self.condition_evaluator.evaluate_condition(transition.condition, self.shared_context, self.shared_context.get_current_stage_output()):
-                        self.logger.info(f"Run {self._current_run_id}: Conditional transition '{transition.condition}' for stage '{current_stage_name}' met, transitioning to '{transition.next_stage_id}'.")
-                        return transition.next_stage_id
-                except ConditionEvaluationError as e_cond:
-                    self.logger.warning(f"Run {self._current_run_id}: Error evaluating conditional transition '{transition.condition}' for stage '{current_stage_name}': {e_cond}. Condition treated as false.")
-                except Exception as e_cond_unexp:
-                    self.logger.error(f"Run {self._current_run_id}: Unexpected error evaluating conditional transition '{transition.condition}' for stage '{current_stage_name}': {e_cond_unexp}. Condition treated as false.", exc_info=True)
-        
-        # 2. Fallback to legacy condition/next_stage_true/false
-        if stage_spec.condition and (stage_spec.next_stage_true or stage_spec.next_stage_false):
-            self.logger.info(f"Run {self._current_run_id}: Evaluating legacy condition '{stage_spec.condition}' for stage '{current_stage_name}'.")
+        # Using ConditionEvaluationService for condition parsing and evaluation
+        condition_str = stage_spec.condition
+        if condition_str:
             try:
-                condition_met = self.condition_evaluator.evaluate_condition(stage_spec.condition, self.shared_context, self.shared_context.get_current_stage_output())
-                if condition_met:
-                    if stage_spec.next_stage_true:
-                        self.logger.info(f"Run {self._current_run_id}: Legacy condition met, transitioning to next_stage_true: '{stage_spec.next_stage_true}'.")
-                        return stage_spec.next_stage_true
-                    else:
-                        self.logger.warning(f"Run {self._current_run_id}: Legacy condition for '{current_stage_name}' met, but next_stage_true is not defined. Checking default next_stage.")
+                condition_satisfied = self.condition_evaluator.parse_and_evaluate_condition(condition_str, self.shared_context)
+                if condition_satisfied:
+                    return stage_spec.next_stage_true
                 else:
-                    if stage_spec.next_stage_false:
-                        self.logger.info(f"Run {self._current_run_id}: Legacy condition not met, transitioning to next_stage_false: '{stage_spec.next_stage_false}'.")
-                        return stage_spec.next_stage_false
-                    else:
-                        self.logger.warning(f"Run {self._current_run_id}: Legacy condition for '{current_stage_name}' not met, but next_stage_false is not defined. Checking default next_stage.")
-            except ConditionEvaluationError as e_cond_legacy:
-                self.logger.warning(f"Run {self._current_run_id}: Error evaluating legacy condition '{stage_spec.condition}' for stage '{current_stage_name}': {e_cond_legacy}. Condition treated as false.")
-            except Exception as e_cond_legacy_unexp:
-                self.logger.error(f"Run {self._current_run_id}: Unexpected error evaluating legacy condition '{stage_spec.condition}' for stage '{current_stage_name}': {e_cond_legacy_unexp}. Condition treated as false.", exc_info=True)
+                    return stage_spec.next_stage_false
+            except Exception as e_cond_eval:
+                self.logger.error(f"Error evaluating condition '{condition_str}' for stage '{current_stage_name}': {e_cond_eval}")
+                return stage_spec.next_stage_false
 
-        # 3. Fallback to default next_stage 
-        if stage_spec.next_stage: # CORRECTED: Was stage_spec.next_stage_id
-            self.logger.info(f"Run {self._current_run_id}: Stage '{current_stage_name}' transitioning to default next stage '{stage_spec.next_stage}'.")
-            return stage_spec.next_stage # CORRECTED: Was stage_spec.next_stage_id
+        return stage_spec.next_stage
+
+    def _unwrap_inputs_if_needed(self, inputs_dict: dict) -> dict:
+        """
+        Helper method to unwrap nested 'inputs' structures that can occur during
+        retry scenarios with reviewer agent modifications.
         
-        self.logger.info(f"Run {self._current_run_id}: Stage '{current_stage_name}' has no explicit next stage and no conditions met/defined for transition. Assuming end of this flow path (None will be treated as NEXT_STAGE_END_SUCCESS by caller).")
-        return None # Return None if no other transition is found; caller interprets as end of this path (likely success)
+        This fixes the double-wrapping bug where agents receive:
+        {'inputs': {'user_goal': 'value'}} instead of {'user_goal': 'value'}
+        
+        Args:
+            inputs_dict: The input dictionary that might have nested 'inputs' wrapper(s)
+            
+        Returns:
+            The unwrapped input dictionary
+        """
+        if not isinstance(inputs_dict, dict):
+            return inputs_dict
+            
+        result = inputs_dict.copy()
+        
+        # Keep unwrapping while we have nested 'inputs' dicts
+        while (isinstance(result, dict) and 
+               "inputs" in result and 
+               isinstance(result["inputs"], dict) and 
+               len(result) == 1):  # Only unwrap if 'inputs' is the only key
+            
+            self.logger.debug(f"Unwrapping nested 'inputs' layer: {result}")
+            result = result["inputs"]
+            
+        return result
 
     async def _invoke_agent_for_stage(
         self,
@@ -684,18 +673,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self.logger.info(f"Run {run_id}: [DEBUG] resolved_inputs type: {type(resolved_inputs)}")
                 self.logger.info(f"Run {run_id}: [DEBUG] resolved_inputs keys: {list(resolved_inputs.keys()) if isinstance(resolved_inputs, dict) else 'N/A'}")
                 
-                # Check for and unwrap extra 'inputs' wrapper if present
-                if isinstance(req_gathering_input_data, dict) and list(req_gathering_input_data.keys()) == ["inputs"] and isinstance(req_gathering_input_data.get("inputs"), dict):
-                    self.logger.info(f"Run {run_id}: Unwrapping {{'inputs': <dict>}} structure from resolved_inputs for SystemRequirementsGatheringAgent_v1. Original: {req_gathering_input_data}")
-                    req_gathering_input_data = req_gathering_input_data["inputs"]
-                    self.logger.info(f"Run {run_id}: [DEBUG] After unwrapping: {req_gathering_input_data}")
-                else:
-                    self.logger.warning(f"Run {run_id}: [DEBUG] Unwrapping condition NOT met. Checking why...")
-                    self.logger.warning(f"Run {run_id}: [DEBUG] - isinstance(dict): {isinstance(req_gathering_input_data, dict)}")
-                    if isinstance(req_gathering_input_data, dict):
-                        self.logger.warning(f"Run {run_id}: [DEBUG] - keys == ['inputs']: {list(req_gathering_input_data.keys()) == ['inputs']}")
-                        self.logger.warning(f"Run {run_id}: [DEBUG] - actual keys: {list(req_gathering_input_data.keys())}")
-                        self.logger.warning(f"Run {run_id}: [DEBUG] - 'inputs' value is dict: {isinstance(req_gathering_input_data.get('inputs'), dict) if 'inputs' in req_gathering_input_data else 'No inputs key'}")
+                # Use the new unwrapping helper method to fix double-wrapping bug
+                req_gathering_input_data = self._unwrap_inputs_if_needed(req_gathering_input_data)
+                self.logger.info(f"Run {run_id}: [DEBUG] After unwrapping: {req_gathering_input_data}")
 
                 if ("user_goal" not in req_gathering_input_data or req_gathering_input_data.get("user_goal") is None) and self.initial_goal_str:
                     self.logger.info(f"Run {run_id}: Injecting initial_goal_str as user_goal for SystemRequirementsGatheringAgent_v1.")
