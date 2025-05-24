@@ -269,32 +269,32 @@ def _get_llm_config(
 
     # REMOVED Mock Override logic block that used use_mock_override
     
-    # Check if mock is specified via CHUNGOID_LLM_PROVIDER_TYPE env var
-    env_provider_type = os.getenv("CHUNGOID_LLM_PROVIDER_TYPE", "").lower()
-    if env_provider_type == "mock":
-        logger.info("LLM Config: Using MockLLMProvider due to CHUNGOID_LLM_PROVIDER_TYPE=mock environment variable.")
+    # Check if mock is specified via CHUNGOID_LLM_PROVIDER env var (updated name)
+    env_provider = os.getenv("CHUNGOID_LLM_PROVIDER", "").lower()
+    if env_provider == "mock":
+        logger.info("LLM Config: Using MockLLMProvider due to CHUNGOID_LLM_PROVIDER=mock environment variable.")
         return {
-            "provider_type": "mock",
+            "provider": "mock",
             "mock_llm_responses": project_config_llm_settings.get("mock_llm_responses", {}) if project_config_llm_settings else {}
         }
     
     # Check if mock is specified in project_config_llm_settings (and not overridden by env var to something else)
-    config_provider_type = (project_config_llm_settings.get("provider_type", "").lower() if project_config_llm_settings else "")
-    if not env_provider_type and config_provider_type == "mock":
+    config_provider = (project_config_llm_settings.get("provider", "").lower() if project_config_llm_settings else "")
+    if not env_provider and config_provider == "mock":
         logger.info("LLM Config: Using MockLLMProvider due to project configuration.")
         return {
-            "provider_type": "mock",
+            "provider": "mock",
             "mock_llm_responses": project_config_llm_settings.get("mock_llm_responses", {}) if project_config_llm_settings else {}
         }
 
     # If not mock, proceed to configure LiteLLM or other providers
-    llm_cfg["provider_type"] = env_provider_type or config_provider_type or "litellm"
+    llm_cfg["provider"] = env_provider or config_provider or "openai"
 
     llm_cfg["default_model"] = (
         cli_params.get("llm_model") or # Assumes --llm-model CLI option exists
         os.getenv("CHUNGOID_LLM_DEFAULT_MODEL") or 
         (project_config_llm_settings.get("default_model") if project_config_llm_settings else None) or 
-        "gpt-3.5-turbo" # Fallback default model
+        "gpt-4o-mini-2024-07-18" # Modern, cost-effective fallback model
     )
 
     explicit_api_key = (
@@ -319,7 +319,7 @@ def _get_llm_config(
     if project_config_llm_settings and "provider_env_vars" in project_config_llm_settings:
         llm_cfg["provider_env_vars"] = project_config_llm_settings["provider_env_vars"]
 
-    logger.info(f"LLM Config generated: Provider=\'{llm_cfg['provider_type']}\', Model=\'{llm_cfg['default_model']}\', APIKey={'present' if 'api_key' in llm_cfg else 'not set'}, BaseURL={'present' if 'base_url' in llm_cfg else 'not set'}")
+    logger.info(f"LLM Config generated: Provider=\'{llm_cfg['provider']}\', Model=\'{llm_cfg['default_model']}\', APIKey={'present' if 'api_key' in llm_cfg else 'not set'}, BaseURL={'present' if 'base_url' in llm_cfg else 'not set'}")
     return llm_cfg
 
 # ---------------------------------------------------------------------------
@@ -954,7 +954,7 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
             logger.info(f"Flow Resume: PromptManager initialized with directory: {prompt_manager_base_dir_for_pm_resume}")
             
             llm_manager_for_resume = LLMManager(llm_config=current_llm_config_resume, prompt_manager=prompt_manager_instance_for_resume)
-            logger.info(f"Flow Resume: LLMManager initialized with provider: {current_llm_config_resume.get('provider_type')}")
+            logger.info(f"Flow Resume: LLMManager initialized with provider: {current_llm_config_resume.get('provider')}")
             
         except Exception as e_llm_resume_init:
             logger.error(f"Flow Resume: Failed to initialize LLMManager: {e_llm_resume_init}", exc_info=True)
@@ -1223,7 +1223,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             logger.info(f"Successfully loaded project configuration using ConfigurationManager")
             
             # Debug logging for configuration
-            logger.info(f"DEBUG: LLM config from new system: provider={system_config.llm.provider_type}, model={system_config.llm.default_model}")
+            logger.info(f"DEBUG: LLM config from new system: provider={system_config.llm.provider}, model={system_config.llm.default_model}")
             
         except ConfigurationError as e:
             logger.error(f"Configuration error: {e}")
@@ -1329,12 +1329,12 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             
             # Project config LLM settings come from the new SystemConfiguration structure
             project_config_llm_settings = {
-                "provider_type": system_config.llm.provider_type,
+                "provider": system_config.llm.provider,  # Changed from provider_type
                 "default_model": system_config.llm.default_model,
-                "api_key": system_config.llm.api_key,
-                "base_url": system_config.llm.base_url,
-                "max_tokens": system_config.llm.max_tokens,
-                "temperature": system_config.llm.temperature,
+                "api_key": system_config.llm.api_key.get_secret_value() if system_config.llm.api_key else None,
+                "base_url": system_config.llm.api_base_url,  # Changed from base_url to api_base_url
+                "max_tokens": system_config.llm.max_tokens_per_request,  # Changed from max_tokens
+                "temperature": 0.1,  # Default for now
                 "timeout": system_config.llm.timeout,
                 "max_retries": system_config.llm.max_retries
             }
@@ -1352,7 +1352,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                 llm_config=effective_llm_config, 
                 prompt_manager=prompt_manager # Re-use the already initialized prompt_manager
             )
-            logger.info(f"LLMManager initialized for build command with provider: {effective_llm_config.get('provider_type')}")
+            logger.info(f"LLMManager initialized for build command with provider: {effective_llm_config.get('provider')}")
 
         except Exception as e_llm_build_init:
             logger.error(f"Build Command: Failed to initialize LLMManager: {e_llm_build_init}", exc_info=True)

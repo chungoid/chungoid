@@ -329,69 +329,56 @@ class LLMManager:
         """
         load_dotenv() # Ensure .env variables are loaded for provider auto-detection
 
-        provider_type = llm_config.get("provider_type", "litellm").lower()
-        default_model = llm_config.get("default_model", "gpt-3.5-turbo") # A sensible general fallback
+        # Default LLM configuration for fallback
+        default_llm_config = {
+            "provider": "openai", # "openai", "mock", or "litellm" (legacy)
+            "default_model": "gpt-4o-mini-2024-07-18",  # Modern, cost-effective model
+            "api_key": None,
+            "base_url": None,
+            "timeout": 60,
+            "max_retries": 3,
+        }
         
-        api_key = llm_config.get("api_key") # User can explicitly pass API key
-        base_url = llm_config.get("base_url") # For local LLMs or custom endpoints
-        provider_env_vars = llm_config.get("provider_env_vars")
-
-        logger.info(f"LLMManager: Initializing with provider_type='{provider_type}', default_model='{default_model}'")
-
-        if provider_type == "litellm":
-            if not litellm:
-                 logger.error("LLMManager: LiteLLM library not available, cannot create LiteLLMProvider. Falling back to MockLLMProvider if possible, or will fail.")
-                 # Fallback to Mock or raise critical error
-                 self._llm_provider_instance = MockLLMProvider(llm_config.get("mock_llm_responses"))
-                 logger.warning("LLMManager: Falling back to MockLLMProvider due to LiteLLM import failure.")
-            else:
-                self._llm_provider_instance = LiteLLMProvider(
-                    default_model=default_model,
-                    api_key=api_key, # Pass along if provided
-                    base_url=base_url, # Pass along if provided
-                    provider_env_vars=provider_env_vars # Pass along if provided
-                )
-        elif provider_type == "mock":
-            self._llm_provider_instance = MockLLMProvider(llm_config.get("mock_llm_responses"))
-        # Example of how a direct OpenAI provider could still be supported if needed, though LiteLLM is preferred.
-        # elif provider_type == "openai":
-        #     from openai import AsyncOpenAI, APIError # Keep these imports local if OpenAILLMProvider is reinstated
-        #     openai_api_key = api_key or os.getenv("OPENAI_API_KEY")
-        #     if not openai_api_key:
-        #         logger.error("OpenAI provider selected but OPENAI_API_KEY not found in env or config.")
-        #         raise ValueError("OpenAI API key not configured for 'openai' provider type.")
-        #     # This would require OpenAILLMProvider class to be defined
-        #     # self._llm_provider_instance = OpenAILLMProvider(api_key=openai_api_key, default_model=default_model) 
-        #     logger.warning("Direct 'openai' provider type is legacy. Prefer 'litellm' with an OpenAI model.")
-        #     # For now, if 'openai' is specified, assume it implies LiteLLM with an OpenAI model.
-        #     # Or, re-instate the OpenAILLMProvider class if direct use is essential.
-        #     # To avoid breaking existing configs that might say "openai", let's route to LiteLLM:
-        #     logger.info("Provider type 'openai' specified, will use LiteLLMProvider with an OpenAI model.")
-        #     self._llm_provider_instance = LiteLLMProvider(
-        #         default_model=default_model if "gpt-" in default_model or default_model.startswith("openai/") else "openai/gpt-3.5-turbo",
-        #         api_key=api_key,
-        #         base_url=base_url, # OpenAI also has base_url for Azure etc.
-        #         provider_env_vars=provider_env_vars
-        #     )
+        # Merge with provided config
+        final_config = {**default_llm_config, **llm_config}
+        
+        provider = final_config.get("provider", "openai").lower()
+        logger.info(f"LLMManager: Initializing with provider='{provider}', default_model='{final_config.get('default_model')}'")
+        
+        if provider == "openai" or provider == "litellm":
+            # Both openai and litellm use LiteLLMProvider
+            self._provider = LiteLLMProvider(
+                default_model=final_config.get("default_model"),
+                api_key=final_config.get("api_key"),
+                base_url=final_config.get("base_url"),
+                timeout=final_config.get("timeout"),
+                max_retries=final_config.get("max_retries"),
+                provider_env_vars=final_config.get("provider_env_vars", {}),
+            )
+            logger.info(f"LLMManager: Using LiteLLMProvider for provider '{provider}'")
+        elif provider == "mock":
+            # Mock provider for testing
+            mock_responses = final_config.get("mock_llm_responses", {})
+            self._provider = MockLLMProvider(mock_responses=mock_responses)
+            logger.info("LLMManager: Using MockLLMProvider")
         else:
-            logger.warning(f"Unknown LLM provider_type: '{provider_type}'. Attempting to use LiteLLMProvider as a fallback.")
-            if not litellm:
-                logger.error("LLMManager: LiteLLM library not available for fallback provider. Critical error.")
-                raise ImportError("LiteLLM is required for fallback provider but not installed.")
-            self._llm_provider_instance = LiteLLMProvider(
-                default_model=default_model,
-                api_key=api_key,
-                base_url=base_url,
-                provider_env_vars=provider_env_vars
+            logger.warning(f"Unknown LLM provider: '{provider}'. Attempting to use LiteLLMProvider as a fallback.")
+            self._provider = LiteLLMProvider(
+                default_model=final_config.get("default_model"),
+                api_key=final_config.get("api_key"),
+                base_url=final_config.get("base_url"),
+                timeout=final_config.get("timeout"),
+                max_retries=final_config.get("max_retries"),
+                provider_env_vars=final_config.get("provider_env_vars", {}),
             )
         
         self.prompt_manager = prompt_manager
-        logger.info(f"LLMManager initialized with concrete provider: {type(self._llm_provider_instance).__name__} and PromptManager.")
+        logger.info(f"LLMManager initialized with concrete provider: {type(self._provider).__name__} and PromptManager.")
 
     @property
     def actual_provider(self) -> LLMProvider:
         """Returns the actual underlying LLMProvider instance (e.g., LiteLLMProvider, MockLLMProvider)."""
-        return self._llm_provider_instance
+        return self._provider
 
     async def generate_text_async_with_prompt_manager(
         self,
@@ -409,7 +396,7 @@ class LLMManager:
         Generates text using a specified prompt from the PromptManager and an underlying LLMProvider.
         Handles fetching prompt definitions, rendering, calling the LLM, and basic JSON validation.
         """
-        if not self._llm_provider_instance: # Should be caught by __init__
+        if not self._provider: # Should be caught by __init__
             logger.error("LLM provider not initialized within LLMManager.")
             raise ValueError("LLMManager cannot make API calls: LLMProvider instance not configured.")
 
@@ -453,7 +440,7 @@ class LLMManager:
             del provider_kwargs['response_format']
 
 
-        logger.info(f"LLMManager: Calling underlying LLM provider ({type(self._llm_provider_instance).__name__}) for prompt: {prompt_name} v{prompt_version}")
+        logger.info(f"LLMManager: Calling underlying LLM provider ({type(self._provider).__name__}) for prompt: {prompt_name} v{prompt_version}")
         logger.debug(
             f"LLMManager call details: model_id='{final_model_id}', temperature={final_temperature}, "
             f"max_tokens={final_max_tokens}, system_prompt_present={bool(system_prompt_content)}, "
@@ -461,7 +448,7 @@ class LLMManager:
         )
 
         try:
-            llm_output_content = await self._llm_provider_instance.generate(
+            llm_output_content = await self._provider.generate(
                 prompt=rendered_user_prompt,
                 model_id=final_model_id,
                 temperature=final_temperature,
@@ -509,18 +496,18 @@ class LLMManager:
         #    logger.error(f"LiteLLM APIConnectionError for prompt {prompt_name} v{prompt_version}: {e_conn}")
         #    raise
         except Exception as e_call: # General catch-all
-            logger.error(f"Generic Exception during LLM call for prompt {prompt_name} v{prompt_version} via provider {type(self._llm_provider_instance).__name__}: {e_call}", exc_info=True)
+            logger.error(f"Generic Exception during LLM call for prompt {prompt_name} v{prompt_version} via provider {type(self._provider).__name__}: {e_call}", exc_info=True)
             raise 
 
     async def close_client(self):
-        if self._llm_provider_instance and hasattr(self._llm_provider_instance, 'close_client'):
+        if self._provider and hasattr(self._provider, 'close_client'):
             try:
-                await self._llm_provider_instance.close_client()
-                logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider_instance).__name__}) client closed.")
+                await self._provider.close_client()
+                logger.info(f"LLMManager: Underlying LLM provider ({type(self._provider).__name__}) client closed.")
             except Exception as e:
                 logger.error(f"LLMManager: Error closing underlying LLM provider client: {e}", exc_info=True)
         else:
-            logger.info(f"LLMManager: Underlying LLM provider ({type(self._llm_provider_instance).__name__}) does not have a close_client method or provider not set.")
+            logger.info(f"LLMManager: Underlying LLM provider ({type(self._provider).__name__}) does not have a close_client method or provider not set.")
 
 # Removed OpenAILLMProvider class as LiteLLMProvider is intended to replace it.
 # If OpenAILLMProvider needs to be kept for some specific reason, it can be reinstated,

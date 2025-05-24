@@ -1,22 +1,67 @@
-# Chungoid MCP Configuration
+# Chungoid Configuration (Updated for new ConfigurationManager system)
 
-# Logging Settings
-# level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-# format: text, json
-logging:
-  level: "INFO"
-  format: "text"
-  file: "chungoid_mcp_server.log"
-  max_bytes: 10485760 # 10 MB
-  backup_count: 5
+# LLM Configuration
+llm:
+  provider: "openai"
+  default_model: "gpt-4"
+  api_key: null  # Will use OPENAI_API_KEY from environment
+  api_base_url: null
+  fallback_model: "gpt-3.5-turbo"
+  timeout: 60
+  max_retries: 3
+  retry_delay: 1.0
+  rate_limit_rpm: 60
+  max_tokens_per_request: 4000
+  enable_cost_tracking: true
 
-# ChromaDB Settings
-# client_type: http, persistent
+# ChromaDB Configuration
 chromadb:
-  client_type: "persistent"
   host: "localhost"
   port: 8000
-  persist_path: "./chroma" # Keep for reference, but not used by HttpClient
+  auth_token: null
+  use_ssl: false
+  default_collection_prefix: "chungoid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  connection_timeout: 30
+  query_timeout: 60
+  max_batch_size: 100
+  auto_cleanup_enabled: true
+  cleanup_retention_days: 30
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  enable_file_logging: true
+  log_directory: "logs"
+  enable_structured_logging: false  # Use text format for this config
+  include_timestamps: true
+  include_caller_info: false
+  max_log_size_mb: 10  # Smaller for this setup
+  log_retention_days: 7
+  compress_old_logs: true
+  mask_secrets: true
+  log_api_requests: false
+  enable_debug_logging: false
+
+# Agent Configuration
+agents:
+  default_timeout: 300
+  max_concurrent_agents: 5
+  enable_parallel_execution: true
+  max_retries: 3
+  retry_exponential_backoff: true
+  base_retry_delay: 2.0
+  enable_automatic_checkpoints: true
+  checkpoint_frequency: 5
+  enable_state_compression: true
+  enable_performance_monitoring: true
+  log_agent_outputs: true
+  enable_health_checks: true
+
+# System-wide settings
+environment: "development"
+enable_telemetry: false
+data_directory: "~/.chungoid"
 
 # Add other configuration sections as needed, e.g.:
 # server:

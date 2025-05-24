@@ -181,7 +181,7 @@ For complex workflows and automation:
 
 ## Configuration
 
-Chungoid uses a **modern hierarchical configuration system** with automatic environment variable integration and validation. The system supports both global and project-specific configurations with intelligent merging.
+Chungoid uses a **modern hierarchical configuration system** with automatic environment variable integration and Pydantic validation. The system supports both global and project-specific configurations with intelligent merging.
 
 ### LLM Provider Setup
 
@@ -213,36 +213,45 @@ ollama serve
 ```yaml
 # .chungoid/config.yaml
 llm:
-  provider: "litellm"
+  provider: "openai"  # Provider type: openai, anthropic, ollama, etc.
   default_model: "gpt-4o-mini-2024-07-18"  # Cost-effective option
   # Or use other models:
   # default_model: "claude-3-sonnet-20240229"  # Anthropic
   # default_model: "ollama/mistral"             # Local Ollama
   max_tokens_per_request: 8000
-  temperature: 0.1
-
-orchestrator:
+  timeout: 60
   max_retries: 3
-  failure_recovery: true
-
-agents:
-  enable_learning: true
-  fallback_strategy: "graceful_degradation"
+  enable_cost_tracking: true
 
 chromadb:
   host: "localhost"
   port: 8000
   # For persistent mode, these settings are automatically configured
   default_collection_prefix: "chungoid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+agents:
+  default_timeout: 300
+  max_concurrent_agents: 5
+  enable_parallel_execution: true
+  max_retries: 3
+
+logging:
+  level: "INFO"
+  enable_structured_logging: true  # Use JSON logging
+  enable_file_logging: true
+  log_directory: "logs"
 ```
 
 **Global configuration** (`~/.chungoid/config.yaml`):
 ```yaml
 # Global defaults - applies to all projects
 llm:
-  provider: "litellm" 
+  provider: "openai" 
   default_model: "gpt-4o-mini-2024-07-18"
   max_tokens_per_request: 8000
+  timeout: 60
+  max_retries: 3
 
 logging:
   level: "INFO"
@@ -262,7 +271,7 @@ The configuration system automatically reads environment variables with the `CHU
 
 ```bash
 # LLM Configuration
-export CHUNGOID_LLM_PROVIDER="litellm"
+export CHUNGOID_LLM_PROVIDER="openai"
 export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
 
 # For specific providers, use standard variables:

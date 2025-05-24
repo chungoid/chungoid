@@ -63,11 +63,16 @@ def get_chroma_client() -> chromadb.ClientAPI:
         chroma_config = system_config.chromadb
     except ConfigurationError as e:
         logger.error(f"Failed to load configuration for ChromaDB: {e}")
-        # Fall back to in-memory mode
+        # Fall back to persistent mode (default)
         chroma_config = None
-        mode = "in-memory"
+        mode = "persistent"
     else:
-        mode = chroma_config.mode  # Default is handled by the Pydantic model
+        # Determine mode based on configuration - default to persistent
+        # If host is not localhost, assume http mode
+        if chroma_config.host != "localhost":
+            mode = "http"
+        else:
+            mode = "persistent"  # Default mode for localhost
     
     logger.debug(f"  Determined mode from config: '{mode}'")
 
@@ -98,10 +103,7 @@ def get_chroma_client() -> chromadb.ClientAPI:
             logger.debug("Initializing in-memory ChromaDB client.")
             _client = chromadb.Client(Settings(is_persistent=False)) # Explicitly non-persistent
         elif mode == "http":
-            server_url = chroma_config.url if chroma_config else None
-            if not server_url:
-                logger.error("ChromaDB mode is 'http' but no URL is configured.")
-                raise ChromaOperationError("ChromaDB HTTP URL not configured.")
+            server_url = f"http://{chroma_config.host}:{chroma_config.port}" if chroma_config else "http://localhost:8000"
             logger.debug(f"Initializing HTTP ChromaDB client for URL: {server_url}")
             # project_dir is not strictly used for http but pass something valid
             _client = _factory_get_client(mode="http", server_url=server_url, project_dir=Path(".") if effective_project_dir is None else effective_project_dir)
