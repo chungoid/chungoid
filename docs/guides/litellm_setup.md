@@ -6,48 +6,50 @@ This guide explains how to configure LiteLLM for use within the Chungoid framewo
 
 Chungoid's `LLMManager` uses `LiteLLMProvider` to make calls to LLMs. LiteLLM itself handles the specifics of connecting to different model providers (OpenAI, Anthropic, Ollama, Azure, HuggingFace, etc.).
 
-The primary configuration for `LLMManager` (and thus LiteLLM) happens in your project's `project_config.yaml` or the global `config.yaml`.
+The primary configuration for `LLMManager` (and thus LiteLLM) happens in your project's `.chungoid/config.yaml` file using the new **Pydantic-based configuration system**.
 
 ## Configuration Values
 
-Here are the key configuration values under the `llm_manager` section in your `config.yaml` that affect LiteLLM:
+Here are the key configuration values under the `llm` section in your `config.yaml` that affect LiteLLM:
 
 ```yaml
-llm_manager:
-  provider_type: "litellm"  # Specifies that LiteLLM should be used.
-  default_model: "ollama/mistral" # IMPORTANT: Set your desired default model.
+llm:
+  provider: "openai"  # Specifies the LLM provider: "openai", "anthropic", "ollama", "litellm", or "mock"
+  default_model: "gpt-4o-mini-2024-07-18" # IMPORTANT: Set your desired default model.
                             # Format depends on the provider, e.g.:
-                            # - OpenAI: "gpt-4-turbo-preview", "gpt-3.5-turbo"
-                            # - Anthropic: "claude-3-opus-20240229", "claude-2.1"
-                            # - Ollama: "ollama/mistral", "ollama/llama2", "ollama/codellama"
-                            #   (prefix with "ollama/" for local Ollama models)
+                            # - OpenAI: "gpt-4o", "gpt-4o-mini-2024-07-18", "gpt-3.5-turbo"
+                            # - Anthropic: "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"
+                            # - Ollama: "mistral", "llama2", "codellama" (no prefix needed)
                             # - Azure: "azure/<your-deployment-name>"
                             # - HuggingFace: "huggingface/<model-repo-id>"
                             # Refer to LiteLLM documentation for more model strings.
 
-  api_key: null             # Optional: Directly provide an API key.
+  api_key: null             # Optional: Directly provide an API key (as SecretStr).
                             # LiteLLM typically prefers API keys to be set as environment variables
                             # (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
-                            # If set here, it can be used as a fallback or for specific providers
-                            # that LiteLLM can use it for. `null` means rely on environment variables.
+                            # If set here, it can be used as a fallback or for specific providers.
+                            # `null` means rely on environment variables.
 
-  base_url: null            # Optional: For self-hosted models or custom API endpoints.
+  api_base_url: null        # Optional: For self-hosted models or custom API endpoints.
                             # - For local Ollama: "http://localhost:11434" (or your Ollama server URL)
                             # - For Azure OpenAI: Your Azure endpoint.
                             # - For other OpenAI-compatible servers.
 
-  provider_env_vars: {}     # Optional: A dictionary of environment variables to set programmatically
-                            # specifically for LiteLLM's context when it initializes.
-                            # Example:
-                            # provider_env_vars:
-                            #   OPENAI_API_KEY: "sk-yourkey" # Not recommended for sensitive keys
-                            #   AZURE_API_VERSION: "2023-07-01-preview"
-                            #   HF_TOKEN: "your_hf_token_for_private_models"
+  fallback_model: "gpt-3.5-turbo"    # Fallback model if the default fails
+  timeout: 60                        # Request timeout in seconds
+  max_retries: 3                     # Maximum retry attempts
+  retry_delay: 1.0                   # Delay between retries
+  rate_limit_rpm: 60                 # Rate limit requests per minute
+  max_tokens_per_request: 4000       # Maximum tokens per request
+  enable_cost_tracking: true         # Enable cost tracking features
+  monthly_budget_limit: null         # Optional monthly budget limit
 
-  # MockLLMProvider specific (if provider_type is "mock"):
-  mock_llm_responses:
-    "initial prompt part": "mocked response for this prompt"
-    # ... more mock responses
+  # Note: provider_env_vars is no longer directly supported in the new schema.
+  # Use environment variables directly or configure them in your deployment environment.
+
+  # MockLLMProvider specific (if provider is "mock"):
+  # Mock responses are now handled differently in the new system.
+  # See Mock LLM Provider section below for details.
 ```
 
 ## Setting Up Specific LLM Providers via LiteLLM
@@ -60,10 +62,11 @@ LiteLLM attempts to automatically detect provider credentials from standard envi
     ```bash
     export OPENAI_API_KEY="sk-yourActualOpenAIKey"
     ```
--   **Config Example (`default_model`)**:
+-   **Config Example**:
     ```yaml
-    llm_manager:
-      default_model: "gpt-4-turbo-preview"
+    llm:
+      provider: "openai"
+      default_model: "gpt-4o-mini-2024-07-18"
     ```
 
 ### 2. Anthropic Models (e.g., Claude 3)
@@ -72,10 +75,11 @@ LiteLLM attempts to automatically detect provider credentials from standard envi
     ```bash
     export ANTHROPIC_API_KEY="sk-ant-yourActualAnthropicKey"
     ```
--   **Config Example (`default_model`)**:
+-   **Config Example**:
     ```yaml
-    llm_manager:
-      default_model: "claude-3-opus-20240229"
+    llm:
+      provider: "anthropic"
+      default_model: "claude-3-5-sonnet-20241022"
     ```
 
 ### 3. Ollama (Local LLMs)
@@ -85,32 +89,29 @@ Ensure your Ollama server is running (typically at `http://localhost:11434`).
 -   **No API Key Needed** for local Ollama by default.
 -   **Config Example**:
     ```yaml
-    llm_manager:
-      default_model: "ollama/mistral" # Or "ollama/llama2", "ollama/codellama", etc.
-      base_url: "http://localhost:11434" # Or your Ollama server address
+    llm:
+      provider: "ollama"
+      default_model: "mistral" # No prefix needed with new system
+      api_base_url: "http://localhost:11434" # Or your Ollama server address
     ```
-    *Note: The `ollama/` prefix in the `default_model` tells LiteLLM to treat it as an Ollama model.*
 
 ### 4. Azure OpenAI Service
 
 -   **Environment Variables**:
     ```bash
     export AZURE_API_KEY="yourAzureOpenAIKey"
-    export AZURE_API_BASE="https://your-resource-name.openai.azure.com/" # Your Azure endpoint
-    export AZURE_API_VERSION="2023-07-01-preview" # Or your preferred API version
+    export AZURE_API_BASE="https://your-resource-name.openai.azure.com/"
+    export AZURE_API_VERSION="2023-07-01-preview"
     ```
-    Alternatively, you can set these in `provider_env_vars` or `api_key` / `base_url` in the config.
--   **Config Example (`default_model`)**:
+-   **Config Example**:
     ```yaml
-    llm_manager:
-      default_model: "azure/your-azure-deployment-name" # Replace with your actual deployment name
-      # api_key: "yourAzureOpenAIKey" # Can also be set here
-      # base_url: "https://your-resource-name.openai.azure.com/" # Can also be set here
-      # provider_env_vars:
-      #   AZURE_API_VERSION: "2023-07-01-preview"
+    llm:
+      provider: "openai"  # Use openai provider for Azure
+      default_model: "azure/your-azure-deployment-name"
+      api_base_url: "https://your-resource-name.openai.azure.com/"
     ```
 
-### 5. HuggingFace Inference Endpoints (and other compatible servers)
+### 5. HuggingFace Inference Endpoints
 
 -   **Environment Variable (for gated/private models)**: `HF_TOKEN`
     ```bash
@@ -118,11 +119,10 @@ Ensure your Ollama server is running (typically at `http://localhost:11434`).
     ```
 -   **Config Example**:
     ```yaml
-    llm_manager:
-      default_model: "huggingface/mistralai/Mistral-7B-Instruct-v0.1" # Public model example
-      # For a model on an inference endpoint:
-      # default_model: "huggingface/your-repo-id"
-      # base_url: "https://your-inference-endpoint-url" # If using a dedicated HF endpoint
+    llm:
+      provider: "litellm"  # Use litellm provider for HuggingFace
+      default_model: "huggingface/mistralai/Mistral-7B-Instruct-v0.1"
+      # api_base_url: "https://your-inference-endpoint-url" # If using dedicated endpoint
     ```
 
 ### 6. Other Providers
@@ -130,11 +130,27 @@ Ensure your Ollama server is running (typically at `http://localhost:11434`).
 LiteLLM supports many other providers (Google Vertex AI/Gemini, Cohere, Bedrock, etc.).
 -   Generally, set the provider-specific API key environment variable (e.g., `GOOGLE_API_KEY`).
 -   Set the `default_model` to the LiteLLM string for that model.
+-   Use `provider: "litellm"` for providers not directly supported by the configuration system.
 -   Refer to the [LiteLLM Documentation](https://docs.litellm.ai/docs/providers) for the correct model strings and required environment variables for each provider.
+
+## Mock LLM Provider
+
+For testing and development, you can use the mock provider:
+
+```yaml
+llm:
+  provider: "mock"
+  default_model: "mock-model"
+```
+
+Or set the environment variable:
+```bash
+export CHUNGOID_LLM_PROVIDER="mock"
+```
 
 ## Per-Prompt Model Configuration
 
-While `llm_manager.default_model` sets the system-wide default, individual prompts defined in YAML files (e.g., in `server_prompts/`) can also specify their own model:
+While `llm.default_model` sets the system-wide default, individual prompts defined in YAML files (e.g., in `server_prompts/`) can also specify their own model:
 
 ```yaml
 # Example: server_prompts/autonomous_engine/some_agent_prompt.yaml
@@ -142,7 +158,7 @@ id: "some_agent_prompt_v1"
 version: "1.0"
 # ... other metadata ...
 model_config:
-  model_id: "ollama/codellama:13b" # This prompt will use codellama via Ollama
+  model_id: "codellama" # This prompt will use codellama
   temperature: 0.5
   max_tokens: 3000
   # response_format: { "type": "json_object" } # If JSON output is expected
@@ -150,11 +166,33 @@ model_config:
 ```
 If a prompt definition includes a `model_id`, it will override the `default_model` from `config.yaml` for calls made using that specific prompt.
 
+## Configuration File Location
+
+The new configuration system looks for configuration in the following order:
+
+1. **Project-specific**: `<your_project_dir>/.chungoid/config.yaml`
+2. **Global**: `chungoid-core/config.yaml`
+3. **Environment variables**: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.
+4. **Defaults**: Built-in Pydantic model defaults
+
 ## Important Notes
 
--   **LiteLLM Installation**: Ensure LiteLLM is installed in your Python environment. It should be part of `chungoid-core`'s dependencies. If not, `pip install litellm`.
--   **Environment Variables**: Setting API keys as environment variables is generally more secure than hardcoding them in config files, especially if your `config.yaml` is committed to version control. Use a `.env` file (which `LLMManager` loads via `python-dotenv`) or export them in your shell.
--   **Chungoid Config Loading**: Chungoid loads `config.yaml` from `chungoid-core/src/chungoid/config.yaml` by default. It can also load project-specific configurations from `<your_project_dir>/.chungoid/project_config.yaml`.
--   **Debugging LiteLLM**: If you encounter issues, LiteLLM has a verbose mode that can be helpful. This is usually enabled by `litellm.set_verbose = True` in code, which `LiteLLMProvider` might do or can be added for debugging. Check Chungoid's logging output for messages from `LiteLLMProvider` and LiteLLM itself.
+-   **New Configuration System**: Chungoid now uses a **Pydantic-based configuration system** with automatic validation and environment variable integration.
+-   **LiteLLM Installation**: Ensure LiteLLM is installed in your Python environment. It should be part of `chungoid-core`'s dependencies.
+-   **Environment Variables**: Setting API keys as environment variables is generally more secure than hardcoding them in config files. Use a `.env` file or export them in your shell.
+-   **Configuration Validation**: The new system automatically validates configuration and provides clear error messages for invalid settings.
+-   **Debugging LiteLLM**: Check Chungoid's logging output for messages from `LiteLLMProvider` and LiteLLM itself. Enable debug logging with `--log-level DEBUG`.
+
+## Viewing Current Configuration
+
+You can view your current configuration using the CLI:
+
+```bash
+# Show effective merged configuration
+chungoid utils show-config
+
+# Show raw configuration file content
+chungoid utils show-config --raw
+```
 
 This guide should help you configure various LLMs for use with Chungoid through LiteLLM. Always refer to the official [LiteLLM Documentation](https://docs.litellm.ai/) for the most up-to-date information on providers and model strings. 

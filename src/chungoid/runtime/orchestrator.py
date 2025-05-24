@@ -986,12 +986,11 @@ class AsyncOrchestrator(BaseOrchestrator):
                 if stage_spec.success_criteria:
                     self.logger.info(f"Run {run_id}, Flow {flow_id}: Checking success criteria for stage '{current_stage_name}'.")
                     # MODIFIED: Call service directly
-                    shared_data_for_criteria = self.shared_context.data if self.shared_context else {}
                     overall_success_criteria_passed, failed_criteria_list = await self.success_criteria_evaluator.check_criteria_for_stage(
                         stage_name=current_stage_name,
                         stage_spec=stage_spec,
                         stage_outputs=stage_output,
-                        shared_context_for_stage=shared_data_for_criteria
+                        shared_context_for_stage=self.shared_context
                     )
 
                     if not overall_success_criteria_passed:
@@ -1055,7 +1054,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     if error_handling_result.flow_pause_status != FlowPauseStatus.NOT_PAUSED:
                         # The error handler decided to pause or requires user intervention
                         self.logger.info(f"Run {run_id}, Flow {flow_id}: Flow pausing due to success criteria failure handling for stage '{current_stage_name}'. Status: {error_handling_result.flow_pause_status}")
-                        return StageStatus.PAUSED, error_handling_result.updated_agent_error_details
+                        return error_handling_result.flow_pause_status, error_handling_result.updated_agent_error_details
 
                     if error_handling_result.next_stage_to_execute == NEXT_STAGE_END_FAILURE:
                         self.logger.info(f"Run {run_id}, Flow {flow_id}: Flow ending in failure due to success criteria failure handling for stage '{current_stage_name}'.")

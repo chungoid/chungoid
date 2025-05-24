@@ -177,7 +177,7 @@ chungoid-core/
 │           ├── analysis_utils.py
 │           ├── chroma_client_factory.py
 │           ├── chroma_utils.py
-│           ├── config_loader.py
+│           ├── config_manager.py  # Modern Pydantic-based configuration system
 │           ├── core_snapshot_utils.py
 │           ├── exceptions.py
 │           ├── feedback_store.py
@@ -222,7 +222,7 @@ chungoid-core/
 │   │   ├── test_chroma_utils.py
 │   │   ├── test_chroma_utils_live.py
 │   │   ├── test_cli_utils.py
-│   │   ├── test_config_loader_live.py
+│   │   ├── test_config_manager_live.py  # Tests for new configuration system
 │   │   ├── test_core_code_generator_agent.py
 │   │   ├── test_core_mcp_client.py
 │   │   ├── test_core_snapshot_dryrun.py

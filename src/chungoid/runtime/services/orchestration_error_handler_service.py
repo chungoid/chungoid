@@ -214,8 +214,7 @@ class OrchestrationErrorHandlerService:
             message=str(error),
             traceback=tb_str,
             can_retry=can_retry_flag,
-            resolved_inputs_at_failure=resolved_inputs_at_failure or {},
-            is_pydantic_validation_error=False # Default to False
+            resolved_inputs_at_failure=resolved_inputs_at_failure or {}
         )
 
     async def _invoke_reviewer(

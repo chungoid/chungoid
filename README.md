@@ -216,8 +216,9 @@ llm:
   provider: "openai"  # Provider type: openai, anthropic, ollama, etc.
   default_model: "gpt-4o-mini-2024-07-18"  # Cost-effective option
   # Or use other models:
-  # default_model: "claude-3-sonnet-20240229"  # Anthropic
-  # default_model: "ollama/mistral"             # Local Ollama
+  # default_model: "claude-3-5-sonnet-20241022"  # Anthropic
+  # default_model: "mistral"                     # Local Ollama
+  api_base_url: null  # For custom endpoints (e.g., "http://localhost:11434" for Ollama)
   max_tokens_per_request: 8000
   timeout: 60
   max_retries: 3
@@ -243,7 +244,7 @@ logging:
   log_directory: "logs"
 ```
 
-**Global configuration** (`~/.chungoid/config.yaml`):
+**Global configuration** (`chungoid-core/config.yaml`):
 ```yaml
 # Global defaults - applies to all projects
 llm:
@@ -294,16 +295,16 @@ The system merges configuration from multiple sources (highest priority first):
 
 1. **Environment variables** (`CHUNGOID_*`)
 2. **Project configuration** (`.chungoid/config.yaml`)
-3. **Global configuration** (`~/.chungoid/config.yaml`)
+3. **Global configuration** (`chungoid-core/config.yaml`)
 4. **Built-in defaults**
 
 #### Supported Providers & Models
 
 | Provider | Model Examples | Setup |
 |----------|-----------------|--------|
-| **OpenAI** | `gpt-4o-mini-2024-07-18`, `gpt-4-turbo-preview` | Set `OPENAI_API_KEY` |
-| **Anthropic** | `claude-3-opus-20240229`, `claude-3-sonnet-20240229` | Set `ANTHROPIC_API_KEY` |
-| **Ollama** | `ollama/mistral`, `ollama/llama2`, `ollama/codellama` | Local server, no API key |
+| **OpenAI** | `gpt-4o-mini-2024-07-18`, `gpt-4o`, `gpt-3.5-turbo` | Set `OPENAI_API_KEY` |
+| **Anthropic** | `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229` | Set `ANTHROPIC_API_KEY` |
+| **Ollama** | `mistral`, `llama2`, `codellama` | Local server, no API key |
 | **Azure OpenAI** | `azure/your-deployment-name` | Set `AZURE_API_KEY`, `AZURE_API_BASE` |
 | **Google** | `gemini-pro`, `gemini-pro-vision` | Set `GOOGLE_API_KEY` |
 | **HuggingFace** | `huggingface/model-name` | Set `HF_TOKEN` (for private models) |

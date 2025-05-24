@@ -370,7 +370,7 @@ def cli(ctx: click.Context, log_level: str) -> None:  # noqa: D401 – imperativ
         ctx.obj["project_config"] = {} 
         # config = get_config() # OLD: This was too generic.
         # ctx.obj[\"project_config\"] = config.dict() if config else {}
-    except ConfigError:
+    except ConfigurationError:
         # logger.warning(\"Could not load project-specific config at CLI entry. Some defaults may apply.\")
         # Let commands handle specific config loading.
         pass
@@ -655,15 +655,21 @@ def flow_run(ctx: click.Context,
         click.echo(f"Error: Project directory {project_path} or its .chungoid subdirectory does not exist.", err=True)
         raise click.Abort()
 
-    # Load project-specific config
-    project_config_path = project_path / PROJECT_CHUNGOID_DIR / "chungoid_config.yaml"
-    if not project_config_path.exists():
-        logger.warning(f"Project config file {project_config_path} not found. Using default settings.")
-        project_config = {} # Start with empty config if not found
-    else:
-        project_config = load_config(project_config_path) # load_config returns a dict
+    # Load project-specific config using ConfigurationManager
+    try:
+        config_manager = ConfigurationManager()
+        config_manager.set_project_root(project_path)
+        system_config = config_manager.get_config()
+        project_config = system_config.model_dump()  # Convert to dict for backward compatibility
+        logger.info(f"Loaded project config for flow run using ConfigurationManager from {project_path}")
+    except ConfigurationError as e:
+        logger.warning(f"Configuration error during flow run: {e}. Using default settings.")
+        project_config = {}
+    except Exception as e:
+        logger.warning(f"Unexpected error loading project config: {e}. Using default settings.")
+        project_config = {}
+        
     ctx.obj["project_config"] = project_config # Store in context
-    logger.info(f"Loaded project config for flow run from {project_config_path if project_config_path.exists() else 'defaults'}")
 
     # Determine server_prompts_base_dir and server_stages_dir for StateManager
     server_prompts_base_dir_str = str(project_config.get("server_prompts_dir") or _get_default_server_prompts_base_dir())
@@ -907,14 +913,21 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
     project_path = project_dir_opt.resolve()
     logger.info(f"Flow Resume: Project directory set to {project_path} for Run ID: {run_id}")
 
-    resumed_project_config_path = project_path / PROJECT_CHUNGOID_DIR / "chungoid_config.yaml"
-    if not resumed_project_config_path.exists():
-        logger.warning(f"Project config file {resumed_project_config_path} not found for resume. Using default settings.")
+    # Load project-specific config using ConfigurationManager
+    try:
+        config_manager = ConfigurationManager()
+        config_manager.set_project_root(project_path)
+        system_config = config_manager.get_config()
+        resumed_project_config = system_config.model_dump()  # Convert to dict for backward compatibility
+        logger.info(f"Loaded project config for flow resume using ConfigurationManager from {project_path}")
+    except ConfigurationError as e:
+        logger.warning(f"Configuration error during flow resume: {e}. Using default settings.")
         resumed_project_config = {}
-    else:
-        resumed_project_config = load_config(resumed_project_config_path)
+    except Exception as e:
+        logger.warning(f"Unexpected error loading project config for resume: {e}. Using default settings.")
+        resumed_project_config = {}
+        
     ctx.obj["project_config"] = resumed_project_config # Store in context
-    logger.info(f"Loaded project config for flow resume from {resumed_project_config_path if resumed_project_config_path.exists() else 'defaults'}")
 
     # Determine server_prompts_base_dir and server_stages_dir for StateManager
     server_prompts_base_dir_str_resume = str(resumed_project_config.get("server_prompts_dir") or _get_default_server_prompts_base_dir())
@@ -1124,7 +1137,7 @@ def project_review(
     except FileNotFoundError:
         click.secho(f"Error: Project directory or .chungoid structure not found in {project_dir_opt.resolve()}", fg="red")
         sys.exit(1)
-    except ConfigError as e:
+    except ConfigurationError as e:
         click.secho(f"Configuration error: {e}", fg="red")
         sys.exit(1)
     except Exception as e:
@@ -1592,19 +1605,9 @@ def show_config(ctx: click.Context, project_dir_opt: Path, raw: bool):
         logger.error(f"Error in show_config: {e}", exc_info=True)
 
 # Add helper functions for backward compatibility
-def load_config(config_path: str) -> Dict[str, Any]:
-    """Temporary compatibility function for loading config files directly."""
-    try:
-        if Path(config_path).exists():
-            with open(config_path, 'r') as f:
-                file_config = yaml.safe_load(f) or {}
-            return file_config
-        return {}
     except Exception as e:
         raise ConfigurationError(f"Failed to load config from {config_path}: {e}")
 
-# Define ConfigError as alias for ConfigurationError for backward compatibility
-ConfigError = ConfigurationError
 
 # Ensure the main CLI entry point is correct
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import re
 from typing import List, Dict, Any, Tuple, Optional
 
 from chungoid.schemas.master_flow import MasterStageSpec
+from chungoid.schemas.orchestration import SharedContext
 from chungoid.runtime.services.context_resolution_service import ContextResolutionService
 
 # Sentinel object for cases where a path is not found during resolution
@@ -26,7 +27,7 @@ class SuccessCriteriaService:
         self,
         path_str: str,
         stage_outputs: Any,
-        shared_context_for_stage: Dict[str, Any]
+        shared_context_for_stage: SharedContext
     ) -> Any:
         """
         Resolves a path string against stage_outputs or shared_context.
@@ -75,7 +76,7 @@ class SuccessCriteriaService:
         stage_name: str,
         stage_spec: MasterStageSpec,
         stage_outputs: Any, 
-        shared_context_for_stage: Dict[str, Any] 
+        shared_context_for_stage: SharedContext 
     ) -> Tuple[bool, List[str]]:
         """
         Checks all success_criteria for a given stage.
@@ -114,7 +115,7 @@ class SuccessCriteriaService:
         criterion_str: str,
         stage_name: str,
         stage_outputs: Any, 
-        shared_context_for_stage: Dict[str, Any]
+        shared_context_for_stage: SharedContext
     ) -> bool:
         self.logger.debug(
             f"Evaluating criterion: '{criterion_str}' for stage '{stage_name}'"

@@ -144,6 +144,8 @@ class LiteLLMProvider(LLMProvider):
                  default_model: str, 
                  api_key: Optional[str] = None,
                  base_url: Optional[str] = None,
+                 timeout: Optional[int] = None,
+                 max_retries: Optional[int] = None,
                  provider_env_vars: Optional[Dict[str, str]] = None):
         if not litellm:
             raise ImportError("LiteLLM library is not installed or failed to import. Cannot use LiteLLMProvider.")
@@ -151,6 +153,8 @@ class LiteLLMProvider(LLMProvider):
         self.default_model = default_model
         self.api_key = api_key
         self.base_url = base_url
+        self.timeout = timeout
+        self.max_retries = max_retries
         
         # Store original environment state for potential restoration if needed, or manage carefully.
         # For now, assume direct modification is acceptable for the process lifetime.
@@ -164,6 +168,10 @@ class LiteLLMProvider(LLMProvider):
             logger.info(f"LiteLLMProvider: Using custom base_url: {self.base_url}")
         if self.api_key:
             logger.info(f"LiteLLMProvider: API key provided directly (will be used if specific env var not found by LiteLLM).")
+        if self.timeout:
+            logger.info(f"LiteLLMProvider: Default timeout set to {self.timeout} seconds")
+        if self.max_retries:
+            logger.info(f"LiteLLMProvider: Default max_retries set to {self.max_retries}")
 
 
     async def generate(
@@ -202,6 +210,14 @@ class LiteLLMProvider(LLMProvider):
         
         if self.base_url:
             litellm_kwargs["api_base"] = self.base_url
+
+        # Add timeout and retry configuration if available (allow per-call override via kwargs)
+        if self.timeout is not None and "timeout" not in kwargs:
+            litellm_kwargs["timeout"] = self.timeout
+            
+        if self.max_retries is not None and "num_retries" not in kwargs:
+            # LiteLLM uses 'num_retries' parameter name, not 'max_retries'
+            litellm_kwargs["num_retries"] = self.max_retries
 
         if response_format: # For OpenAI and compatible models that support it
             litellm_kwargs["response_format"] = response_format
