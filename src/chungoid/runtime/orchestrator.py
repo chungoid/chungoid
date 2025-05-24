@@ -677,18 +677,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                     self.logger.info(f"Run {run_id}: Unwrapping {{'inputs': <dict>}} structure from resolved_inputs for SystemRequirementsGatheringAgent_v1. Original: {req_gathering_input_data}")
                     req_gathering_input_data = req_gathering_input_data["inputs"]
                 
-                self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: self.initial_goal_str is: '{self.initial_goal_str}' (type: {type(self.initial_goal_str)})")
-                self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: 'user_goal' not in req_gathering_input_data is: {"user_goal" not in req_gathering_input_data}")
-                self.logger.info(f"Run {run_id}: DIAGNOSTIC PRE-CHECK for SysReqAgent: bool(self.initial_goal_str) is: {bool(self.initial_goal_str)}")
-
                 if "user_goal" not in req_gathering_input_data and self.initial_goal_str:
-                    self.logger.info(f"Run {run_id}: DIAGNOSTIC INSIDE-IF for SysReqAgent: Condition was TRUE. self.initial_goal_str is: '{self.initial_goal_str}'")
-                    self.logger.info(f"Run {run_id}: Injecting initial_goal_str ('{self.initial_goal_str[:100]}...') as user_goal for SystemRequirementsGatheringAgent_v1.")
+                    self.logger.info(f"Run {run_id}: Injecting initial_goal_str as user_goal for SystemRequirementsGatheringAgent_v1.")
                     req_gathering_input_data["user_goal"] = self.initial_goal_str
-                else:
-                    self.logger.info(f"Run {run_id}: DIAGNOSTIC ELSE for SysReqAgent: Condition was FALSE. 'user_goal' in req_gathering_input_data: {'user_goal' in req_gathering_input_data}. self.initial_goal_str (truthiness): {bool(self.initial_goal_str)}")
-                
-                self.logger.info(f"Run {run_id}: Inputs being passed to SystemRequirementsGatheringAgent_v1: {req_gathering_input_data}")
                 raw_output = await agent_callable(inputs=req_gathering_input_data, full_context=self.shared_context) # Use agent_callable
             
             elif isinstance(agent_instance_for_type_check, SystemFileSystemAgent_v1):

@@ -117,11 +117,6 @@ class SystemRequirementsGatheringAgent_v1(BaseAgent[SystemRequirementsGatheringI
             f"System Requirements Gathering Agent ({self.AGENT_ID}) invoked with goal: {inputs.get('user_goal', 'Not specified')}"
         )
 
-        # ----->>> ADD DIAGNOSTIC LOGGING HERE <<<-----
-        self.logger.info(f"AGENT DIAGNOSTIC: About to validate inputs. Type: {type(inputs)}, Value: {inputs}, ID: {id(inputs)}")
-        self.logger.info(f"AGENT DIAGNOSTIC: Keys in inputs: {list(inputs.keys()) if isinstance(inputs, dict) else 'Not a dict'}")
-        self.logger.info(f"AGENT DIAGNOSTIC: user_goal present: {'user_goal' in inputs if isinstance(inputs, dict) else 'Not a dict'}")
-
         try:
             parsed_inputs = SystemRequirementsGatheringInput(**inputs)
         except ValidationError as e:
