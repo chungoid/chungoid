@@ -1284,8 +1284,21 @@ class AsyncOrchestrator(BaseOrchestrator):
             agent_registry = self.agent_provider._registry
         
         if agent_registry:
-            self.enhanced_agent_resolver = EnhancedAgentResolver(agent_registry, self.agent_provider)
-            self.logger.info("Enhanced Agent Resolver initialized for task-type orchestration")
+            # Extract llm_provider and prompt_manager from agent_provider
+            llm_provider = None
+            prompt_manager = None
+            
+            if hasattr(self.agent_provider, '_llm_provider'):
+                llm_provider = self.agent_provider._llm_provider
+            if hasattr(self.agent_provider, '_prompt_manager'):
+                prompt_manager = self.agent_provider._prompt_manager
+            
+            if llm_provider and prompt_manager:
+                self.enhanced_agent_resolver = EnhancedAgentResolver(agent_registry, llm_provider, prompt_manager)
+                self.logger.info("Enhanced Agent Resolver initialized for task-type orchestration")
+            else:
+                self.enhanced_agent_resolver = None
+                self.logger.warning(f"Enhanced Agent Resolver not initialized - missing dependencies: llm_provider={llm_provider is not None}, prompt_manager={prompt_manager is not None}")
         else:
             self.enhanced_agent_resolver = None
             self.logger.warning("Enhanced Agent Resolver not initialized - agent registry not found")

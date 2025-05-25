@@ -56,12 +56,22 @@ class AgentResolutionResult:
                  success: bool,
                  agent_instance: Optional[ProtocolAwareAgent] = None,
                  error: Optional[str] = None,
-                 capabilities: Optional[List[str]] = None):
+                 capabilities: Optional[List[str]] = None,
+                 execution_mode: Optional[ExecutionMode] = None,
+                 resolution_method: Optional[ResolutionMethod] = None,
+                 confidence_score: float = 0.0,
+                 fallback_reason: Optional[str] = None,
+                 capabilities_matched: Optional[List[str]] = None):
         self.agent_id = agent_id
         self.success = success
         self.agent_instance = agent_instance
         self.error = error
         self.capabilities = capabilities or []
+        self.execution_mode = execution_mode or ExecutionMode.DIRECT
+        self.resolution_method = resolution_method or ResolutionMethod.DIRECT_AGENT_ID
+        self.confidence_score = confidence_score
+        self.fallback_reason = fallback_reason
+        self.capabilities_matched = capabilities_matched or []
 
 
 class AgentResolutionError(Exception):
@@ -85,6 +95,12 @@ class EnhancedAgentResolver:
         self.llm_provider = llm_provider
         self.prompt_manager = prompt_manager
         self.logger = logging.getLogger(__name__)
+        
+        # Initialize task type mappings and autonomous capabilities cache
+        self._task_type_mappings = self._initialize_task_type_mappings()
+        self._autonomous_capabilities_cache = {}
+        self._refresh_autonomous_capabilities_cache()
+        self.logger.info("Initialized EnhancedAgentResolver with task type mappings and autonomous capabilities cache")
         
     async def resolve_agent(self, agent_id: str, context: Optional[Dict[str, Any]] = None) -> AgentResolutionResult:
         """Resolve and instantiate a protocol-aware agent"""
@@ -337,4 +353,120 @@ class EnhancedAgentResolver:
     def refresh_cache(self):
         """Refresh all internal caches."""
         self._refresh_autonomous_capabilities_cache()
-        self.logger.info("Refreshed EnhancedAgentResolver caches") 
+        self.logger.info("Refreshed EnhancedAgentResolver caches")
+    
+    async def resolve_agent_for_stage(self, stage_spec) -> AgentResolutionResult:
+        """Resolve agent for a specific stage using task-type orchestration"""
+        try:
+            # Initialize task type mappings and autonomous capabilities cache
+            if not hasattr(self, '_task_type_mappings'):
+                self._task_type_mappings = self._initialize_task_type_mappings()
+            if not hasattr(self, '_autonomous_capabilities_cache'):
+                self._autonomous_capabilities_cache = {}
+                self._refresh_autonomous_capabilities_cache()
+            
+            task_type = getattr(stage_spec, 'task_type', None)
+            required_capabilities = getattr(stage_spec, 'required_capabilities', [])
+            preferred_execution = getattr(stage_spec, 'preferred_execution', 'any')
+            fallback_agent_id = getattr(stage_spec, 'fallback_agent_id', None)
+            
+            self.logger.info(f"Resolving agent for stage: task_type={task_type}, capabilities={required_capabilities}, execution={preferred_execution}")
+            
+            # Method 1: Try task-type mapping first
+            if task_type and task_type in self._task_type_mappings:
+                mapping = self._task_type_mappings[task_type]
+                preferred_agents = mapping.get('preferred_agents', [])
+                
+                for agent_id in preferred_agents:
+                    agent_class = self.agent_registry.get_agent(agent_id)
+                    if agent_class and self._is_protocol_aware_agent(agent_class):
+                        agent_capabilities = self._extract_agent_capabilities(agent_class)
+                        if self._matches_capabilities(agent_capabilities, required_capabilities):
+                            agent_instance = await self._instantiate_agent(agent_class)
+                            if agent_instance:
+                                return AgentResolutionResult(
+                                    agent_id=agent_id,
+                                    success=True,
+                                    agent_instance=agent_instance,
+                                    capabilities=agent_capabilities,
+                                    execution_mode=ExecutionMode.AUTONOMOUS if self._is_autonomous_capable_class(agent_class) else ExecutionMode.CONCRETE,
+                                    resolution_method=ResolutionMethod.TASK_TYPE_MAPPING,
+                                    confidence_score=0.9,
+                                    capabilities_matched=required_capabilities
+                                )
+            
+            # Method 2: Try capability-based matching
+            if required_capabilities:
+                for agent_id, agent_info in self._autonomous_capabilities_cache.items():
+                    agent_capabilities = agent_info['capabilities']
+                    if self._matches_capabilities(agent_capabilities, required_capabilities):
+                        agent_class = agent_info['agent_class']
+                        agent_instance = await self._instantiate_agent(agent_class)
+                        if agent_instance:
+                            return AgentResolutionResult(
+                                agent_id=agent_id,
+                                success=True,
+                                agent_instance=agent_instance,
+                                capabilities=agent_capabilities,
+                                execution_mode=ExecutionMode.AUTONOMOUS,
+                                resolution_method=ResolutionMethod.CAPABILITY_MATCH,
+                                confidence_score=0.8,
+                                capabilities_matched=required_capabilities
+                            )
+            
+            # Method 3: Try fallback agent if specified
+            if fallback_agent_id:
+                agent_class = self.agent_registry.get_agent(fallback_agent_id)
+                if agent_class:
+                    agent_instance = await self._instantiate_agent(agent_class)
+                    if agent_instance:
+                        agent_capabilities = self._extract_agent_capabilities(agent_class)
+                        return AgentResolutionResult(
+                            agent_id=fallback_agent_id,
+                            success=True,
+                            agent_instance=agent_instance,
+                            capabilities=agent_capabilities,
+                            execution_mode=ExecutionMode.FALLBACK,
+                            resolution_method=ResolutionMethod.FALLBACK_AGENT_ID,
+                            confidence_score=0.6,
+                            capabilities_matched=[]
+                        )
+            
+            # Method 4: Try task-type fallback agents
+            if task_type and task_type in self._task_type_mappings:
+                mapping = self._task_type_mappings[task_type]
+                fallback_agents = mapping.get('fallback_agents', [])
+                
+                for agent_id in fallback_agents:
+                    agent_class = self.agent_registry.get_agent(agent_id)
+                    if agent_class:
+                        agent_instance = await self._instantiate_agent(agent_class)
+                        if agent_instance:
+                            agent_capabilities = self._extract_agent_capabilities(agent_class)
+                            return AgentResolutionResult(
+                                agent_id=agent_id,
+                                success=True,
+                                agent_instance=agent_instance,
+                                capabilities=agent_capabilities,
+                                execution_mode=ExecutionMode.CONCRETE,
+                                resolution_method=ResolutionMethod.CONCRETE_FALLBACK,
+                                confidence_score=0.5,
+                                capabilities_matched=[]
+                            )
+            
+            # No suitable agent found
+            return AgentResolutionResult(
+                agent_id="",
+                success=False,
+                error=f"No suitable agent found for task_type='{task_type}' with capabilities={required_capabilities}",
+                fallback_reason=f"Task type '{task_type}' not mapped and no matching capabilities found"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error resolving agent for stage: {e}")
+            return AgentResolutionResult(
+                agent_id="",
+                success=False,
+                error=str(e),
+                fallback_reason=f"Exception during resolution: {str(e)}"
+            ) 
