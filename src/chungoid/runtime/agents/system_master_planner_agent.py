@@ -361,29 +361,41 @@ class MasterPlannerAgent(ProtocolAwareAgent):
     async def execute_with_protocols(self, task_input, full_context: Optional[Dict[str, Any]] = None):
         """
         Execute using appropriate protocol with fallback to traditional method.
-        Follows AI agent best practices for hybrid execution.
+        For MasterPlannerAgent, this delegates to invoke_async to ensure proper output format.
         """
         try:
-            # Determine primary protocol for this agent
-            primary_protocol = self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "simple_operations"
+            # For MasterPlannerAgent, we need to call invoke_async to get proper MasterPlannerOutput
+            logger.info(f"MasterPlannerAgent executing via protocol delegation to invoke_async")
             
-            protocol_task = {
-                "task_input": task_input.dict() if hasattr(task_input, 'dict') else task_input,
-                "full_context": full_context,
-                "goal": f"Execute {self.AGENT_NAME} specialized task"
-            }
-            
-            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
-            
-            if protocol_result["overall_success"]:
-                return self._extract_output_from_protocol_result(protocol_result, task_input)
+            # Convert task_input to MasterPlannerInput if needed
+            if hasattr(task_input, 'dict'):
+                task_input_dict = task_input.dict()
+            elif hasattr(task_input, 'model_dump'):
+                task_input_dict = task_input.model_dump()
+            elif isinstance(task_input, dict):
+                task_input_dict = task_input
             else:
-                self._logger.warning("Protocol execution failed, falling back to traditional method")
-                raise ProtocolExecutionError("Pure protocol execution failed")
+                # Try to create MasterPlannerInput from the task_input
+                from ...schemas.agent_master_planner import MasterPlannerInput
+                task_input_dict = {"user_goal": str(task_input)}
+            
+            # Create MasterPlannerInput from the task input
+            from ...schemas.agent_master_planner import MasterPlannerInput
+            if isinstance(task_input, MasterPlannerInput):
+                planner_input = task_input
+            else:
+                planner_input = MasterPlannerInput(**task_input_dict)
+            
+            # Call the actual invoke_async method to get proper MasterPlannerOutput
+            result = await self.invoke_async(planner_input, full_context)
+            
+            logger.info(f"MasterPlannerAgent protocol execution completed successfully")
+            return result
                 
         except Exception as e:
-            self._logger.warning(f"Protocol execution error: {e}, falling back to traditional method")
-            raise ProtocolExecutionError("Pure protocol execution failed")
+            logger.error(f"MasterPlannerAgent protocol execution failed: {e}")
+            # Re-raise the exception to maintain error handling behavior
+            raise
 
     # ADDED: Protocol phase execution logic
     def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
@@ -407,7 +419,8 @@ class MasterPlannerAgent(ProtocolAwareAgent):
 
     def _extract_output_from_protocol_result(self, protocol_result: Dict[str, Any], task_input) -> Any:
         """Extract agent output from protocol execution results."""
-        # Generic extraction - should be overridden by specific agents
+        # For MasterPlannerAgent, this method is not used since we delegate directly to invoke_async
+        # But we keep it for compatibility
         return {
             "status": "SUCCESS",
             "message": "Task completed via protocol execution",

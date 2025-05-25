@@ -243,11 +243,13 @@ class RegistryAgentProvider:
                 
                 # Instantiate the agent class
                 agent_instance = self._instantiate_agent_class(agent_class, identifier)
-                if agent_instance and hasattr(agent_instance, 'invoke_async'):
+                if agent_instance:
                     logger.info(f"RegistryAgentProvider: Successfully instantiated agent '{identifier}' from registry.")
-                    return agent_instance.invoke_async
+                    # Return protocol adapter instead of invoke_async
+                    from .protocol_adapter import ProtocolExecutionAdapter
+                    return ProtocolExecutionAdapter(agent_instance)
                 else:
-                    raise NoAgentFoundError(f"Failed to instantiate agent '{identifier}' from registry or missing invoke_async method.")
+                    raise NoAgentFoundError(f"Failed to instantiate agent '{identifier}' from registry.")
             else:
                 raise NoAgentFoundError(f"Agent '{identifier}' not found in registry or fallback map.")
 

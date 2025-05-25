@@ -1442,8 +1442,10 @@ class AsyncOrchestrator(BaseOrchestrator):
                             stage_spec.agent_id = resolved_agent_id
                         
                         # Get the agent callable
-                        if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
-                            agent_callable = agent_instance_for_type_check.invoke_async
+                        if agent_instance_for_type_check:
+                            # Use protocol adapter for all ProtocolAwareAgent instances
+                            from ..utils.protocol_adapter import ProtocolExecutionAdapter
+                            agent_callable = ProtocolExecutionAdapter(agent_instance_for_type_check)
                         else:
                             # Fallback to agent provider
                             agent_callable = self.agent_provider.get(identifier=resolved_agent_id, shared_context=self.shared_context.data)
@@ -1491,8 +1493,10 @@ class AsyncOrchestrator(BaseOrchestrator):
                 self.logger.info(f"Run {run_id}: [DEBUG] - isinstance(SystemRequirementsGatheringAgent_v1): {isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1) if agent_instance_for_type_check else 'agent_instance is None'}")
 
                 if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
-                    agent_callable = agent_instance_for_type_check.invoke_async
-                else: # Fallback if raw instance not available or no invoke_async
+                    # Use protocol adapter for all ProtocolAwareAgent instances
+                    from ..utils.protocol_adapter import ProtocolExecutionAdapter
+                    agent_callable = ProtocolExecutionAdapter(agent_instance_for_type_check)
+                else: # Fallback if raw instance not available
                     agent_callable = self.agent_provider.get(identifier=stage_spec.agent_id, shared_context=self.shared_context.data)
             
             # For enhanced stages, resolve inputs after agent resolution
@@ -1578,7 +1582,7 @@ class AsyncOrchestrator(BaseOrchestrator):
                     return raw_output
                     
                 except AutonomousExecutionError as autonomous_error:
-                    self.logger.warning(f"Run {run_id}: Autonomous execution failed for agent '{stage_spec.agent_id}': {autonomous_error.message}")
+                    self.logger.warning(f"Run {run_id}: Autonomous execution failed for agent '{stage_spec.agent_id}': {str(autonomous_error)}")
                     # Fall back to traditional execution if autonomous fails
                     self.logger.info(f"Run {run_id}: Falling back to traditional single-pass execution for agent '{stage_spec.agent_id}'")
                 except Exception as autonomous_unexpected_error:

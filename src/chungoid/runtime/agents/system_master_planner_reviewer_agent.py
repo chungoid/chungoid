@@ -252,10 +252,10 @@ class MasterPlannerReviewerAgent(ProtocolAwareAgent):
             prompt_manager=prompt_manager,
             agent_id=agent_id or self.AGENT_ID,
             system_context=system_context,
-            config=config,
             **kwargs
         )
-        self.config = config if config else {}
+        # Store config as private attribute if needed for backward compatibility
+        self._config = config if config else {}
         # Store LLM provider internally without creating a Pydantic field
         self._llm_client = llm_provider or llm_client or llm_manager # Directly assign the passed llm_client (which should be an LLMManager instance)
         # Add missing _logger attribute
