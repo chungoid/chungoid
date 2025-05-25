@@ -77,6 +77,9 @@ from chungoid.schemas.agent_logs import QualityAssuranceLogEntry, QAEventType, O
 # Import for plan modification
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
 
+# Registry-first architecture import
+from chungoid.registry import register_autonomous_engine_agent
+
 logger = logging.getLogger(__name__)
 
 ARCA_PROMPT_NAME = "automated_refinement_coordinator_agent_v1.yaml" # If LLM-based decision making is used
@@ -209,6 +212,7 @@ class ARCAOutput(BaseModel):
     error_message: Optional[str] = Field(None, description="Error message if ARCA encountered an issue.")
 
 
+@register_autonomous_engine_agent(capabilities=["autonomous_coordination", "quality_gates", "refinement_orchestration"])
 class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent[ARCAReviewInput, ARCAOutput]):
     AGENT_ID: ClassVar[str] = "AutomatedRefinementCoordinatorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Automated Refinement Coordinator Agent v1"

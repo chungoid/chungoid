@@ -21,6 +21,7 @@ from ...utils.chromadb_migration_utils import (
 )
 from ...utils.agent_registry import AgentCard
 from ...utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class BlueprintReviewerOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
+@register_autonomous_engine_agent(capabilities=["review_protocol", "quality_validation", "architectural_review"])
 class BlueprintReviewerAgent_v1(ProtocolAwareAgent[BlueprintReviewerInput, BlueprintReviewerOutput]):
     """
     Performs an advanced review of a Project Blueprint, suggesting optimizations, architectural alternatives, and identifying subtle flaws.

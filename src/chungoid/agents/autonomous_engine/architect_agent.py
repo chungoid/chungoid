@@ -16,6 +16,7 @@ from ...utils.prompt_manager import PromptManager, PromptRenderError
 from ...schemas.common import ConfidenceScore
 from ...utils.agent_registry import AgentCard # For AgentCard
 from ...utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class ArchitectAgentOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
+@register_autonomous_engine_agent(capabilities=["architecture_design", "system_planning", "blueprint_generation"])
 class ArchitectAgent_v1(ProtocolAwareAgent[ArchitectAgentInput, ArchitectAgentOutput]):
     """
     Generates a technical blueprint based on an LOPRD and project context.

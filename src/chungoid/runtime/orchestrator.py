@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
 from typing import Any, Dict, List, Optional, Union, Callable, cast, ClassVar, Tuple
 import re
+import inspect
 
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider, NoAgentFoundForCategoryError, AmbiguousAgentCategoryError
 from chungoid.utils.state_manager import StateManager
@@ -127,92 +128,309 @@ class AutonomousExecutionEngine:
 
 class AutonomousExecutionEngine:
     """
-    Week 2: Full Autonomous Execution Engine Implementation
-    
-    Enables agents to work autonomously with tools until task completion,
-    transforming from single-pass LLM execution to tool-driven feedback loops.
+    Autonomous execution engine that enables agents to work with real tools
+    until task completion with sophisticated feedback loops and validation.
     """
     
     def __init__(self, orchestrator: 'AsyncOrchestrator'):
         self.orchestrator = orchestrator
-        self.logger = logging.getLogger(f"{__name__}.AutonomousExecutionEngine")
+        self.logger = logging.getLogger(__name__)
+        
+        # Tool integration components - initialize first
+        self._tool_registry = {}
+        self._parameter_mappings = {}
+        self._initialize_tool_registry()
+        self._initialize_parameter_mappings()
+        
+        # Initialize MCP tools after registry is ready
         self.mcp_tools = self._initialize_mcp_tools()
         self.tool_validator = ToolValidationProtocol()
-        self.logger.info("AutonomousExecutionEngine initialized with protocol-tool integration")
     
-    def _initialize_mcp_tools(self) -> Dict[str, Callable]:
-        """Initialize all available MCP tools for autonomous execution."""
-        tools_registry = {}
-        
+    def _initialize_tool_registry(self) -> None:
+        """Initialize registry of real MCP tool functions."""
         try:
-            # Discover available tools from each category - no imports needed
-            # Tools are created as lambda wrappers that call _safe_tool_call
-            tools_registry.update(self._discover_chromadb_tools())
-            tools_registry.update(self._discover_filesystem_tools())
-            tools_registry.update(self._discover_terminal_tools())
-            tools_registry.update(self._discover_content_tools())
+            # Import all MCP tool modules
+            from chungoid.mcp_tools.filesystem.file_operations import (
+                filesystem_read_file, filesystem_write_file, filesystem_copy_file,
+                filesystem_move_file, filesystem_safe_delete
+            )
+            from chungoid.mcp_tools.filesystem.directory_operations import (
+                filesystem_list_directory, filesystem_create_directory,
+                filesystem_project_scan, filesystem_sync_directories
+            )
+            from chungoid.mcp_tools.filesystem.batch_operations import (
+                filesystem_batch_operations, filesystem_backup_restore,
+                filesystem_template_expansion
+            )
+            from chungoid.mcp_tools.chromadb.document_tools import (
+                chroma_add_documents, chroma_query_documents, chroma_get_documents,
+                chroma_update_documents, chroma_delete_documents, chromadb_batch_operations,
+                chromadb_reflection_query, chromadb_update_metadata
+            )
+            from chungoid.mcp_tools.chromadb.collection_tools import (
+                chroma_list_collections, chroma_create_collection, chroma_get_collection_info,
+                chroma_get_collection_count, chroma_modify_collection, chroma_delete_collection,
+                chroma_peek_collection
+            )
+            from chungoid.mcp_tools.chromadb.project_tools import (
+                chroma_initialize_project_collections, chroma_set_project_context,
+                chroma_get_project_status
+            )
+            from chungoid.mcp_tools.terminal.command_execution import (
+                terminal_execute_command, terminal_execute_batch, terminal_get_environment,
+                terminal_set_working_directory
+            )
+            from chungoid.mcp_tools.terminal.security import (
+                terminal_classify_command, terminal_check_permissions, terminal_sandbox_status
+            )
+            from chungoid.mcp_tools.content.web_fetching import (
+                tool_fetch_web_content, web_content_summarize, web_content_extract,
+                web_content_validate
+            )
+            from chungoid.mcp_tools.content.dynamic_content import (
+                mcptool_get_named_content, content_generate_dynamic, content_cache_management,
+                content_version_control
+            )
             
-            self.logger.info(f"Initialized {len(tools_registry)} MCP tools for autonomous execution")
+            # Register all tools
+            self._tool_registry.update({
+                # Filesystem tools
+                "filesystem_read_file": filesystem_read_file,
+                "filesystem_write_file": filesystem_write_file,
+                "filesystem_copy_file": filesystem_copy_file,
+                "filesystem_move_file": filesystem_move_file,
+                "filesystem_safe_delete": filesystem_safe_delete,
+                "filesystem_list_directory": filesystem_list_directory,
+                "filesystem_create_directory": filesystem_create_directory,
+                "filesystem_project_scan": filesystem_project_scan,
+                "filesystem_sync_directories": filesystem_sync_directories,
+                "filesystem_batch_operations": filesystem_batch_operations,
+                "filesystem_backup_restore": filesystem_backup_restore,
+                "filesystem_template_expansion": filesystem_template_expansion,
+                
+                # ChromaDB tools
+                "chroma_add_documents": chroma_add_documents,
+                "chroma_query_documents": chroma_query_documents,
+                "chroma_get_documents": chroma_get_documents,
+                "chroma_update_documents": chroma_update_documents,
+                "chroma_delete_documents": chroma_delete_documents,
+                "chromadb_batch_operations": chromadb_batch_operations,
+                "chromadb_reflection_query": chromadb_reflection_query,
+                "chromadb_update_metadata": chromadb_update_metadata,
+                "chroma_list_collections": chroma_list_collections,
+                "chroma_create_collection": chroma_create_collection,
+                "chroma_get_collection_info": chroma_get_collection_info,
+                "chroma_get_collection_count": chroma_get_collection_count,
+                "chroma_modify_collection": chroma_modify_collection,
+                "chroma_delete_collection": chroma_delete_collection,
+                "chroma_peek_collection": chroma_peek_collection,
+                "chroma_initialize_project_collections": chroma_initialize_project_collections,
+                "chroma_set_project_context": chroma_set_project_context,
+                "chroma_get_project_status": chroma_get_project_status,
+                
+                # Terminal tools
+                "terminal_execute_command": terminal_execute_command,
+                "terminal_execute_batch": terminal_execute_batch,
+                "terminal_get_environment": terminal_get_environment,
+                "terminal_set_working_directory": terminal_set_working_directory,
+                "terminal_classify_command": terminal_classify_command,
+                "terminal_check_permissions": terminal_check_permissions,
+                "terminal_sandbox_status": terminal_sandbox_status,
+                
+                # Content tools
+                "tool_fetch_web_content": tool_fetch_web_content,
+                "web_content_summarize": web_content_summarize,
+                "web_content_extract": web_content_extract,
+                "web_content_validate": web_content_validate,
+                "mcptool_get_named_content": mcptool_get_named_content,
+                "content_generate_dynamic": content_generate_dynamic,
+                "content_cache_management": content_cache_management,
+                "content_version_control": content_version_control,
+            })
             
-        except Exception as e:
-            self.logger.warning(f"Error initializing MCP tools: {e}")
+            self.logger.info(f"Initialized tool registry with {len(self._tool_registry)} real MCP tools")
             
-        return tools_registry
+        except ImportError as e:
+            self.logger.error(f"Failed to import MCP tools: {e}")
+            self._tool_registry = {}
     
-    def _discover_chromadb_tools(self) -> Dict[str, Callable]:
-        """Discover ChromaDB tools for vector operations."""
-        return {
-            "chroma_query_documents": lambda **kwargs: self._safe_tool_call("chroma_query_documents", **kwargs),
-            "chroma_store_document": lambda **kwargs: self._safe_tool_call("chroma_store_document", **kwargs),
-            "chroma_get_collection": lambda **kwargs: self._safe_tool_call("chroma_get_collection", **kwargs),
-        }
-    
-    def _discover_filesystem_tools(self) -> Dict[str, Callable]:
-        """Discover filesystem tools for file operations."""
-        return {
-            "filesystem_read_file": lambda **kwargs: self._safe_tool_call("filesystem_read_file", **kwargs),
-            "filesystem_write_file": lambda **kwargs: self._safe_tool_call("filesystem_write_file", **kwargs),
-            "filesystem_list_dir": lambda **kwargs: self._safe_tool_call("filesystem_list_dir", **kwargs),
-            "filesystem_project_scan": lambda **kwargs: self._safe_tool_call("filesystem_project_scan", **kwargs),
-            "codebase_search": lambda **kwargs: self._safe_tool_call("codebase_search", **kwargs),
-            "file_search": lambda **kwargs: self._safe_tool_call("file_search", **kwargs),
-        }
-    
-    def _discover_terminal_tools(self) -> Dict[str, Callable]:
-        """Discover terminal tools for command execution."""
-        return {
-            "terminal_execute_command": lambda **kwargs: self._safe_tool_call("terminal_execute_command", **kwargs),
-            "terminal_validate_environment": lambda **kwargs: self._safe_tool_call("terminal_validate_environment", **kwargs),
-        }
-    
-    def _discover_content_tools(self) -> Dict[str, Callable]:
-        """Discover content tools for generation and fetching."""
-        return {
-            "content_generate": lambda **kwargs: self._safe_tool_call("content_generate", **kwargs),
-            "content_fetch": lambda **kwargs: self._safe_tool_call("content_fetch", **kwargs),
-            "content_validate": lambda **kwargs: self._safe_tool_call("content_validate", **kwargs),
-        }
-    
-    def _safe_tool_call(self, tool_name: str, **kwargs) -> Dict[str, Any]:
-        """Safe wrapper for tool calls with error handling."""
-        try:
-            # This is a placeholder for actual tool invocation
-            # In real implementation, this would call the actual MCP tool
-            return {
-                "tool": tool_name,
-                "status": "success",
-                "result": f"Tool {tool_name} executed with args: {kwargs}",
-                "autonomous": True
+    def _initialize_parameter_mappings(self) -> None:
+        """Initialize intelligent parameter mappings for tool integration."""
+        self._parameter_mappings = {
+            # Common parameter mappings
+            "project_context": ["project_path", "project_id"],
+            "file_operations": ["file_path", "content", "encoding"],
+            "directory_operations": ["directory_path", "recursive"],
+            "chroma_operations": ["collection_name", "documents", "query_texts"],
+            "terminal_operations": ["command", "working_directory", "environment"],
+            "content_operations": ["url", "content_type", "cache_duration"],
+            
+            # Tool-specific parameter mappings
+            "filesystem_read_file": {
+                "required": ["file_path"],
+                "optional": ["encoding", "detect_encoding", "max_size_mb", "project_path", "project_id"],
+                "defaults": {"detect_encoding": True, "max_size_mb": 50}
+            },
+            "filesystem_write_file": {
+                "required": ["file_path", "content"],
+                "optional": ["encoding", "create_backup", "atomic_write", "create_directories", "project_path", "project_id"],
+                "defaults": {"encoding": "utf-8", "create_backup": True, "atomic_write": True, "create_directories": True}
+            },
+            "chroma_query_documents": {
+                "required": ["collection_name"],
+                "optional": ["query_texts", "query_embeddings", "n_results", "where", "where_document", "include", "project_path", "project_id"],
+                "defaults": {"n_results": 10}
+            },
+            "terminal_execute_command": {
+                "required": ["command"],
+                "optional": ["working_directory", "environment", "timeout", "capture_output", "project_path", "project_id"],
+                "defaults": {"capture_output": True, "timeout": 30}
             }
+        }
+    
+    def _map_tool_parameters(self, tool_name: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Map generic kwargs to specific tool parameters with intelligent defaults."""
+        try:
+            # Get tool function to inspect signature
+            tool_function = self._tool_registry.get(tool_name)
+            if not tool_function:
+                self.logger.warning(f"Tool {tool_name} not found in registry")
+                return kwargs
+            
+            # Get function signature
+            sig = inspect.signature(tool_function)
+            valid_params = set(sig.parameters.keys())
+            
+            # Get parameter mapping for this tool
+            tool_mapping = self._parameter_mappings.get(tool_name, {})
+            
+            # Start with provided kwargs
+            mapped_params = {}
+            
+            # Map known parameters
+            for key, value in kwargs.items():
+                if key in valid_params:
+                    mapped_params[key] = value
+                else:
+                    # Try to map common parameter names
+                    if key in ["path", "filepath"] and "file_path" in valid_params:
+                        mapped_params["file_path"] = value
+                    elif key in ["dir", "directory"] and "directory_path" in valid_params:
+                        mapped_params["directory_path"] = value
+                    elif key in ["collection"] and "collection_name" in valid_params:
+                        mapped_params["collection_name"] = value
+                    elif key in ["query", "search"] and "query_texts" in valid_params:
+                        mapped_params["query_texts"] = [value] if isinstance(value, str) else value
+                    elif key in ["cmd"] and "command" in valid_params:
+                        mapped_params["command"] = value
+                    else:
+                        self.logger.debug(f"Unmapped parameter {key} for tool {tool_name}")
+            
+            # Add intelligent defaults
+            if "project_path" in valid_params and "project_path" not in mapped_params:
+                mapped_params["project_path"] = str(Path.cwd())
+            
+            if "project_id" in valid_params and "project_id" not in mapped_params:
+                mapped_params["project_id"] = kwargs.get("run_id", "autonomous_execution")
+            
+            # Apply tool-specific defaults
+            defaults = tool_mapping.get("defaults", {})
+            for param, default_value in defaults.items():
+                if param in valid_params and param not in mapped_params:
+                    mapped_params[param] = default_value
+            
+            self.logger.debug(f"Mapped parameters for {tool_name}: {mapped_params}")
+            return mapped_params
+            
         except Exception as e:
-            self.logger.error(f"Tool {tool_name} failed: {e}")
+            self.logger.error(f"Failed to map parameters for {tool_name}: {e}")
+            return kwargs
+    
+    async def _safe_tool_call(self, tool_name: str, **kwargs) -> Dict[str, Any]:
+        """Enhanced tool call with real MCP tool integration."""
+        try:
+            # Get real tool function
+            tool_function = self._tool_registry.get(tool_name)
+            if not tool_function:
+                self.logger.warning(f"Tool {tool_name} not found in registry, using fallback")
+                return {
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": f"Tool {tool_name} not available",
+                    "autonomous": True
+                }
+            
+            # Map parameters intelligently
+            mapped_params = self._map_tool_parameters(tool_name, kwargs)
+            
+            # Execute real tool function
+            self.logger.info(f"Executing real tool {tool_name} with parameters: {list(mapped_params.keys())}")
+            
+            # Handle async tool execution
+            if asyncio.iscoroutinefunction(tool_function):
+                result = await tool_function(**mapped_params)
+            else:
+                # Run sync function in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, lambda: tool_function(**mapped_params))
+            
+            # Normalize result format
+            normalized_result = self._normalize_tool_result(tool_name, result)
+            
+            self.logger.info(f"Tool {tool_name} executed successfully")
+            return normalized_result
+            
+        except Exception as e:
+            self.logger.error(f"Real tool {tool_name} failed: {e}", exc_info=True)
             return {
                 "tool": tool_name,
                 "status": "error",
                 "error": str(e),
-                "autonomous": True
+                "autonomous": True,
+                "fallback_used": False
             }
     
+    def _normalize_tool_result(self, tool_name: str, result: Any) -> Dict[str, Any]:
+        """Normalize tool result to consistent format."""
+        try:
+            if isinstance(result, dict):
+                # Add autonomous execution metadata
+                normalized = result.copy()
+                normalized.update({
+                    "tool": tool_name,
+                    "autonomous": True,
+                    "real_tool_used": True,
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+                # Ensure status field exists
+                if "status" not in normalized and "success" in normalized:
+                    normalized["status"] = "success" if normalized["success"] else "error"
+                elif "status" not in normalized:
+                    normalized["status"] = "success"
+                
+                return normalized
+            else:
+                # Wrap non-dict results
+                return {
+                    "tool": tool_name,
+                    "status": "success",
+                    "result": result,
+                    "autonomous": True,
+                    "real_tool_used": True,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Failed to normalize result for {tool_name}: {e}")
+            return {
+                "tool": tool_name,
+                "status": "error",
+                "error": f"Result normalization failed: {e}",
+                "autonomous": True,
+                "real_tool_used": True
+            }
+
     def _is_autonomous_capable(self, agent_instance) -> bool:
         """Check if agent supports autonomous execution."""
         if agent_instance is None:
@@ -597,6 +815,67 @@ class AutonomousExecutionEngine:
         refined_task["iteration_count"] = task.get("iteration_count", 0) + 1
         
         return refined_task
+
+    def _initialize_mcp_tools(self) -> Dict[str, Callable]:
+        """Initialize all available MCP tools for autonomous execution."""
+        tools_registry = {}
+        
+        try:
+            # Create lambda wrappers for all registered tools
+            for tool_name in self._tool_registry.keys():
+                # Use closure to capture tool_name correctly
+                def create_tool_wrapper(name: str) -> Callable:
+                    return lambda **kwargs: asyncio.run(self._safe_tool_call(name, **kwargs))
+                tools_registry[tool_name] = create_tool_wrapper(tool_name)
+            
+            # Add legacy tool discovery for backward compatibility
+            tools_registry.update(self._discover_chromadb_tools())
+            tools_registry.update(self._discover_filesystem_tools())
+            tools_registry.update(self._discover_terminal_tools())
+            tools_registry.update(self._discover_content_tools())
+            
+            self.logger.info(f"Initialized {len(tools_registry)} MCP tools for autonomous execution")
+            
+        except Exception as e:
+            self.logger.warning(f"Error initializing MCP tools: {e}")
+            
+        return tools_registry
+    
+    def _discover_chromadb_tools(self) -> Dict[str, Callable]:
+        """Discover ChromaDB tools for vector operations."""
+        return {
+            "chroma_query_documents": lambda **kwargs: asyncio.run(self._safe_tool_call("chroma_query_documents", **kwargs)),
+            "chroma_store_document": lambda **kwargs: asyncio.run(self._safe_tool_call("chroma_add_documents", **kwargs)),
+            "chroma_get_collection": lambda **kwargs: asyncio.run(self._safe_tool_call("chroma_get_collection_info", **kwargs)),
+            "chromadb_batch_operations": lambda **kwargs: asyncio.run(self._safe_tool_call("chromadb_batch_operations", **kwargs)),
+            "chromadb_reflection_query": lambda **kwargs: asyncio.run(self._safe_tool_call("chromadb_reflection_query", **kwargs)),
+        }
+    
+    def _discover_filesystem_tools(self) -> Dict[str, Callable]:
+        """Discover filesystem tools for file operations."""
+        return {
+            "filesystem_read_file": lambda **kwargs: asyncio.run(self._safe_tool_call("filesystem_read_file", **kwargs)),
+            "filesystem_write_file": lambda **kwargs: asyncio.run(self._safe_tool_call("filesystem_write_file", **kwargs)),
+            "filesystem_list_dir": lambda **kwargs: asyncio.run(self._safe_tool_call("filesystem_list_directory", **kwargs)),
+            "filesystem_project_scan": lambda **kwargs: asyncio.run(self._safe_tool_call("filesystem_project_scan", **kwargs)),
+            "codebase_search": lambda **kwargs: asyncio.run(self._safe_tool_call("filesystem_project_scan", **kwargs)),
+            "file_search": lambda **kwargs: asyncio.run(self._safe_tool_call("filesystem_project_scan", **kwargs)),
+        }
+    
+    def _discover_terminal_tools(self) -> Dict[str, Callable]:
+        """Discover terminal tools for command execution."""
+        return {
+            "terminal_execute_command": lambda **kwargs: asyncio.run(self._safe_tool_call("terminal_execute_command", **kwargs)),
+            "terminal_validate_environment": lambda **kwargs: asyncio.run(self._safe_tool_call("terminal_get_environment", **kwargs)),
+        }
+    
+    def _discover_content_tools(self) -> Dict[str, Callable]:
+        """Discover content tools for generation and fetching."""
+        return {
+            "content_generate": lambda **kwargs: asyncio.run(self._safe_tool_call("content_generate_dynamic", **kwargs)),
+            "content_fetch": lambda **kwargs: asyncio.run(self._safe_tool_call("tool_fetch_web_content", **kwargs)),
+            "content_validate": lambda **kwargs: asyncio.run(self._safe_tool_call("web_content_validate", **kwargs)),
+        }
 
 # ---------------------------------------------------------------------------
 # DSL → Python models

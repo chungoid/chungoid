@@ -50,6 +50,7 @@ from chungoid.utils.smart_dependency_analysis import (
     DependencyInfo,
     DependencyAnalysisResult
 )
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -715,6 +716,7 @@ class NodeJSDependencyStrategy(DependencyStrategy):
 # Main Dependency Management Agent
 # =============================================================================
 
+@register_autonomous_engine_agent(capabilities=["dependency_analysis", "package_management", "conflict_resolution"])
 class DependencyManagementAgent_v1(ProtocolAwareAgent[DependencyManagementInput, DependencyManagementOutput]):
     """
     Comprehensive autonomous dependency management agent.
@@ -740,7 +742,7 @@ class DependencyManagementAgent_v1(ProtocolAwareAgent[DependencyManagementInput,
     
     ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
-    AGENT_ID: ClassVar[str] = "chungoid.agents.autonomous_engine.dependency_management_agent.DependencyManagementAgent_v1"
+    AGENT_ID: ClassVar[str] = "DependencyManagementAgent_v1"
     AGENT_NAME: ClassVar[str] = "Dependency Management Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Comprehensive autonomous dependency management with multi-language support and intelligent conflict resolution"
     VERSION: ClassVar[str] = "1.0.0"

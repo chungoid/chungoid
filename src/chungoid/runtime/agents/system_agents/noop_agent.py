@@ -10,12 +10,14 @@ from chungoid.schemas.orchestration import SharedContext
 try:
     from chungoid.utils.llm_provider import LLMProvider
     from chungoid.utils.prompt_manager import PromptManager
-    from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+    # REMOVED: ProjectChromaManagerAgent_v1 import - replaced with MCP tools
+    # from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 except ImportError:
     LLMProvider = Any
     PromptManager = Any
-    ProjectChromaManagerAgent_v1 = Any
 
+# Define ProjectChromaManagerAgent_v1 as Any since it doesn't exist
+ProjectChromaManagerAgent_v1 = Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,17 @@ class NoOpOutput(BaseModel):
     message: str
     passthrough_data: Optional[Dict[str, Any]] = None
 
+from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.utils.agent_registry import AgentCard
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager
+from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.protocols.base.protocol_interface import ProtocolPhase
+
+# Registry-first architecture import
+from chungoid.registry import register_system_agent
+
+@register_system_agent(capabilities=["simple_operations", "status_reporting"])
 class NoOpAgent_v1(ProtocolAwareAgent[NoOpInput, NoOpOutput]):
     """
     A No-Operation Agent. It logs its invocation and returns a success message.
@@ -66,7 +79,7 @@ class NoOpAgent_v1(ProtocolAwareAgent[NoOpInput, NoOpOutput]):
         kwargs_for_super["agent_id"] = effective_agent_id
         
         super().__init__(**kwargs_for_super)
-        logger.info(f"NoOpAgent_v1 (ID: {self.agent_id}) initialized.")
+        logger.info(f"NoOpAgent_v1 (ID: {self.get_id()}) initialized.")
 
     # ADDED: Protocol-aware execution method (hybrid approach)
     async def execute_with_protocols(self, task_input: NoOpInput, full_context: Optional[Dict[str, Any]] = None) -> NoOpOutput:
@@ -131,11 +144,20 @@ class NoOpAgent_v1(ProtocolAwareAgent[NoOpInput, NoOpOutput]):
         full_context: Optional[SharedContext] = None,
     ) -> NoOpOutput:
         logger.info(
-            f"NoOpAgent_v1 (ID: {self.agent_id}) invoked. Input: {task_input}. Context: {full_context}"
+            f"NoOpAgent_v1 (ID: {self.get_id()}) invoked. Input: {task_input}. Context: {full_context}"
         )
+        
+        # Handle both Pydantic model and dictionary inputs
+        if isinstance(task_input, dict):
+            # Convert dict to NoOpInput model
+            passthrough_data = task_input.get('passthrough_data')
+        else:
+            # Already a Pydantic model
+            passthrough_data = task_input.passthrough_data
+            
         return NoOpOutput(
-            message=f"NoOpAgent_v1 (ID: {self.agent_id}) executed successfully.",
-            passthrough_data=task_input.passthrough_data
+            message=f"NoOpAgent_v1 (ID: {self.get_id()}) executed successfully.",
+            passthrough_data=passthrough_data
         )
 
     @classmethod

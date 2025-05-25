@@ -65,13 +65,12 @@ from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterP
 
 # Real Agent Imports (ensure all necessary are here)
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
-from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent
 from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
-from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent
 from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+# REMOVED: ProjectChromaManagerAgent_v1 import - replaced with MCP tools
+# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
 import subprocess
 import json as py_json # Avoid conflict with click.json
@@ -116,7 +115,7 @@ from chungoid.schemas.agent_master_planner import MasterPlannerInput # <<< ADD T
 # Import for CoreCodeGeneratorAgent
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
 # Import for CoreTestGeneratorAgent
-from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent
+# from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent  # COMMENTED OUT - Module doesn't exist
 # Import for CodeIntegrationAgent - UPDATED
 from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
@@ -126,7 +125,7 @@ from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 
 # Import the new system_test_runner_agent
 # from chungoid.runtime.agents import system_test_runner_agent # ADDED # OLD IMPORT
-from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent # NEW IMPORT
+# from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent # NEW IMPORT - COMMENTED OUT - Module doesn't exist
 from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1 # ADDED IMPORT
 
 # Ensure AgentID type is available if used for keys, though strings are fine for dict keys.
@@ -149,14 +148,15 @@ from chungoid.runtime.agents.agent_base import BaseAgent # For type hinting # CO
 
 # ADDED: Imports for production system agents and dependencies
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
-from chungoid.agents.autonomous_engine import get_autonomous_engine_agent_fallback_map
+# REMOVED: from chungoid.agents.autonomous_engine import get_autonomous_engine_agent_fallback_map
+# Legacy fallback map import removed - using registry-first architecture
 
 # For dependencies of RegistryAgentProvider and agents
 from chungoid.utils.llm_provider import LLMProvider # Already imported but ensure it's available
 # from chungoid.utils.prompt_manager import PromptManager # Already imported but ensure it's available
 
 # ADDED: Import ProjectChromaManagerAgent_v1 at the top for the map
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
 # ADDED: Import for NoOpAgent_v1
 from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1 
@@ -164,35 +164,37 @@ from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1
 # --- Production System Agents Fallback Map ---
 # This map defines the primary fallback for system agents.
 # It uses the actual agent classes.
-PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] = {
-    MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
-    MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
-    CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Alias for CoreCodeGeneratorAgent_v1
-    TestGeneratorAgent.AGENT_ID: TestGeneratorAgent,   # Alias for CoreTestGeneratorAgent_v1
-    SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
-    "SmartCodeGeneratorAgent_v1": SmartCodeIntegrationAgent_v1, # ADDED ALIAS
-    SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent, # This is SystemTestRunnerAgent_v1
-    SystemFileSystemAgent_v1.AGENT_ID: SystemFileSystemAgent_v1, # Ensure this uses the class name
-    SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
-    ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
-    NoOpAgent_v1.AGENT_ID: NoOpAgent_v1, # ADDED NoOpAgent_v1
-    # ProjectChromaManagerAgent_v1 is typically instantiated directly in CLI commands
-    # and added to the fallback map as an instance, not as a class here.
-    # AutonomousEngineAgent_v1 is handled by get_autonomous_engine_agent_fallback_map
-}
+# REMOVED: PRODUCTION_SYSTEM_AGENTS_MAP - replaced with registry-first architecture
+# All agents are now auto-registered via @register_agent decorators
+# PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] = {
+#     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
+#     MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
+#     CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Alias for CoreCodeGeneratorAgent_v1
+#     SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
+#     "SmartCodeGeneratorAgent_v1": SmartCodeIntegrationAgent_v1, # ADDED ALIAS
+#     # SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent, # COMMENTED OUT - Module doesn't exist
+#     SystemFileSystemAgent_v1.AGENT_ID: SystemFileSystemAgent_v1, # Ensure this uses the class name
+#     SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
+#     ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
+#     NoOpAgent_v1.AGENT_ID: NoOpAgent_v1, # ADDED NoOpAgent_v1
+#     # ProjectChromaManagerAgent_v1 is typically instantiated directly in CLI commands
+#     # and added to the fallback map as an instance, not as a class here.
+#     # AutonomousEngineAgent_v1 is handled by get_autonomous_engine_agent_fallback_map
+# }
 # --- End Production System Agents Fallback Map ---
 
+# REMOVED: Legacy autonomous engine fallback map - replaced with registry-first architecture
 # --- Autonomous Engine Agents Fallback Map ---
-def get_autonomous_engine_agent_fallback_map() -> Dict[AgentID, Union[Type[BaseAgent], BaseAgent]]:
-    """Returns a dictionary of core autonomous engine agents for fallback."""
-    # This map should only contain system-critical, non-mock agents
-    # that are part of the autonomous engine's core capabilities.
-    return {
-        # AutonomousEngineAgent_v1.AGENT_ID: AutonomousEngineAgent_v1, # COMMENTED OUT
-        # Other autonomous engine agents can be added here as classes.
-        # ProjectChromaManagerAgent_v1 is often instantiated specifically with project context
-        # in the CLI command logic and added to the final_fallback_map there.
-    }
+# def get_autonomous_engine_agent_fallback_map() -> Dict[AgentID, Union[Type[BaseAgent], BaseAgent]]:
+#     """Returns a dictionary of core autonomous engine agents for fallback."""
+#     # This map should only contain system-critical, non-mock agents
+#     # that are part of the autonomous engine's core capabilities.
+#     return {
+#         # AutonomousEngineAgent_v1.AGENT_ID: AutonomousEngineAgent_v1, # COMMENTED OUT
+#         # Other autonomous engine agents can be added here as classes.
+#         # ProjectChromaManagerAgent_v1 is often instantiated specifically with project context
+#         # in the CLI command logic and added to the final_fallback_map there.
+#     }
 # --- End Autonomous Engine Agents Fallback Map ---
 
 # Assuming StatusFileError might be a custom exception, if not defined elsewhere, it might need to be.
@@ -713,9 +715,9 @@ def flow_run(ctx: click.Context,
     
     tags_list = [t.strip() for t in tags.split(",")] if tags else []
 
-    # Fallback map for agents - similar to build command
-    final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
-    final_fallback_map.update(get_autonomous_engine_agent_fallback_map())
+    # REPLACED: Legacy fallback map approach with registry-first architecture
+    # final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
+    # final_fallback_map.update(get_autonomous_engine_agent_fallback_map())
     
     llm_manager_for_flow_run: Optional[LLMManager] = None
     try:
@@ -745,21 +747,28 @@ def flow_run(ctx: click.Context,
         logger.error(f"Flow Run: Failed to initialize LLMManager: {e_llm_init}", exc_info=True)
         pass # Allow orchestrator creation; flows not needing LLM might still work.
 
+    # REPLACED: Legacy agent registry with registry-first architecture
     # Agent Registry and Provider
-    agent_registry = AgentRegistry(project_root=project_path, chroma_mode="persistent")
-    # Register essential agents (can be expanded)
-    agent_registry.add_agent_card(core_stage_executor_card())
-    agent_registry.add_agent_card(get_master_planner_agent_card())
-    agent_registry.add_agent_card(get_master_planner_reviewer_agent_card())
+    # agent_registry = AgentRegistry(project_root=project_path, chroma_mode="persistent")
+    # # Register essential agents (can be expanded)
+    # agent_registry.add_agent_card(core_stage_executor_card())
+    # agent_registry.add_agent_card(get_master_planner_agent_card())
+    # agent_registry.add_agent_card(get_master_planner_reviewer_agent_card())
 
-    agent_provider = RegistryAgentProvider(
-        registry=agent_registry,
-        fallback=final_fallback_map,  # RENAMED from fallback_agents_map
-        llm_provider=llm_manager_for_flow_run, # RENAMED from llm_manager
-        prompt_manager=prompt_manager_instance 
-    )
-    logger.info("Flow Run: AgentProvider (RegistryAgentProvider) initialized.")
+    # agent_provider = RegistryAgentProvider(
+    #     registry=agent_registry,
+    #     fallback=final_fallback_map,  # RENAMED from fallback_agents_map
+    #     llm_provider=llm_manager_for_flow_run, # RENAMED from llm_manager
+    #     prompt_manager=prompt_manager_instance 
+    # )
     
+    # ADDED: Registry-first agent provider (NO fallback maps)
+    agent_provider = get_registry_agent_provider(
+        llm_provider=llm_manager_for_flow_run,
+        prompt_manager=prompt_manager_instance
+    )
+    logger.info("Flow Run: Registry-first AgentProvider initialized (no fallback maps).")
+
     # Shared context for this run
     # Crucial: project_id MUST be correctly determined and passed if agents like PCMA rely on it in their __init__ via shared_context.
     current_shared_context = {
@@ -973,22 +982,29 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
             logger.error(f"Flow Resume: Failed to initialize LLMManager: {e_llm_resume_init}", exc_info=True)
             pass
 
+        # REPLACED: Legacy fallback map approach with registry-first architecture
         # Fallback map for agents (consistency with other commands)
-        resume_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
-        resume_fallback_map.update(get_autonomous_engine_agent_fallback_map())
+        # resume_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
+        # resume_fallback_map.update(get_autonomous_engine_agent_fallback_map())
 
-        agent_registry_resume = AgentRegistry(project_root=project_path, chroma_mode="persistent")
-        agent_registry_resume.add_agent_card(core_stage_executor_card())
-        agent_registry_resume.add_agent_card(get_master_planner_agent_card())
-        agent_registry_resume.add_agent_card(get_master_planner_reviewer_agent_card())
+        # agent_registry_resume = AgentRegistry(project_root=project_path, chroma_mode="persistent")
+        # agent_registry_resume.add_agent_card(core_stage_executor_card())
+        # agent_registry_resume.add_agent_card(get_master_planner_agent_card())
+        # agent_registry_resume.add_agent_card(get_master_planner_reviewer_agent_card())
 
-        agent_provider_resume = RegistryAgentProvider(
-            registry=agent_registry_resume,
-            fallback=resume_fallback_map,
-            llm_provider=llm_manager_for_resume, # RENAMED from llm_manager
+        # agent_provider_resume = RegistryAgentProvider(
+        #     registry=agent_registry_resume,
+        #     fallback=resume_fallback_map,
+        #     llm_provider=llm_manager_for_resume, # RENAMED from llm_manager
+        #     prompt_manager=prompt_manager_instance_for_resume
+        # )
+        
+        # ADDED: Registry-first agent provider (NO fallback maps)
+        agent_provider_resume = get_registry_agent_provider(
+            llm_provider=llm_manager_for_resume,
             prompt_manager=prompt_manager_instance_for_resume
         )
-        logger.info("Flow Resume: AgentProvider (RegistryAgentProvider) initialized.")
+        logger.info("Flow Resume: Registry-first AgentProvider initialized (no fallback maps).")
         
         # Shared context for resume operation
         resume_shared_context = {
@@ -1146,7 +1162,7 @@ def project_review(
         sys.exit(1)
 
 # Import for ProjectChromaManagerAgent_v1, needed by the 'build' command
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
+# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 # CORRECTED IMPORT for HumanReviewRecord
 from chungoid.schemas.project_status_schema import HumanReviewRecord 
 
@@ -1157,8 +1173,9 @@ from chungoid.schemas.project_status_schema import HumanReviewRecord
 @click.option("--run-id", "run_id_override_opt", type=str, default=None, help="Specify a custom run ID for this execution.")
 @click.option("--initial-context", type=str, default=None, help="JSON string containing initial context variables for the build.")
 @click.option("--tags", type=str, default=None, help="Comma-separated tags for this build (e.g., 'dev,release').")
+@click.option("--model", type=str, default=None, help="Override the default LLM model for this build (e.g., 'gpt-4o', 'gpt-4o-mini-2024-07-18').")
 @click.pass_context
-def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str]):
+def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: Path, run_id_override_opt: Optional[str], initial_context: Optional[str], tags: Optional[str], model: Optional[str]):
     """Initiates a project build from a user goal specified in a file."""
     logger = logging.getLogger("chungoid.cli.build")
     abs_project_dir = project_dir_opt.resolve()
@@ -1335,7 +1352,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             # The --use-mock-llm-provider flag IS available on `build`.
             build_command_llm_cli_params = {
                 "llm_provider": None, # No specific CLI flag for provider on 'build'
-                "llm_model": None,    # No specific CLI flag for model on 'build'
+                "llm_model": model,    # Use the --model CLI parameter
                 "llm_api_key": None,  # No specific CLI flag for api key on 'build'
                 "llm_base_url": None  # No specific CLI flag for base url on 'build'
             }
@@ -1399,42 +1416,48 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
         agent_registry = AgentRegistry(project_root=abs_project_dir)
         agent_registry.add(core_stage_executor_card, overwrite=True)
 
-        # Project Chroma Manager - needed for many core flows if not using mocks for it
-        project_chroma_manager = ProjectChromaManagerAgent_v1(
-            project_root_workspace_path=str(abs_project_dir),
-            project_id=current_project_id
-        )
+        # REMOVED: Project Chroma Manager - replaced with MCP tools
+        # project_chroma_manager = ProjectChromaManagerAgent_v1(
+        #     project_root_workspace_path=str(abs_project_dir),
+        #     project_id=current_project_id
+        # )
         
         core_system_agent_classes = {
-            SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,
-            ProjectChromaManagerAgent_v1.AGENT_ID: project_chroma_manager, # Pass the instance
+            # SystemTestRunnerAgent.AGENT_ID: SystemTestRunnerAgent,  # COMMENTED OUT - Module doesn't exist
+            # REMOVED: ProjectChromaManagerAgent_v1.AGENT_ID: project_chroma_manager, # Pass the instance
         }
 
+        # REPLACED: Legacy fallback map approach with registry-first architecture
         # Determine final fallback map
-        final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = {}
+        # final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = {}
         
         # Option 2: Selective fallback for core agents
         # These are agent CLASSES that the provider will instantiate if needed
         # The orchestrator primarily needs the MasterPlannerAgent. Others are plan-dependent.
-        final_fallback_map.update({
-            MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
-            ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
-            CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Original CoreCodeGeneratorAgent_v1
-            TestGeneratorAgent.AGENT_ID: TestGeneratorAgent, # Original CoreTestGeneratorAgent_v1
-            SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
-            "FileOperationAgent_v1": SystemFileSystemAgent_v1,
-            SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
-        })
-        final_fallback_map.update(core_system_agent_classes)
+        # final_fallback_map.update({
+        #     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
+        #     ArchitectAgent_v1.AGENT_ID: ArchitectAgent_v1,
+        #     CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Original CoreCodeGeneratorAgent_v1
+        #     SmartCodeIntegrationAgent_v1.AGENT_ID: SmartCodeIntegrationAgent_v1,
+        #     "FileOperationAgent_v1": SystemFileSystemAgent_v1,
+        #     SystemRequirementsGatheringAgent_v1.AGENT_ID: SystemRequirementsGatheringAgent_v1,
+        # })
+        # final_fallback_map.update(core_system_agent_classes)
         
-        agent_provider = RegistryAgentProvider(
-            registry=agent_registry,
-            fallback=final_fallback_map,
+        # agent_provider = RegistryAgentProvider(
+        #     registry=agent_registry,
+        #     fallback=final_fallback_map,
+        #     llm_provider=llm_manager,
+        #     prompt_manager=prompt_manager,
+        #     # REMOVED: project_chroma_manager=project_chroma_manager
+        # )
+        
+        # ADDED: Registry-first agent provider (NO fallback maps)
+        agent_provider = get_registry_agent_provider(
             llm_provider=llm_manager,
-            prompt_manager=prompt_manager,
-            project_chroma_manager=project_chroma_manager
+            prompt_manager=prompt_manager
         )
-        logger.info("RegistryAgentProvider initialized.")
+        logger.info("Build: Registry-first AgentProvider initialized (no fallback maps).")
 
         # Metrics Store Setup
         metrics_store_root = abs_project_dir
@@ -1612,3 +1635,176 @@ def show_config(ctx: click.Context, project_dir_opt: Path, raw: bool):
 # Ensure the main CLI entry point is correct
 if __name__ == "__main__":
     cli()
+
+@cli.group()
+def config():
+    """Configuration management commands."""
+    pass
+
+@config.command()
+@click.option('--format', 'output_format', type=click.Choice(['yaml', 'json', 'table']), default='table', help='Output format')
+def show(output_format):
+    """Show current configuration."""
+    try:
+        from chungoid.utils.config_manager import get_config_manager
+        
+        config_manager = get_config_manager()
+        config = config_manager.get_config()
+        
+        if output_format == 'yaml':
+            import yaml
+            click.echo(yaml.dump(config.dict(), default_flow_style=False))
+        elif output_format == 'json':
+            import json
+            click.echo(json.dumps(config.dict(), indent=2))
+        else:  # table format
+            click.echo("Current Configuration:")
+            click.echo(f"  LLM Provider: {config.llm.provider}")
+            click.echo(f"  Default Model: {config.llm.default_model}")
+            click.echo(f"  Fallback Model: {config.llm.fallback_model}")
+            click.echo(f"  Max Tokens: {config.llm.max_tokens_per_request}")
+            click.echo(f"  Cost Tracking: {config.llm.enable_cost_tracking}")
+            if config.llm.monthly_budget_limit:
+                click.echo(f"  Monthly Budget: ${config.llm.monthly_budget_limit}")
+            
+            api_key = config_manager.get_secret('llm.api_key')
+            click.echo(f"  API Key: {'Configured' if api_key else 'Not configured'}")
+            
+    except Exception as e:
+        click.echo(f"Error loading configuration: {e}", err=True)
+        sys.exit(1)
+
+@config.command()
+@click.argument('model_name')
+@click.option('--global', 'is_global', is_flag=True, help='Set globally instead of project-specific')
+@click.option('--budget', type=float, help='Set monthly budget limit')
+def set_model(model_name, is_global, budget):
+    """Set the default LLM model."""
+    try:
+        from chungoid.utils.config_manager import get_config_manager
+        from pathlib import Path
+        
+        # Validate model name
+        valid_models = [
+            "gpt-4o-mini-2024-07-18",
+            "gpt-4o", 
+            "gpt-4-turbo",
+            "gpt-3.5-turbo"
+        ]
+        
+        if model_name not in valid_models:
+            click.echo(f"Warning: '{model_name}' is not a recognized model name.")
+            click.echo(f"Valid models: {', '.join(valid_models)}")
+            if not click.confirm("Continue anyway?"):
+                return
+        
+        config_manager = get_config_manager()
+        
+        # Prepare updates
+        updates = {
+            "llm": {
+                "default_model": model_name
+            }
+        }
+        
+        if budget:
+            updates["llm"]["monthly_budget_limit"] = budget
+        
+        # Set project root if not global
+        if not is_global:
+            config_manager.set_project_root(Path.cwd())
+        
+        # Update configuration
+        config_manager.update_configuration(updates, persist=True)
+        
+        scope = "globally" if is_global else "for this project"
+        click.echo(f"✓ Set default model to '{model_name}' {scope}")
+        
+        if budget:
+            click.echo(f"✓ Set monthly budget limit to ${budget}")
+            
+        # Show cost warning for expensive models
+        if model_name in ["gpt-4o", "gpt-4-turbo"] and not budget:
+            click.echo("⚠️  Warning: This is a more expensive model. Consider setting a budget limit with --budget")
+            
+    except Exception as e:
+        click.echo(f"Error setting model: {e}", err=True)
+        sys.exit(1)
+
+@config.command()
+def validate():
+    """Validate current configuration."""
+    try:
+        from chungoid.utils.config_manager import get_config_manager
+        
+        config_manager = get_config_manager()
+        config = config_manager.get_config()
+        
+        click.echo("✓ Configuration is valid")
+        
+        # Check for common issues
+        api_key = config_manager.get_secret('llm.api_key')
+        if not api_key:
+            click.echo("⚠️  Warning: No API key configured. Set OPENAI_API_KEY environment variable.")
+        
+        if not config.llm.enable_cost_tracking:
+            click.echo("⚠️  Warning: Cost tracking is disabled. Enable it to monitor usage.")
+            
+        if not config.llm.monthly_budget_limit:
+            click.echo("⚠️  Warning: No monthly budget limit set. Consider setting one to prevent unexpected costs.")
+            
+    except Exception as e:
+        click.echo(f"✗ Configuration validation failed: {e}", err=True)
+        sys.exit(1)
+
+@config.command()
+@click.option('--model', help='Test with specific model')
+def test(model):
+    """Test LLM configuration with a simple request."""
+    try:
+        from chungoid.utils.config_manager import get_config_manager
+        from chungoid.utils.llm_provider import LLMManager
+        from chungoid.utils.prompt_manager import PromptManager
+        import asyncio
+        
+        config_manager = get_config_manager()
+        config = config_manager.get_config()
+        
+        # Check API key
+        api_key = config_manager.get_secret('llm.api_key')
+        if not api_key:
+            click.echo("✗ No API key configured. Set OPENAI_API_KEY environment variable.", err=True)
+            sys.exit(1)
+        
+        click.echo("Testing LLM configuration...")
+        
+        # Create minimal LLM manager
+        llm_config = {
+            "provider": config.llm.provider,
+            "default_model": model or config.llm.default_model,
+            "api_key": api_key,
+            "timeout": config.llm.timeout,
+            "max_retries": config.llm.max_retries
+        }
+        
+        # Create minimal prompt manager (empty for test)
+        prompt_manager = PromptManager(prompt_directory_paths=[str(Path(__file__).parent.parent.parent / "server_prompts")])
+        llm_manager = LLMManager(llm_config=llm_config, prompt_manager=prompt_manager)
+        
+        async def test_llm():
+            response = await llm_manager.actual_provider.generate(
+                prompt="Say 'Configuration test successful' and nothing else.",
+                max_tokens=50,
+                temperature=0.1
+            )
+            return response.strip()
+        
+        result = asyncio.run(test_llm())
+        
+        click.echo(f"✓ Test successful!")
+        click.echo(f"Model: {model or config.llm.default_model}")
+        click.echo(f"Response: {result}")
+        
+    except Exception as e:
+        click.echo(f"✗ Test failed: {e}", err=True)
+        sys.exit(1)

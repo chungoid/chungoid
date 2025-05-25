@@ -19,6 +19,7 @@ from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class ProjectDocumentationAgentOutput(BaseModel):
     # usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
 
+@register_autonomous_engine_agent(capabilities=["documentation_generation", "project_analysis", "comprehensive_reporting"])
 class ProjectDocumentationAgent_v1(ProtocolAwareAgent[ProjectDocumentationAgentInput, ProjectDocumentationAgentOutput]):
     AGENT_ID: ClassVar[str] = "ProjectDocumentationAgent_v1"
     AGENT_NAME: ClassVar[str] = "Project Documentation Agent v1"

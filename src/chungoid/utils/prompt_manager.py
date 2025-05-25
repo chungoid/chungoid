@@ -267,7 +267,7 @@ id: "my_agent" # Base name of the agent/prompt
 version: "v1"
 description: "Prompt for My Agent to do X."
 model_settings:
-  model_name: "gpt-4-turbo-preview"
+  model_name: "gpt-4o-mini-2024-07-18"
   temperature: 0.5
   max_tokens: 1500
 system_prompt: |

@@ -86,7 +86,7 @@ class LLMConfiguration(BaseModel):
     api_base_url: Optional[str] = Field(None, description="Custom API base URL")
     
     # Model preferences
-    default_model: str = Field(default="gpt-4", description="Default model to use")
+    default_model: str = Field(default="gpt-4o-mini-2024-07-18", description="Default model to use")
     fallback_model: str = Field(default="gpt-3.5-turbo", description="Fallback model if default fails")
     
     # Performance settings
@@ -693,7 +693,7 @@ def create_default_config_file(file_path: Path, include_examples: bool = True) -
     default_config = {
         'llm': {
             'provider': 'openai',
-            'default_model': 'gpt-4',
+            'default_model': 'gpt-4o-mini-2024-07-18',
             'timeout': 60,
             'max_retries': 3
         },

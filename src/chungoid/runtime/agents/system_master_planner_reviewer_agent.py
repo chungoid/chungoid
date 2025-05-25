@@ -41,6 +41,9 @@ from chungoid.schemas.master_flow import MasterStageSpec, MasterExecutionPlan
 from networkx import spanner # Added MasterExecutionPlan for helper methods
 # from chungoid.runtime.agents.mocks.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
 
+# Registry-first architecture import
+from chungoid.registry import register_system_agent
+
 logger = logging.getLogger(__name__)
 
 # --- Prompt Constants ---
@@ -204,6 +207,7 @@ The master execution plan has been paused. Please analyze the situation and prov
 Based on all the information above and the rules provided in the system prompt, please formulate your suggestion as a JSON object.
 """
 
+@register_system_agent(capabilities=["plan_review", "error_analysis", "recovery_suggestions"])
 class MasterPlannerReviewerAgent:
     '''
     System agent responsible for reviewing failed/paused MasterExecutionPlans and suggesting next steps.

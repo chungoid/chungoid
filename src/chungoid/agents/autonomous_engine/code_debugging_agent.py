@@ -21,6 +21,7 @@ from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class DebuggingTaskOutput(BaseModel):
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
 
+@register_autonomous_engine_agent(capabilities=["code_debugging", "error_analysis", "automated_fixes"])
 class CodeDebuggingAgent_v1(ProtocolAwareAgent[DebuggingTaskInput, DebuggingTaskOutput]):
     AGENT_ID: ClassVar[str] = "CodeDebuggingAgent_v1"
     AGENT_NAME: ClassVar[str] = "Code Debugging Agent v1"

@@ -5,7 +5,7 @@ from __future__ import annotations
 Two use-cases:
 • **DictAgentProvider** – thin wrapper around an in-memory mapping used by
   existing tests/demo scripts.
-• **RegistryAgentProvider** – consults `AgentRegistry` (Chroma-backed)
+• **RegistryAgentProvider** – consults `InMemoryAgentRegistry` (registry-first)
   and optionally falls back to a supplied mapping.
 
 Both implement the `AgentProvider` protocol expected by the refactored
@@ -29,61 +29,22 @@ import inspect
 import traceback
 import re
 
-# ADDED: Moved import to module level
-from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
-from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # MOVED TO MODULE LEVEL
-from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1 # ADDED IMPORT
-# ADDED: Import ArchitectAgent_v1
-from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
+# ADDED: Import for registry-first architecture
+from chungoid.registry.in_memory_agent_registry import InMemoryAgentRegistry
 
-# ADDED: Import for SystemMasterPlannerReviewerAgent_v1
-from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent # MODIFIED CLASS NAME
+# ADDED: Import LLMManager for type hints
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from chungoid.utils.llm_provider import LLMManager
 
-# ADDED: Import CodeDebuggingAgent_v1
-from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
+# REMOVED: All individual agent imports - registry-first architecture handles this
+# The registry will dynamically import and instantiate agents as needed
 
 # Define logger at the module level
 logger = logging.getLogger(__name__)
-# --- TEMPORARY DEBUGGING CODE HAS BEEN REMOVED ---
 
 # For type hinting AgentCallable
-# AgentCallable = Callable[..., Any]  # Simple version
-# More precise: Callable[Concatenate[InputSchema, P], OutputSchema] or similar with Pydantic models
-# For now, stick to Any to avoid over-complicating until fully typed Agent execution is ready.
-# AgentCallable = Callable[..., Any] # REMOVED
 AgentFallbackItem = Union[AgentCallable, type] # Can be a direct callable or a class to instantiate
-
-# --- DIAGNOSTIC CODE AT THE TOP OF agent_resolver.py ---
-# print("--- DIAGNOSING chungoid.utils.agent_resolver (Top of agent_resolver.py) ---")
-# print(f"Python Executable: {sys.executable}")
-# print(f"Initial sys.path: {sys.path}")
-# print(f"os.getcwd(): {os.getcwd()}")
-# print(f"__file__ (agent_resolver.py): {__file__}")
-
-# # Try to see where 'chungoid' itself is found from
-# try:
-#     print("Relevant sys.path entries for 'chungoid' (in agent_resolver.py):")
-#     for p in sys.path:
-#         if 'chungoid' in p.lower() or 'site-packages' in p.lower() or p == os.getcwd() or '.local/pipx/venvs' in p.lower():
-#             print(f"  - {p}")
-
-#     import chungoid
-#     print(f"Found chungoid (in agent_resolver.py): {chungoid.__file__ if hasattr(chungoid, '__file__') else 'Namespace package'}")
-#     if hasattr(chungoid, '__path__'):
-#         print(f"chungoid.__path__ (in agent_resolver.py): {chungoid.__path__}")
-#         for p_item_chungoid in chungoid.__path__:
-#             print(f"  Contents of chungoid path item {p_item_chungoid}: {os.listdir(p_item_chungoid) if os.path.exists(p_item_chungoid) and os.path.isdir(p_item_chungoid) else 'Not a dir or does not exist'}")
-#             utils_dir_path_ar = Path(p_item_chungoid) / 'utils'
-#             print(f"    Looking for {utils_dir_path_ar} (from agent_resolver.py): Exists? {utils_dir_path_ar.exists()}, IsDir? {utils_dir_path_ar.is_dir()}")
-#             if utils_dir_path_ar.is_dir():
-#                  print(f"    Contents of {utils_dir_path_ar} (from agent_resolver.py): {os.listdir(utils_dir_path_ar)}")
-# except ModuleNotFoundError as e_chungoid_diag_ar:
-#     print(f"DIAGNOSTIC (Agent Resolver): Failed to import top-level 'chungoid' in agent_resolver.py: {e_chungoid_diag_ar}")
-# except Exception as e_diag_general_ar:
-#     print(f"DIAGNOSTIC (Agent Resolver): General error during diagnostic imports in agent_resolver.py: {e_diag_general_ar}")
-
-# print("--- END DIAGNOSTIC (Top of agent_resolver.py) ---")
-# --- END DIAGNOSTIC CODE ---
 
 StageDict = Dict[str, object]
 
@@ -178,31 +139,38 @@ class RegistryAgentProvider:
 
     def __init__(
         self,
-        registry: "AgentRegistry",
+        registry: "InMemoryAgentRegistry",
         fallback: Optional[Dict[str, AgentCallable]] = None,
-        # MODIFIED: Add dependencies for agent instantiation
-        llm_provider: Optional[LLMProvider] = None,
+        # MODIFIED: Accept either LLMManager or LLMProvider for backward compatibility
+        llm_provider: Optional[Union["LLMManager", LLMProvider]] = None,
         prompt_manager: Optional[PromptManager] = None,
     ) -> None:
-        from .agent_registry import AgentRegistry as ConcreteAgentRegistry
-        # MODIFIED: Import dependencies
-        # from chungoid.utils.llm_provider import LLMProvider # MOVED UP
-        # from chungoid.utils.prompt_manager import PromptManager # MOVED UP
-        # from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # REMOVED FROM HERE
-        # ADDED: Import for SystemFileSystemAgent_v1 to check its type
+        # MODIFIED: Import the correct registry types for registry-first architecture
+        from chungoid.registry.in_memory_agent_registry import InMemoryAgentRegistry
+        from chungoid.utils.llm_provider import LLMManager
         from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
 
-        if not isinstance(registry, ConcreteAgentRegistry):
-            logger.error(f"RegistryAgentProvider __init__: PASSED REGISTRY TYPE IS {type(registry)}. EXPECTED ConcreteAgentRegistry.") # DIAGNOSTIC
-            raise TypeError("registry must be an AgentRegistry instance")
+        # FIXED: Accept InMemoryAgentRegistry for registry-first architecture
+        if not isinstance(registry, InMemoryAgentRegistry):
+            logger.error(f"RegistryAgentProvider __init__: PASSED REGISTRY TYPE IS {type(registry)}. EXPECTED InMemoryAgentRegistry.") # DIAGNOSTIC
+            raise TypeError("registry must be an InMemoryAgentRegistry instance")
         self._registry = registry
         logger.info(f"RegistryAgentProvider __init__: self._registry SET to {type(self._registry)}, id: {id(self._registry)}") # DIAGNOSTIC
 
         self._fallback: Dict[str, AgentCallable] = fallback or {}
         self._cache: Dict[str, AgentCallable] = {}
         
-        # MODIFIED: Store dependencies
-        self._llm_provider = llm_provider
+        # MODIFIED: Handle both LLMManager and LLMProvider types
+        if isinstance(llm_provider, LLMManager):
+            # Extract the actual LLMProvider from LLMManager
+            self._llm_provider = llm_provider.actual_provider
+            logger.info(f"RegistryAgentProvider: Received LLMManager, extracted underlying {type(self._llm_provider).__name__}")
+        else:
+            # Direct LLMProvider or None
+            self._llm_provider = llm_provider
+            if llm_provider:
+                logger.info(f"RegistryAgentProvider: Received direct LLMProvider: {type(self._llm_provider).__name__}")
+        
         self._prompt_manager = prompt_manager
         # ADDED: Store shared_context if provided, or initialize an empty one
         # This is a slight change in approach: self._shared_context will be set by the orchestrator
@@ -229,7 +197,7 @@ class RegistryAgentProvider:
     def get(self, identifier: str, category: Optional[str] = None, shared_context: Optional[Dict[str, Any]] = None) -> Callable[..., Coroutine[Any, Any, Any]]:
         """
         Retrieves an agent's callable (invoke_async method) by its ID or category.
-        It now also accepts shared_context to be passed to agents.
+        Pure registry-first architecture - no hardcoded agent references.
         """
         # Stash the shared_context for use during agent instantiation in helper methods
         self._orchestrator_shared_context = shared_context
@@ -237,13 +205,10 @@ class RegistryAgentProvider:
         logger.debug(f"RegistryAgentProvider GET: identifier='{identifier}', category='{category}', has_shared_context={shared_context is not None}")
         logger.info(f"RegistryAgentProvider GET: hasattr(self, '_registry'): {hasattr(self, '_registry')}")
         if hasattr(self, '_registry'):
-            logger.info(f"RegistryAgentProvider GET: self._registry type: {type(self._registry)}, id: {id(self._registry)}") # DIAGNOSTIC
-
-        agent_instance: Optional[BaseAgent] = None
-        potential_item: Optional[Union[Type[BaseAgent], BaseAgent, AgentCallable]] = None # Allow AgentCallable here
+            logger.info(f"RegistryAgentProvider GET: self._registry type: {type(self._registry)}, id: {id(self._registry)}")
 
         try:
-            # Check if the agent is in the fallback map first
+            # Check if the agent is in the fallback map first (for backward compatibility)
             if identifier in self._fallback:
                 potential_item = self._fallback[identifier]
                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' FOUND in fallback map.")
@@ -251,105 +216,45 @@ class RegistryAgentProvider:
 
                 if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
                     logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is a BaseAgent class. Instantiating...")
-                    constructor_params = inspect.signature(potential_item.__init__).parameters
-                    init_kwargs = {}
-                    if 'llm_provider' in constructor_params and self._llm_provider:
-                        init_kwargs['llm_provider'] = self._llm_provider.actual_provider
-                    if 'prompt_manager' in constructor_params and self._prompt_manager:
-                        init_kwargs['prompt_manager'] = self._prompt_manager
-                        init_kwargs['project_root_path'] = project_root_val
-                        logger.info(f"RegistryAgentProvider: Passing project_root_path='{project_root_val}' to {identifier}")
-
-
-                    agent_instance = potential_item(**init_kwargs)
-                    logger.info(f"RegistryAgentProvider: Instantiated fallback agent '{identifier}' of type {type(agent_instance)}.")
+                    agent_instance = self._instantiate_agent_class(potential_item, identifier)
+                    if agent_instance and hasattr(agent_instance, 'invoke_async'):
+                        return agent_instance.invoke_async
                 elif isinstance(potential_item, BaseAgent):
                     logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is already an instantiated BaseAgent.")
-                    agent_instance = potential_item
-                elif callable(potential_item): # Could be a direct function or an already wrapped callable
+                    if hasattr(potential_item, 'invoke_async'):
+                        return potential_item.invoke_async
+                elif callable(potential_item):
                     logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is a direct callable.")
-                    # If it's a BaseAgent method or a function that needs to be wrapped for async,
-                    # this might need more specific handling if not already an AgentCallable.
-                    # For now, assume it's ready or will be handled by the return logic.
-                    # The protocol expects an AgentCallable (async (inputs, context) -> output)
-                    # If potential_item is a sync function, it needs wrapping.
-                    # However, our AgentCallable is defined as Callable[..., Coroutine[Any, Any, Any]]
-                    # so the fallback item should already conform or be an async method of a BaseAgent.
-                    if hasattr(potential_item, 'invoke_async') and asyncio.iscoroutinefunction(potential_item.invoke_async):
-                         return potential_item.invoke_async
-                    elif asyncio.iscoroutinefunction(potential_item): # Check if it's an async function itself
-                         return potential_item 
+                    if asyncio.iscoroutinefunction(potential_item):
+                        return potential_item
                     else:
-                        logger.warning(f"RegistryAgentProvider: Fallback callable for '{identifier}' is not directly an async function or BaseAgent.invoke_async. Returning as is, may cause issues.")
-                        return potential_item # This might be problematic if not conforming
+                        logger.warning(f"RegistryAgentProvider: Fallback callable for '{identifier}' is not async. May cause issues.")
+                        return potential_item
 
-            # If not in fallback, try to instantiate known system agents by ID
-            # This section is for agents that are part of the core system and imported directly.
-            elif identifier == MasterPlannerAgent.AGENT_ID: # Direct comparison with class attribute
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches MasterPlannerAgent. Instantiating...")
-                agent_instance = MasterPlannerAgent(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-            elif identifier == CoreCodeGeneratorAgent_v1.AGENT_ID:
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches CoreCodeGeneratorAgent_v1. Instantiating...")
-                agent_instance = CoreCodeGeneratorAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-            elif identifier == SystemRequirementsGatheringAgent_v1.AGENT_ID:
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches SystemRequirementsGatheringAgent_v1. Instantiating...")
-                agent_instance = SystemRequirementsGatheringAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-            elif identifier == MasterPlannerReviewerAgent.AGENT_ID: # MODIFIED CLASS NAME
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches MasterPlannerReviewerAgent. Instantiating...") # MODIFIED LOG
-                # Assuming MasterPlannerReviewerAgent also takes llm_provider and prompt_manager
-                # If its constructor is different, this needs adjustment.
-                # Based on its file, it takes llm_client (which can be LLMProvider) and config.
-                # For now, pass llm_provider as llm_client.
-                agent_instance = MasterPlannerReviewerAgent(llm_client=self._llm_provider) # MODIFIED Instantiation
-            # ADD MORE SYSTEM AGENTS HERE
-            else:
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' not found in fallback or known system agents. Trying registry...")
-                # At this point, identifier was not in fallback, and not a known system agent to instantiate directly.
-                # Try to load from agent registry (e.g., ChromaDB)
-                # This part of the logic is simplified in the provided snippet.
-                # A real implementation would query self._registry.get_agent_card(identifier)
-                # and then instantiate the class from card.module_path and card.class_name.
+            # Registry-first approach: Query the registry for the agent
+            logger.info(f"RegistryAgentProvider: Identifier '{identifier}' not found in fallback. Querying registry...")
+            
+            if not self._registry:
+                raise NoAgentFoundError(f"Registry not available and agent '{identifier}' not in fallback map.")
+            
+            # Get agent from registry
+            agent_class = self._registry.get_agent(identifier)
+            if agent_class:
+                logger.info(f"RegistryAgentProvider: Found agent '{identifier}' in registry: {agent_class.__name__}")
                 
-                # --- SIMPLIFIED REGISTRY LOGIC PLACEHOLDER ---
-                # In a full system, you'd do:
-                # agent_card = self._registry.get_agent_card(identifier)
-                # if agent_card:
-                #     module = importlib.import_module(agent_card.module_path)
-                #     AgentClass = getattr(module, agent_card.class_name)
-                #     # Instantiate AgentClass with dependencies (llm_provider, prompt_manager, etc.)
-                #     # This requires a consistent way to pass dependencies or a factory.
-                #     agent_instance = AgentClass(...) # Simplified
-                # else:
-                #     raise NoAgentFoundError(f"Agent '{identifier}' not found in fallback map or registry.")
-                # --- END SIMPLIFIED REGISTRY LOGIC ---
-                
-                # For this example, if not in fallback or known system list, assume not found if registry is not fully implemented here.
-                logger.warning(f"RegistryAgentProvider: ID-based registry lookup for '{identifier}' not fully implemented in this example. Assuming not found for now if not in fallback or known system list.")
-                raise NoAgentFoundError(f"Agent '{identifier}' not found in fallback map, known system agents, or registry (registry lookup simplified).")
-
-
-            if agent_instance:
-                logger.info(f"RegistryAgentProvider: Agent instance {type(agent_instance).__name__} created for id '{identifier}'. Returning invoke_async.")
-                if hasattr(agent_instance, 'invoke_async') and asyncio.iscoroutinefunction(agent_instance.invoke_async):
+                # Instantiate the agent class
+                agent_instance = self._instantiate_agent_class(agent_class, identifier)
+                if agent_instance and hasattr(agent_instance, 'invoke_async'):
+                    logger.info(f"RegistryAgentProvider: Successfully instantiated agent '{identifier}' from registry.")
                     return agent_instance.invoke_async
                 else:
-                    # This should ideally not happen if BaseAgent defines invoke_async properly
-                    logger.error(f"RegistryAgentProvider: Agent instance for '{identifier}' of type {type(agent_instance)} does not have a valid async invoke_async method.")
-                    raise NoAgentFoundError(f"Instantiated agent for '{identifier}' does not have a valid async invoke_async method.")
+                    raise NoAgentFoundError(f"Failed to instantiate agent '{identifier}' from registry or missing invoke_async method.")
+            else:
+                raise NoAgentFoundError(f"Agent '{identifier}' not found in registry or fallback map.")
 
-            # If potential_item was a direct callable from fallback and not a BaseAgent class/instance
-            # This path is less likely if fallbacks are BaseAgent classes or instances, but included for robustness.
-            # The check for callable(potential_item) and returning it or its invoke_async was handled earlier.
-            # If we reach here, it means potential_item was None or not a recognized type from fallback,
-            # and it wasn't a known system agent.
-
-            # Fallback to original error if nothing resolved.
-            # This should ideally be caught by the NoAgentFoundError from the registry lookup if it gets there.
-            raise NoAgentFoundError(f"Agent '{identifier}' could not be resolved or instantiated.")
-
-        except NoAgentFoundError: # Re-raise specific error
+        except NoAgentFoundError:
             raise
-        except Exception as exc: # Catch-all for other unexpected issues during resolution/instantiation
+        except Exception as exc:
             logger.error(f"RegistryAgentProvider: Unexpected error resolving/instantiating agent '{identifier}': {exc}", exc_info=True)
             raise NoAgentFoundError(f"Unexpected error resolving/instantiating agent '{identifier}': {exc}") from exc
 
@@ -809,8 +714,12 @@ class RegistryAgentProvider:
 
         # Explicitly pass provider-held dependencies if agent expects them
         if 'llm_provider' in constructor_params and self._llm_provider:
-            agent_init_params['llm_provider'] = self._llm_provider.actual_provider
+            agent_init_params['llm_provider'] = self._llm_provider
             logger.debug(f"Added self._llm_provider to init_params for {agent_class.__name__}")
+        # ADDED: Support for legacy agents that use llm_client instead of llm_provider
+        if 'llm_client' in constructor_params and self._llm_provider:
+            agent_init_params['llm_client'] = self._llm_provider
+            logger.debug(f"Added self._llm_provider as llm_client to init_params for {agent_class.__name__}")
         if 'prompt_manager' in constructor_params and self._prompt_manager:
             agent_init_params['prompt_manager'] = self._prompt_manager
             logger.debug(f"Added self._prompt_manager to init_params for {agent_class.__name__}")
@@ -933,36 +842,6 @@ class RegistryAgentProvider:
 # Convenient alias used by FlowExecutor refactor
 LegacyProvider = DictAgentProvider 
 
-# After all class definitions that might have forward references to AgentProvider
-
-# Resolve forward references for Pydantic models that use \'AgentProvider\'
-# This is necessary because of the TYPE_CHECKING import of AgentProvider
-# in agent files, which Pydantic needs to resolve before model instantiation.
-SystemRequirementsGatheringAgent_v1.model_rebuild()
-ArchitectAgent_v1.model_rebuild() # ArchitectAgent_v1 also uses Optional['AgentProvider']
-
-# Add other agents here if they also have `agent_provider: Optional['AgentProvider']`
-# and are imported in this file or are part of the typical resolution path.
-# e.g.:
-MasterPlannerAgent.model_rebuild() # SystemMasterPlannerAgent_v1
-# CoreCodeGeneratorAgent_v1.model_rebuild() # REMOVED: Not a Pydantic model (this one was missed)
-
-# It's also good practice to rebuild any other models that might have unresolved
-# forward references due to TYPE_CHECKING blocks, if they are defined or imported
-# globally in this module. 
-
-# ADDED: Call model_rebuild for BaseAgent and other relevant Pydantic models
-# This is crucial for resolving forward references used in type hints, especially
-# when TYPE_CHECKING is used to break circular dependencies.
-from chungoid.runtime.agents.agent_base import BaseAgent
-from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
-from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
-from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
-from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
-from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
-
-BaseAgent.model_rebuild()
-MasterPlannerAgent.model_rebuild()
-ArchitectAgent_v1.model_rebuild()
-SystemRequirementsGatheringAgent_v1.model_rebuild()
-CodeDebuggingAgent_v1.model_rebuild() 
+# REMOVED: All duplicate imports and model_rebuild calls
+# Registry-first architecture handles agent registration automatically via decorators
+# No need for manual model rebuilding or imports in the resolver 

@@ -23,10 +23,15 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 # from chungoid.utils.security import is_safe_path # For path safety checks # REMOVED
 from chungoid.schemas.errors import AgentErrorDetails # For structured errors
 from chungoid.schemas.orchestration import SharedContext # ADDED
+from chungoid.utils.agent_registry import AgentCard
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager
+from chungoid.registry import register_system_agent
 
 logger = logging.getLogger(__name__)
 
-# MOVED TO MODULE LEVEL
+# Registry-first architecture import
+@register_system_agent(capabilities=["file_management", "directory_operations", "file_operations"])
 class SystemFileSystemAgent_v1(BaseAgent):
     """
     An agent that provides tools for interacting with the file system.

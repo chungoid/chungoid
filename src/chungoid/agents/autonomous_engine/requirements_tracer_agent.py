@@ -23,6 +23,7 @@ from ...utils.chromadb_migration_utils import (
 )
 from ...utils.agent_registry import AgentCard
 from ...utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class RequirementsTracerOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
+@register_autonomous_engine_agent(capabilities=["requirements_traceability", "artifact_analysis", "quality_validation"])
 class RequirementsTracerAgent_v1(ProtocolAwareAgent[RequirementsTracerInput, RequirementsTracerOutput]):
     """
     Generates a traceability report (Markdown) between two development artifacts.

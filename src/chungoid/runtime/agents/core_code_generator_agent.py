@@ -20,6 +20,7 @@ from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.chroma_agent_io_schemas import StoreArtifactInput, StoreArtifactOutput, RetrieveArtifactOutput
+from chungoid.registry import register_system_agent
 GENERATED_CODE_ARTIFACTS_COLLECTION = "generated_code_artifacts"
 PROJECT_DOCUMENTATION_ARTIFACTS_COLLECTION = "project_documentation_artifacts"
 LIVE_CODEBASE_COLLECTION = "live_codebase"
@@ -30,6 +31,7 @@ PROMPT_ID = "smart_code_generator_agent_v1_prompt"
 PROMPT_VERSION = "0.2.0"
 PROMPT_SUB_DIR = "autonomous_engine"
 
+@register_system_agent(capabilities=["systematic_implementation", "code_generation", "quality_validation"])
 class CoreCodeGeneratorAgent_v1(ProtocolAwareAgent[SmartCodeGeneratorAgentInput, SmartCodeGeneratorAgentOutput]):
     AGENT_ID: ClassVar[str] = "SmartCodeGeneratorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Smart Code Generator Agent"

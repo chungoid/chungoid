@@ -19,6 +19,7 @@ from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptDefinition
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_system_agent
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class SystemRequirementsGatheringOutput(BaseModel):
     requirements_summary: str = Field(..., description="A textual summary of the gathered and refined requirements.")
     # Add other fields, e.g., structured requirements data
 
+@register_system_agent(capabilities=["requirements_gathering", "stakeholder_analysis", "documentation"])
 class SystemRequirementsGatheringAgent_v1(ProtocolAwareAgent[SystemRequirementsGatheringInput, SystemRequirementsGatheringOutput]):
     AGENT_ID: ClassVar[str] = "SystemRequirementsGatheringAgent_v1"
     AGENT_NAME: ClassVar[str] = "System Requirements Gathering Agent"

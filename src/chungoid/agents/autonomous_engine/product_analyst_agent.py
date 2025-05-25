@@ -23,6 +23,9 @@ from ...utils.agent_registry_meta import AgentCategory, AgentVisibility
 # MIGRATED: Using MCP tools instead of ProjectChromaManagerAgent_v1
 from ...utils.chromadb_migration_utils import migrate_store_artifact, migrate_retrieve_artifact
 
+# Registry-first architecture import
+from chungoid.registry import register_autonomous_engine_agent
+
 logger = logging.getLogger(__name__)
 
 class ProtocolExecutionError(Exception):
@@ -53,6 +56,7 @@ class ProductAnalystAgentOutput(BaseModel):
     raw_llm_response: Optional[str] = Field(None, description="The raw JSON string from the LLM before validation, for debugging.")
     validation_errors: Optional[str] = Field(None, description="Validation errors if the LLM output failed schema validation.")
 
+@register_autonomous_engine_agent(capabilities=["requirements_analysis", "stakeholder_analysis", "documentation"])
 class ProductAnalystAgent_v1(ProtocolAwareAgent[ProductAnalystAgentInput, ProductAnalystAgentOutput]):
     AGENT_ID: ClassVar[str] = "ProductAnalystAgent_v1"
     AGENT_NAME: ClassVar[str] = "Product Analyst Agent v1"

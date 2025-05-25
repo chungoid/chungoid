@@ -23,6 +23,7 @@ from ...utils.chromadb_migration_utils import (
 )
 from ...utils.agent_registry import AgentCard
 from ...utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class ProactiveRiskAssessorOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging or deeper analysis.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
+@register_autonomous_engine_agent(capabilities=["risk_assessment", "deep_investigation", "impact_analysis"])
 class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInput, ProactiveRiskAssessorOutput]):
     """
     Analyzes LOPRDs, Blueprints, or Plans for potential risks, issues, and optimization opportunities.
