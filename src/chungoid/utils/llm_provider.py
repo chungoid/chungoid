@@ -269,10 +269,16 @@ class LiteLLMProvider(LLMProvider):
             litellm_kwargs["num_retries"] = self.max_retries
 
         if response_format: # For OpenAI and compatible models that support it
-            litellm_kwargs["response_format"] = response_format
-            # For more robust JSON with LiteLLM, you can also pass `json=True` 
-            # or ensure the model name implies JSON mode if supported by the model on LiteLLM.
-            # Example: if response_format == {"type": "json_object"}: litellm_kwargs["json"] = True
+            # Handle different response format types for LiteLLM compatibility
+            if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+                # LiteLLM may not support the OpenAI-style response_format directly
+                # Instead, we'll rely on prompt engineering and post-processing
+                logger.debug("LiteLLMProvider: json_object response_format requested, will rely on prompt engineering")
+                # Don't pass response_format to LiteLLM, handle via prompt and post-processing
+                pass
+            else:
+                # For other response formats, try to pass them through
+                litellm_kwargs["response_format"] = response_format
 
         try:
             logger.info(f"LiteLLMProvider calling model: {chosen_model} via LiteLLM (prompt first 100 chars): {prompt[:100]}...")

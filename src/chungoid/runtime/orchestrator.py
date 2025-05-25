@@ -693,9 +693,10 @@ class AutonomousExecutionEngine:
             
             # Execute via protocol if available
             if hasattr(agent, 'execute_with_protocol'):
-                protocol_result = agent.execute_with_protocol(
-                    protocol_task, 
-                    getattr(agent, 'PRIMARY_PROTOCOLS', ['simple_operations'])[0]
+                # FIXED: Correct parameter order (protocol, context) and await the async call
+                protocol_result = await agent.execute_with_protocol(
+                    getattr(agent, 'PRIMARY_PROTOCOLS', ['simple_operations'])[0],
+                    protocol_task
                 )
                 return {
                     "agent_result": protocol_result,
@@ -2268,8 +2269,13 @@ class AsyncOrchestrator(BaseOrchestrator):
         return StageStatus.COMPLETED_FAILURE, final_error_fallback
 
     def _extract_output_and_metrics(self, agent_output_raw: Any) -> Tuple[Any, Optional[Dict[str, Any]]]:
-        """Extracts the primary output and any embedded metrics from agent\'s raw output."""
-        if isinstance(agent_output_raw, tuple) and len(agent_output_raw) == 2 and isinstance(agent_output_raw[1], dict):
+        """Extracts the primary output and any embedded metrics from agent's raw output."""
+        # Handle AgentOutput objects from protocol-aware agents
+        if hasattr(agent_output_raw, 'data') and hasattr(agent_output_raw, 'success'):
+            # This is likely an AgentOutput object from a protocol-aware agent
+            self.logger.debug(f"Extracting data from AgentOutput object: success={getattr(agent_output_raw, 'success', None)}")
+            return agent_output_raw.data, None  # Extract the data attribute for success criteria
+        elif isinstance(agent_output_raw, tuple) and len(agent_output_raw) == 2 and isinstance(agent_output_raw[1], dict):
             # Assuming convention: (primary_output, metrics_dict)
             return agent_output_raw[0], agent_output_raw[1]
         return agent_output_raw, None # No separate metrics dict

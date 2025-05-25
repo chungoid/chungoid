@@ -144,11 +144,16 @@ class ProtocolAwareAgent(BaseModel):
         try:
             # Load and initialize the protocol
             self.current_protocol = get_protocol(protocol)
+            
+            # CRITICAL FIX: Setup the protocol to initialize phases and templates
+            self.current_protocol.setup(context)
+            
             self.protocol_context = context.copy()
             
             # Execute all phases in sequence
             phases_completed = []
             overall_success = True
+            aggregated_outputs = {}  # FIXED: Collect all phase outputs here
             
             for phase in self.current_protocol.phases:
                 self.logger.info(f"Starting phase: {phase.name}")
@@ -156,6 +161,10 @@ class ProtocolAwareAgent(BaseModel):
                 # Execute the phase
                 phase_result = await self._execute_protocol_phase(phase)
                 phases_completed.append(phase.name)
+                
+                # FIXED: Aggregate phase outputs into final output structure
+                if phase_result["success"] and phase_result.get("outputs"):
+                    aggregated_outputs.update(phase_result["outputs"])
                 
                 # Check if phase failed
                 if not phase_result["success"]:
@@ -165,10 +174,10 @@ class ProtocolAwareAgent(BaseModel):
             
             execution_time = time.time() - start_time
             
-            # Create standardized output
+            # FIXED: Use aggregated outputs instead of protocol_context for data
             return AgentOutput(
                 success=overall_success,
-                data=self.protocol_context,
+                data=aggregated_outputs,  # FIXED: Use aggregated phase outputs
                 agent_id=self.agent_id,
                 protocol_used=protocol,
                 phases_completed=phases_completed,
@@ -217,6 +226,9 @@ class ProtocolAwareAgent(BaseModel):
                 phase_outputs = await self._execute_phase_logic(phase, self.protocol_context)
                 phase.outputs.update(phase_outputs)
                 
+                # FIXED: Store phase outputs in phase_result for aggregation
+                phase_result["outputs"].update(phase_outputs)
+                
                 # Validate phase completion
                 validation_results = self._validate_phase_completion(phase)
                 phase.validation_results.update(validation_results)
@@ -242,7 +254,6 @@ class ProtocolAwareAgent(BaseModel):
         
         # Update phase result
         phase_result.update({
-            "outputs": dict(phase.outputs),
             "validation_results": dict(phase.validation_results),
             "execution_time": phase.execution_time,
             "retry_count": phase.retry_count

@@ -94,7 +94,7 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "goal": f"Execute {self.AGENT_NAME} specialized task"
             }
             
-            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            protocol_result = await self.execute_with_protocol(protocol_task, primary_protocol)
             
             if protocol_result["overall_success"]:
                 return self._extract_output_from_protocol_result(protocol_result, task_input)
@@ -230,7 +230,7 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
             agent_id=ArchitectAgent_v1.AGENT_ID,
             name=ArchitectAgent_v1.AGENT_NAME,
             description=ArchitectAgent_v1.AGENT_DESCRIPTION,
-            version=ArchitectAgent_v1.VERSION,
+            version=ArchitectAgent_v1.AGENT_VERSION,
             input_schema=ArchitectAgentInput.model_json_schema(),
             output_schema=ArchitectAgentOutput.model_json_schema(),
             categories=[cat.value for cat in [ArchitectAgent_v1.CATEGORY, AgentCategory.AUTONOMOUS_PROJECT_ENGINE]],

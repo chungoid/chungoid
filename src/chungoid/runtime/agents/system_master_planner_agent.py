@@ -81,8 +81,10 @@ You MUST return a JSON object with this EXACT structure:
       "preferred_execution": "autonomous",
       "fallback_agent_id": "SmartCodeGeneratorAgent_v1",
       "inputs": {
-        "requirements": "{context.outputs.stage_id_1.requirements}",
-        "target_language": "python"
+        "project_id": "{context.project_id}",
+        "task_description": "Create a simple Python hello world script based on requirements",
+        "target_file_path": "hello_world.py",
+        "programming_language": "python"
       },
       "success_criteria": ["code_generated", "tests_pass"],
       "next_stage": null

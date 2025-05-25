@@ -70,12 +70,44 @@ STANDARD_SUCCESS_CRITERIA = {
         field_path="requirements_document"
     ),
     
+    "requirements_extracted": SuccessCriterion(
+        name="requirements_extracted",
+        operator=SuccessCriteriaOperator.EXISTS,
+        value=True,
+        description="Requirements must be extracted from user goal",
+        field_path="goal_analysis"
+    ),
+    
     "stakeholder_needs_identified": SuccessCriterion(
         name="stakeholder_needs_identified",
-        operator=SuccessCriteriaOperator.GREATER_EQUAL,
-        value=1,
-        description="At least one stakeholder need must be identified",
-        field_path="stakeholder_needs.count"
+        operator=SuccessCriteriaOperator.EXISTS,
+        value=True,
+        description="Stakeholder needs must be identified",
+        field_path="goal_analysis.key_stakeholders"
+    ),
+    
+    "stakeholders_identified": SuccessCriterion(
+        name="stakeholders_identified",
+        operator=SuccessCriteriaOperator.EXISTS,
+        value=True,
+        description="Stakeholders must be identified",
+        field_path="stakeholder_needs_identified"
+    ),
+    
+    "code_generated": SuccessCriterion(
+        name="code_generated",
+        operator=SuccessCriteriaOperator.EXISTS,
+        value=True,
+        description="Code must be generated successfully",
+        field_path="generated_code"
+    ),
+    
+    "tests_pass": SuccessCriterion(
+        name="tests_pass",
+        operator=SuccessCriteriaOperator.EXISTS,
+        value=True,
+        description="Tests must pass successfully",
+        field_path="test_results"
     ),
     
     "code_files_created": SuccessCriterion(

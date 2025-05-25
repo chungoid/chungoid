@@ -8,8 +8,14 @@ This protocol bridges the gap between strategic planning (Deep Planning) and
 tactical implementation by creating detailed architectural specifications.
 """
 
+import logging
 from typing import List, Dict, Any, Optional
-from ..base.protocol_interface import ProtocolInterface, ProtocolPhase
+from datetime import datetime
+
+from ..base.protocol_interface import ProtocolInterface, ProtocolPhase, PhaseStatus, ProtocolTemplate
+
+logger = logging.getLogger(__name__)
+
 
 class ArchitecturePlanningProtocol(ProtocolInterface):
     """
@@ -19,11 +25,26 @@ class ArchitecturePlanningProtocol(ProtocolInterface):
     with file-by-file specifications, directory structures, and implementation phases.
     """
     
+    def __init__(self):
+        super().__init__()
+    
     @property
     def name(self) -> str:
-        return "architecture_planning"
+        """Protocol name."""
+        return "Architecture Planning Protocol"
+    
+    @property
+    def description(self) -> str:
+        """Protocol description."""
+        return "Transforms high-level plans into detailed implementation blueprints with file-by-file specifications"
+    
+    @property
+    def total_estimated_time(self) -> int:
+        """Total estimated time in minutes."""
+        return 600  # 10 hours total for comprehensive architecture planning
     
     def initialize_phases(self) -> List[ProtocolPhase]:
+        """Initialize protocol phases."""
         return [
             ProtocolPhase(
                 name="blueprint_structure_design",
@@ -134,6 +155,75 @@ class ArchitecturePlanningProtocol(ProtocolInterface):
                 ]
             )
         ]
+    
+    def initialize_templates(self) -> Dict[str, ProtocolTemplate]:
+        """Initialize protocol templates."""
+        return {
+            "blueprint_design_prompt": ProtocolTemplate(
+                name="blueprint_design_prompt",
+                description="Template for blueprint structure design phase",
+                template_content="""
+                Design detailed directory structure for the following plan:
+                
+                High-Level Plan: [high_level_plan]
+                Target Architecture: [target_architecture]
+                
+                Please create:
+                1. Complete directory tree with change references
+                2. File change classifications (NEW/ENHANCE/REFACTOR)
+                3. Dependency mappings between components
+                """,
+                variables=["high_level_plan", "target_architecture"]
+            ),
+            "implementation_spec_prompt": ProtocolTemplate(
+                name="implementation_spec_prompt",
+                description="Template for implementation specification phase",
+                template_content="""
+                Create file-by-file implementation specifications:
+                
+                Blueprint Structure: [blueprint_structure]
+                Coding Standards: [coding_standards]
+                
+                Please generate:
+                1. Detailed specifications for each file
+                2. Code skeleton examples
+                3. Interface definitions
+                4. Import dependency updates
+                """,
+                variables=["blueprint_structure", "coding_standards"]
+            ),
+            "phase_mapping_prompt": ProtocolTemplate(
+                name="phase_mapping_prompt",
+                description="Template for phase mapping",
+                template_content="""
+                Map implementation into realistic phases:
+                
+                Implementation Specs: [implementation_specs]
+                Timeline Constraints: [timeline_constraints]
+                
+                Please create:
+                1. Week-by-week implementation plan
+                2. Phase dependencies
+                3. Success criteria per phase
+                4. Risk mitigation strategies
+                """,
+                variables=["implementation_specs", "timeline_constraints"]
+            )
+        }
+    
+    def get_template(self, template_name: str, **variables) -> str:
+        """Get protocol template with variable substitution."""
+        templates = self.initialize_templates()
+        template = templates.get(template_name, None)
+        if template:
+            content = template.template_content
+            # Simple variable substitution using [variable] format
+            for var_name, var_value in variables.items():
+                placeholder = f"[{var_name}]"
+                content = content.replace(placeholder, str(var_value))
+            return content
+        else:
+            raise ValueError(f"Template '{template_name}' not found")
     
     def create_implementation_blueprint(self, deep_plan: Dict[str, Any]) -> Dict[str, Any]:
         """

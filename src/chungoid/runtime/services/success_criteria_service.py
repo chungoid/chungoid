@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Tuple, Optional
 
 from chungoid.schemas.master_flow import MasterStageSpec
 from chungoid.schemas.orchestration import SharedContext
+from chungoid.schemas.success_criteria import STANDARD_SUCCESS_CRITERIA
 from chungoid.runtime.services.context_resolution_service import ContextResolutionService
 
 # Sentinel object for cases where a path is not found during resolution
@@ -30,56 +31,38 @@ class SuccessCriteriaService:
         shared_context_for_stage: SharedContext
     ) -> Any:
         """
-        Resolves a path string against stage_outputs or shared_context.
-        Priority is given to stage_outputs if path doesn't explicitly target context.
+        Resolves a path string to a value from stage_outputs or shared_context.
+        
+        Args:
+            path_str: Dot-separated path like "outputs.previous_stage.result_value"
+            stage_outputs: Direct outputs from the stage
+            shared_context_for_stage: Shared context for the stage
+            
+        Returns:
+            The resolved value, or _SENTINEL if not found
         """
-        self.logger.debug(f"Attempting to resolve path for criterion: '{path_str}'")
-
-        if path_str.startswith("{context.") and path_str.endswith("}"):
-            # Explicit context path
-            path_expression_in_braces = path_str[len("{context."):-1]
-            self.logger.debug(f"Resolving context path '{path_expression_in_braces}' from path '{path_str}'")
-            try:
-                # Fix: If the path starts with "outputs.", we need to prepend "data." to make it resolve correctly
-                # against the SharedContext structure where outputs are stored in shared_context.data['outputs']
-                if path_expression_in_braces.startswith("outputs."):
-                    corrected_path = "data." + path_expression_in_braces
-                    self.logger.debug(f"Correcting context path from '{path_expression_in_braces}' to '{corrected_path}'")
-                    resolved_value = self.context_resolver.resolve_single_path(
-                        corrected_path, shared_context_for_stage
-                    )
-                else:
-                    resolved_value = self.context_resolver.resolve_single_path(
-                        path_expression_in_braces, shared_context_for_stage
-                    )
-                self.logger.debug(f"Context path resolution result: {resolved_value}")
-                return resolved_value
-            except Exception as e:
-                self.logger.error(f"Unexpected error resolving context path '{path_str}': {e}", exc_info=True)
-                return _SENTINEL
+        self.logger.debug(f"Resolving path '{path_str}' for criterion evaluation.")
         
-        # Fix: If path starts with "outputs.", resolve against shared context, not stage_outputs
-        if path_str.startswith("outputs."):
-            self.logger.debug(f"Path '{path_str}' starts with 'outputs.', resolving against shared context")
-            try:
-                # Resolve against shared_context.data['outputs']
-                corrected_path = "data." + path_str
-                self.logger.debug(f"Resolving outputs path '{path_str}' as context path '{corrected_path}'")
-                resolved_value = self.context_resolver.resolve_single_path(
-                    corrected_path, shared_context_for_stage
-                )
-                self.logger.debug(f"Outputs path resolution result: {resolved_value}")
+        # First try to resolve from shared context using context resolver
+        try:
+            resolved_value = await self.context_resolver.resolve_context_path(
+                path_str, shared_context_for_stage
+            )
+            if resolved_value is not None:
+                self.logger.debug(f"Resolved '{path_str}' from shared context to: {resolved_value}")
                 return resolved_value
-            except Exception as e:
-                self.logger.error(f"Error resolving outputs path '{path_str}': {e}", exc_info=True)
-                return _SENTINEL
+        except Exception as e:
+            self.logger.debug(f"Could not resolve '{path_str}' from shared context: {e}")
         
-        # For other paths, resolve against stage_outputs directly
+        # If not found in shared context, try direct access to stage_outputs
+        path_parts = path_str.split(".")
         current_obj = stage_outputs
-        parts = path_str.split('.')
-
-        for part in parts:
-            if isinstance(current_obj, dict):
+        
+        for part in path_parts:
+            if current_obj is None:
+                self.logger.debug(f"Encountered None while resolving '{path_str}' at part '{part}'.")
+                return _SENTINEL
+            elif isinstance(current_obj, dict):
                 if part in current_obj:
                     current_obj = current_obj[part]
                 else:
@@ -133,6 +116,44 @@ class SuccessCriteriaService:
             self.logger.info(f"All success criteria passed for stage '{stage_name}'.")
         return all_passed, failed_criteria
 
+    def _has_operator(self, criterion_str: str) -> bool:
+        """Check if criterion string contains any operators."""
+        operators = [
+            "EXISTS", "IS_NOT_EMPTY", "IS_EMPTY", "IS_TRUE", "IS_FALSE", 
+            "IS_NONE", "IS_NOT_NONE", "CONTAINS", ">=", "<=", "!=", "==", ">", "<"
+        ]
+        return any(op in criterion_str for op in operators)
+
+    def _convert_legacy_criterion_to_operator_format(self, criterion_str: str) -> str:
+        """Convert legacy criterion to operator-based format."""
+        # Check if it's in the standard mappings
+        if criterion_str in STANDARD_SUCCESS_CRITERIA:
+            standard_criterion = STANDARD_SUCCESS_CRITERIA[criterion_str]
+            
+            # Convert SuccessCriterion to operator string format
+            if standard_criterion.operator.value == "exists":
+                return f"{standard_criterion.field_path} EXISTS"
+            elif standard_criterion.operator.value == "greater_equal":
+                return f"{standard_criterion.field_path} >= {standard_criterion.value}"
+            elif standard_criterion.operator.value == "equals":
+                return f"{standard_criterion.field_path} == {standard_criterion.value}"
+            elif standard_criterion.operator.value == "greater_than":
+                return f"{standard_criterion.field_path} > {standard_criterion.value}"
+            elif standard_criterion.operator.value == "less_than":
+                return f"{standard_criterion.field_path} < {standard_criterion.value}"
+            elif standard_criterion.operator.value == "less_equal":
+                return f"{standard_criterion.field_path} <= {standard_criterion.value}"
+            elif standard_criterion.operator.value == "is_not_empty":
+                return f"{standard_criterion.field_path} IS_NOT_EMPTY"
+            elif standard_criterion.operator.value == "contains":
+                return f"{standard_criterion.field_path} CONTAINS {standard_criterion.value}"
+            else:
+                # Default to EXISTS for unknown operators
+                return f"{standard_criterion.field_path} EXISTS"
+        
+        # For unknown legacy criteria, create a default EXISTS criterion
+        return f"{criterion_str} EXISTS"
+
     async def _evaluate_single_criterion(
         self,
         criterion_str: str,
@@ -144,6 +165,35 @@ class SuccessCriteriaService:
             f"Evaluating criterion: '{criterion_str}' for stage '{stage_name}'"
         )
 
+        # First try operator-based parsing
+        if self._has_operator(criterion_str):
+            return await self._evaluate_operator_criterion(
+                criterion_str, stage_name, stage_outputs, shared_context_for_stage
+            )
+        
+        # If no operators found, try legacy format conversion
+        self.logger.info(
+            f"Stage '{stage_name}': No operators found in criterion '{criterion_str}', attempting legacy format conversion"
+        )
+        
+        converted_criterion = self._convert_legacy_criterion_to_operator_format(criterion_str)
+        self.logger.info(
+            f"Stage '{stage_name}': Converted legacy criterion '{criterion_str}' to '{converted_criterion}'"
+        )
+        
+        return await self._evaluate_operator_criterion(
+            converted_criterion, stage_name, stage_outputs, shared_context_for_stage
+        )
+
+    async def _evaluate_operator_criterion(
+        self,
+        criterion_str: str,
+        stage_name: str,
+        stage_outputs: Any, 
+        shared_context_for_stage: SharedContext
+    ) -> bool:
+        """Evaluate a criterion string that contains operators."""
+        
         operators = {
             "EXISTS": 1, "IS_NOT_EMPTY": 1, "IS_EMPTY": 1, "IS_TRUE": 1,
             "IS_FALSE": 1, "IS_NONE": 1, "IS_NOT_NONE": 1, "CONTAINS": 2,
@@ -251,8 +301,8 @@ class SuccessCriteriaService:
             else:
                 if rhs_str.lower() == "true": rhs_value = True
                 elif rhs_str.lower() == "false": rhs_value = False
-                elif re.fullmatch(r"-?\\d+", rhs_str): rhs_value = int(rhs_str)
-                elif re.fullmatch(r"-?\\d*\\.\\d+", rhs_str): rhs_value = float(rhs_str)
+                elif re.fullmatch(r"-?\d+", rhs_str): rhs_value = int(rhs_str)
+                elif re.fullmatch(r"-?\d*\.\d+", rhs_str): rhs_value = float(rhs_str)
                 else: rhs_value = rhs_str 
 
         self.logger.debug(

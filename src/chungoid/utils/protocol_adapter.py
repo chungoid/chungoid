@@ -36,7 +36,7 @@ class ProtocolExecutionAdapter:
         if not self.agent.PRIMARY_PROTOCOLS:
             raise ValueError(f"Agent {agent_instance.agent_id} has no PRIMARY_PROTOCOLS defined")
     
-    async def __call__(self, inputs: Any = None, full_context: Dict[str, Any] = None, input_payload: Any = None, **kwargs) -> Any:
+    async def __call__(self, inputs: Any = None, full_context: Dict[str, Any] = None, input_payload: Any = None, task_input: Any = None, **kwargs) -> Any:
         """
         Adapter callable that mimics invoke_async interface.
         
@@ -44,6 +44,7 @@ class ProtocolExecutionAdapter:
             inputs: Task inputs (can be any type) - new interface
             full_context: Full execution context
             input_payload: Task inputs (can be any type) - legacy interface for backward compatibility
+            task_input: Task inputs (can be any type) - orchestrator interface
             **kwargs: Additional keyword arguments for flexibility
             
         Returns:
@@ -52,10 +53,10 @@ class ProtocolExecutionAdapter:
         try:
             self.logger.info(f"Protocol adapter executing for agent: {self.agent.agent_id}")
             
-            # Handle both parameter names for backward compatibility
-            actual_inputs = inputs if inputs is not None else input_payload
+            # Handle multiple parameter names for backward compatibility
+            actual_inputs = inputs if inputs is not None else (input_payload if input_payload is not None else task_input)
             if actual_inputs is None:
-                raise ValueError("Either 'inputs' or 'input_payload' must be provided")
+                raise ValueError("Either 'inputs', 'input_payload', or 'task_input' must be provided")
             
             # Handle additional context from kwargs
             if full_context is None:
@@ -63,7 +64,7 @@ class ProtocolExecutionAdapter:
             
             # Merge any additional context from kwargs
             for key, value in kwargs.items():
-                if key not in ['inputs', 'input_payload'] and key not in full_context:
+                if key not in ['inputs', 'input_payload', 'task_input'] and key not in full_context:
                     full_context[key] = value
             
             # Check if agent has custom execute_with_protocols method (with 's')

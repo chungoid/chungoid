@@ -357,7 +357,7 @@ class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent):
                 "goal": f"Execute {self.AGENT_NAME} specialized task"
             }
             
-            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            protocol_result = await self.execute_with_protocol(protocol_task, primary_protocol)
             
             if protocol_result["overall_success"]:
                 return self._extract_output_from_protocol_result(protocol_result, task_input)
@@ -372,7 +372,7 @@ class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent):
             self._logger.error(error_msg)
             raise ProtocolExecutionError(error_msg)
             
-            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            protocol_result = await self.execute_with_protocol(protocol_task, primary_protocol)
             
             if protocol_result["overall_success"]:
                 return self._extract_output_from_protocol_result(protocol_result, task_input)

@@ -94,7 +94,7 @@ class SmartCodeIntegrationAgent_v1(ProtocolAwareAgent):
                 "goal": f"Execute {self.AGENT_NAME} specialized task"
             }
             
-            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            protocol_result = await self.execute_with_protocol(protocol_task, primary_protocol)
             
             if protocol_result["overall_success"]:
                 return self._extract_output_from_protocol_result(protocol_result, task_input)

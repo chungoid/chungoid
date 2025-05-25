@@ -8,7 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from .base.protocol_interface import ProtocolInterface, ProtocolPhase, PhaseStatus
+from .base.protocol_interface import ProtocolInterface, ProtocolPhase, PhaseStatus, ProtocolTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -17,55 +17,148 @@ class PlanReviewProtocol(ProtocolInterface):
     """Protocol for comprehensive plan analysis and optimization."""
     
     def __init__(self):
-        super().__init__(
-            protocol_id="plan_review",
-            name="Plan Review Protocol",
-            description="Comprehensive plan analysis and optimization"
-        )
+        super().__init__()
         
-        # Define protocol phases
-        self.phases = [
+    @property
+    def name(self) -> str:
+        """Protocol name."""
+        return "Plan Review Protocol"
+    
+    @property
+    def description(self) -> str:
+        """Protocol description."""
+        return "Comprehensive plan analysis and optimization"
+    
+    @property
+    def total_estimated_time(self) -> float:
+        """Total estimated time in hours."""
+        return 4.0  # Sum of all phase time estimates
+    
+    def initialize_phases(self) -> List[ProtocolPhase]:
+        """Initialize all protocol phases."""
+        return [
             ProtocolPhase(
                 name="analysis",
                 description="Analyze execution plan",
-                required_inputs=["execution_plan", "success_criteria", "constraints"],
+                time_box_hours=1.0,
                 required_outputs=["plan_analysis", "risk_assessment"],
                 validation_criteria=[
                     "plan_analysis.coverage >= 0.95",
                     "risk_assessment.level != 'unacceptable'"
-                ]
+                ],
+                tools_required=["plan_analyzer", "risk_assessor"]
             ),
             ProtocolPhase(
                 name="optimization",
                 description="Optimize plan for efficiency",
-                required_inputs=["plan_analysis", "optimization_criteria"],
+                time_box_hours=1.5,
                 required_outputs=["optimized_plan", "improvement_recommendations"],
                 validation_criteria=[
                     "optimized_plan.efficiency > original_plan.efficiency",
                     "improvement_recommendations.count >= 3"
-                ]
+                ],
+                tools_required=["plan_optimizer", "efficiency_analyzer"],
+                dependencies=["analysis"]
             ),
             ProtocolPhase(
                 name="validation",
                 description="Validate optimized plan",
-                required_inputs=["optimized_plan", "validation_criteria"],
+                time_box_hours=1.0,
                 required_outputs=["validated_plan", "approval_status"],
                 validation_criteria=[
                     "validated_plan.feasible == true",
                     "approval_status == 'approved'"
-                ]
+                ],
+                tools_required=["plan_validator", "feasibility_checker"],
+                dependencies=["optimization"]
             ),
             ProtocolPhase(
                 name="documentation",
                 description="Document review findings",
-                required_inputs=["validated_plan", "review_findings"],
+                time_box_hours=0.5,
                 required_outputs=["review_report", "execution_recommendations"],
                 validation_criteria=[
                     "review_report EXISTS",
                     "execution_recommendations IS_NOT_EMPTY"
-                ]
+                ],
+                tools_required=["documentation_generator", "report_formatter"],
+                dependencies=["validation"]
             )
         ]
+    
+    def initialize_templates(self) -> Dict[str, ProtocolTemplate]:
+        """Initialize protocol templates."""
+        return {
+            "analysis_prompt": ProtocolTemplate(
+                name="analysis_prompt",
+                description="Template for plan analysis",
+                template_content="""
+                Analyze the following execution plan:
+                
+                Execution Plan: [execution_plan]
+                Success Criteria: [success_criteria]
+                Constraints: [constraints]
+                
+                Please analyze:
+                1. Plan completeness and coverage
+                2. Potential risks and mitigation strategies
+                3. Resource requirements and availability
+                4. Timeline feasibility and dependencies
+                """,
+                variables=["execution_plan", "success_criteria", "constraints"]
+            ),
+            "optimization_prompt": ProtocolTemplate(
+                name="optimization_prompt",
+                description="Template for plan optimization",
+                template_content="""
+                Optimize the plan for better efficiency:
+                
+                Plan Analysis: [plan_analysis]
+                Optimization Criteria: [optimization_criteria]
+                
+                Please optimize:
+                1. Execution sequence and parallelization
+                2. Resource allocation and utilization
+                3. Risk reduction strategies
+                4. Performance improvements
+                """,
+                variables=["plan_analysis", "optimization_criteria"]
+            ),
+            "validation_prompt": ProtocolTemplate(
+                name="validation_prompt",
+                description="Template for plan validation",
+                template_content="""
+                Validate the optimized plan:
+                
+                Optimized Plan: [optimized_plan]
+                Validation Criteria: [validation_criteria]
+                
+                Please validate:
+                1. Technical feasibility
+                2. Resource constraints compliance
+                3. Timeline achievability
+                4. Risk acceptability
+                """,
+                variables=["optimized_plan", "validation_criteria"]
+            ),
+            "documentation_prompt": ProtocolTemplate(
+                name="documentation_prompt",
+                description="Template for review documentation",
+                template_content="""
+                Document the review findings:
+                
+                Validated Plan: [validated_plan]
+                Review Findings: [review_findings]
+                
+                Please document:
+                1. Comprehensive review report
+                2. Execution recommendations
+                3. Risk mitigation strategies
+                4. Success metrics and monitoring
+                """,
+                variables=["validated_plan", "review_findings"]
+            )
+        }
     
     def get_phases(self) -> List[ProtocolPhase]:
         """Get all protocol phases."""
@@ -116,57 +209,14 @@ class PlanReviewProtocol(ProtocolInterface):
     
     def get_template(self, template_name: str, **variables) -> str:
         """Get protocol template with variable substitution."""
-        templates = {
-            "analysis_prompt": """
-            Analyze the following execution plan:
-            
-            Execution Plan: {execution_plan}
-            Success Criteria: {success_criteria}
-            Constraints: {constraints}
-            
-            Please analyze:
-            1. Plan completeness and coverage
-            2. Potential risks and mitigation strategies
-            3. Resource requirements and availability
-            4. Timeline feasibility and dependencies
-            """,
-            "optimization_prompt": """
-            Optimize the plan for better efficiency:
-            
-            Plan Analysis: {plan_analysis}
-            Optimization Criteria: {optimization_criteria}
-            
-            Please optimize:
-            1. Execution sequence and parallelization
-            2. Resource allocation and utilization
-            3. Risk reduction strategies
-            4. Performance improvements
-            """,
-            "validation_prompt": """
-            Validate the optimized plan:
-            
-            Optimized Plan: {optimized_plan}
-            Validation Criteria: {validation_criteria}
-            
-            Please validate:
-            1. Technical feasibility
-            2. Resource constraints compliance
-            3. Timeline achievability
-            4. Risk acceptability
-            """,
-            "documentation_prompt": """
-            Document the review findings:
-            
-            Validated Plan: {validated_plan}
-            Review Findings: {review_findings}
-            
-            Please document:
-            1. Comprehensive review report
-            2. Execution recommendations
-            3. Risk mitigation strategies
-            4. Success metrics and monitoring
-            """
-        }
-        
-        template = templates.get(template_name, "")
-        return template.format(**variables) 
+        templates = self.initialize_templates()
+        template = templates.get(template_name, None)
+        if template:
+            content = template.template_content
+            # Simple variable substitution using [variable] format
+            for var_name, var_value in variables.items():
+                placeholder = f"[{var_name}]"
+                content = content.replace(placeholder, str(var_value))
+            return content
+        else:
+            raise ValueError(f"Template '{template_name}' not found") 
