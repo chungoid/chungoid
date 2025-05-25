@@ -279,7 +279,7 @@ chungoid build --goal-file goal.txt
 ```bash
 # Production environment variables
 export OPENAI_API_KEY="sk-your-openai-api-key"
-export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o"
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
 export CHUNGOID_LLM_MONTHLY_BUDGET_LIMIT="200.0"
 export CHUNGOID_ENVIRONMENT="production"
 export CHUNGOID_LOG_LEVEL="INFO"
