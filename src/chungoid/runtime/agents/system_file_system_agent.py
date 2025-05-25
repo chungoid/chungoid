@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Registry-first architecture import
 @register_system_agent(capabilities=["file_management", "directory_operations", "file_operations"])
-class SystemFileSystemAgent_v1(BaseAgent):
+class SystemFileSystemAgent_v1(ProtocolAwareAgent):
     """
     An agent that provides tools for interacting with the file system.
     """
@@ -43,6 +43,10 @@ class SystemFileSystemAgent_v1(BaseAgent):
     AGENT_VERSION: ClassVar[str] = "1.0.0"
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.FILE_MANAGEMENT
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    
+    # AUTONOMOUS: Protocol-aware configuration
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["file_operations", "directory_operations"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["file_management", "path_validation"]
 
     # --- Pydantic Schemas for Agent Tools ---
 
@@ -213,7 +217,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
             raise ProtocolExecutionError("Pure protocol execution failed")
 
     # ADDED: Protocol phase execution logic
-    def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
+    async def _execute_phase_logic(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
         """Execute agent-specific logic for each protocol phase."""
         
         # Generic phase handling - can be overridden by specific agents
@@ -242,92 +246,6 @@ class SystemFileSystemAgent_v1(BaseAgent):
             "execution_time": protocol_result.get("execution_time", 0),
             "phases_completed": len([p for p in protocol_result.get("phases", []) if p.get("success", False)])
         }
-
-    async def invoke_async(
-        self,
-        tool_name: Optional[str] = None,
-        tool_input: Optional[Dict[str, Any]] = None,
-        project_root: Optional[Path] = None,
-        run_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        full_context: Optional[SharedContext] = None,
-        inputs: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """
-        Invoke a file system operation.
-        Adapts to different invocation patterns from the orchestrator.
-        """
-        actual_tool_name: Optional[str] = tool_name
-        actual_tool_input: Optional[Dict[str, Any]] = tool_input
-        actual_project_root: Optional[Path] = project_root
-
-        if inputs is not None:
-            if not actual_tool_name and "tool_name" in inputs:
-                actual_tool_name = inputs["tool_name"]
-            if actual_tool_input is None and "tool_input" in inputs:
-                actual_tool_input = inputs["tool_input"]
-
-        # MODIFIED: More robust retrieval of project_root from full_context.data
-        if not actual_project_root and full_context and hasattr(full_context, 'data') and isinstance(full_context.data, dict):
-            project_root_from_context_str = full_context.data.get('mcp_root_workspace_path') or full_context.data.get('project_root_path')
-            if project_root_from_context_str:
-                try:
-                    actual_project_root = Path(project_root_from_context_str)
-                    self._logger.debug(f"Retrieved project_root from full_context.data ('mcp_root_workspace_path' or 'project_root_path'): {actual_project_root}")
-                except (TypeError, ValueError) as e: # Added ValueError for robustness
-                    self._logger.warning(f"Could not convert project_root ('{project_root_from_context_str}') from full_context.data to Path: {e}")
-            else:
-                self._logger.debug("Neither 'mcp_root_workspace_path' nor 'project_root_path' found in full_context.data.")
-        elif not actual_project_root:
-             self._logger.debug("actual_project_root not set and full_context or full_context.data is not available/suitable for project_root retrieval.")
-
-        if not actual_tool_name:
-            return {"success": False, "error": f"'tool_name' is required but was not provided directly or in 'inputs' for {self.AGENT_NAME}."}
-        if actual_tool_input is None:
-            actual_tool_input = {}
-            self._logger.debug(f"tool_input was None for tool '{actual_tool_name}', defaulting to {{}}.")
-        elif not isinstance(actual_tool_input, dict):
-            return {"success": False, "error": f"'tool_input' must be a dictionary for {self.AGENT_NAME}, got {type(actual_tool_input)}."}
-
-        if not actual_project_root:
-            return {"success": False, "error": f"'project_root' is required but was not provided and could not be retrieved from context for {self.AGENT_NAME}."}
-
-        if not hasattr(self, actual_tool_name):
-            return {"success": False, "error": f"Tool '{actual_tool_name}' not found on {self.AGENT_NAME}."}
-
-        method = getattr(self, actual_tool_name)
-        
-        try:
-            # If method is an async function, await it directly.
-            # The method itself should handle blocking I/O appropriately (e.g., using to_thread internally if needed for actual file ops)
-            if asyncio.iscoroutinefunction(method):
-                if "project_root" in method.__code__.co_varnames:
-                    # Assuming tool methods like create_directory are defined as async
-                    # and might take project_root
-                    result = await method(**actual_tool_input, project_root=actual_project_root)
-                else:
-                    result = await method(**actual_tool_input)
-            else: # If it's a synchronous method (should ideally not be the case for tool methods)
-                self._logger.warning(f"Tool method {actual_tool_name} is synchronous. Running in thread.")
-                if "project_root" in method.__code__.co_varnames:
-                    result = await asyncio.to_thread(method, **actual_tool_input, project_root=actual_project_root)
-                else:
-                    result = await asyncio.to_thread(method, **actual_tool_input)
-            
-            # Ensure the result is a dictionary, as expected by the type hint and orchestrator
-            if isinstance(result, BaseModel):
-                return result.model_dump() # Standard Pydantic model output
-            elif isinstance(result, dict):
-                return result # Already a dict
-            else:
-                # This case should ideally not be reached if tool methods return FileSystemOutput or a dict.
-                self._logger.warning(f"Tool method {actual_tool_name} returned non-dict/BaseModel type: {type(result)}. Value: {str(result)[:200]}. Wrapping in a generic error dict.")
-                return {"success": False, "error": f"Tool {actual_tool_name} returned unexpected type: {type(result)}", "details": str(result)[:500]}
-
-        except Exception as e:
-            self._logger.error(f"Error executing tool {actual_tool_name} for agent {self.AGENT_ID}: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "details": f"Exception type: {type(e).__name__}"}
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:

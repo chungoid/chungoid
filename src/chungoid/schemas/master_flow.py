@@ -125,6 +125,66 @@ class MasterStageSpec(BaseModel):
             #     logger.warning(f"Stage '{data.id}' has no defined next stage or conditional transitions. This might be an intended end of a path.")
         return data
 
+class EnhancedMasterStageSpec(BaseModel):
+    """Enhanced stage specification for task-type based autonomous orchestration."""
+    id: str
+    name: str
+    description: str
+    
+    # NEW: Task-type based specification (CORE TRANSFORMATION)
+    task_type: str = Field(..., description="Primary task type from autonomous vocabulary")
+    required_capabilities: List[str] = Field(..., description="Required agent capabilities")
+    preferred_execution: Literal["autonomous", "concrete", "any"] = Field(default="autonomous", description="Execution mode preference")
+    
+    # ENHANCED: Agent selection (backward compatibility)
+    agent_id: Optional[str] = Field(None, description="Specific agent ID (for concrete agents or fallback)")
+    fallback_agent_id: Optional[str] = Field(None, description="Fallback agent if autonomous unavailable")
+    
+    # STANDARD: Input/output configuration
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    output_context_path: Optional[str] = Field(None)
+    success_criteria: List[str] = Field(default_factory=list, description="Autonomous completion criteria")
+    next_stage: Optional[str] = Field(None)
+    
+    # COMPATIBILITY: Legacy fields for backward compatibility
+    number: Optional[float] = Field(None, description="Unique stage number for status tracking")
+    condition: Optional[str] = Field(None, description="Condition for branching")
+    next_stage_true: Optional[str] = Field(None, description="Next stage if condition is true")
+    next_stage_false: Optional[str] = Field(None, description="Next stage if condition is false")
+    clarification_checkpoint: Optional[ClarificationCheckpointSpec] = Field(None)
+    conditional_transitions: Optional[List[ConditionalTransition]] = Field(None)
+    on_failure: Optional[MasterStageFailurePolicy] = Field(None)
+    on_success: Optional[MasterStageFailurePolicy] = Field(None)
+    max_retries: Optional[int] = Field(None)
+
+class EnhancedMasterExecutionPlan(BaseModel):
+    """Enhanced execution plan for task-type based autonomous orchestration."""
+    id: str
+    name: str
+    description: str
+    version: str = Field(default="2.0.0", description="Enhanced autonomous version")
+    
+    # NEW: Task-type based stages
+    stages: Dict[str, EnhancedMasterStageSpec] = Field(...)
+    initial_stage: str = Field(..., description="First stage to execute (replaces start_stage)")
+    
+    # COMPATIBILITY: Legacy fields for backward compatibility
+    start_stage: Optional[str] = Field(None, description="Legacy field, use initial_stage instead")
+    project_id: Optional[str] = Field(None, description="The ID of the project this plan belongs to")
+    global_config: Optional[Dict[str, Any]] = Field(None, description="Global configuration for the plan")
+    original_request: Optional[UserGoalRequest] = Field(None, description="The original UserGoalRequest that initiated this plan")
+    file_path: Optional[Path] = Field(None, description="Optional path to the file from which this plan was loaded")
+
+    @model_validator(mode='after')
+    def ensure_start_stage_compatibility(cls, data: Any) -> Any:
+        """Ensure backward compatibility between start_stage and initial_stage."""
+        if isinstance(data, EnhancedMasterExecutionPlan):
+            if data.start_stage and not data.initial_stage:
+                data.initial_stage = data.start_stage
+            elif data.initial_stage and not data.start_stage:
+                data.start_stage = data.initial_stage
+        return data
+
 class MasterExecutionPlan(BaseModel):
     """Validated, structured representation of a Master Flow YAML."""
     id: str = Field(..., description="Unique ID for this Master Execution Plan.")
@@ -168,7 +228,9 @@ __all__ = [
     "ClarificationCheckpointSpec",
     "MasterStageSpec",
     "MasterExecutionPlan",
-    "ConditionalTransition"
+    "ConditionalTransition",
+    "EnhancedMasterStageSpec",
+    "EnhancedMasterExecutionPlan"
 ]
 
 # Example Usage (for testing or reference)

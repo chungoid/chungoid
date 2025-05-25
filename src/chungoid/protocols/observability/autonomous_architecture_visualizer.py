@@ -803,7 +803,7 @@ class AutonomousArchitectureVisualizerProtocol(ProtocolInterface):
     async def _discover_active_agents(self) -> List[Dict[str, Any]]:
         """Discover currently active agents."""
         try:
-            from ...runtime.agent_registry import get_agent_registry
+            from ...runtime.agent_registry import get_agent_registry # TODO: what is going on here
             
             registry = get_agent_registry()
             active_agents = []

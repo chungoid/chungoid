@@ -59,8 +59,8 @@ class ArchitectAgent_v1(ProtocolAwareAgent[ArchitectAgentInput, ArchitectAgentOu
     """
     Generates a technical blueprint based on an LOPRD and project context.
     
-    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only.
-    ✨ MCP TOOL INTEGRATION - Uses ChromaDB MCP tools instead of agent dependencies.
+    PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only.
+    MCP TOOL INTEGRATION - Uses ChromaDB MCP tools instead of agent dependencies.
     """
     
     AGENT_ID: ClassVar[str] = "ArchitectAgent_v1"

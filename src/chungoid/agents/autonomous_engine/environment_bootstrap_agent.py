@@ -71,7 +71,7 @@ from chungoid.utils.smart_dependency_analysis import (
 )
 
 # Registry-first architecture import
-from chungoid.registry import register_autonomous_engine_agent
+from chungoid.registry import register_system_agent
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -606,7 +606,7 @@ class NodeJSEnvironmentStrategy(EnvironmentStrategy):
 # Main Environment Bootstrap Agent
 # ============================================================================
 
-@register_autonomous_engine_agent(capabilities=["environment_setup", "dependency_management", "project_bootstrapping"])
+@register_system_agent(capabilities=["environment_setup", "dependency_management", "project_bootstrapping"])
 class EnvironmentBootstrapAgent(ProtocolAwareAgent[EnvironmentBootstrapInput, EnvironmentBootstrapOutput]):
     """
     Comprehensive environment bootstrap agent with multi-language support.

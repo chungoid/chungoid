@@ -652,7 +652,7 @@ class ChungoidEngine:
             The result of the tool execution. Structure depends on the tool.
         """
         logger.info(f"Executing MCP tool '{tool_name}' with args: {tool_arguments}")
-        current_project_dir = Path(self.project_dir).resolve()
+        current_project_dir = Path(self.project_dir).resolve() # TODO: not accessed?
         tool_call_id = tool_call_id or f"tool-{uuid.uuid4()}"
 
         # Get tool specification from registry

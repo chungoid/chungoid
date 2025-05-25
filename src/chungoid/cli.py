@@ -161,6 +161,9 @@ from chungoid.utils.llm_provider import LLMProvider # Already imported but ensur
 # ADDED: Import for NoOpAgent_v1
 from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1 
 
+# ADDED: Import get_registry_agent_provider function
+from chungoid.agents import get_registry_agent_provider
+
 # --- Production System Agents Fallback Map ---
 # This map defines the primary fallback for system agents.
 # It uses the actual agent classes.
@@ -1568,9 +1571,11 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
     try:
         asyncio.run(do_build())
         # Successful completion, exit code 0 is implicit
-    except Exception:
-         # Errors are logged within do_build. We re-raise them to allow a non-zero exit code.
-         click.echo("Build failed. See logs for details.", err=True)
+    except Exception as e:
+         # Show the actual error instead of just "Build failed"
+         logger.error(f"Build command failed with exception: {e}", exc_info=True)
+         click.echo(f"Build failed with error: {e}", err=True)
+         click.echo("See logs for full details.", err=True)
          sys.exit(1) # Ensure non-zero exit code on any exception from do_build
 
 @utils.command(name="show-config")

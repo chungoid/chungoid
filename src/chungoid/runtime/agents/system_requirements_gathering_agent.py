@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import logging
-class ProtocolExecutionError(Exception):
-    """Raised when protocol execution fails."""
-    pass
-
 import asyncio
 import uuid
-from typing import Any, Dict, Optional, ClassVar
+from typing import Any, Dict, Optional, ClassVar, Type, List
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,155 +19,240 @@ from chungoid.registry import register_system_agent
 
 logger = logging.getLogger(__name__)
 
+class ProtocolExecutionError(Exception):
+    """Raised when protocol execution fails."""
+    pass
+
 class SystemRequirementsGatheringInput(BaseModel):
     user_goal: str = Field(..., description="The high-level user goal.")
-    project_context_summary: Optional[str] = Field(None, description="Optional summary of the existing project context.")
-    # Add other fields as necessary, e.g., existing requirements, constraints
+    project_context: Optional[str] = Field(None, description="Optional summary of the existing project context.")
 
 class SystemRequirementsGatheringOutput(BaseModel):
-    refined_requirements_document_id: Optional[str] = Field(None, description="ID of the document artifact containing the refined requirements (e.g., in ChromaDB).")
+    requirements_document_id: Optional[str] = Field(None, description="ID of the document artifact containing the refined requirements.")
     requirements_summary: str = Field(..., description="A textual summary of the gathered and refined requirements.")
-    # Add other fields, e.g., structured requirements data
+    functional_requirements: List[str] = Field(default_factory=list, description="List of functional requirements extracted from the user goal.")
+    technical_requirements: List[str] = Field(default_factory=list, description="List of technical requirements and constraints.")
+    acceptance_criteria: List[str] = Field(default_factory=list, description="List of acceptance criteria for the project.")
+    status: str = Field(default="SUCCESS", description="Status of the requirements gathering process.")
 
-@register_system_agent(capabilities=["requirements_gathering", "stakeholder_analysis", "documentation"])
-class SystemRequirementsGatheringAgent_v1(ProtocolAwareAgent[SystemRequirementsGatheringInput, SystemRequirementsGatheringOutput]):
+@register_system_agent(capabilities=["requirements_analysis", "stakeholder_analysis", "documentation"])
+class SystemRequirementsGatheringAgent_v1(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "SystemRequirementsGatheringAgent_v1"
     AGENT_NAME: ClassVar[str] = "System Requirements Gathering Agent"
     VERSION: ClassVar[str] = "1.0.0"
-    DESCRIPTION: ClassVar[str] = "Gathers and refines system requirements based on an initial user goal or problem statement."
+    DESCRIPTION: ClassVar[str] = "Autonomously gathers and refines system requirements based on user goals using LLM-driven analysis."
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.REQUIREMENTS_ANALYSIS
-    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL # Or PUBLIC if it can be invoked directly
-
-    # Declare fields for dependencies injected in __init__
-    llm_provider: LLMProvider
-    prompt_manager: PromptManager
-    loprd_generation_prompt_template_obj: Optional[PromptDefinition] = None
-    loprd_generation_inline_fallback_prompt: Optional[str] = None
-
-    class Config:
-        arbitrary_types_allowed = True
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    INPUT_SCHEMA: ClassVar[Type[SystemRequirementsGatheringInput]] = SystemRequirementsGatheringInput
+    OUTPUT_SCHEMA: ClassVar[Type[SystemRequirementsGatheringOutput]] = SystemRequirementsGatheringOutput
     
-    # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['requirements_gathering', 'stakeholder_analysis']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['documentation', 'validation']
-    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'goal_tracking']
+    # AUTONOMOUS: Protocol-aware configuration
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["requirements_analysis", "stakeholder_analysis"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["documentation", "validation"]
 
     def __init__(self, 
                  llm_provider: LLMProvider, 
                  prompt_manager: PromptManager, 
-                 system_context: Optional[Dict[str, Any]] = None):
-        # Pass llm_provider and prompt_manager to super().__init__
-        init_kwargs = {
-            "llm_provider": llm_provider,
-            "prompt_manager": prompt_manager
-        }
-        if system_context is not None:
-            init_kwargs["system_context"] = system_context
-        
-        super().__init__(**init_kwargs)
-        # Pydantic now handles assignment of llm_provider, prompt_manager
-        if not self.llm_provider: # Should be caught by Pydantic if not optional
+                 system_context: Optional[Dict[str, Any]] = None,
+                 config: Optional[Dict[str, Any]] = None,
+                 agent_id: Optional[str] = None,
+                 **kwargs):
+        if not llm_provider:
             raise ValueError("LLMProvider is required for SystemRequirementsGatheringAgent_v1")
-        if not self.prompt_manager: # Should be caught by Pydantic if not optional
+        if not prompt_manager:
             raise ValueError("PromptManager is required for SystemRequirementsGatheringAgent_v1")
 
-        # Load the LOPRD generation prompt using PromptManager
-        try:
-            self.loprd_generation_prompt_template_obj = self.prompt_manager.get_prompt_definition(
-                prompt_name="system_requirements_gathering_v1",
-                prompt_version="1.0",
-                sub_path="autonomous_engine"
-            )
-            self.loprd_generation_inline_fallback_prompt = None
-        except FileNotFoundError:
-            logger.error("LOPRD prompt file 'autonomous_engine/system_requirements_gathering_agent_v1_prompt.yaml' not found by PromptManager.")
-            self.loprd_generation_prompt_template_obj = None 
-            self.loprd_generation_inline_fallback_prompt = """
-            You are an expert requirements analyst. Generate a JSON LOPRD for: {user_goal}. Context: {project_context_summary}.
-            JSON should include: loprd_id, document_version, user_goal_received, execution_summary, detailed_requirements, acceptance_criteria, relevant_technologies, potential_risks.
-            """
-            logger.warning("Using a basic inline fallback prompt for LOPRD generation.")
-        except Exception as e:
-            logger.error(f"Error loading LOPRD prompt: {e}", exc_info=True)
-            self.loprd_generation_prompt_template_obj = None
-            self.loprd_generation_inline_fallback_prompt = "Error loading prompt. Goal: {user_goal}."
-            logger.warning("Using error fallback prompt for LOPRD generation.")
+        super().__init__(
+            llm_provider=llm_provider,
+            prompt_manager=prompt_manager,
+            agent_id=agent_id or self.AGENT_ID,
+            system_context=system_context,
+            config=config,
+            **kwargs
+        )
 
-    async def execute(self, task_input, full_context: Optional[Dict[str, Any]] = None):
-        """
-        Execute using pure protocol architecture.
-        No fallback - protocol execution only for clean, maintainable code.
-        """
-        try:
-            # Determine primary protocol for this agent
-            primary_protocol = self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "simple_operations"
-            
-            protocol_task = {
-                "task_input": task_input.dict() if hasattr(task_input, 'dict') else task_input,
-                "full_context": full_context,
-                "goal": f"Execute {self.AGENT_NAME} specialized task"
-            }
-            
-            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
-            
-            if protocol_result["overall_success"]:
-                return self._extract_output_from_protocol_result(protocol_result, task_input)
-            else:
-                # Enhanced error handling instead of fallback
-                error_msg = f"Protocol execution failed for {self.AGENT_NAME}: {protocol_result.get('error', 'Unknown error')}"
-                self._logger.error(error_msg)
-                raise ProtocolExecutionError(error_msg)
-                
-        except Exception as e:
-            error_msg = f"Pure protocol execution failed for {self.AGENT_NAME}: {e}"
-            self._logger.error(error_msg)
-            raise ProtocolExecutionError(error_msg)
-
-    # ADDED: Protocol phase execution logic
-    def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
-        """Execute agent-specific logic for each protocol phase."""
+        self._llm_provider = llm_provider
+        self._prompt_manager = prompt_manager
+        self._logger = logging.getLogger(self.AGENT_ID)
         
-        # Generic phase handling - can be overridden by specific agents
-        if phase.name in ["discovery", "analysis", "planning", "execution", "validation"]:
-            return self._execute_generic_phase(phase)
+        self._logger.info(f"{self.AGENT_ID} (v{self.VERSION}) initialized as autonomous protocol-aware agent.")
+
+    async def _execute_phase_logic(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute protocol phase logic for requirements gathering."""
+        if phase.name == "analysis" or phase == ProtocolPhase.ANALYSIS:
+            # Perform requirements analysis
+            user_goal = context.get("user_goal", "")
+            requirements = await self._analyze_requirements(user_goal)
+            return {"requirements": requirements, "phase": "analysis"}
+        elif phase.name == "validation" or phase == ProtocolPhase.VALIDATION:
+            # Validate requirements
+            requirements = context.get("requirements", {})
+            validation_result = self._validate_requirements(requirements)
+            return {"validation": validation_result, "phase": "validation"}
+        elif phase.name == "synthesis" or phase == ProtocolPhase.SYNTHESIS:
+            # Synthesize final requirements
+            requirements = context.get("requirements", {})
+            validation = context.get("validation", {})
+            final_requirements = self._synthesize_requirements(requirements, validation)
+            return {"final_requirements": final_requirements, "phase": "synthesis"}
         else:
-            self._logger.warning(f"Unknown protocol phase: {phase.name}")
-            return {"phase_completed": True, "method": "fallback"}
+            # Default phase handling
+            phase_name = phase.name if hasattr(phase, 'name') else str(phase)
+            return {"phase": phase_name, "status": "completed"}
 
-    def _execute_generic_phase(self, phase: ProtocolPhase) -> Dict[str, Any]:
-        """Execute generic phase logic suitable for most agents."""
+    async def _analyze_requirements(self, user_goal: str) -> Dict[str, Any]:
+        """Analyze user goal to extract requirements."""
+        try:
+            if self.llm_provider:
+                # Use LLM for sophisticated analysis
+                prompt = f"""
+                Analyze the following user goal and extract detailed requirements:
+                
+                Goal: {user_goal}
+                
+                Please provide:
+                1. Functional requirements
+                2. Technical requirements  
+                3. Acceptance criteria
+                4. Potential risks
+                
+                Format as JSON.
+                """
+                
+                response = await self.llm_provider.generate(
+                    prompt=prompt,
+                    system_prompt="You are a requirements analyst. Provide structured analysis.",
+                    response_format="json_object"
+                )
+                
+                if response and response.content:
+                    import json
+                    try:
+                        return json.loads(response.content)
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Fallback to basic analysis
+            return self._generate_fallback_requirements_dict(user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in requirements analysis: {e}")
+            return self._generate_fallback_requirements_dict(user_goal)
+
+    def _validate_requirements(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate requirements for completeness and consistency."""
+        validation = {
+            "is_complete": True,
+            "is_consistent": True,
+            "issues": [],
+            "confidence": 0.8
+        }
+        
+        # Check for required fields
+        required_fields = ["functional_requirements", "technical_requirements"]
+        for field in required_fields:
+            if field not in requirements or not requirements[field]:
+                validation["is_complete"] = False
+                validation["issues"].append(f"Missing {field}")
+        
+        # Check for consistency
+        if "functional_requirements" in requirements and "technical_requirements" in requirements:
+            func_reqs = requirements["functional_requirements"]
+            tech_reqs = requirements["technical_requirements"]
+            if isinstance(func_reqs, list) and isinstance(tech_reqs, list):
+                if len(func_reqs) == 0 or len(tech_reqs) == 0:
+                    validation["is_consistent"] = False
+                    validation["issues"].append("Empty requirements lists")
+        
+        return validation
+
+    def _synthesize_requirements(self, requirements: Dict[str, Any], validation: Dict[str, Any]) -> Dict[str, Any]:
+        """Synthesize final requirements based on analysis and validation."""
+        final_requirements = requirements.copy()
+        
+        # Add validation metadata
+        final_requirements["validation_status"] = validation
+        final_requirements["synthesis_timestamp"] = datetime.now(timezone.utc).isoformat()
+        final_requirements["confidence_score"] = validation.get("confidence", 0.8)
+        
+        # Ensure all required fields are present
+        if "acceptance_criteria" not in final_requirements:
+            final_requirements["acceptance_criteria"] = [
+                "System meets functional requirements",
+                "System meets technical requirements",
+                "System passes validation tests"
+            ]
+        
+        return final_requirements
+
+    def _generate_fallback_requirements_dict(self, user_goal: str) -> Dict[str, Any]:
+        """Generate basic requirements when LLM analysis fails."""
         return {
-            "phase_name": phase.name,
-            "status": "completed", 
-            "outputs": {"generic_result": f"Phase {phase.name} completed"},
-            "method": "generic_protocol_execution"
+            "functional_requirements": [
+                f"Implement core functionality for: {user_goal}",
+                "Provide user-friendly interface",
+                "Handle basic error scenarios"
+            ],
+            "technical_requirements": [
+                "Use appropriate programming language",
+                "Follow coding best practices",
+                "Include basic error handling"
+            ],
+            "complexity_assessment": "medium",
+            "estimated_effort": "Basic implementation effort required",
+            "key_technologies": ["python"],
+            "potential_risks": ["Implementation complexity", "User requirements clarity"]
         }
 
-    def _extract_output_from_protocol_result(self, protocol_result: Dict[str, Any], task_input) -> Any:
-        """Extract agent output from protocol execution results."""
-        # Generic extraction - should be overridden by specific agents
-        return {
-            "status": "SUCCESS",
-            "message": "Task completed via protocol execution",
-            "protocol_used": protocol_result.get("protocol_name"),
-            "execution_time": protocol_result.get("execution_time", 0),
-            "phases_completed": len([p for p in protocol_result.get("phases", []) if p.get("success", False)])
-        }
+    def _generate_requirements_summary(self, user_goal: str, functional_reqs: List[str], 
+                                     technical_reqs: List[str], acceptance_criteria: List[str]) -> str:
+        """Generate a comprehensive summary of gathered requirements."""
+        
+        summary_parts = [
+            f"Requirements Analysis for: {user_goal}",
+            "",
+            "FUNCTIONAL REQUIREMENTS:",
+        ]
+        
+        for i, req in enumerate(functional_reqs, 1):
+            summary_parts.append(f"  {i}. {req}")
+        
+        summary_parts.extend([
+            "",
+            "TECHNICAL REQUIREMENTS:",
+        ])
+        
+        for i, req in enumerate(technical_reqs, 1):
+            summary_parts.append(f"  {i}. {req}")
+        
+        summary_parts.extend([
+            "",
+            "ACCEPTANCE CRITERIA:",
+        ])
+        
+        for i, criteria in enumerate(acceptance_criteria, 1):
+            summary_parts.append(f"  {i}. {criteria}")
+        
+        summary_parts.extend([
+            "",
+            f"Total Requirements: {len(functional_reqs)} functional, {len(technical_reqs)} technical",
+            f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+        ])
+        
+        return "\n".join(summary_parts)
 
-    @classmethod
-    def get_agent_card_static(cls) -> AgentCard:
-        """Returns the static AgentCard for this agent."""
+    @staticmethod
+    def get_agent_card_static() -> AgentCard:
+        """Return the agent card for this agent."""
         return AgentCard(
-            agent_id=cls.AGENT_ID,
-            name=cls.AGENT_NAME,
-            version=cls.VERSION,
-            description=cls.DESCRIPTION,
-            category=cls.CATEGORY,
-            visibility=cls.VISIBILITY,
-            input_schema=SystemRequirementsGatheringInput.model_json_schema(),
-            output_schema=SystemRequirementsGatheringOutput.model_json_schema(),
-            dependencies=["LLMProvider", "PromptManager"],
-            init_args=["llm_provider", "prompt_manager"]
+            agent_id="SystemRequirementsGatheringAgent_v1",
+            name="System Requirements Gathering Agent",
+            description="Autonomously gathers and refines system requirements using protocol-driven analysis",
+            category=AgentCategory.REQUIREMENTS_ANALYSIS,
+            version="1.0.0",
+            capabilities=["requirements_analysis", "stakeholder_analysis", "documentation"],
+            input_schema=SystemRequirementsGatheringInput,
+            output_schema=SystemRequirementsGatheringOutput
         )
 
 # Example of how it might be used (for testing this file directly)

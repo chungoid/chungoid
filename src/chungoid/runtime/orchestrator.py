@@ -57,8 +57,11 @@ from chungoid.schemas.flows import PausedRunDetails # ADDED
 from ..agents.protocol_aware_agent import ProtocolAwareAgent
 from ..protocols.universal.tool_validation import ToolValidationProtocol
 from ..protocols import get_protocol
-# TODO: Re-enable once dependencies resolved
-# import chungoid.mcp_tools as mcp_tools
+
+# ADDED: Enhanced schemas for task-type orchestration
+from chungoid.schemas.master_flow import EnhancedMasterExecutionPlan, EnhancedMasterStageSpec
+# ADDED: Enhanced agent resolution
+from chungoid.runtime.enhanced_agent_resolver import EnhancedAgentResolver, AgentResolutionResult, AgentResolutionError
 
 # ADDED: Local constants to replace missing imports (temporarily)
 
@@ -1232,6 +1235,8 @@ class AsyncOrchestrator(BaseOrchestrator):
     condition_evaluator: ConditionEvaluationService # ADDED
     success_criteria_evaluator: SuccessCriteriaService # ADDED
     input_validator: InputValidationService # ADDED
+    error_handler: OrchestrationErrorHandlerService # ADDED
+    current_plan: Optional[Union[MasterExecutionPlan, EnhancedMasterExecutionPlan]] = None # ENHANCED: Support both plan types
 
     def __init__(
         self,
@@ -1271,7 +1276,22 @@ class AsyncOrchestrator(BaseOrchestrator):
         # ADDED: Initialize Autonomous Execution Engine for tool-driven task completion
         self.autonomous_execution_engine = AutonomousExecutionEngine(self)
 
-        self.current_plan: Optional[MasterExecutionPlan] = None
+        # ADDED: Initialize Enhanced Agent Resolver for task-type orchestration
+        # Get the agent registry from the agent provider if available
+        agent_registry = None
+        if hasattr(self.agent_provider, 'agent_registry'):
+            agent_registry = self.agent_provider.agent_registry
+        elif hasattr(self.agent_provider, '_registry'):
+            agent_registry = self.agent_provider._registry
+        
+        if agent_registry:
+            self.enhanced_agent_resolver = EnhancedAgentResolver(agent_registry, self.agent_provider)
+            self.logger.info("Enhanced Agent Resolver initialized for task-type orchestration")
+        else:
+            self.enhanced_agent_resolver = None
+            self.logger.warning("Enhanced Agent Resolver not initialized - agent registry not found")
+
+        self.current_plan = None
 
     def _emit_metric(
         self,
@@ -1365,56 +1385,112 @@ class AsyncOrchestrator(BaseOrchestrator):
     async def _invoke_agent_for_stage(
         self,
         stage_name: str,
-        stage_spec: MasterStageSpec,
+        stage_spec: Union[MasterStageSpec, EnhancedMasterStageSpec],
         run_id: str,
         flow_id: str,
         attempt_number: int
     ) -> Any: # Can return any agent output type or raise AgentErrorDetails / Exception
         """Invokes the agent for the given stage and returns its output."""
-        self.logger.info(f"Run {run_id}: Invoking agent for stage '{stage_name}' (Agent: {stage_spec.agent_id}, Attempt: {attempt_number}).")
+        
+        # ENHANCED: Determine if this is an enhanced stage spec with task-type orchestration
+        is_enhanced_stage = isinstance(stage_spec, EnhancedMasterStageSpec)
+        
+        if is_enhanced_stage:
+            self.logger.info(f"Run {run_id}: Invoking ENHANCED agent for stage '{stage_name}' (Task Type: {stage_spec.task_type}, Attempt: {attempt_number}).")
+        else:
+            self.logger.info(f"Run {run_id}: Invoking LEGACY agent for stage '{stage_name}' (Agent: {stage_spec.agent_id}, Attempt: {attempt_number}).")
+        
         self.shared_context.current_stage_id = stage_name
         self.shared_context.current_stage_status = StageStatus.RUNNING
         self.shared_context.current_attempt_number_for_stage = attempt_number
-        self._emit_metric(MetricEventType.MASTER_STAGE_START, flow_id, run_id, stage_id=stage_name, agent_id=stage_spec.agent_id, data={"attempt_number": attempt_number})
+        
+        # Emit metrics with appropriate agent identification
+        agent_id_for_metrics = stage_spec.task_type if is_enhanced_stage else stage_spec.agent_id
+        self._emit_metric(MetricEventType.MASTER_STAGE_START, flow_id, run_id, stage_id=stage_name, agent_id=agent_id_for_metrics, data={"attempt_number": attempt_number})
 
         agent_callable: Optional[Callable[..., Any]] = None
         agent_instance_for_type_check: Optional[BaseAgent] = None # To hold the resolved agent instance
         resolved_inputs = {}
+        
         try:
-            # Resolve inputs first using ContextResolutionService
-            resolved_inputs = self.context_resolver.resolve_inputs_for_stage(
-                inputs_spec=stage_spec.inputs or {},
-                shared_context_override=self.shared_context
-            )
-            self.logger.debug(f"Run {run_id}: Resolved inputs for stage '{stage_name}': {resolved_inputs}")
-
-            self.shared_context.update_resolved_inputs_for_current_stage(resolved_inputs)
-
-            # Get agent instance for type checking and its callable
-            # Ensure shared_context is passed to provider if it needs it for instantiation
-            if isinstance(self.agent_provider, RegistryAgentProvider):
-                # If it's a RegistryAgentProvider, it should have set_orchestrator_shared_context
-                # or accept shared_context in its get methods.
-                # The get_raw_agent_instance in RegistryAgentProvider was updated to accept shared_context.data
-                self.agent_provider.set_orchestrator_shared_context(self.shared_context.data) # Pass the .data part
-                agent_instance_for_type_check = self.agent_provider.get_raw_agent_instance(
-                    stage_spec.agent_id, 
-                    shared_context=self.shared_context.data # Pass the .data part
+            # ENHANCED: Agent Resolution - Use enhanced resolver for enhanced stages
+            if is_enhanced_stage and self.enhanced_agent_resolver:
+                self.logger.info(f"Run {run_id}: Using Enhanced Agent Resolver for task_type='{stage_spec.task_type}'")
+                try:
+                    resolution_result: AgentResolutionResult = await self.enhanced_agent_resolver.resolve_agent_for_stage(stage_spec)
+                    
+                    if resolution_result.success:
+                        agent_instance_for_type_check = resolution_result.agent_instance
+                        resolved_agent_id = resolution_result.agent_id
+                        
+                        self.logger.info(f"Run {run_id}: Enhanced resolution SUCCESS - Agent: {resolved_agent_id}, Mode: {resolution_result.execution_mode.value}, Method: {resolution_result.resolution_method.value}, Confidence: {resolution_result.confidence_score}")
+                        
+                        # Update stage_spec with resolved agent_id for downstream processing
+                        if hasattr(stage_spec, 'agent_id'):
+                            stage_spec.agent_id = resolved_agent_id
+                        
+                        # Get the agent callable
+                        if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
+                            agent_callable = agent_instance_for_type_check.invoke_async
+                        else:
+                            # Fallback to agent provider
+                            agent_callable = self.agent_provider.get(identifier=resolved_agent_id, shared_context=self.shared_context.data)
+                    else:
+                        raise AgentResolutionError(f"Enhanced agent resolution failed: {resolution_result.fallback_reason}")
+                        
+                except AgentResolutionError as resolution_error:
+                    self.logger.error(f"Run {run_id}: Enhanced agent resolution failed for task_type='{stage_spec.task_type}': {resolution_error}")
+                    # Fall back to legacy resolution if enhanced fails
+                    if hasattr(stage_spec, 'agent_id') and stage_spec.agent_id:
+                        self.logger.warning(f"Run {run_id}: Falling back to legacy agent resolution with agent_id='{stage_spec.agent_id}'")
+                        is_enhanced_stage = False  # Switch to legacy mode
+                    else:
+                        raise OrchestrationError(f"Enhanced agent resolution failed and no fallback agent_id available: {resolution_error}", stage_name=stage_name, run_id=run_id)
+            
+            # LEGACY: Traditional agent resolution (or fallback from enhanced)
+            if not is_enhanced_stage or not agent_instance_for_type_check:
+                # Resolve inputs first using ContextResolutionService
+                resolved_inputs = self.context_resolver.resolve_inputs_for_stage(
+                    inputs_spec=stage_spec.inputs or {},
+                    shared_context_override=self.shared_context
                 )
-            else: # Fallback for other providers, may not support raw instance easily
-                 agent_instance_for_type_check = None # Or try a more generic way if available
+                self.logger.debug(f"Run {run_id}: Resolved inputs for stage '{stage_name}': {resolved_inputs}")
 
-            # ADDED: Debug logging for agent instance detection
-            self.logger.info(f"Run {run_id}: [DEBUG] Agent instance detection for '{stage_spec.agent_id}':")
-            self.logger.info(f"Run {run_id}: [DEBUG] - agent_instance_for_type_check: {agent_instance_for_type_check}")
-            self.logger.info(f"Run {run_id}: [DEBUG] - agent_instance_for_type_check type: {type(agent_instance_for_type_check)}")
-            self.logger.info(f"Run {run_id}: [DEBUG] - isinstance(SystemRequirementsGatheringAgent_v1): {isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1) if agent_instance_for_type_check else 'agent_instance is None'}")
+                self.shared_context.update_resolved_inputs_for_current_stage(resolved_inputs)
 
-            if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
-                agent_callable = agent_instance_for_type_check.invoke_async
-            else: # Fallback if raw instance not available or no invoke_async
-                agent_callable = self.agent_provider.get(identifier=stage_spec.agent_id, shared_context=self.shared_context.data)
+                # Get agent instance for type checking and its callable
+                # Ensure shared_context is passed to provider if it needs it for instantiation
+                if isinstance(self.agent_provider, RegistryAgentProvider):
+                    # If it's a RegistryAgentProvider, it should have set_orchestrator_shared_context
+                    # or accept shared_context in its get methods.
+                    # The get_raw_agent_instance in RegistryAgentProvider was updated to accept shared_context.data
+                    self.agent_provider.set_orchestrator_shared_context(self.shared_context.data) # Pass the .data part
+                    agent_instance_for_type_check = self.agent_provider.get_raw_agent_instance(
+                        stage_spec.agent_id, 
+                        shared_context=self.shared_context.data # Pass the .data part
+                    )
+                else: # Fallback for other providers, may not support raw instance easily
+                     agent_instance_for_type_check = None # Or try a more generic way if available
 
+                # ADDED: Debug logging for agent instance detection
+                self.logger.info(f"Run {run_id}: [DEBUG] Agent instance detection for '{stage_spec.agent_id}':")
+                self.logger.info(f"Run {run_id}: [DEBUG] - agent_instance_for_type_check: {agent_instance_for_type_check}")
+                self.logger.info(f"Run {run_id}: [DEBUG] - agent_instance_for_type_check type: {type(agent_instance_for_type_check)}")
+                self.logger.info(f"Run {run_id}: [DEBUG] - isinstance(SystemRequirementsGatheringAgent_v1): {isinstance(agent_instance_for_type_check, SystemRequirementsGatheringAgent_v1) if agent_instance_for_type_check else 'agent_instance is None'}")
+
+                if agent_instance_for_type_check and hasattr(agent_instance_for_type_check, 'invoke_async'):
+                    agent_callable = agent_instance_for_type_check.invoke_async
+                else: # Fallback if raw instance not available or no invoke_async
+                    agent_callable = self.agent_provider.get(identifier=stage_spec.agent_id, shared_context=self.shared_context.data)
+            
+            # For enhanced stages, resolve inputs after agent resolution
+            if is_enhanced_stage and not resolved_inputs:
+                resolved_inputs = self.context_resolver.resolve_inputs_for_stage(
+                    inputs_spec=stage_spec.inputs or {},
+                    shared_context_override=self.shared_context
+                )
+                self.logger.debug(f"Run {run_id}: Resolved inputs for enhanced stage '{stage_name}': {resolved_inputs}")
+                self.shared_context.update_resolved_inputs_for_current_stage(resolved_inputs)
 
             # Ensure agent_callable is actually callable
             if not callable(agent_callable):
@@ -1719,11 +1795,18 @@ class AsyncOrchestrator(BaseOrchestrator):
             resolved_inputs_for_error_handler: Optional[Dict[str, Any]] = None # Initialize for error case
 
             try:
+                # ENHANCED: Handle both legacy and enhanced plan formats for agent_id
+                effective_agent_id = stage_spec.agent_id
+                if not effective_agent_id and hasattr(stage_spec, 'fallback_agent_id'):
+                    effective_agent_id = stage_spec.fallback_agent_id
+                if not effective_agent_id:
+                    effective_agent_id = "UnknownAgent"  # Fallback for logging
+                
                 self.state_manager.record_stage_start(
                     run_id=run_id,
                     flow_id=flow_id, 
                     stage_id=current_stage_name,
-                    agent_id=stage_spec.agent_id
+                    agent_id=effective_agent_id
                 )
 
                 # Check for clarification checkpoint before agent invocation
@@ -2251,9 +2334,19 @@ class AsyncOrchestrator(BaseOrchestrator):
                 # Parse the JSON plan string into a MasterExecutionPlan object.
                 # The from_yaml method handles parsing of JSON as it's a subset of YAML.
                 # The plan's 'id' should be present in the master_plan_json content.
-                loaded_master_plan = MasterExecutionPlan.from_yaml(
-                    yaml_text=planner_output.master_plan_json
-                )
+                
+                # ENHANCED: Try parsing as EnhancedMasterExecutionPlan first (new format)
+                try:
+                    loaded_master_plan = EnhancedMasterExecutionPlan.model_validate_json(
+                        planner_output.master_plan_json
+                    )
+                    self.logger.info(f"Run {run_id}: Successfully parsed plan as EnhancedMasterExecutionPlan")
+                except Exception as enhanced_parse_error:
+                    self.logger.info(f"Run {run_id}: Failed to parse as EnhancedMasterExecutionPlan, trying legacy format: {enhanced_parse_error}")
+                    # Fallback to legacy format
+                    loaded_master_plan = MasterExecutionPlan.from_yaml(
+                        yaml_text=planner_output.master_plan_json
+                    )
                 
                 # Assign the user_goal_request to the loaded plan.
                 loaded_master_plan.original_request = user_goal_req_for_plan
@@ -2264,7 +2357,9 @@ class AsyncOrchestrator(BaseOrchestrator):
                 # potentially override self.current_plan.id if master_plan_id (from CLI) is given.
                 # For now, we assume the ID from planner_output.master_plan_json is the primary one.
                 
-                self.logger.info(f"Run {run_id}: Successfully parsed generated plan. Plan ID: {loaded_master_plan.id}, Start Stage: {loaded_master_plan.start_stage}") # Corrected to start_stage
+                # ENHANCED: Handle both plan formats for logging
+                start_stage_for_log = getattr(loaded_master_plan, 'initial_stage', None) or getattr(loaded_master_plan, 'start_stage', 'Unknown')
+                self.logger.info(f"Run {run_id}: Successfully parsed generated plan. Plan ID: {loaded_master_plan.id}, Start Stage: {start_stage_for_log}")
 
             except NoAgentFoundForCategoryError as e_planner_not_found:
                 self.logger.error(f"Run {run_id}: MasterPlannerAgent (\'{planner_agent_id}\') not found: {e_planner_not_found}", exc_info=True)
@@ -2404,7 +2499,11 @@ class AsyncOrchestrator(BaseOrchestrator):
                     self.logger.error(f"Run {run_id}: Cannot apply modified inputs from resume_context. Stage '{start_stage_name}' not found in plan.")
         else:
             # Start of a new flow
-            start_stage_name = self.current_plan.start_stage
+            # ENHANCED: Handle both legacy (start_stage) and enhanced (initial_stage) plan formats
+            if hasattr(self.current_plan, 'initial_stage') and self.current_plan.initial_stage:
+                start_stage_name = self.current_plan.initial_stage
+            else:
+                start_stage_name = self.current_plan.start_stage
             self.logger.info(f"Run {run_id}: Starting new flow '{final_flow_id}' from stage '{start_stage_name}'.")
             self._emit_metric(MetricEventType.FLOW_START, final_flow_id, run_id, data={"start_stage_id": start_stage_name})
             self.state_manager.record_flow_start(run_id, final_flow_id, initial_context=self.shared_context.data if self.shared_context else None)

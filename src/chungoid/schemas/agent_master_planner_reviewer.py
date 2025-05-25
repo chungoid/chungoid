@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, validator, ConfigDict
 
 from chungoid.schemas.common_enums import FlowPauseStatus, ReviewerActionType
 from chungoid.schemas.errors import AgentErrorDetails
-from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
+from chungoid.schemas.master_flow import MasterExecutionPlan, EnhancedMasterExecutionPlan, MasterStageSpec
 
 
 class ReviewerModifyPlanAction(Enum):
@@ -19,7 +19,7 @@ class ReviewerModifyPlanAction(Enum):
 
 class MasterPlannerReviewerInput(BaseModel):
     """Input for the MasterPlannerReviewerAgent."""
-    current_master_plan: MasterExecutionPlan = Field(..., description="The current MasterExecutionPlan that is being executed.")
+    current_master_plan: Union[MasterExecutionPlan, EnhancedMasterExecutionPlan] = Field(..., description="The current MasterExecutionPlan or EnhancedMasterExecutionPlan that is being executed.")
     paused_run_details: Dict[str, Any] = Field(..., description="The PausedRunDetails dictionary from StateManager when the flow was paused.")
     # PausedRunDetails contains: run_id, flow_id (which is master_plan.id), paused_at_stage_id, timestamp,
     # status (FlowPauseStatus), context_snapshot, error_details, clarification_request.

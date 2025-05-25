@@ -10,6 +10,7 @@ from itertools import tee
 import logging
 import uuid
 import json
+from typing import ClassVar, List
 class ProtocolExecutionError(Exception):
     """Raised when protocol execution fails."""
     pass
@@ -42,6 +43,19 @@ from networkx import spanner # Added MasterExecutionPlan for helper methods
 # from chungoid.runtime.agents.mocks.testing_mock_agents import MockSetupAgentV1Output, MockClarificationAgentV1Output # ADDED FOR MOCK LOGIC
 
 # Registry-first architecture import
+from chungoid.registry import register_system_agent
+
+from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.protocols.base.protocol_interface import ProtocolPhase
+from chungoid.runtime.agents.agent_base import BaseAgent # MODIFIED: Changed AgentBase to BaseAgent
+from chungoid.utils.agent_registry import AgentCard, AgentToolSpec # MODIFIED: Changed import path
+from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
+# from chungoid.utils.security import is_safe_path # For path safety checks # REMOVED
+from chungoid.schemas.errors import AgentErrorDetails # For structured errors
+from chungoid.schemas.orchestration import SharedContext # ADDED
+from chungoid.utils.agent_registry import AgentCard
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager
 from chungoid.registry import register_system_agent
 
 logger = logging.getLogger(__name__)
@@ -208,24 +222,50 @@ Based on all the information above and the rules provided in the system prompt, 
 """
 
 @register_system_agent(capabilities=["plan_review", "error_analysis", "recovery_suggestions"])
-class MasterPlannerReviewerAgent:
+class MasterPlannerReviewerAgent(ProtocolAwareAgent):
     '''
     System agent responsible for reviewing failed/paused MasterExecutionPlans and suggesting next steps.
     '''
-    AGENT_ID = "system.master_planner_reviewer_agent_v1"
-    AGENT_NAME = "Master Planner Reviewer Agent"
-    AGENT_DESCRIPTION = ("Reviews failed or paused autonomous execution plans and suggests recovery actions, "
-                       "such as retrying a stage, modifying the plan, or escalating to a user.")
+    AGENT_ID: ClassVar[str] = "system.master_planner_reviewer_agent_v1"
+    AGENT_NAME: ClassVar[str] = "Master Planner Reviewer Agent"
+    AGENT_DESCRIPTION: ClassVar[str] = ("Reviews failed or paused autonomous execution plans and suggests recovery actions, "
+                        "including retrying stages, adding clarification stages, or escalating to users.")
+    VERSION: ClassVar[str] = "1.0.0"
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL
+    
+    # AUTONOMOUS: Protocol-aware configuration
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review", "error_analysis"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["recovery_suggestions", "escalation_management"]
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None, llm_client: Optional[LLMProvider] = None, llm_manager: Optional[Any] = None):
+    def __init__(self, 
+                 llm_provider: LLMProvider = None,
+                 prompt_manager: PromptManager = None,
+                 config: Optional[Dict[str, Any]] = None, 
+                 llm_client: Optional[LLMProvider] = None, 
+                 llm_manager: Optional[Any] = None,
+                 system_context: Optional[Dict[str, Any]] = None,
+                 agent_id: Optional[str] = None,
+                 **kwargs):
+        super().__init__(
+            llm_provider=llm_provider or llm_client,
+            prompt_manager=prompt_manager,
+            agent_id=agent_id or self.AGENT_ID,
+            system_context=system_context,
+            config=config,
+            **kwargs
+        )
         self.config = config if config else {}
-        self.llm_client = llm_client # Directly assign the passed llm_client (which should be an LLMManager instance)
+        # Store LLM provider internally without creating a Pydantic field
+        self._llm_client = llm_provider or llm_client or llm_manager # Directly assign the passed llm_client (which should be an LLMManager instance)
+        # Add missing _logger attribute
+        self._logger = logging.getLogger(self.AGENT_ID)
 
-        if self.llm_client:
-            logger.info(f"MasterPlannerReviewerAgent initialized with provided LLM client/manager: {type(self.llm_client).__name__}")
+        if self._llm_client:
+            logger.info(f"MasterPlannerReviewerAgent initialized with provided LLM client/manager: {type(self._llm_client).__name__}")
         elif llm_manager: # Accept llm_manager as an alternative name for dependency injection
-            self.llm_client = llm_manager
-            logger.info(f"MasterPlannerReviewerAgent initialized with provided llm_manager: {type(self.llm_client).__name__}")
+            self._llm_client = llm_manager
+            logger.info(f"MasterPlannerReviewerAgent initialized with provided llm_manager: {type(self._llm_client).__name__}")
         else:
             logger.warning("MasterPlannerReviewerAgent: No LLM client/manager provided during initialization. LLM capabilities will be unavailable.")
         
@@ -351,7 +391,7 @@ class MasterPlannerReviewerAgent:
             raise ProtocolExecutionError("Pure protocol execution failed")
 
     # ADDED: Protocol phase execution logic
-    def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
+    async def _execute_phase_logic(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
         """Execute agent-specific logic for each protocol phase."""
         
         # Generic phase handling - can be overridden by specific agents
@@ -380,337 +420,6 @@ class MasterPlannerReviewerAgent:
             "execution_time": protocol_result.get("execution_time", 0),
             "phases_completed": len([p for p in protocol_result.get("phases", []) if p.get("success", False)])
         }
-
-    # MAINTAINED: Original invoke_async method for backward compatibility
-
-    async def invoke_async(self, input_payload: MasterPlannerReviewerInput) -> MasterPlannerReviewerOutput:
-        logger.info(f"MasterPlannerReviewerAgent invoked for paused stage: {input_payload.paused_stage_id}")
-
-        initial_msg_content_from_stage_A = ""
-        if input_payload.full_context_at_pause and \
-           input_payload.full_context_at_pause.get("intermediate_outputs", {}):
-            setup_message_obj = input_payload.full_context_at_pause["intermediate_outputs"].get("setup_message")
-            if setup_message_obj:
-                if isinstance(setup_message_obj, dict):
-                    initial_msg_content_from_stage_A = setup_message_obj.get("message", "")
-                elif hasattr(setup_message_obj, 'message'):
-                    initial_msg_content_from_stage_A = setup_message_obj.message
-        
-        if not initial_msg_content_from_stage_A and \
-           input_payload.paused_stage_id == "stage_B_fail_point" and \
-           input_payload.current_master_plan and \
-           input_payload.current_master_plan.stages.get("stage_A_setup") and \
-           isinstance(input_payload.current_master_plan.stages["stage_A_setup"].inputs, dict) and \
-           isinstance(input_payload.current_master_plan.stages["stage_A_setup"].inputs.get("initial_message"), str):
-            initial_msg_content_from_stage_A = input_payload.current_master_plan.stages["stage_A_setup"].inputs.get("initial_message", "")
-            logger.info(f"invoke_async: initial_msg_content_from_stage_A from spec fallback = '{initial_msg_content_from_stage_A}'")
-
-        # --- Specific Mock Triggers ---
-        if input_payload.paused_stage_id == "stage_B_fail_point":
-            if "trigger_TC_P2F1_MODIFY_02" in initial_msg_content_from_stage_A:
-                logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_MODIFY_02 mock: Modifying stage_B_fail_point.")
-                original_stage_b_spec = input_payload.current_master_plan.stages.get("stage_B_fail_point")
-                if not original_stage_b_spec: return self._default_escalate_to_user("MOCK ERROR: Original spec for stage_B_fail_point not found for TC_P2F1_MODIFY_02.")
-                try:
-                    updated_spec_data = original_stage_b_spec.model_dump(exclude_unset=False)
-                    if not isinstance(updated_spec_data.get("inputs"), dict): updated_spec_data["inputs"] = {}
-                    updated_spec_data["inputs"]["trigger_fail"] = False
-                    updated_spec_data["inputs"]["modified_by_reviewer_TC_P2F1_MODIFY_02"] = True
-                    if "setup_message" not in updated_spec_data["inputs"]: updated_spec_data["inputs"]["setup_message"] = "context.intermediate_outputs.setup_message.message"
-                    final_updated_stage_spec = MasterStageSpec(**updated_spec_data)
-                except Exception as e: return self._default_escalate_to_user(f"MOCK ERROR: Failed to construct updated spec for TC_P2F1_MODIFY_02: {e}")
-                details = ModifyMasterPlanModifyStageDetails(action="modify_stage_spec", target_stage_id="stage_B_fail_point", updated_stage_spec=final_updated_stage_spec)
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.MODIFY_MASTER_PLAN, suggestion_details=details, confidence_score=0.98, reasoning="Mock: TC_P2F1_MODIFY_02 - Modifying stage_B_fail_point.")
-
-            if "trigger_TC_P2F1_RETRY_02_AGENT_SWAP" in initial_msg_content_from_stage_A:
-                logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_LLM_MODIFY_03 mock: Modifying stage_B_fail_point to use mock_alternative_agent_v1.")
-                original_stage_b_spec_model = input_payload.current_master_plan.stages.get("stage_B_fail_point")
-                if not original_stage_b_spec_model:
-                    return self._default_escalate_to_user("MOCK ERROR: Original spec for stage_B_fail_point not found for TC_P2F1_LLM_MODIFY_03.")
-                
-                try:
-                    # Create a new spec based on the old one, but change the agent_id
-                    updated_spec_data = original_stage_b_spec_model.model_dump(exclude_unset=False)
-                    updated_spec_data["agent_id"] = "mock_alternative_agent_v1"
-                    
-                    # Ensure essential inputs for mock_alternative_agent_v1 are mapped if not already.
-                    # MockAlternativeAgentV1Input requires 'setup_message'.
-                    # It also accepts 'trigger_fail' and 'modified_by_reviewer_TC_P2F1_MODIFY_02' but they are optional.
-                    if not isinstance(updated_spec_data.get("inputs"), dict):
-                        updated_spec_data["inputs"] = {}
-                    
-                    # If the original stage_B_fail_point had specific inputs for 'setup_message',
-                    # we should try to preserve it or set a default if compatible.
-                    # For this mock, we'll ensure 'setup_message' is explicitly set for the new agent.
-                    # The original 'stage_B_fail_point' was using:
-                    # "setup_message": "context.intermediate_outputs.setup_message.message" (or "context.outputs.stage_A_setup.message")
-                    # This path should still be valid for MockAlternativeAgentV1Input.
-                    if "setup_message" not in updated_spec_data["inputs"]:
-                        logger.info("TC_P2F1_LLM_MODIFY_03: 'setup_message' not in original inputs, setting default for mock_alternative_agent_v1.")
-                        # Check where stage_A_setup's message is. Based on recent tests, it's context.outputs.stage_A_setup.message
-                        updated_spec_data["inputs"]["setup_message"] = "context.outputs.stage_A_setup.message"
-
-                    # Preserve trigger_fail if it was there, though mock_alternative_agent_v1 ignores it.
-                    if "trigger_fail" not in updated_spec_data["inputs"] and original_stage_b_spec_model.inputs and isinstance(original_stage_b_spec_model.inputs, dict) and "trigger_fail" in original_stage_b_spec_model.inputs:
-                         updated_spec_data["inputs"]["trigger_fail"] = original_stage_b_spec_model.inputs["trigger_fail"]
-                    
-                    # New success criteria for MockAlternativeAgentV1
-                    updated_spec_data["success_criteria"] = [
-                        "alternative_processed_message EXISTS",
-                        "original_trigger_fail_value IS_BOOL"
-                    ]
-                    
-                    final_updated_stage_spec = MasterStageSpec(**updated_spec_data)
-
-                except Exception as e:
-                    return self._default_escalate_to_user(f"MOCK ERROR: Failed to construct updated spec for TC_P2F1_LLM_MODIFY_03: {e}")
-
-                modification_details = ModifyMasterPlanModifyStageDetails(
-                    action="modify_stage_spec",
-                    target_stage_id="stage_B_fail_point",
-                    updated_stage_spec=final_updated_stage_spec
-                )
-                return MasterPlannerReviewerOutput(
-                    suggestion_type=ReviewerActionType.MODIFY_MASTER_PLAN,
-                    suggestion_details=modification_details,
-                    confidence_score=0.99, # High confidence for mock
-                    reasoning="Mock for TC_P2F1_LLM_MODIFY_03: Change agent_id for stage_B_fail_point to mock_alternative_agent_v1."
-                )
-
-            if "trigger_TC_P2F1_RETRY_AS_IS" in initial_msg_content_from_stage_A:
-                # This must match the failure_message_override in test_reviewer_flow_v1.yaml for this TC
-                expected_error_substring = "Intentional transient failure for TC_P2F1_OTHER_01"
-                actual_error_message = input_payload.triggering_error_details.message if input_payload.triggering_error_details else ""
-                
-                logger.debug(f"Reviewer Mock (RETRY_AS_IS): initial_msg contains trigger.")
-                logger.debug(f"Reviewer Mock (RETRY_AS_IS): Expected error substring: '{expected_error_substring}' (Type: {type(expected_error_substring)}, Len: {len(expected_error_substring)}, Repr: {repr(expected_error_substring)})")
-                logger.debug(f"Reviewer Mock (RETRY_AS_IS): Actual error message: '{actual_error_message}' (Type: {type(actual_error_message)}, Len: {len(actual_error_message)}, Repr: {repr(actual_error_message)})")
-
-                comparison_result = expected_error_substring in actual_error_message
-                logger.debug(f"Reviewer Mock (RETRY_AS_IS): Comparison `expected in actual` result: {comparison_result}")
-
-                if comparison_result:
-                    logger.info(f"Reviewer Mock: Matched TC_P2F1_RETRY_AS_IS. Suggesting RETRY_STAGE_AS_IS.")
-                    return MasterPlannerReviewerOutput(
-                        suggestion_type=ReviewerActionType.RETRY_STAGE_AS_IS,
-                        confidence_score=1.0,
-                        reasoning="Mock for TC_P2F1_RETRY_AS_IS: Simulated transient error."
-                    )
-                else:
-                    logger.warning(f"Reviewer Mock: TC_P2F1_RETRY_AS_IS trigger, but error message mismatch. Expected substring {repr(expected_error_substring)} not in actual {repr(actual_error_message)}. Falling back or to LLM.")
-                    # Fallback logic or LLM call would happen here
-                    pass # Allow fallback to LLM or other mocks
-
-            if "trigger_TC_P2F1_ESCALATE" in initial_msg_content_from_stage_A:
-                logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_OTHER_02 mock: ESCALATE_TO_USER for stage_B_fail_point.")
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.ESCALATE_TO_USER, suggestion_details={"message_to_user": "Mock escalation for TC_P2F1_OTHER_02."}, confidence_score=1.0, reasoning="Mock for TC_P2F1_OTHER_02: Escalating as per test trigger.")
-
-            if "trigger_TC_P2F1_MODIFY_01" in initial_msg_content_from_stage_A:
-                logger.warning("MasterPlannerReviewerAgent: Applying TC_P2F1_MODIFY_01 mock: Removing stage_B_fail_point.")
-                details = ModifyMasterPlanRemoveStageDetails(action="remove_stage", target_stage_id="stage_B_fail_point")
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.MODIFY_MASTER_PLAN, suggestion_details=details, confidence_score=1.0, reasoning="Mock for TC_P2F1_MODIFY_01: Remove stage_B_fail_point.")
-
-            # TC_P2F1_OTHER_03: NO_ACTION_SUGGESTED
-            # This mock path is for testing the orchestrator's behavior when the reviewer explicitly suggests NO_ACTION_SUGGESTED,
-            # allowing the stage's on_failure (or the default on_failure if not specified) to take over.
-            if "trigger_TC_P2F1_NO_ACTION" in initial_msg_content_from_stage_A:
-                logger.info("Reviewer Mock: Matched TC_P2F1_NO_ACTION. Suggesting NO_ACTION_SUGGESTED.")
-                return MasterPlannerReviewerOutput(
-                    suggestion_type=ReviewerActionType.NO_ACTION_SUGGESTED,
-                    suggestion_details={}, 
-                    reasoning="Mock for TC_P2F1_NO_ACTION: Explicitly suggesting NO_ACTION_SUGGESTED to test orchestrator's on_failure handling for the stage.",
-                    confidence_score=1.0
-                )
-
-            # Clarification logic for stage_B_fail_point
-            # This section is specific to stage_B_fail_point and its clarification needs.
-            # It should ONLY execute if paused_stage_id is 'stage_B_fail_point'.
-            # However, the initial_msg_content_from_stage_A is general.
-            if input_payload.paused_stage_id == "stage_B_fail_point": # Ensure this section is scoped
-                needs_clarification = "stage_B_needs_clarification" in initial_msg_content_from_stage_A
-                clarification_provided = False
-                if input_payload.full_context_at_pause and input_payload.full_context_at_pause.get("intermediate_outputs", {}):
-                    clar_key_pattern = "clarification_for_stage_b"
-                    alt_clar_key = "stage_BC_clarify_for_B_output"
-                    clar_data = input_payload.full_context_at_pause["intermediate_outputs"].get(clar_key_pattern) or \
-                                input_payload.full_context_at_pause["intermediate_outputs"].get(alt_clar_key)
-                    if clar_data:
-                        clar_content = getattr(clar_data, 'clarification_provided', None) if hasattr(clar_data, 'clarification_provided') else clar_data.get('clarification_provided')
-                        if clar_content: clarification_provided = True
-                
-                if needs_clarification and not clarification_provided:
-                    logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (needs clarification): ADD_CLARIFICATION_STAGE.")
-                    new_stage_spec_dict = {
-                        "id": "stage_BC_clarify_for_B", "name": "Clarification for Stage B (Mock)", "description": "Mock clarification stage.",
-                        "number": input_payload.paused_stage_spec.get("number", 0.0) + 0.1, "agent_id": "SystemInterventionAgent_v1",
-                        "inputs": {"prompt_message_for_user": f"Clarification for stage_B based on: {initial_msg_content_from_stage_A}"},
-                        "output_context_path": "intermediate_outputs.clarification_for_stage_b", "next_stage": "stage_B_fail_point",
-                        "success_criteria": ["human_response IS_NOT_EMPTY"], "on_failure": {"action": "FAIL_MASTER_FLOW"}
-                    }
-                    try: final_new_stage_spec = MasterStageSpec(**new_stage_spec_dict)
-                    except Exception as e: return self._default_escalate_to_user(f"Mock ADD_CLARIFICATION_STAGE spec error: {e}")
-                    details_add = AddClarificationStageDetails(new_stage_spec=final_new_stage_spec, insert_before_stage_id="stage_B_fail_point", original_failed_stage_id="stage_B_fail_point")
-                    return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.ADD_CLARIFICATION_STAGE, suggestion_details=details_add, confidence_score=0.9, reasoning="Mock: Adding clarification for Stage B.")
-
-                if needs_clarification and clarification_provided:
-                    logger.warning("MasterPlannerReviewerAgent: Mock for stage_B_fail_point (clarification provided): RETRY_STAGE_WITH_CHANGES.")
-                    details_retry = RetryStageWithChangesDetails(
-                        target_stage_id="stage_B_fail_point",
-                        changes_to_stage_spec={"inputs": {"trigger_fail": False, "setup_message": "context.intermediate_outputs.setup_message.message", "clarification_input": "context.intermediate_outputs.clarification_for_stage_b.clarification_provided"}}
-                    )
-                    return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.RETRY_STAGE_WITH_CHANGES, suggestion_details=details_retry, confidence_score=0.9, reasoning="Mock: Clarification provided. Retrying Stage B.")
-            
-            # Fallback for stage_B_fail_point if clarification not explicitly handled by above AND NO LLM
-            if not self.llm_client:
-                logger.warning("MasterPlannerReviewerAgent: Mock fallback for stage_B_fail_point (LLM N/A): RETRY_STAGE_WITH_CHANGES (trigger_fail=false).")
-                details_fallback = RetryStageWithChangesDetails(target_stage_id="stage_B_fail_point", changes_to_stage_spec={"inputs": {"trigger_fail": False, "setup_message": "context.intermediate_outputs.setup_message.message"}})
-                return MasterPlannerReviewerOutput(suggestion_type=ReviewerActionType.RETRY_STAGE_WITH_CHANGES, suggestion_details=details_fallback, confidence_score=0.8, reasoning="Mock Fallback (LLM N/A): Generic retry for stage_B_fail_point.")
-
-        # --- General LLM Invocation or Final Fallback ---
-        if self.llm_client:
-            logger.info("Proceeding with LLM-based review as no specific mock was triggered or returned.")
-            action_types_list = [action.value for action in ReviewerActionType]
-            action_types_json = json.dumps(action_types_list)
-            system_prompt = SYSTEM_PROMPT_TEMPLATE_BASE.replace("{action_types_json}", action_types_json)
-
-            paused_stage_spec_json = json.dumps(self._get_paused_stage_spec(input_payload.current_master_plan, input_payload.paused_stage_id), indent=2)
-            current_master_plan_snippet = json.dumps(self._get_simplified_plan_snippet(input_payload.current_master_plan, input_payload.paused_stage_id), indent=2)
-            relevant_context_snapshot = self._get_relevant_context_snippet(input_payload.full_context_at_pause, input_payload.paused_stage_id)
-            relevant_context_snapshot_json = json.dumps(relevant_context_snapshot, indent=2)
-
-            user_prompt = USER_PROMPT_TEMPLATE.format(
-                paused_stage_id=input_payload.paused_stage_id,
-                pause_status=input_payload.pause_status.value,
-                error_type=input_payload.triggering_error_details.error_type if input_payload.triggering_error_details else "N/A",
-                error_message=input_payload.triggering_error_details.message if input_payload.triggering_error_details else "N/A",
-                error_traceback=input_payload.triggering_error_details.traceback if input_payload.triggering_error_details else "N/A",
-                error_agent_id=input_payload.triggering_error_details.agent_id if input_payload.triggering_error_details else "N/A",
-                current_master_plan_snippet=current_master_plan_snippet,
-                paused_stage_spec_json=paused_stage_spec_json,
-                relevant_context_snapshot_json=relevant_context_snapshot_json
-            )
-            llm_response_str = "" # Initialize llm_response_str
-            try:
-                # MODIFIED: Call generate on the actual_provider and request json_object
-                if hasattr(self.llm_client, 'actual_provider') and self.llm_client.actual_provider:
-                    llm_response_obj = await self.llm_client.actual_provider.generate(
-                        prompt=user_prompt,
-                        system_prompt=system_prompt,
-                        temperature=0.1,
-                        max_tokens=1024,
-                        response_format={"type": "json_object"} # Request JSON object
-                    )
-                    # Assuming the provider returns a dict when json_object is requested and successful
-                    if isinstance(llm_response_obj, dict):
-                        llm_suggestion_dict = llm_response_obj
-                    elif isinstance(llm_response_obj, str): # Fallback if it's still a string
-                        logger.warning("LLM provider returned a string despite json_object request. Attempting manual parse.")
-                        llm_response_str = llm_response_obj
-                        # Manual stripping and parsing (kept for fallback)
-                        if llm_response_str.startswith("```json"):
-                            llm_response_str = llm_response_str[len("```json"):]
-                        if llm_response_str.startswith("```"):
-                            llm_response_str = llm_response_str[3:]
-                        if llm_response_str.endswith("```"):
-                            llm_response_str = llm_response_str[:-3]
-                        llm_response_str = llm_response_str.strip()
-                        llm_suggestion_dict = json.loads(llm_response_str)
-                    else:
-                        raise ValueError(f"LLM provider returned unexpected type: {type(llm_response_obj)}")
-                else:
-                    logger.error("LLM client does not have an 'actual_provider' or it's None. Cannot make LLM call.")
-                    return self._default_escalate_to_user("LLM provider misconfiguration.")
-                
-                suggestion_type_val = llm_suggestion_dict.get("suggestion_type")
-                raw_details = llm_suggestion_dict.get("suggestion_details")
-                parsed_details: Optional[Union[RetryStageWithChangesDetails, AddClarificationStageDetails, ModifyMasterPlanDetails, Dict[str, Any]]] = None
-                
-                if suggestion_type_val == ReviewerActionType.RETRY_STAGE_WITH_CHANGES.value:
-                    parsed_details = RetryStageWithChangesDetails(**raw_details) if raw_details else None
-                    
-                    if parsed_details and parsed_details.changes_to_stage_spec and isinstance(parsed_details.changes_to_stage_spec.get("inputs"), dict):
-                        current_input_value_dict = parsed_details.changes_to_stage_spec["inputs"]
-                        
-                        logger.debug(f"Initial 'inputs' value from LLM (for flattening): {current_input_value_dict}")
-
-                        max_flatten_depth = 5
-                        flatten_count = 0
-                        # Iteratively unwrap if the current dictionary is of the form {"inputs": <another_dict>}
-                        while (
-                            isinstance(current_input_value_dict, dict) and \
-                            list(current_input_value_dict.keys()) == ["inputs"] and \
-                            isinstance(current_input_value_dict.get("inputs"), dict) and \
-                            flatten_count < max_flatten_depth
-                        ):
-                            logger.info(f"Unwrapping nested 'inputs' layer. Current: {current_input_value_dict}")
-                            current_input_value_dict = current_input_value_dict["inputs"]
-                            flatten_count += 1
-                        
-                        if flatten_count > 0:
-                             logger.info(f"Applied {flatten_count} levels of 'inputs' unwrapping. Result: {current_input_value_dict}")
-                        
-                        parsed_details.changes_to_stage_spec["inputs"] = current_input_value_dict
-                        
-                        logger.info(f"Final 'inputs' value for RETRY_STAGE_WITH_CHANGES after potential flattening: {parsed_details.changes_to_stage_spec['inputs']}")
-                elif suggestion_type_val == ReviewerActionType.ADD_CLARIFICATION_STAGE.value:
-                    if raw_details and "new_stage_spec" in raw_details and isinstance(raw_details["new_stage_spec"], dict):
-                        raw_details["new_stage_spec"] = MasterStageSpec(**raw_details["new_stage_spec"])
-                    parsed_details = AddClarificationStageDetails(**raw_details) if raw_details else None
-                elif suggestion_type_val == ReviewerActionType.MODIFY_MASTER_PLAN.value:
-                    action_in_details = raw_details.get("action") if isinstance(raw_details, dict) else None
-                    # ---- START MODIFICATION FOR LLM OUTPUT ----
-                    # LLM might return "stage_id_to_remove" instead of target_stage_id and no "action"
-                    llm_stage_id_to_remove = raw_details.get("stage_id_to_remove") if isinstance(raw_details, dict) else None
-
-                    if action_in_details == "remove_stage" or (action_in_details is None and llm_stage_id_to_remove):
-                        # If LLM provided llm_stage_id_to_remove, adapt it
-                        if llm_stage_id_to_remove and not raw_details.get("target_stage_id"):
-                            raw_details["target_stage_id"] = llm_stage_id_to_remove
-                        # Ensure action is set
-                        raw_details["action"] = "remove_stage"
-                        parsed_details = ModifyMasterPlanRemoveStageDetails(**raw_details) if raw_details else None
-                    # ---- END MODIFICATION FOR LLM OUTPUT ----
-                    elif action_in_details == "modify_stage_spec":
-                        if raw_details and "updated_stage_spec" in raw_details and isinstance(raw_details["updated_stage_spec"], dict):
-                             raw_details["updated_stage_spec"] = MasterStageSpec(**raw_details["updated_stage_spec"])
-                        parsed_details = ModifyMasterPlanModifyStageDetails(**raw_details) if raw_details else None
-                    else: # Default for MODIFY_MASTER_PLAN if action is unknown or not remove/modify_spec
-                        parsed_details = raw_details # Pass through raw details if structure is not recognized for specific parsing
-                elif suggestion_type_val == ReviewerActionType.ESCALATE_TO_USER.value: # ADDED THIS BLOCK
-                    parsed_details = raw_details # Assign raw_details for ESCALATE_TO_USER
-                # For other types like RETRY_STAGE_AS_IS, PROCEED_AS_IS, NO_ACTION_SUGGESTED, 
-                # suggestion_details might be None or a simple dict if the LLM provides one.
-                # If raw_details is None for these, parsed_details will also correctly be None.
-                # If raw_details is a dict (e.g. for ESCALATE_TO_USER's message_to_user), it will be passed.
-                elif parsed_details is None and isinstance(raw_details, dict): # Fallback to assign raw_details if it's a dict and not yet parsed
-                    parsed_details = raw_details
-
-                # Normalise confidence_score from LLM output (could be 0-100 or 0-1)
-                raw_conf = llm_suggestion_dict.get("confidence_score", 0.75)
-                try:
-                    conf_float = float(raw_conf)
-                except (TypeError, ValueError):
-                    conf_float = 0.75
-                if conf_float > 1:
-                    conf_float = conf_float / 100.0 if conf_float <= 100 else 1.0
-                if conf_float < 0:
-                    conf_float = 0.0
-
-                return MasterPlannerReviewerOutput(
-                    suggestion_type=suggestion_type_val,
-                    suggestion_details=parsed_details,
-                    confidence_score=conf_float,
-                    reasoning=llm_suggestion_dict.get("reasoning", "LLM provided suggestion.")
-                )
-            except json.JSONDecodeError as json_err:
-                logger.error(f"LLM response not valid JSON: {json_err}. Response: {llm_response_str}", exc_info=True)
-                return self._default_escalate_to_user(f"LLM output not valid JSON. Details: {json_err}. Raw: {llm_response_str[:200]}")
-            except Exception as e: 
-                logger.error(f"Error processing LLM suggestion: {e}. LLM Raw: {llm_response_str}", exc_info=True)
-                return self._default_escalate_to_user(f"Error processing LLM suggestion: {e}. Raw: {llm_response_str[:200]}")
-        else: 
-            logger.warning("LLM client not available. No specific mock matched. Falling back to default escalation.")
-            return self._default_escalate_to_user("LLM client not configured and no specific mock rule applied for this scenario.")
 
     def _default_escalate_to_user(self, reason: str) -> MasterPlannerReviewerOutput:
         logger.error(f"MasterPlannerReviewerAgent escalating to user: {reason}")

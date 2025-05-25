@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime, timezone
 
 from .errors import AgentErrorDetails # Import for use in PausedRunDetails
 from chungoid.schemas.common_enums import FlowPauseStatus # Added import
-from chungoid.schemas.master_flow import MasterExecutionPlan # Added for current_master_plan_snapshot
+from chungoid.schemas.master_flow import MasterExecutionPlan, EnhancedMasterExecutionPlan # Added for current_master_plan_snapshot
 from chungoid.schemas.orchestration import ClarificationCheckpointSpec # Assuming ClarificationCheckpointSpec will be in orchestration.py or similar
 
 class StageInput(BaseModel):
@@ -57,7 +57,7 @@ class PausedRunDetails(BaseModel):
 
     # Added fields based on refactoring plan review
     next_stage_options: Optional[List[str]] = Field(None, description="Suggested next stage IDs the user can choose from if resuming manually.")
-    current_master_plan_snapshot: Optional[MasterExecutionPlan] = Field(None, description="A snapshot of the MasterExecutionPlan at the time of pause.")
+    current_master_plan_snapshot: Optional[Union[MasterExecutionPlan, EnhancedMasterExecutionPlan]] = Field(None, description="A snapshot of the MasterExecutionPlan at the time of pause.")
     audit_trail: Optional[List[Dict[str, Any]]] = Field(None, description="A log of review and resume attempts related to this pause instance. Each entry could be an 'AuditEntry' model later.")
 
     model_config = ConfigDict(

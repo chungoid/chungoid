@@ -35,6 +35,7 @@ def initialize_all_agents() -> Dict[str, bool]:
         from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
         from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
         from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1
+        from chungoid.runtime.agents.system_intervention_agent import SystemInterventionAgent_v1
         logger.info("✅ System agents imported successfully")
     except Exception as e:
         logger.error(f"❌ Failed to import system agents: {e}")
