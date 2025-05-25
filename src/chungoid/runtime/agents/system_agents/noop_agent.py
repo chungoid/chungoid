@@ -1,10 +1,11 @@
-from typing import Any, Dict, Optional, ClassVar
+from typing import Any, Dict, Optional, ClassVar, List
 import logging
 from pydantic import BaseModel
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import InputSchema, OutputSchema
+# REMOVED: BaseAgent import - no longer exists
+# from chungoid.runtime.agents.agent_base import InputSchema, OutputSchema
 from chungoid.schemas.orchestration import SharedContext
 # Attempt to import providers for type hinting, but allow Any if it causes cycles during early init
 try:
@@ -41,7 +42,7 @@ from chungoid.protocols.base.protocol_interface import ProtocolPhase
 from chungoid.registry import register_system_agent
 
 @register_system_agent(capabilities=["simple_operations", "status_reporting"])
-class NoOpAgent_v1(ProtocolAwareAgent[NoOpInput, NoOpOutput]):
+class NoOpAgent_v1(ProtocolAwareAgent):
     """
     A No-Operation Agent. It logs its invocation and returns a success message.
     It primarily serves as a placeholder in execution plans where an action is
@@ -49,6 +50,7 @@ class NoOpAgent_v1(ProtocolAwareAgent[NoOpInput, NoOpOutput]):
     """
     AGENT_ID: ClassVar[str] = "NoOpAgent_v1"
     AGENT_VERSION: ClassVar[str] = "1.0"
+    CAPABILITIES: ClassVar[List[str]] = ["simple_operations", "status_reporting"]
 
     # ADDED: Protocol definitions following AI agent best practices
     PRIMARY_PROTOCOLS: ClassVar[list[str]] = ["simple_operations"]
@@ -161,9 +163,9 @@ class NoOpAgent_v1(ProtocolAwareAgent[NoOpInput, NoOpOutput]):
         )
 
     @classmethod
-    def get_input_schema(cls) -> type[InputSchema]:
+    def get_input_schema(cls) -> type:
         return NoOpInput
 
     @classmethod
-    def get_output_schema(cls) -> type[OutputSchema]:
+    def get_output_schema(cls) -> type:
         return NoOpOutput 

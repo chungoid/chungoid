@@ -9,11 +9,11 @@ import logging
 from typing import Dict, Any, Optional, Type, List, Union
 from pydantic import BaseModel, ValidationError
 
+from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.runtime.agents.system_requirements_gathering_agent import (
     SystemRequirementsGatheringAgent_v1,
     SystemRequirementsGatheringInput
 )
-from chungoid.runtime.agents.agent_base import BaseAgent
 
 
 class InputValidationResult(BaseModel):
@@ -62,7 +62,7 @@ class InputValidationService:
     def validate_and_inject_inputs(
         self,
         agent_id: str,
-        agent_instance: Optional[BaseAgent],
+        agent_instance: Optional[ProtocolAwareAgent],
         resolved_inputs: Dict[str, Any],
         injection_context: Optional[Dict[str, Any]] = None,
         run_id: str = "unknown"
@@ -134,7 +134,7 @@ class InputValidationService:
         
         return result
     
-    def _get_agent_rules(self, agent_id: str, agent_instance: Optional[BaseAgent]) -> Optional[Dict[str, Any]]:
+    def _get_agent_rules(self, agent_id: str, agent_instance: Optional[ProtocolAwareAgent]) -> Optional[Dict[str, Any]]:
         """Get validation rules for an agent."""
         # First try by agent_id
         if agent_id in self.AGENT_INPUT_RULES:

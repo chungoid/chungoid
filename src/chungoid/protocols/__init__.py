@@ -9,6 +9,13 @@ from .base.protocol_interface import ProtocolInterface, ProtocolPhase, ProtocolT
 from .base.validation import ProtocolValidator, ValidationResult
 from .base.execution_engine import ProtocolExecutionEngine
 
+# Core operational protocols (5 new protocols)
+from .requirements_analysis import RequirementsAnalysisProtocol
+from .stakeholder_analysis import StakeholderAnalysisProtocol
+from .code_generation import CodeGenerationProtocol
+from .file_management import FileManagementProtocol
+from .plan_review import PlanReviewProtocol
+
 # Universal protocols (5 protocols)
 from .universal.agent_communication import AgentCommunicationProtocol
 from .universal.context_sharing import ContextSharingProtocol
@@ -59,6 +66,10 @@ __all__ = [
     'ProtocolInterface', 'ProtocolPhase', 'ProtocolTemplate', 'PhaseStatus',
     'ProtocolValidator', 'ValidationResult', 'ProtocolExecutionEngine',
     
+    # Core operational protocols (5 new)
+    'RequirementsAnalysisProtocol', 'StakeholderAnalysisProtocol', 'CodeGenerationProtocol',
+    'FileManagementProtocol', 'PlanReviewProtocol',
+    
     # Universal protocols (5)
     'AgentCommunicationProtocol', 'ContextSharingProtocol', 'ToolValidationProtocol',
     'ErrorRecoveryProtocol', 'GoalTrackingProtocol',
@@ -84,6 +95,13 @@ __all__ = [
 
 # Protocol registry for easy access
 AVAILABLE_PROTOCOLS = {
+    # Core operational protocols (NEW)
+    "requirements_analysis": RequirementsAnalysisProtocol,
+    "stakeholder_analysis": StakeholderAnalysisProtocol,
+    "code_generation": CodeGenerationProtocol,
+    "file_management": FileManagementProtocol,
+    "plan_review": PlanReviewProtocol,
+    
     # Universal protocols
     "agent_communication": AgentCommunicationProtocol,
     "context_sharing": ContextSharingProtocol,
@@ -109,6 +127,10 @@ AVAILABLE_PROTOCOLS = {
     "autonomous_execution_evaluator": AutonomousExecutionEvaluatorProtocol,
 }
 
+def get_protocol_registry() -> dict:
+    """Get the complete protocol registry."""
+    return AVAILABLE_PROTOCOLS.copy()
+
 def get_protocol(protocol_name: str) -> ProtocolInterface:
     """Get a protocol instance by name."""
     if protocol_name in AVAILABLE_PROTOCOLS:
@@ -120,4 +142,15 @@ def list_available_protocols() -> list:
     """List all available protocol names."""
     return list(AVAILABLE_PROTOCOLS.keys())
 
-# Total: 14 protocols (5 universal + 4 planning + 2 collaboration + 2 observability + 1 evaluation) 
+def validate_agent_protocols(primary_protocols: list, secondary_protocols: list = None) -> bool:
+    """Validate that all agent protocols exist in the registry."""
+    secondary_protocols = secondary_protocols or []
+    all_protocols = primary_protocols + secondary_protocols
+    
+    missing_protocols = [p for p in all_protocols if p not in AVAILABLE_PROTOCOLS]
+    if missing_protocols:
+        raise ValueError(f"Missing protocols in registry: {missing_protocols}")
+    
+    return True
+
+# Total: 19 protocols (5 core operational + 5 universal + 4 planning + 2 collaboration + 2 observability + 1 evaluation) 

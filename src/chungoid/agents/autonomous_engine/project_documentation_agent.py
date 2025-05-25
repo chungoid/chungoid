@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from ..protocol_aware_agent import ProtocolAwareAgent
 from ...protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
@@ -68,11 +67,12 @@ class ProjectDocumentationAgentOutput(BaseModel):
 
 
 @register_autonomous_engine_agent(capabilities=["documentation_generation", "project_analysis", "comprehensive_reporting"])
-class ProjectDocumentationAgent_v1(ProtocolAwareAgent[ProjectDocumentationAgentInput, ProjectDocumentationAgentOutput]):
+class ProjectDocumentationAgent_v1(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "ProjectDocumentationAgent_v1"
     AGENT_NAME: ClassVar[str] = "Project Documentation Agent v1"
     DESCRIPTION: ClassVar[str] = "Generates project documentation (README, API docs, dependency audit) from project artifacts and codebase context."
-    VERSION: ClassVar[str] = "0.1.0"
+    AGENT_VERSION: ClassVar[str] = "0.1.0"
+    CAPABILITIES: ClassVar[List[str]] = ["documentation_generation", "project_analysis", "comprehensive_reporting"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.DOCUMENTATION_GENERATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
@@ -80,8 +80,8 @@ class ProjectDocumentationAgent_v1(ProtocolAwareAgent[ProjectDocumentationAgentI
     _prompt_manager: PromptManager
     _logger: logging.Logger
     # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['documentation_generation']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['content_validation', 'template_management']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["agent_communication"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "agent_communication"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
 
 

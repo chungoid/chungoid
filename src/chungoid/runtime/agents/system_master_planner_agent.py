@@ -6,7 +6,7 @@ class ProtocolExecutionError(Exception):
     """Raised when protocol execution fails."""
     pass
 
-from typing import Any, Dict, Optional, ClassVar
+from typing import Any, List, Dict, Optional, ClassVar
 import uuid
 from datetime import datetime, timezone
 
@@ -22,7 +22,6 @@ from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent
 
 from pathlib import Path # For conceptual PCMA instantiation
 
@@ -218,10 +217,11 @@ DEFAULT_USER_PROMPT_TEMPLATE = (
 from chungoid.registry import register_system_agent
 
 @register_system_agent(capabilities=["multi_agent_coordination", "deep_planning", "workflow_orchestration"])
-class MasterPlannerAgent(ProtocolAwareAgent[MasterPlannerInput, MasterPlannerOutput]):
+class MasterPlannerAgent(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "SystemMasterPlannerAgent_v1"
     AGENT_NAME: ClassVar[str] = "System Master Planner Agent"
-    VERSION: ClassVar[str] = "0.2.0"  # Updated version
+    AGENT_VERSION: ClassVar[str] = "0.2.0"  # Updated version
+    CAPABILITIES: ClassVar[List[str]] = ["multi_agent_coordination", "deep_planning", "workflow_orchestration"]  # Added required CAPABILITIES
     DESCRIPTION: ClassVar[str] = (
         "Generates a MasterExecutionPlan based on a high-level user goal using an "
         "LLM."
@@ -230,8 +230,8 @@ class MasterPlannerAgent(ProtocolAwareAgent[MasterPlannerInput, MasterPlannerOut
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
     # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ["multi_agent_coordination", "deep_planning"]
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ["workflow_orchestration", "goal_tracking"]
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["autonomous_team_formation", "enhanced_deep_planning"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["enhanced_deep_planning", "goal_tracking"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ["agent_communication", "context_sharing", "tool_validation"]
 
     NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME: ClassVar[str] = "blueprint_to_flow_agent_v1.yaml"
@@ -246,7 +246,7 @@ class MasterPlannerAgent(ProtocolAwareAgent[MasterPlannerInput, MasterPlannerOut
             "system_prompt": ENHANCED_AUTONOMOUS_SYSTEM_PROMPT
         }
         # Pydantic's BaseModel.__init__ (called via super() chain) will use these
-        # to populate fields from BaseAgent (llm_provider, prompt_manager)
+        # to populate fields from ProtocolAwareAgent (llm_provider, prompt_manager)
         super().__init__(**initial_data)
 
         # Post-initialization checks or logic can go here if needed,

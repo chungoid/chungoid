@@ -6,14 +6,14 @@ class ProtocolExecutionError(Exception):
     """Raised when protocol execution fails."""
     pass
 
-from typing import Dict, Any, Optional, Literal, ClassVar
+from typing import Dict, Any, Optional, Literal, ClassVar, List
 import logging
 import hashlib
 import uuid
 import tempfile
 import datetime
 
-# ADDED Imports for BaseAgent dependencies
+# ADDED Imports for ProtocolAwareAgent dependencies
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager
 
@@ -26,7 +26,6 @@ from chungoid.schemas.errors import AgentErrorDetails
 # from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LIVE_CODEBASE_COLLECTION
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent, InputSchema, OutputSchema
 
 # Registry-first architecture import
 from chungoid.registry import register_system_agent
@@ -37,7 +36,7 @@ logger = logging.getLogger(__name__)
 LIVE_CODEBASE_COLLECTION = "live_codebase_collection"
 
 @register_system_agent(capabilities=["code_integration", "file_operations", "version_management"])
-class SmartCodeIntegrationAgent_v1(ProtocolAwareAgent[SmartCodeIntegrationInput, SmartCodeIntegrationOutput]):
+class SmartCodeIntegrationAgent_v1(ProtocolAwareAgent):
     """    Smart Code Integration Agent (Version 1).
 
     Fetches code from ChromaDB (or direct input), integrates it into files using various edit actions,
@@ -51,12 +50,13 @@ class SmartCodeIntegrationAgent_v1(ProtocolAwareAgent[SmartCodeIntegrationInput,
     AGENT_DESCRIPTION: ClassVar[str] = "Integrates code (sourced from ChromaDB or direct input) into files and updates live codebase in ChromaDB."
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_EDITING
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
-    VERSION: ClassVar[str] = "0.2.1"
-    INPUT_SCHEMA: ClassVar[type[InputSchema]] = SmartCodeIntegrationInput
-    OUTPUT_SCHEMA: ClassVar[type[OutputSchema]] = SmartCodeIntegrationOutput
+    AGENT_VERSION: ClassVar[str] = "0.2.1"
+    CAPABILITIES: ClassVar[List[str]] = ["code_integration", "file_operations", "version_management"]
+    INPUT_SCHEMA: ClassVar[type] = SmartCodeIntegrationInput
+    OUTPUT_SCHEMA: ClassVar[type] = SmartCodeIntegrationOutput
     # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['code_integration']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['systematic_implementation', 'quality_validation']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["code_integration"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["code_generation", "tool_validation"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'tool_validation', 'error_recovery']
 
 
@@ -159,7 +159,7 @@ class SmartCodeIntegrationAgent_v1(ProtocolAwareAgent[SmartCodeIntegrationInput,
             },
             input_schema=SmartCodeIntegrationInput.model_json_schema(),
             output_schema=SmartCodeIntegrationOutput.model_json_schema(),
-            version=SmartCodeIntegrationAgent_v1.VERSION,
+            version=SmartCodeIntegrationAgent_v1.AGENT_VERSION,
             metadata={
                 "callable_fn_path": f"{SmartCodeIntegrationAgent_v1.__module__}.{SmartCodeIntegrationAgent_v1.__name__}"
             }

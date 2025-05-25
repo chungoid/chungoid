@@ -66,7 +66,7 @@ class RequirementsTracerOutput(BaseModel):
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
 @register_autonomous_engine_agent(capabilities=["requirements_traceability", "artifact_analysis", "quality_validation"])
-class RequirementsTracerAgent_v1(ProtocolAwareAgent[RequirementsTracerInput, RequirementsTracerOutput]):
+class RequirementsTracerAgent_v1(ProtocolAwareAgent):
     """
     Generates a traceability report (Markdown) between two development artifacts.
     
@@ -78,7 +78,8 @@ class RequirementsTracerAgent_v1(ProtocolAwareAgent[RequirementsTracerInput, Req
     AGENT_NAME: ClassVar[str] = "Requirements Tracer Agent v1"
     DESCRIPTION: ClassVar[str] = "Generates a traceability report (Markdown) between two development artifacts (e.g., LOPRD to Blueprint)."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = RTA_PROMPT_NAME
-    VERSION: ClassVar[str] = "0.2.0"
+    AGENT_VERSION: ClassVar[str] = "0.2.0"
+    CAPABILITIES: ClassVar[List[str]] = ["requirements_traceability", "artifact_analysis", "quality_validation"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.REQUIREMENTS_ANALYSIS
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[RequirementsTracerInput]] = RequirementsTracerInput
@@ -90,8 +91,8 @@ class RequirementsTracerAgent_v1(ProtocolAwareAgent[RequirementsTracerInput, Req
     _logger: logging.Logger
     
     # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['requirements_tracing', 'goal_tracking']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['documentation', 'validation']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["requirements_analysis", "goal_tracking"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "tool_validation"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
 
     def __init__(

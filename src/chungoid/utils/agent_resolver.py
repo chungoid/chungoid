@@ -19,7 +19,6 @@ from .agent_registry import AgentCard, AgentRegistry
 from chungoid.schemas.common import AgentCallable
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager
-from chungoid.runtime.agents.agent_base import BaseAgent
 import logging
 import asyncio
 import functools
@@ -214,13 +213,13 @@ class RegistryAgentProvider:
                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' FOUND in fallback map.")
                 logger.info(f"RegistryAgentProvider: Fallback item type: {type(potential_item)}, name: {getattr(potential_item, '__name__', 'N/A')}")
 
-                if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
-                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is a BaseAgent class. Instantiating...")
+                if inspect.isclass(potential_item) and issubclass(potential_item, ProtocolAwareAgent):
+                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is a ProtocolAwareAgent class. Instantiating...")
                     agent_instance = self._instantiate_agent_class(potential_item, identifier)
                     if agent_instance and hasattr(agent_instance, 'invoke_async'):
                         return agent_instance.invoke_async
-                elif isinstance(potential_item, BaseAgent):
-                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is already an instantiated BaseAgent.")
+                elif isinstance(potential_item, ProtocolAwareAgent):
+                    logger.info(f"RegistryAgentProvider: Fallback item for '{identifier}' is already an instantiated ProtocolAwareAgent.")
                     if hasattr(potential_item, 'invoke_async'):
                         return potential_item.invoke_async
                 elif callable(potential_item):
@@ -595,7 +594,7 @@ class RegistryAgentProvider:
     def get_agent_callable(self, agent_id: str, shared_context: Optional[Dict[str, Any]] = None) -> AgentCallable:
         """
         Resolves an agent ID to its `invoke_async` callable.
-        Handles instantiation of BaseAgent subclasses and provides necessary context.
+        Handles instantiation of ProtocolAwareAgent subclasses and provides necessary context.
         MODIFIED: Accepts shared_context and passes it for agent instantiation.
         """
         logger.debug(f"Attempting to get callable for agent_id: {agent_id}")
@@ -610,20 +609,20 @@ class RegistryAgentProvider:
             # or that system_context is mutable and updated. For now, assumes direct callable is fine.
             # If the cached item is an instance method, it will use its original system_context.
             # This might be an issue if shared_context changes between calls for the same agent_id.
-            # For now, we are returning the invoke_async method of a NEW instance if it's a BaseAgent type.
-            # So, the cache here is more for direct callables than for BaseAgent classes.
-            # Let's refine caching for BaseAgent types.
+            # For now, we are returning the invoke_async method of a NEW instance if it's a ProtocolAwareAgent type.
+            # So, the cache here is more for direct callables than for ProtocolAwareAgent classes.
+            # Let's refine caching for ProtocolAwareAgent types.
             
-            # If the cached item is a BaseAgent class, we need to instantiate it.
+            # If the cached item is a ProtocolAwareAgent class, we need to instantiate it.
             cached_item = self._cache[agent_id]
-            if inspect.isclass(cached_item) and issubclass(cached_item, BaseAgent):
-                logger.debug(f"Cache hit for {agent_id} is a BaseAgent class. Instantiating with current shared_context.")
+            if inspect.isclass(cached_item) and issubclass(cached_item, ProtocolAwareAgent):
+                logger.debug(f"Cache hit for {agent_id} is a ProtocolAwareAgent class. Instantiating with current shared_context.")
                 agent_instance = self._instantiate_agent_class(cached_item, agent_id)
                 if agent_instance:
                     return getattr(agent_instance, "invoke_async")
                 else:
                     # Fall through if instantiation failed, should not happen if class is valid
-                    logger.error(f"Failed to re-instantiate cached BaseAgent class {agent_id}")
+                    logger.error(f"Failed to re-instantiate cached ProtocolAwareAgent class {agent_id}")
             elif callable(cached_item): # It's a direct callable (function or method of an already instantiated object)
                 return cached_item
             # else: fall through to standard resolution
@@ -633,7 +632,7 @@ class RegistryAgentProvider:
             potential_item = self._fallback[agent_id]
             logger.debug(f"Found '{agent_id}' in fallback map. Type: {type(potential_item)}")
 
-            if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
+            if inspect.isclass(potential_item) and issubclass(potential_item, ProtocolAwareAgent):
                 agent_instance = self._instantiate_agent_class(potential_item, agent_id)
                 if agent_instance:
                     # Cache the class itself for future re-instantiation
@@ -645,7 +644,7 @@ class RegistryAgentProvider:
                 self._cache[agent_id] = potential_item
                 return potential_item
             else:
-                logger.warning(f"Item for '{agent_id}' in fallback map is not a callable or BaseAgent class: {type(potential_item)}")
+                logger.warning(f"Item for '{agent_id}' in fallback map is not a callable or ProtocolAwareAgent class: {type(potential_item)}")
 
         # If not in fallback or fallback item was not suitable, try AgentRegistry (Chroma)
         # This part of the logic would involve querying self._registry
@@ -660,7 +659,6 @@ class RegistryAgentProvider:
         #         module_path, class_name = agent_card.fully_qualified_class_name.rsplit('.', 1)
         #         module = importlib.import_module(module_path)
         #         agent_class = getattr(module, class_name)
-        #         if inspect.isclass(agent_class) and issubclass(agent_class, BaseAgent):
         #             agent_instance = self._instantiate_agent_class(agent_class, agent_id, agent_card=agent_card)
         #             if agent_instance:
         #                 return getattr(agent_instance, "invoke_async")
@@ -673,12 +671,12 @@ class RegistryAgentProvider:
 
     def _instantiate_agent_class(
         self, 
-        agent_class: Type[BaseAgent], 
+        agent_class: Type[ProtocolAwareAgent], 
         agent_id: str,
         agent_card: Optional[AgentCard] = None
-    ) -> Optional[BaseAgent]:
+    ) -> Optional[ProtocolAwareAgent]:
         """
-        Helper to instantiate a BaseAgent subclass, injecting necessary dependencies.
+        Helper to instantiate a ProtocolAwareAgent subclass, injecting necessary dependencies.
         It uses self._orchestrator_shared_context which should be set before calling this.
         """
         logger.debug(f"Instantiating agent class {agent_class.__name__} for agent_id '{agent_id}'")
@@ -736,7 +734,7 @@ class RegistryAgentProvider:
         # Crucially, pass the prepared system_context
         agent_init_params['system_context'] = agent_system_context
         
-        # Add agent_id if the constructor expects it (some BaseAgent might)
+        # Add agent_id if the constructor expects it (some ProtocolAwareAgent might)
         if 'agent_id' in constructor_params:
             agent_init_params['agent_id'] = agent_id # Pass the resolved agent_id
 
@@ -776,9 +774,9 @@ class RegistryAgentProvider:
             logger.error(traceback.format_exc())
             return None
 
-    def get_raw_agent_instance(self, agent_id: str, shared_context: Optional[Dict[str, Any]] = None) -> Optional[BaseAgent]:
+    def get_raw_agent_instance(self, agent_id: str, shared_context: Optional[Dict[str, Any]] = None) -> Optional[ProtocolAwareAgent]:
         """
-        Retrieves or creates a raw instance of a BaseAgent.
+        Retrieves or creates a raw instance of a ProtocolAwareAgent.
         MODIFIED: Accepts shared_context and passes it for agent instantiation.
         """
         logger.debug(f"Attempting to get raw instance for agent_id: {agent_id}")
@@ -790,13 +788,13 @@ class RegistryAgentProvider:
         # Check fallback (common for system agents that are classes)
         if agent_id in self._fallback:
             potential_item = self._fallback[agent_id]
-            if inspect.isclass(potential_item) and issubclass(potential_item, BaseAgent):
+            if inspect.isclass(potential_item) and issubclass(potential_item, ProtocolAwareAgent):
                 return self._instantiate_agent_class(potential_item, agent_id)
-            elif isinstance(potential_item, BaseAgent): # Already an instance
+            elif isinstance(potential_item, ProtocolAwareAgent): # Already an instance
                 # TODO: Update system_context if necessary? For now, return as-is.
                 return potential_item
             else:
-                logger.warning(f"Fallback item for {agent_id} is not a BaseAgent class or instance: {type(potential_item)}")
+                logger.warning(f"Fallback item for {agent_id} is not a ProtocolAwareAgent class or instance: {type(potential_item)}")
         
         # If not in fallback, try AgentRegistry (Chroma)
         # This part of the logic would involve querying self._registry
@@ -806,7 +804,6 @@ class RegistryAgentProvider:
         #         module_path, class_name = agent_card.fully_qualified_class_name.rsplit('.', 1)
         #         module = importlib.import_module(module_path)
         #         agent_class = getattr(module, class_name)
-        #         if inspect.isclass(agent_class) and issubclass(agent_class, BaseAgent):
         #             return self._instantiate_agent_class(agent_class, agent_id, agent_card=agent_card)
         #     except Exception as e:
         #         logger.error(f"Error dynamically importing or instantiating agent {agent_id} from card for raw instance: {e}")

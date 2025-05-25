@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, model_validator, PrivateAttr
 
 from ..protocol_aware_agent import ProtocolAwareAgent
 from ...protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider # Assuming direct LLM call for complex decisions might be an option
 from chungoid.utils.prompt_manager import PromptManager # If decision logic uses prompts
 from chungoid.schemas.common import ConfidenceScore
@@ -213,12 +212,13 @@ class ARCAOutput(BaseModel):
 
 
 @register_autonomous_engine_agent(capabilities=["autonomous_coordination", "quality_gates", "refinement_orchestration"])
-class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent[ARCAReviewInput, ARCAOutput]):
+class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "AutomatedRefinementCoordinatorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Automated Refinement Coordinator Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Coordinates the iterative refinement of project artifacts, invoking specialist agents as needed."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "automated_refinement_coordinator_agent_v1.yaml" # Points to server_prompts/autonomous_engine/
-    VERSION: ClassVar[str] = "0.1.0"
+    AGENT_VERSION: ClassVar[str] = "0.1.0"
+    CAPABILITIES: ClassVar[List[str]] = ["autonomous_coordination", "quality_gates", "refinement_orchestration"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.AUTONOMOUS_COORDINATION # MODIFIED
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL # Usually internal, invoked by higher orchestrator
     INPUT_SCHEMA: ClassVar[Type[ARCAReviewInput]] = ARCAReviewInput
@@ -243,8 +243,8 @@ class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent[ARCAReviewInput,
 
     DEFAULT_ACCEPTANCE_THRESHOLD: ClassVar[float] = 0.75 # Default acceptance threshold
     # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['multi_agent_coordination', 'workflow_orchestration']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['quality_validation', 'goal_tracking']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["autonomous_team_formation", "enhanced_deep_planning"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "goal_tracking"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'error_recovery']
 
 
@@ -264,7 +264,7 @@ class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent[ARCAReviewInput,
         if system_context and "logger" in system_context:
             self._logger_instance = system_context["logger"]
         else:
-            # Ensure AGENT_ID is accessible, might need to be self.AGENT_ID if BaseAgent sets it up
+            # Ensure AGENT_ID is accessible, might need to be self.AGENT_ID if ProtocolAwareAgent sets it up
             # or AutomatedRefinementCoordinatorAgent_v1.AGENT_ID if accessed as class variable
             self._logger_instance = logging.getLogger(AutomatedRefinementCoordinatorAgent_v1.AGENT_ID)
 

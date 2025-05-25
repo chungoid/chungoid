@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent # MODIFIED: Changed AgentBase to BaseAgent
 from chungoid.utils.agent_registry import AgentCard, AgentToolSpec # MODIFIED: Changed import path
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 # from chungoid.utils.security import is_safe_path # For path safety checks # REMOVED
@@ -41,12 +40,13 @@ class SystemFileSystemAgent_v1(ProtocolAwareAgent):
     AGENT_NAME: ClassVar[str] = "System File System Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Performs file system operations like creating/modifying directories and files."
     AGENT_VERSION: ClassVar[str] = "1.0.0"
+    CAPABILITIES: ClassVar[List[str]] = ["file_management", "directory_operations", "file_operations"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.FILE_MANAGEMENT
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     
     # AUTONOMOUS: Protocol-aware configuration
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["file_operations", "directory_operations"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["file_management", "path_validation"]
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["file_management"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["file_management"]
 
     # --- Pydantic Schemas for Agent Tools ---
 
@@ -103,7 +103,7 @@ class SystemFileSystemAgent_v1(ProtocolAwareAgent):
 
     def __init__(self, **data: Any):
         super().__init__(**data)
-        # BaseAgent's __init__ will store 'system_context' in self.system_context if passed via **data
+        # ProtocolAwareAgent's __init__ will store 'system_context' in self.system_context if passed via **data
         # Initialize _logger from self.system_context
         current_logger = None
         if self.system_context and "logger" in self.system_context:
@@ -119,7 +119,7 @@ class SystemFileSystemAgent_v1(ProtocolAwareAgent):
         if project_root_override_from_invoke_async is not None: # MODIFIED: Parameter name change
             base_path_arg = project_root_override_from_invoke_async # MODIFIED: Parameter name change
             self._logger.info(f"RESOLVE_PATH_DEBUG: Using project_root_override_from_invoke_async: {base_path_arg} (type: {type(base_path_arg)})")
-        elif hasattr(self, 'project_root') and self.project_root: # This might be from BaseAgent if set
+        elif hasattr(self, 'project_root') and self.project_root: # This might be from ProtocolAwareAgent if set
             base_path_arg = self.project_root
             self._logger.info(f"RESOLVE_PATH_DEBUG: Using self.project_root: {base_path_arg} (type: {type(base_path_arg)})")
         else: # Fallback: Try to get from system_context if available (should be less common)

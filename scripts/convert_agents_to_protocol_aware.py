@@ -260,11 +260,9 @@ class AgentProtocolConverter:
         # Add ProtocolAwareAgent import
         if "from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent" not in content:
             # Find BaseAgent import and add ProtocolAwareAgent import before it
-            baseagent_pattern = r'from chungoid\.runtime\.agents\.agent_base import BaseAgent'
             if re.search(baseagent_pattern, content):
                 content = re.sub(
                     baseagent_pattern,
-                    'from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent\nfrom chungoid.protocols.base.protocol_interface import ProtocolPhase\nfrom chungoid.runtime.agents.agent_base import BaseAgent',
                     content
                 )
         

@@ -55,7 +55,7 @@ class ArchitectAgentOutput(BaseModel):
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
 @register_autonomous_engine_agent(capabilities=["architecture_design", "system_planning", "blueprint_generation"])
-class ArchitectAgent_v1(ProtocolAwareAgent[ArchitectAgentInput, ArchitectAgentOutput]):
+class ArchitectAgent_v1(ProtocolAwareAgent):
     """
     Generates a technical blueprint based on an LOPRD and project context.
     
@@ -67,14 +67,16 @@ class ArchitectAgent_v1(ProtocolAwareAgent[ArchitectAgentInput, ArchitectAgentOu
     AGENT_NAME: ClassVar[str] = "Architect Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Generates a technical blueprint based on an LOPRD and project context."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "architect_agent_v1_prompt.yaml"
-    VERSION: ClassVar[str] = "0.1.0"
+    AGENT_VERSION: ClassVar[str] = "0.1.0"
+    CAPABILITIES: ClassVar[List[str]] = ["architecture_design", "system_planning", "blueprint_generation"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.PLANNING_AND_DESIGN # MODIFIED
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[ArchitectAgentInput]] = ArchitectAgentInput
     OUTPUT_SCHEMA: ClassVar[Type[ArchitectAgentOutput]] = ArchitectAgentOutput
     
     # ADDED: Protocol definitions following Universal Protocol Infrastructure
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['architecture_design', 'system_planning']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["architecture_planning", "enhanced_deep_planning"]
+    SECONDARY_PROTOCOLS: ClassVar[list[str]] = []
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
 
     async def execute(self, task_input, full_context: Optional[Dict[str, Any]] = None):

@@ -131,7 +131,6 @@ from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAge
 # Ensure AgentID type is available if used for keys, though strings are fine for dict keys.
 from chungoid.schemas.common import AgentID # CORRECTED IMPORT
 # from chungoid.runtime.agents.base import AgentBase # For type hinting if needed # REMOVED
-from chungoid.runtime.agents.agent_base import BaseAgent # For type hinting # CORRECTED IMPORT
 
 # --- ADDED IMPORTS FOR MOCK SETUP AGENT ---
 # from chungoid.runtime.agents.mocks.testing_mock_agents import (
@@ -169,7 +168,7 @@ from chungoid.agents import get_registry_agent_provider
 # It uses the actual agent classes.
 # REMOVED: PRODUCTION_SYSTEM_AGENTS_MAP - replaced with registry-first architecture
 # All agents are now auto-registered via @register_agent decorators
-# PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[BaseAgent], BaseAgent]] = {
+# PRODUCTION_SYSTEM_AGENTS_MAP: Dict[AgentID, Union[Type[ProtocolAwareAgent], ProtocolAwareAgent]] = {
 #     MasterPlannerAgent.AGENT_ID: MasterPlannerAgent,
 #     MasterPlannerReviewerAgent.AGENT_ID: MasterPlannerReviewerAgent,
 #     CodeGeneratorAgent.AGENT_ID: CodeGeneratorAgent, # Alias for CoreCodeGeneratorAgent_v1
@@ -188,7 +187,7 @@ from chungoid.agents import get_registry_agent_provider
 
 # REMOVED: Legacy autonomous engine fallback map - replaced with registry-first architecture
 # --- Autonomous Engine Agents Fallback Map ---
-# def get_autonomous_engine_agent_fallback_map() -> Dict[AgentID, Union[Type[BaseAgent], BaseAgent]]:
+# def get_autonomous_engine_agent_fallback_map() -> Dict[AgentID, Union[Type[ProtocolAwareAgent], ProtocolAwareAgent]]:
 #     """Returns a dictionary of core autonomous engine agents for fallback."""
 #     # This map should only contain system-critical, non-mock agents
 #     # that are part of the autonomous engine's core capabilities.
@@ -719,7 +718,7 @@ def flow_run(ctx: click.Context,
     tags_list = [t.strip() for t in tags.split(",")] if tags else []
 
     # REPLACED: Legacy fallback map approach with registry-first architecture
-    # final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
+    # final_fallback_map: Dict[AgentID, Union[Type[ProtocolAwareAgent], ProtocolAwareAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
     # final_fallback_map.update(get_autonomous_engine_agent_fallback_map())
     
     llm_manager_for_flow_run: Optional[LLMManager] = None
@@ -987,7 +986,7 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
 
         # REPLACED: Legacy fallback map approach with registry-first architecture
         # Fallback map for agents (consistency with other commands)
-        # resume_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
+        # resume_fallback_map: Dict[AgentID, Union[Type[ProtocolAwareAgent], ProtocolAwareAgent, AgentFallbackItem]] = dict(PRODUCTION_SYSTEM_AGENTS_MAP)
         # resume_fallback_map.update(get_autonomous_engine_agent_fallback_map())
 
         # agent_registry_resume = AgentRegistry(project_root=project_path, chroma_mode="persistent")
@@ -1432,7 +1431,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
 
         # REPLACED: Legacy fallback map approach with registry-first architecture
         # Determine final fallback map
-        # final_fallback_map: Dict[AgentID, Union[Type[BaseAgent], BaseAgent, AgentFallbackItem]] = {}
+        # final_fallback_map: Dict[AgentID, Union[Type[ProtocolAwareAgent], ProtocolAwareAgent, AgentFallbackItem]] = {}
         
         # Option 2: Selective fallback for core agents
         # These are agent CLASSES that the provider will instantiate if needed

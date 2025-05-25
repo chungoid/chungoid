@@ -6,7 +6,7 @@ It provides a simple interface for pausing execution and requesting user input.
 """
 
 import logging
-from typing import Dict, Any, Optional, ClassVar
+from typing import Dict, Any, Optional, ClassVar, List
 from pydantic import BaseModel, Field
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
@@ -34,7 +34,7 @@ class SystemInterventionOutput(BaseModel):
 
 
 @register_system_agent(capabilities=["human_interaction", "system_intervention", "user_clarification"])
-class SystemInterventionAgent_v1(ProtocolAwareAgent[SystemInterventionInput, SystemInterventionOutput]):
+class SystemInterventionAgent_v1(ProtocolAwareAgent):
     """
     System agent for handling human intervention and user clarification requests.
     
@@ -44,7 +44,8 @@ class SystemInterventionAgent_v1(ProtocolAwareAgent[SystemInterventionInput, Sys
     
     AGENT_ID: ClassVar[str] = "SystemInterventionAgent_v1"
     AGENT_NAME: ClassVar[str] = "System Intervention Agent"
-    VERSION: ClassVar[str] = "1.0.0"
+    AGENT_VERSION: ClassVar[str] = "1.0.0"
+    CAPABILITIES: ClassVar[List[str]] = ["human_interaction", "system_intervention", "user_clarification"]
     DESCRIPTION: ClassVar[str] = "Handles human intervention requests and user clarification needs"
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL

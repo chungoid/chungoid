@@ -26,11 +26,11 @@ from .code_debugging_agent import CodeDebuggingAgent_v1
 from .environment_bootstrap_agent import EnvironmentBootstrapAgent
 from .dependency_management_agent import DependencyManagementAgent_v1
 
-# MODIFIED: Use TYPE_CHECKING to avoid circular import
+# Use TYPE_CHECKING to avoid circular import
 if TYPE_CHECKING:
-    from chungoid.runtime.agents.agent_base import BaseAgent
+    from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 
-AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type[BaseAgent]] = [
+AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type['ProtocolAwareAgent']] = [
     ProductAnalystAgent_v1,
     ProactiveRiskAssessorAgent_v1,
     AutomatedRefinementCoordinatorAgent_v1,

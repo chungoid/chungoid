@@ -11,15 +11,21 @@ Following the "rip the bandaid off" approach with pure autonomous architecture.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Any, Type, Tuple, Union
+import inspect
+import asyncio
+from typing import Dict, List, Optional, Any, Callable, Type, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from chungoid.schemas.master_flow import EnhancedMasterStageSpec
 from chungoid.registry.in_memory_agent_registry import InMemoryAgentRegistry, AgentMetadata
-from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.utils.agent_resolver import AgentProvider
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager
+from chungoid.utils.agent_registry import AgentRegistry
+from chungoid.schemas.agent_outputs import AgentOutput
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +50,18 @@ class ExecutionMode(Enum):
 
 @dataclass
 class AgentResolutionResult:
-    """Result of agent resolution with metadata."""
-    agent_instance: Optional[BaseAgent]
-    agent_id: str
-    execution_mode: ExecutionMode
-    resolution_method: ResolutionMethod
-    capabilities_matched: List[str]
-    task_type: Optional[str] = None
-    confidence_score: float = 1.0
-    fallback_reason: Optional[str] = None
-    
-    @property
-    def success(self) -> bool:
-        """Whether resolution was successful."""
-        return self.agent_instance is not None
+    """Result of agent resolution attempt"""
+    def __init__(self, 
+                 agent_id: str,
+                 success: bool,
+                 agent_instance: Optional[ProtocolAwareAgent] = None,
+                 error: Optional[str] = None,
+                 capabilities: Optional[List[str]] = None):
+        self.agent_id = agent_id
+        self.success = success
+        self.agent_instance = agent_instance
+        self.error = error
+        self.capabilities = capabilities or []
 
 
 class AgentResolutionError(Exception):
@@ -71,25 +75,108 @@ class AgentResolutionError(Exception):
 
 
 class EnhancedAgentResolver:
-    """
-    Enhanced agent resolver that implements capability-based resolution
-    for task-type orchestration while ensuring no agents are left behind.
-    """
+    """Enhanced agent resolver for protocol-aware agents"""
     
-    def __init__(self, agent_registry: InMemoryAgentRegistry, agent_provider: AgentProvider):
+    def __init__(self, 
+                 agent_registry: AgentRegistry,
+                 llm_provider: LLMProvider,
+                 prompt_manager: PromptManager):
         self.agent_registry = agent_registry
-        self.agent_provider = agent_provider
+        self.llm_provider = llm_provider
+        self.prompt_manager = prompt_manager
         self.logger = logging.getLogger(__name__)
         
-        # Initialize task-type to capability mappings
-        self._task_type_mappings = self._initialize_task_type_mappings()
-        
-        # Initialize autonomous agent capabilities cache
-        self._autonomous_capabilities_cache = {}
-        self._refresh_autonomous_capabilities_cache()
-        
-        self.logger.info("EnhancedAgentResolver initialized with task-type orchestration")
+    async def resolve_agent(self, agent_id: str, context: Optional[Dict[str, Any]] = None) -> AgentResolutionResult:
+        """Resolve and instantiate a protocol-aware agent"""
+        try:
+            # Get agent class from registry
+            agent_class = self.agent_registry.get_agent(agent_id)
+            if not agent_class:
+                return AgentResolutionResult(
+                    agent_id=agent_id,
+                    success=False,
+                    error=f"Agent {agent_id} not found in registry"
+                )
+            
+            # Verify it's a protocol-aware agent
+            if not self._is_protocol_aware_agent(agent_class):
+                return AgentResolutionResult(
+                    agent_id=agent_id,
+                    success=False,
+                    error=f"Agent {agent_id} is not a ProtocolAwareAgent"
+                )
+            
+            # Extract capabilities
+            capabilities = self._extract_agent_capabilities(agent_class)
+            
+            # Instantiate agent
+            agent_instance = await self._instantiate_agent(agent_class, context)
+            if not agent_instance:
+                return AgentResolutionResult(
+                    agent_id=agent_id,
+                    success=False,
+                    error=f"Failed to instantiate agent {agent_id}",
+                    capabilities=capabilities
+                )
+            
+            return AgentResolutionResult(
+                agent_id=agent_id,
+                success=True,
+                agent_instance=agent_instance,
+                capabilities=capabilities
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error resolving agent {agent_id}: {e}")
+            return AgentResolutionResult(
+                agent_id=agent_id,
+                success=False,
+                error=str(e)
+            )
     
+    def _is_protocol_aware_agent(self, agent_class: Type[ProtocolAwareAgent]) -> bool:
+        """Check if agent class is protocol-aware"""
+        try:
+            return (
+                inspect.isclass(agent_class) and
+                issubclass(agent_class, ProtocolAwareAgent) and
+                hasattr(agent_class, 'PRIMARY_PROTOCOLS') and
+                hasattr(agent_class, 'SECONDARY_PROTOCOLS') and
+                hasattr(agent_class, 'CAPABILITIES') and
+                len(agent_class.PRIMARY_PROTOCOLS) > 0
+            )
+        except Exception:
+            return False
+    
+    def _extract_agent_capabilities(self, agent_class: Type[ProtocolAwareAgent]) -> List[str]:
+        """Extract capabilities from protocol-aware agent"""
+        try:
+            if hasattr(agent_class, 'CAPABILITIES'):
+                return list(agent_class.CAPABILITIES)
+            elif hasattr(agent_class, 'PRIMARY_PROTOCOLS'):
+                return list(agent_class.PRIMARY_PROTOCOLS)
+            else:
+                return []
+        except Exception:
+            return []
+    
+    async def _instantiate_agent(self, agent_class: Type[ProtocolAwareAgent], context: Optional[Dict[str, Any]] = None) -> Optional[ProtocolAwareAgent]:
+        """Instantiate a protocol-aware agent"""
+        try:
+            # Standard initialization for ProtocolAwareAgent
+            agent_instance = agent_class(
+                llm_provider=self.llm_provider,
+                prompt_manager=self.prompt_manager,
+                system_context=context
+            )
+            
+            self.logger.info(f"Successfully instantiated {agent_class.__name__}")
+            return agent_instance
+            
+        except Exception as e:
+            self.logger.error(f"Failed to instantiate {agent_class.__name__}: {e}")
+            return None
+
     def _initialize_task_type_mappings(self) -> Dict[str, Dict[str, Any]]:
         """Initialize task-type to capability mappings based on autonomous agents."""
         return {
@@ -187,7 +274,7 @@ class EnhancedAgentResolver:
         
         self.logger.info(f"Refreshed autonomous capabilities cache: {len(self._autonomous_capabilities_cache)} autonomous agents")
     
-    def _is_autonomous_capable_class(self, agent_class: Type[BaseAgent]) -> bool:
+    def _is_autonomous_capable_class(self, agent_class: Type[ProtocolAwareAgent]) -> bool:
         """Check if an agent class is autonomous-capable."""
         # Check if it's a ProtocolAwareAgent with protocols
         if not issubclass(agent_class, ProtocolAwareAgent):
@@ -200,230 +287,6 @@ class EnhancedAgentResolver:
         )
         
         return has_protocols
-    
-    def _extract_agent_capabilities(self, agent_class: Type[BaseAgent]) -> List[str]:
-        """Extract capabilities from an agent class."""
-        capabilities = []
-        
-        # Extract from PRIMARY_PROTOCOLS
-        if hasattr(agent_class, 'PRIMARY_PROTOCOLS'):
-            capabilities.extend(getattr(agent_class, 'PRIMARY_PROTOCOLS', []))
-        
-        # Extract from SECONDARY_PROTOCOLS
-        if hasattr(agent_class, 'SECONDARY_PROTOCOLS'):
-            capabilities.extend(getattr(agent_class, 'SECONDARY_PROTOCOLS', []))
-        
-        # Extract from metadata if available
-        agent_id = getattr(agent_class, 'AGENT_ID', None)
-        if agent_id:
-            metadata = self.agent_registry.get_agent_metadata(agent_id)
-            if metadata and metadata.capabilities:
-                capabilities.extend(metadata.capabilities)
-        
-        return list(set(capabilities))  # Remove duplicates
-    
-    async def resolve_agent_for_stage(self, stage_spec: EnhancedMasterStageSpec) -> AgentResolutionResult:
-        """
-        Resolve the best agent for a stage based on task type and capabilities.
-        Ensures no agents are left behind with comprehensive fallback mechanisms.
-        """
-        self.logger.info(f"Resolving agent for stage '{stage_spec.id}' with task_type='{stage_spec.task_type}'")
-        
-        # Strategy 1: Try autonomous agents first (if preferred)
-        if stage_spec.preferred_execution in ["autonomous", "any"]:
-            autonomous_result = await self._resolve_autonomous_agent(stage_spec)
-            if autonomous_result.success:
-                self.logger.info(f"Resolved autonomous agent '{autonomous_result.agent_id}' for task_type '{stage_spec.task_type}'")
-                return autonomous_result
-        
-        # Strategy 2: Try concrete agents with invoke_async
-        if stage_spec.preferred_execution in ["concrete", "any"]:
-            concrete_result = await self._resolve_concrete_agent(stage_spec)
-            if concrete_result.success:
-                self.logger.info(f"Resolved concrete agent '{concrete_result.agent_id}' for task_type '{stage_spec.task_type}'")
-                return concrete_result
-        
-        # Strategy 3: Try direct agent_id if provided
-        if stage_spec.agent_id:
-            direct_result = await self._resolve_direct_agent(stage_spec.agent_id, stage_spec)
-            if direct_result.success:
-                self.logger.info(f"Resolved direct agent '{direct_result.agent_id}' for stage '{stage_spec.id}'")
-                return direct_result
-        
-        # Strategy 4: Try fallback_agent_id if provided
-        if stage_spec.fallback_agent_id:
-            fallback_result = await self._resolve_direct_agent(stage_spec.fallback_agent_id, stage_spec)
-            if fallback_result.success:
-                fallback_result.execution_mode = ExecutionMode.FALLBACK
-                fallback_result.resolution_method = ResolutionMethod.FALLBACK_AGENT_ID
-                fallback_result.fallback_reason = "Used fallback_agent_id after primary resolution failed"
-                self.logger.info(f"Resolved fallback agent '{fallback_result.agent_id}' for stage '{stage_spec.id}'")
-                return fallback_result
-        
-        # Strategy 5: Last resort - try any agent that matches capabilities
-        last_resort_result = await self._resolve_any_matching_agent(stage_spec)
-        if last_resort_result.success:
-            self.logger.warning(f"Used last resort resolution for stage '{stage_spec.id}': {last_resort_result.agent_id}")
-            return last_resort_result
-        
-        # Complete failure - no suitable agent found
-        error_msg = (f"No suitable agent found for task_type='{stage_spec.task_type}' "
-                    f"with capabilities={stage_spec.required_capabilities}")
-        self.logger.error(error_msg)
-        raise AgentResolutionError(
-            error_msg,
-            task_type=stage_spec.task_type,
-            required_capabilities=stage_spec.required_capabilities
-        )
-    
-    async def _resolve_autonomous_agent(self, stage_spec: EnhancedMasterStageSpec) -> AgentResolutionResult:
-        """Resolve autonomous-capable agent for the stage."""
-        task_mapping = self._task_type_mappings.get(stage_spec.task_type, {})
-        
-        # Try preferred agents first
-        for preferred_agent_id in task_mapping.get("preferred_agents", []):
-            if preferred_agent_id in self._autonomous_capabilities_cache:
-                agent_info = self._autonomous_capabilities_cache[preferred_agent_id]
-                if self._matches_capabilities(agent_info["capabilities"], stage_spec.required_capabilities):
-                    agent_instance = await self._instantiate_agent(preferred_agent_id)
-                    if agent_instance:
-                        return AgentResolutionResult(
-                            agent_instance=agent_instance,
-                            agent_id=preferred_agent_id,
-                            execution_mode=ExecutionMode.AUTONOMOUS,
-                            resolution_method=ResolutionMethod.AUTONOMOUS_PREFERENCE,
-                            capabilities_matched=stage_spec.required_capabilities,
-                            task_type=stage_spec.task_type,
-                            confidence_score=0.9
-                        )
-        
-        # Try any autonomous agent that matches capabilities
-        for agent_id, agent_info in self._autonomous_capabilities_cache.items():
-            if self._matches_capabilities(agent_info["capabilities"], stage_spec.required_capabilities):
-                agent_instance = await self._instantiate_agent(agent_id)
-                if agent_instance:
-                    return AgentResolutionResult(
-                        agent_instance=agent_instance,
-                        agent_id=agent_id,
-                        execution_mode=ExecutionMode.AUTONOMOUS,
-                        resolution_method=ResolutionMethod.CAPABILITY_MATCH,
-                        capabilities_matched=stage_spec.required_capabilities,
-                        task_type=stage_spec.task_type,
-                        confidence_score=0.7
-                    )
-        
-        # No autonomous agent found
-        return AgentResolutionResult(
-            agent_instance=None,
-            agent_id="",
-            execution_mode=ExecutionMode.AUTONOMOUS,
-            resolution_method=ResolutionMethod.CAPABILITY_MATCH,
-            capabilities_matched=[],
-            task_type=stage_spec.task_type,
-            confidence_score=0.0,
-            fallback_reason="No autonomous agent matches required capabilities"
-        )
-    
-    async def _resolve_concrete_agent(self, stage_spec: EnhancedMasterStageSpec) -> AgentResolutionResult:
-        """Resolve concrete agent with invoke_async method."""
-        task_mapping = self._task_type_mappings.get(stage_spec.task_type, {})
-        
-        # Try fallback agents from task mapping
-        for fallback_agent_id in task_mapping.get("fallback_agents", []):
-            agent_instance = await self._instantiate_agent(fallback_agent_id)
-            if agent_instance and hasattr(agent_instance, 'invoke_async'):
-                return AgentResolutionResult(
-                    agent_instance=agent_instance,
-                    agent_id=fallback_agent_id,
-                    execution_mode=ExecutionMode.CONCRETE,
-                    resolution_method=ResolutionMethod.CONCRETE_FALLBACK,
-                    capabilities_matched=[],
-                    task_type=stage_spec.task_type,
-                    confidence_score=0.6
-                )
-        
-        # Try any registered agent with invoke_async
-        for agent_id, agent_class in self.agent_registry.list_agents().items():
-            if not self._is_autonomous_capable_class(agent_class):
-                agent_instance = await self._instantiate_agent(agent_id)
-                if agent_instance and hasattr(agent_instance, 'invoke_async'):
-                    return AgentResolutionResult(
-                        agent_instance=agent_instance,
-                        agent_id=agent_id,
-                        execution_mode=ExecutionMode.CONCRETE,
-                        resolution_method=ResolutionMethod.CONCRETE_FALLBACK,
-                        capabilities_matched=[],
-                        task_type=stage_spec.task_type,
-                        confidence_score=0.4
-                    )
-        
-        # No concrete agent found
-        return AgentResolutionResult(
-            agent_instance=None,
-            agent_id="",
-            execution_mode=ExecutionMode.CONCRETE,
-            resolution_method=ResolutionMethod.CONCRETE_FALLBACK,
-            capabilities_matched=[],
-            task_type=stage_spec.task_type,
-            confidence_score=0.0,
-            fallback_reason="No concrete agent with invoke_async found"
-        )
-    
-    async def _resolve_direct_agent(self, agent_id: str, stage_spec: EnhancedMasterStageSpec) -> AgentResolutionResult:
-        """Resolve agent by direct agent_id."""
-        agent_instance = await self._instantiate_agent(agent_id)
-        if agent_instance:
-            execution_mode = ExecutionMode.AUTONOMOUS if self._is_autonomous_capable_class(type(agent_instance)) else ExecutionMode.DIRECT
-            return AgentResolutionResult(
-                agent_instance=agent_instance,
-                agent_id=agent_id,
-                execution_mode=execution_mode,
-                resolution_method=ResolutionMethod.DIRECT_AGENT_ID,
-                capabilities_matched=[],
-                task_type=stage_spec.task_type,
-                confidence_score=1.0
-            )
-        
-        return AgentResolutionResult(
-            agent_instance=None,
-            agent_id=agent_id,
-            execution_mode=ExecutionMode.DIRECT,
-            resolution_method=ResolutionMethod.DIRECT_AGENT_ID,
-            capabilities_matched=[],
-            task_type=stage_spec.task_type,
-            confidence_score=0.0,
-            fallback_reason=f"Agent '{agent_id}' could not be instantiated"
-        )
-    
-    async def _resolve_any_matching_agent(self, stage_spec: EnhancedMasterStageSpec) -> AgentResolutionResult:
-        """Last resort: try any agent that might work."""
-        # Try any agent in the registry
-        for agent_id, agent_class in self.agent_registry.list_agents().items():
-            agent_instance = await self._instantiate_agent(agent_id)
-            if agent_instance and hasattr(agent_instance, 'invoke_async'):
-                execution_mode = ExecutionMode.AUTONOMOUS if self._is_autonomous_capable_class(agent_class) else ExecutionMode.CONCRETE
-                return AgentResolutionResult(
-                    agent_instance=agent_instance,
-                    agent_id=agent_id,
-                    execution_mode=execution_mode,
-                    resolution_method=ResolutionMethod.CONCRETE_FALLBACK,
-                    capabilities_matched=[],
-                    task_type=stage_spec.task_type,
-                    confidence_score=0.2,
-                    fallback_reason="Last resort: using any available agent"
-                )
-        
-        # Absolute failure
-        return AgentResolutionResult(
-            agent_instance=None,
-            agent_id="",
-            execution_mode=ExecutionMode.CONCRETE,
-            resolution_method=ResolutionMethod.CONCRETE_FALLBACK,
-            capabilities_matched=[],
-            task_type=stage_spec.task_type,
-            confidence_score=0.0,
-            fallback_reason="No agents available in registry"
-        )
     
     def _matches_capabilities(self, agent_capabilities: List[str], required_capabilities: List[str]) -> bool:
         """Check if agent capabilities match required capabilities."""
@@ -457,15 +320,6 @@ class EnhancedAgentResolver:
                 return True
         
         return False
-    
-    async def _instantiate_agent(self, agent_id: str) -> Optional[BaseAgent]:
-        """Instantiate an agent by ID using the agent provider."""
-        try:
-            # Use the agent provider to get the agent instance
-            return self.agent_provider.get(identifier=agent_id)
-        except Exception as e:
-            self.logger.debug(f"Could not get raw agent instance for agent_id: {agent_id}. Not found in fallback or registry (registry lookup not fully implemented here).")
-            return None
     
     def get_task_type_mappings(self) -> Dict[str, Dict[str, Any]]:
         """Get the current task-type mappings."""

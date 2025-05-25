@@ -11,7 +11,6 @@ from pathlib import Path
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import InputSchema, OutputSchema, BaseAgent
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
@@ -51,15 +50,16 @@ class SmartCodeGeneratorAgentOutput(BaseModel):
 class CoreCodeGeneratorAgent_v1(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "SmartCodeGeneratorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Smart Code Generator Agent"
-    VERSION: ClassVar[str] = "1.0.0"
+    AGENT_VERSION: ClassVar[str] = "1.0.0"
+    CAPABILITIES: ClassVar[List[str]] = ["systematic_implementation", "code_generation", "quality_validation"]
     DESCRIPTION: ClassVar[str] = "Autonomously generates high-quality code based on specifications using LLM-driven systematic implementation."
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_GENERATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[SmartCodeGeneratorAgentInput]] = SmartCodeGeneratorAgentInput
     OUTPUT_SCHEMA: ClassVar[Type[SmartCodeGeneratorAgentOutput]] = SmartCodeGeneratorAgentOutput
 
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ["systematic_implementation"]
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ["quality_validation", "code_review"]
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["code_generation"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "plan_review"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ["agent_communication", "tool_validation", "error_recovery"]
 
     _llm_provider: LLMProvider

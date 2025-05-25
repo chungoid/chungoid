@@ -56,7 +56,7 @@ class BlueprintReviewerOutput(BaseModel):
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
 @register_autonomous_engine_agent(capabilities=["review_protocol", "quality_validation", "architectural_review"])
-class BlueprintReviewerAgent_v1(ProtocolAwareAgent[BlueprintReviewerInput, BlueprintReviewerOutput]):
+class BlueprintReviewerAgent_v1(ProtocolAwareAgent):
     """
     Performs an advanced review of a Project Blueprint, suggesting optimizations, architectural alternatives, and identifying subtle flaws.
     
@@ -68,7 +68,8 @@ class BlueprintReviewerAgent_v1(ProtocolAwareAgent[BlueprintReviewerInput, Bluep
     AGENT_NAME: ClassVar[str] = "Blueprint Reviewer Agent v1"
     DESCRIPTION: ClassVar[str] = "Performs an advanced review of a Project Blueprint, suggesting optimizations, architectural alternatives, and identifying subtle flaws."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "blueprint_reviewer_agent_v1.yaml"
-    VERSION: ClassVar[str] = "0.1.0"
+    AGENT_VERSION: ClassVar[str] = "0.1.0"
+    CAPABILITIES: ClassVar[List[str]] = ["review_protocol", "quality_validation", "architectural_review"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.QUALITY_ASSURANCE
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[BlueprintReviewerInput]] = BlueprintReviewerInput
@@ -78,8 +79,8 @@ class BlueprintReviewerAgent_v1(ProtocolAwareAgent[BlueprintReviewerInput, Bluep
     _prompt_manager: PromptManager
     _logger: logging.Logger
     
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['review_protocol', 'quality_validation']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['deep_investigation', 'documentation']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review", "tool_validation"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review", "agent_communication"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
 
     def __init__(

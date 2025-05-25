@@ -58,7 +58,7 @@ class ProactiveRiskAssessorOutput(BaseModel):
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
 @register_autonomous_engine_agent(capabilities=["risk_assessment", "deep_investigation", "impact_analysis"])
-class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInput, ProactiveRiskAssessorOutput]):
+class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent):
     """
     Analyzes LOPRDs, Blueprints, or Plans for potential risks, issues, and optimization opportunities.
     
@@ -67,11 +67,12 @@ class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInpu
     """
     
     AGENT_ID: ClassVar[str] = "ProactiveRiskAssessorAgent_v1"
+    AGENT_VERSION: ClassVar[str] = "0.2.0"  # Fixed: Changed from VERSION to AGENT_VERSION
     AGENT_NAME: ClassVar[str] = "Proactive Risk Assessor Agent v1"
     DESCRIPTION: ClassVar[str] = "Analyzes LOPRDs, Blueprints, or Plans for potential risks, issues, and optimization opportunities."
-    VERSION: ClassVar[str] = "0.2.0" # Bumped version
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.RISK_ASSESSMENT
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    CAPABILITIES: ClassVar[List[str]] = ["risk_assessment", "deep_investigation", "impact_analysis"]  # Added required CAPABILITIES
     INPUT_SCHEMA: ClassVar[Type[ProactiveRiskAssessorInput]] = ProactiveRiskAssessorInput
     OUTPUT_SCHEMA: ClassVar[Type[ProactiveRiskAssessorOutput]] = ProactiveRiskAssessorOutput
 
@@ -81,8 +82,8 @@ class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInpu
     _logger: logging.Logger
     
     # Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['risk_assessment', 'deep_investigation']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['impact_analysis', 'mitigation_planning']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review", "enhanced_deep_planning"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'goal_tracking']
 
     # MIGRATED: Collection constants moved here from PCMA - FIXED: Added ClassVar annotations
@@ -100,7 +101,7 @@ class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInpu
         llm_provider: LLMProvider, 
         prompt_manager: PromptManager, 
         system_context: Optional[Dict[str, Any]] = None,
-        **kwargs # To catch other potential BaseAgent args like config, agent_id
+        **kwargs # To catch other potential ProtocolAwareAgent args like config, agent_id
     ):
         super().__init__(
             llm_provider=llm_provider,
@@ -123,7 +124,7 @@ class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInpu
             self._logger.error("PromptManager not provided during initialization.")
             raise ValueError("PromptManager is required for ProactiveRiskAssessorAgent_v1.")
         
-        self._logger.info(f"{self.AGENT_ID} (v{self.VERSION}) initialized with MCP tool integration.")
+        self._logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized with MCP tool integration.")
 
     async def execute(self, task_input: ProactiveRiskAssessorInput, full_context: Optional[Dict[str, Any]] = None) -> ProactiveRiskAssessorOutput:
         """
@@ -264,7 +265,7 @@ class ProactiveRiskAssessorAgent_v1(ProtocolAwareAgent[ProactiveRiskAssessorInpu
             agent_id=ProactiveRiskAssessorAgent_v1.AGENT_ID,
             name=ProactiveRiskAssessorAgent_v1.AGENT_NAME,
             description=ProactiveRiskAssessorAgent_v1.DESCRIPTION,
-            version=ProactiveRiskAssessorAgent_v1.VERSION,
+            version=ProactiveRiskAssessorAgent_v1.AGENT_VERSION,
             input_schema=input_schema,
             output_schema=output_schema,
             categories=[cat.value for cat in [ProactiveRiskAssessorAgent_v1.CATEGORY, AgentCategory.AUTONOMOUS_PROJECT_ENGINE]],

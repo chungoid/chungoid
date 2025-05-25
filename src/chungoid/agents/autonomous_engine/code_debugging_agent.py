@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..protocol_aware_agent import ProtocolAwareAgent
 from ...protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
 from chungoid.schemas.common import ConfidenceScore
@@ -67,12 +66,13 @@ class DebuggingTaskOutput(BaseModel):
 
 
 @register_autonomous_engine_agent(capabilities=["code_debugging", "error_analysis", "automated_fixes"])
-class CodeDebuggingAgent_v1(ProtocolAwareAgent[DebuggingTaskInput, DebuggingTaskOutput]):
+class CodeDebuggingAgent_v1(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "CodeDebuggingAgent_v1"
     AGENT_NAME: ClassVar[str] = "Code Debugging Agent v1"
     DESCRIPTION: ClassVar[str] = "Analyzes faulty code with test failures and proposes fixes."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = CDA_PROMPT_NAME
-    VERSION: ClassVar[str] = "0.1.0"
+    AGENT_VERSION: ClassVar[str] = "0.1.0"
+    CAPABILITIES: ClassVar[List[str]] = ["code_debugging", "error_analysis", "automated_fixes"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_REMEDIATION 
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL 
 
@@ -80,8 +80,8 @@ class CodeDebuggingAgent_v1(ProtocolAwareAgent[DebuggingTaskInput, DebuggingTask
     _prompt_manager: PromptManager
     _logger: logging.Logger
     # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['code_remediation', 'deep_investigation']
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['test_analysis', 'error_recovery']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["code_generation", "plan_review"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "error_recovery"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'tool_validation', 'context_sharing']
 
 

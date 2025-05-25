@@ -47,7 +47,6 @@ from chungoid.registry import register_system_agent
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
-from chungoid.runtime.agents.agent_base import BaseAgent # MODIFIED: Changed AgentBase to BaseAgent
 from chungoid.utils.agent_registry import AgentCard, AgentToolSpec # MODIFIED: Changed import path
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 # from chungoid.utils.security import is_safe_path # For path safety checks # REMOVED
@@ -230,13 +229,14 @@ class MasterPlannerReviewerAgent(ProtocolAwareAgent):
     AGENT_NAME: ClassVar[str] = "Master Planner Reviewer Agent"
     AGENT_DESCRIPTION: ClassVar[str] = ("Reviews failed or paused autonomous execution plans and suggests recovery actions, "
                         "including retrying stages, adding clarification stages, or escalating to users.")
-    VERSION: ClassVar[str] = "1.0.0"
+    AGENT_VERSION: ClassVar[str] = "1.0.0"
+    CAPABILITIES: ClassVar[List[str]] = ["plan_review", "error_analysis", "recovery_suggestions"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL
     
     # AUTONOMOUS: Protocol-aware configuration
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review", "error_analysis"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["recovery_suggestions", "escalation_management"]
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["plan_review", "error_recovery"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["error_recovery"]
 
     def __init__(self, 
                  llm_provider: LLMProvider = None,

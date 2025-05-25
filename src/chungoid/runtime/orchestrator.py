@@ -41,7 +41,6 @@ from chungoid.runtime.agents.system_requirements_gathering_agent import (
     SystemRequirementsGatheringAgent_v1,
     SystemRequirementsGatheringInput
 ) # ADDED
-from chungoid.runtime.agents.agent_base import BaseAgent # ADDED for type annotations
 from chungoid.schemas.agent_code_generator import SmartCodeGeneratorAgentInput # MODIFIED
 from chungoid.schemas.agent_master_planner import MasterPlannerInput, MasterPlannerOutput # ADDED
 
@@ -1409,7 +1408,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         self._emit_metric(MetricEventType.MASTER_STAGE_START, flow_id, run_id, stage_id=stage_name, agent_id=agent_id_for_metrics, data={"attempt_number": attempt_number})
 
         agent_callable: Optional[Callable[..., Any]] = None
-        agent_instance_for_type_check: Optional[BaseAgent] = None # To hold the resolved agent instance
+        agent_instance_for_type_check: Optional[ProtocolAwareAgent] = None # To hold the resolved agent instance
         resolved_inputs = {}
         
         try:
