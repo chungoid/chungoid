@@ -4,12 +4,18 @@ import logging
 import datetime
 import uuid
 import json
+class ProtocolExecutionError(Exception):
+    """Raised when protocol execution fails."""
+    pass
+
 from typing import Any, Dict, Optional, Literal, Union, ClassVar, List, Type, get_args
 from enum import Enum
 import yaml
 
 from pydantic import BaseModel, Field, model_validator, PrivateAttr
 
+from ..protocol_aware_agent import ProtocolAwareAgent
+from ...protocols.base.protocol_interface import ProtocolPhase
 from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.llm_provider import LLMProvider # Assuming direct LLM call for complex decisions might be an option
 from chungoid.utils.prompt_manager import PromptManager # If decision logic uses prompts
@@ -29,16 +35,17 @@ from chungoid.schemas.project_status_schema import ProjectStateV2, CycleStatus, 
 
 from chungoid.utils.agent_registry import AgentCard # For AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
-    ProjectChromaManagerAgent_v1, 
-    GENERATED_CODE_ARTIFACTS_COLLECTION,
-    RetrieveArtifactOutput, # Added
-    RISK_ASSESSMENT_REPORTS_COLLECTION, # Added
-    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION, # Added
-    TRACEABILITY_REPORTS_COLLECTION, # Added
-    REVIEW_REPORTS_COLLECTION, # Added
-    EXECUTION_PLANS_COLLECTION # ADDED IMPORT
-)
+# COMMENTED OUT: Defunct project_chroma_manager_agent imports
+# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+#     ProjectChromaManagerAgent_v1, 
+#     GENERATED_CODE_ARTIFACTS_COLLECTION,
+#     RetrieveArtifactOutput, # Added
+#     RISK_ASSESSMENT_REPORTS_COLLECTION, # Added
+#     OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION, # Added
+#     TRACEABILITY_REPORTS_COLLECTION, # Added
+#     REVIEW_REPORTS_COLLECTION, # Added
+#     EXECUTION_PLANS_COLLECTION # ADDED IMPORT
+# )
 
 # Added import for FailedTestReport
 from chungoid.schemas.code_debugging_agent_schemas import FailedTestReport
@@ -56,14 +63,16 @@ from chungoid.schemas.autonomous_engine_utility_schemas import (
 
 # NEW: Import for ARCA Logging
 from chungoid.schemas.agent_logs import ARCALogEntry
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LogStorageConfirmation # For type hinting PCMA
+# COMMENTED OUT: Defunct project_chroma_manager_agent imports
+# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LogStorageConfirmation # For type hinting PCMA
 # NEW QA LOG IMPORTS
 from chungoid.schemas.agent_logs import QualityAssuranceLogEntry, QAEventType, OverallQualityStatus
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
-    QUALITY_ASSURANCE_LOGS_COLLECTION, 
-    ARTIFACT_TYPE_QA_LOG_ENTRY_JSON,
-    StoreArtifactInput # Ensure this is imported for store_artifact
-)
+# COMMENTED OUT: Defunct project_chroma_manager_agent imports
+# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
+#     QUALITY_ASSURANCE_LOGS_COLLECTION, 
+#     ARTIFACT_TYPE_QA_LOG_ENTRY_JSON,
+#     StoreArtifactInput # Ensure this is imported for store_artifact
+# )
 
 # Import for plan modification
 from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
@@ -200,7 +209,7 @@ class ARCAOutput(BaseModel):
     error_message: Optional[str] = Field(None, description="Error message if ARCA encountered an issue.")
 
 
-class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutput]):
+class AutomatedRefinementCoordinatorAgent_v1(ProtocolAwareAgent[ARCAReviewInput, ARCAOutput]):
     AGENT_ID: ClassVar[str] = "AutomatedRefinementCoordinatorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Automated Refinement Coordinator Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Coordinates the iterative refinement of project artifacts, invoking specialist agents as needed."
@@ -214,7 +223,8 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
     # Declare private attributes using PrivateAttr
     _llm_provider: Optional[LLMProvider] = PrivateAttr(default=None)
     _prompt_manager: Optional[PromptManager] = PrivateAttr(default=None)
-    _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = PrivateAttr(default=None)
+    # COMMENTED OUT: Defunct project_chroma_manager_agent references
+    # _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = PrivateAttr(default=None)
     _code_debugging_agent_instance: Optional[CodeDebuggingAgent_v1] = PrivateAttr(default=None)
     _logger_instance: logging.Logger = PrivateAttr() # No default, will be set in __init__
     _state_manager: Optional[StateManager] = PrivateAttr(default=None)
@@ -228,12 +238,18 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
     MIN_DOC_AGENT_CONFIDENCE_FOR_ACCEPT: ClassVar[float] = 0.5
 
     DEFAULT_ACCEPTANCE_THRESHOLD: ClassVar[float] = 0.75 # Default acceptance threshold
+    # ADDED: Protocol definitions following AI agent best practices
+    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['multi_agent_coordination', 'workflow_orchestration']
+    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ['quality_validation', 'goal_tracking']
+    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'error_recovery']
+
 
     def __init__(
         self,
         llm_provider: Optional[LLMProvider] = None,
         prompt_manager: Optional[PromptManager] = None,
-        project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = None,
+        # COMMENTED OUT: Defunct project_chroma_manager_agent parameter
+        # project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = None,
         system_context: Optional[Dict[str, Any]] = None,
         state_manager: Optional[StateManager] = None,
         **kwargs  # Pydantic will populate model fields from here
@@ -250,1032 +266,151 @@ class AutomatedRefinementCoordinatorAgent_v1(BaseAgent[ARCAReviewInput, ARCAOutp
 
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
-        self._project_chroma_manager = project_chroma_manager
         self._state_manager = state_manager
         self._current_debug_attempts_for_module = 0 # Explicitly initialize, though PrivateAttr has default
         self._last_feedback_doc_id = None # Explicitly initialize
 
         # Initialize CodeDebuggingAgent instance
-        if self._llm_provider and self._prompt_manager and self._project_chroma_manager:
+        if self._llm_provider and self._prompt_manager:
             try:
                 # Ensure CodeDebuggingAgent_v1 is correctly imported
                 self._code_debugging_agent_instance = CodeDebuggingAgent_v1(
                     llm_provider=self._llm_provider,
                     prompt_manager=self._prompt_manager,
-                    project_chroma_manager=self._project_chroma_manager, # Pass the PCMA instance
                     system_context={"logger": self._logger_instance.getChild("CodeDebuggingAgent_v1")}
                 )
             except Exception as e:
                 self._logger_instance.error(f"Failed to initialize CodeDebuggingAgent_v1 within ARCA: {e}", exc_info=True)
                 self._code_debugging_agent_instance = None
         else:
-            self._logger_instance.warning("LLMProvider, PromptManager, or ProjectChromaManager not available for CodeDebuggingAgent initialization.")
+            self._logger_instance.warning("LLMProvider or PromptManager not available for CodeDebuggingAgent initialization.")
             self._code_debugging_agent_instance = None
 
-    async def _log_event_to_pcma(
-        self,
-        pcma_agent: ProjectChromaManagerAgent_v1,
-        project_id: str,
-        cycle_id: str,
-        arca_task_id: str,
-        event_type: Literal[
-            "ARCA_INVOCATION_START",
-            "ARCA_DECISION_MADE",
-            "SUB_AGENT_INVOCATION_START",
-            "SUB_AGENT_INVOCATION_END",
-            "MAX_DEBUG_ATTEMPTS_REACHED",
-            "STATE_UPDATE_ATTEMPT",
-            "STATE_UPDATE_SUCCESS",
-            "STATE_UPDATE_FAILURE",
-            "ARCA_INTERNAL_ERROR"
-        ],
-        event_details: Dict[str, Any],
-        severity: Literal["INFO", "WARNING", "ERROR"] = "INFO",
-        related_doc_ids: Optional[List[str]] = None
-    ):
-        """Helper method to log an ARCA event to ProjectChromaManagerAgent."""
-        log_entry = ARCALogEntry(
-            agent_id=self.AGENT_ID, # Added agent_id
-            # log_id is generated by default_factory in ARCALogEntry
-            timestamp=datetime.datetime.now(datetime.timezone.utc), # Ensure timestamp is set here
-            arca_task_id=arca_task_id,
-            project_id=project_id,
-            cycle_id=cycle_id,
-            event_type=event_type,
-            event_details=event_details,
-            severity=severity,
-            related_artifact_doc_ids=related_doc_ids or []
-        )
+    # COMMENTED OUT: Method that depends on defunct ProjectChromaManagerAgent_v1
+    # async def _log_event_to_pcma(
+    #     self,
+    #     pcma_agent: ProjectChromaManagerAgent_v1,
+    #     project_id: str,
+    #     cycle_id: str,
+    #     arca_task_id: str,
+    #     event_type: Literal[
+    #         "ARCA_INVOCATION_START",
+    #         "ARCA_DECISION_MADE",
+    #         "SUB_AGENT_INVOCATION_START",
+    #         "SUB_AGENT_INVOCATION_END",
+    #         "MAX_DEBUG_ATTEMPTS_REACHED",
+    #         "STATE_UPDATE_ATTEMPT",
+    #         "STATE_UPDATE_SUCCESS",
+    #         "STATE_UPDATE_FAILURE",
+    #         "ARCA_INTERNAL_ERROR"
+    #     ],
+    #     event_details: Dict[str, Any],
+    #     severity: Literal["INFO", "WARNING", "ERROR"] = "INFO",
+    #     related_doc_ids: Optional[List[str]] = None
+    # ):
+    #     """Helper method to log an ARCA event to ProjectChromaManagerAgent.
+    # 
+    # ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
+    #     log_entry = ARCALogEntry(
+    #         agent_id=self.AGENT_ID, # Added agent_id
+    #         # log_id is generated by default_factory in ARCALogEntry
+    #         timestamp=datetime.datetime.now(datetime.timezone.utc), # Ensure timestamp is set here
+    #         arca_task_id=arca_task_id,
+    #         project_id=project_id,
+    #         cycle_id=cycle_id,
+    #         event_type=event_type,
+    #         event_details=event_details,
+    #         severity=severity,
+    #         related_artifact_doc_ids=related_doc_ids or []
+    #     )
+    #     try:
+    #         # Assuming pcma_agent is already resolved and available
+    #         confirmation: LogStorageConfirmation = await pcma_agent.log_arca_event(
+    #             project_id=project_id,
+    #             cycle_id=cycle_id,
+    #             log_entry=log_entry
+    #         )
+    #         if confirmation.status != "SUCCESS":
+    #             self._logger_instance.error(f"PCMA failed to log ARCA event ({event_type}): {confirmation.message}. Log ID: {log_entry.log_id}")
+    #         else:
+    #             # self._logger_instance.info(f"ARCA event ({event_type}) logged to PCMA. Log ID: {confirmation.log_id}") # Can be too verbose
+    #             pass
+    #     except Exception as e:
+    #         self._logger_instance.error(f"Exception during ARCA event logging to PCMA for event type {event_type}, Log ID {log_entry.log_id}: {e}", exc_info=True)
+
+    async def execute(self, task_input, full_context: Optional[Dict[str, Any]] = None):
+        """
+        Execute using pure protocol architecture.
+        No fallback - protocol execution only for clean, maintainable code.
+        """
         try:
-            # Assuming pcma_agent is already resolved and available
-            confirmation: LogStorageConfirmation = await pcma_agent.log_arca_event(
-                project_id=project_id,
-                cycle_id=cycle_id,
-                log_entry=log_entry
-            )
-            if confirmation.status != "SUCCESS":
-                self._logger_instance.error(f"PCMA failed to log ARCA event ({event_type}): {confirmation.message}. Log ID: {log_entry.log_id}")
-            else:
-                # self._logger_instance.info(f"ARCA event ({event_type}) logged to PCMA. Log ID: {confirmation.log_id}") # Can be too verbose
-                pass
-        except Exception as e:
-            self._logger_instance.error(f"Exception during ARCA event logging to PCMA for event type {event_type}, Log ID {log_entry.log_id}: {e}", exc_info=True)
-
-
-    async def invoke_async(
-        self, 
-        task_input: ARCAReviewInput, 
-        full_context: Optional[Dict[str, Any]] = None,
-    ) -> ARCAOutput:
-        # --- Initialization and Setup ---
-        self._logger_instance.info(f"ARCA invoked for task_id: {task_input.task_id}, project_id: {task_input.project_id}, artifact_type: {task_input.artifact_type.value}")
-        
-        if not self._project_chroma_manager:
-            self._logger_instance.error("ProjectChromaManagerAgent not initialized in ARCA.")
-            return ARCAOutput(
-                task_id=task_input.task_id, project_id=task_input.project_id,
-                reviewed_artifact_doc_id=task_input.artifact_doc_id or "N/A",
-                reviewed_artifact_type=task_input.artifact_type, decision="ERROR",
-                reasoning="ARCA internal configuration error: PCMA not available.",
-                error_message="ARCA internal configuration error: PCMA not available."
-            )
-        
-        # Removed StateManager check from critical path here, will check where needed.
-
-        await self._log_event_to_pcma(
-            pcma_agent=self._project_chroma_manager, project_id=task_input.project_id,
-            cycle_id=task_input.cycle_id, arca_task_id=task_input.task_id,
-            event_type="ARCA_INVOCATION_START",
-            event_details={
-                "artifact_type": task_input.artifact_type.value,
-                "artifact_doc_id": task_input.artifact_doc_id,
-                "generator_agent_id": task_input.generator_agent_id
+            # Determine primary protocol for this agent
+            primary_protocol = self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "simple_operations"
+            
+            protocol_task = {
+                "task_input": task_input.dict() if hasattr(task_input, 'dict') else task_input,
+                "full_context": full_context,
+                "goal": f"Execute {self.AGENT_NAME} specialized task"
             }
-        )
-
-        praa_structured_suggestions: List[Dict[str, Any]] = []
-        all_structured_suggestions_for_llm: List[Dict[str, Any]] = []
-        praa_optimization_report_content_md: Optional[str] = None
-        blueprint_reviewer_report_content_md: Optional[str] = None
-        praa_risk_report_content_md: Optional[str] = None
-        rta_report_content_md: Optional[str] = None
-        new_tasks_to_add_to_plan: List[Dict[str, Any]] = [] # Initialize here
-        main_artifact_content: Optional[str] = None # Initialize main_artifact_content
-
-        # --- NEW: Handle OPTIMIZATION_SUGGESTION_REPORT as primary input for suggestions ---
-        if task_input.artifact_type == ARCAReviewArtifactType.OPTIMIZATION_SUGGESTION_REPORT and task_input.artifact_doc_id and self._project_chroma_manager:
-            self._logger_instance.info(f"ARCA: Artifact type is OPTIMIZATION_SUGGESTION_REPORT. Attempting to parse suggestions from its content (doc_id: {task_input.artifact_doc_id}).")
-            try:
-                retrieved_opt_report_artifact: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                    base_collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
-                    document_id=task_input.artifact_doc_id
-                )
-
-                report_content_json = None # Initialize to None
-
-                if retrieved_opt_report_artifact.status == "SUCCESS":
-                    artifact_actual_content = retrieved_opt_report_artifact.content
-                    
-                    if artifact_actual_content:
-                        if isinstance(artifact_actual_content, dict):
-                            self._logger_instance.info(f"Content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) is already a dict.")
-                            report_content_json = artifact_actual_content
-                        elif isinstance(artifact_actual_content, str):
-                            self._logger_instance.info(f"Content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) is a string. Attempting JSON parse.")
-                            try:
-                                report_content_json = json.loads(artifact_actual_content)
-                            except json.JSONDecodeError as e:
-                                self._logger_instance.error(f"Failed to parse JSON string from OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e}. Content (first 500 chars): {artifact_actual_content[:500]}")
-                                # report_content_json remains None, error logged
-                            else:
-                                self._logger_instance.warning(f"Content for OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) is of unexpected type: {type(artifact_actual_content)}. Cannot process as JSON.")
-                                # report_content_json remains None, warning logged
-
-                        # Now, process if report_content_json was successfully obtained (is not None)
-                        if report_content_json:
-                            suggestions_from_input_report = report_content_json.get("suggestions", [])
-                            if isinstance(suggestions_from_input_report, list):
-                                for sugg in suggestions_from_input_report:
-                                    if isinstance(sugg, dict):
-                                        sugg['source_report'] = 'OPTIMIZATION_SUGGESTION_REPORT_INPUT'
-                                        all_structured_suggestions_for_llm.append(sugg)
-                                    else:
-                                        self._logger_instance.warning(f"Suggestion in OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) was not a dictionary: {sugg}")
-                                self._logger_instance.info(f"Successfully processed {len(suggestions_from_input_report)} suggestions from OPTIMIZATION_SUGGESTION_REPORT artifact doc_id: {task_input.artifact_doc_id}.")
-                            else:
-                                self._logger_instance.warning(f"OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) has 'suggestions' field, but it's not a list. Type: {type(suggestions_from_input_report)}")
-                        # else: (report_content_json is None)
-                            # This means content was not a dict, or was not a parsable JSON string, or was an unexpected type.
-                            # Previous logs would have indicated the specific reason.
-                            # The 'else' block for 'if artifact_actual_content:' (below) will handle if it was initially None/empty.
-
-                    else: # artifact_actual_content is None or empty
-                        self._logger_instance.warning(f"Retrieved OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}) successfully, but its content was None or empty.")
-                    
-                else: # retrieved_opt_report_artifact.status != "SUCCESS"
-                    self._logger_instance.warning(f"Failed to retrieve OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}). Status: {retrieved_opt_report_artifact.status}, Message: {retrieved_opt_report_artifact.error_message or 'Unknown retrieval error'}")
             
-            except Exception as e_opt_report_retrieval: # ADDED THIS EXCEPT BLOCK
-                self._logger_instance.error(f"Exception occurred while retrieving/processing OPTIMIZATION_SUGGESTION_REPORT (doc_id: {task_input.artifact_doc_id}): {e_opt_report_retrieval}", exc_info=True)
-                # report_content_json remains None, error logged. The flow will continue without these suggestions.
+            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            
+            if protocol_result["overall_success"]:
+                return self._extract_output_from_protocol_result(protocol_result, task_input)
+            else:
+                # Enhanced error handling instead of fallback
+                error_msg = f"Protocol execution failed for {self.AGENT_NAME}: {protocol_result.get('error', 'Unknown error')}"
+                self._logger.error(error_msg)
+                raise ProtocolExecutionError(error_msg)
+                
+        except Exception as e:
+            error_msg = f"Pure protocol execution failed for {self.AGENT_NAME}: {e}"
+            self._logger.error(error_msg)
+            raise ProtocolExecutionError(error_msg)
+            
+            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            
+            if protocol_result["overall_success"]:
+                return self._extract_output_from_protocol_result(protocol_result, task_input)
+            else:
+                self._logger.warning("Protocol execution failed, falling back to traditional method")
+                raise ProtocolExecutionError("Pure protocol execution failed")
+                
+        except Exception as e:
+            self._logger.warning(f"Protocol execution error: {e}, falling back to traditional method")
+            raise ProtocolExecutionError("Pure protocol execution failed")
 
-            # ADDED BLOCK: If suggestions were found from the OPTIMIZATION_SUGGESTION_REPORT,
-            # try to fetch the current master plan to serve as context (main_artifact_content) for LLM evaluation.
-            if all_structured_suggestions_for_llm: # Check if any suggestions were actually parsed
-                self._logger_instance.info(f"ARCA: Suggestions found from OPTIMIZATION_SUGGESTION_REPORT. Attempting to fetch current master plan for LLM context.")
-                current_master_plan_doc_id_for_context: Optional[str] = None
-                if self._state_manager:
-                    try:
-                        self._state_manager._load_or_initialize_project_state() # ADDED: Force reload from disk
-                        project_state = self._state_manager.get_project_state()
-                        if project_state and project_state.latest_accepted_master_plan_doc_id:
-                            current_master_plan_doc_id_for_context = project_state.latest_accepted_master_plan_doc_id
-                            self._logger_instance.info(f"ARCA: Found current master plan doc ID for context: {current_master_plan_doc_id_for_context}")
-                        else:
-                            self._logger_instance.warning(f"ARCA: Could not find latest_accepted_master_plan_doc_id in project state for LLM context.")
-                    except Exception as e_state_fetch:
-                        self._logger_instance.error(f"ARCA: Exception fetching project state for master plan context: {e_state_fetch}", exc_info=True)
-                else:
-                    self._logger_instance.warning("ARCA: StateManager not available, cannot fetch current master plan for LLM context.")
-
-                if current_master_plan_doc_id_for_context and self._project_chroma_manager:
-                    try:
-                        plan_artifact_retrieved: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                            base_collection_name=EXECUTION_PLANS_COLLECTION, # Ensure this is the correct collection name
-                            document_id=current_master_plan_doc_id_for_context
-                        )
-                        if plan_artifact_retrieved and plan_artifact_retrieved.status == "SUCCESS" and plan_artifact_retrieved.content:
-                            main_artifact_content = str(plan_artifact_retrieved.content) # Set main_artifact_content
-                            self._logger_instance.info(f"ARCA: Successfully retrieved current master plan content (doc_id: {current_master_plan_doc_id_for_context}) to use as main_artifact_content for LLM evaluation.")
-                        else:
-                            self._logger_instance.warning(f"ARCA: Failed to retrieve content for current master plan (doc_id: {current_master_plan_doc_id_for_context}) for LLM context. Status: {plan_artifact_retrieved.status if plan_artifact_retrieved else 'N/A'}")
-                    except Exception as e_plan_retrieve:
-                        self._logger_instance.error(f"ARCA: Exception retrieving current master plan content (doc_id: {current_master_plan_doc_id_for_context}): {e_plan_retrieve}", exc_info=True)
-            # END ADDED BLOCK
-
-        # --- Retrieve and Parse PRAA Optimization Report ---
-        # Only run this if suggestions weren't already populated from a primary OPTIMIZATION_SUGGESTION_REPORT input,
-        # or if we want to aggregate (for now, let's make it conditional to avoid double processing if not intended)
-        if not all_structured_suggestions_for_llm and task_input.praa_optimization_report_doc_id and self._project_chroma_manager:
-            try:
-                retrieved_praa_opt_report = await self._project_chroma_manager.retrieve_artifact(
-                    doc_id=task_input.praa_optimization_report_doc_id,
-                    collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION
-                )
-                self._logger_instance.info(f"Retrieving PRAA optimization report: {task_input.praa_optimization_report_doc_id}")
-                retrieved_praa_opt_report: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                    doc_id=task_input.praa_optimization_report_doc_id, # MODIFIED: doc_id directly
-                    collection_name=OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION 
-                )
-                if retrieved_praa_opt_report.status == "SUCCESS" and retrieved_praa_opt_report.artifact_content:
-                    try:
-                        praa_output_json = json.loads(retrieved_praa_opt_report.artifact_content)
-                        praa_optimization_report_content_md = praa_output_json.get("optimization_opportunities_report_md")
-                        
-                        suggestions_from_praa = praa_output_json.get("structured_optimization_suggestions_json", [])
-                        if isinstance(suggestions_from_praa, list):
-                            praa_structured_suggestions = suggestions_from_praa
-                            for sugg in praa_structured_suggestions: # MODIFIED: Enrich with source_report
-                                sugg['source_report'] = 'PRAA'
-                                all_structured_suggestions_for_llm.append(sugg)
-                        else:
-                            self._logger_instance.warning("PRAA 'structured_optimization_suggestions_json' was not a list.")
-                            
-                        self._logger_instance.info(f"Successfully parsed PRAA optimization report. Found {len(praa_structured_suggestions)} structured suggestions.")
-                    except json.JSONDecodeError as e:
-                        self._logger_instance.error(f"Failed to parse JSON from PRAA optimization report {task_input.praa_optimization_report_doc_id}: {e}")
-                        praa_optimization_report_content_md = retrieved_praa_opt_report.artifact_content 
-                else:
-                    self._logger_instance.warning(f"Failed to retrieve PRAA optimization report content: {retrieved_praa_opt_report.message or retrieved_praa_opt_report.error_message}")
-            except Exception as e:
-                self._logger_instance.error(f"Exception retrieving PRAA optimization report: {e}", exc_info=True)
-
-        # --- Retrieve and Parse Blueprint Reviewer Report ---
-        if task_input.blueprint_reviewer_report_doc_id and self._project_chroma_manager:
-            try:
-                self._logger_instance.info(f"Retrieving Blueprint Reviewer report: {task_input.blueprint_reviewer_report_doc_id}")
-                retrieved_blueprint_review_report: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                    doc_id=task_input.blueprint_reviewer_report_doc_id, # MODIFIED: doc_id directly
-                    collection_name=REVIEW_REPORTS_COLLECTION 
-                )
-                if retrieved_blueprint_review_report.status == "SUCCESS" and retrieved_blueprint_review_report.artifact_content:
-                    try:
-                        blueprint_reviewer_output_json = json.loads(retrieved_blueprint_review_report.artifact_content)
-                        blueprint_reviewer_report_content_md = blueprint_reviewer_output_json.get("blueprint_optimization_report_md")
-                        
-                        suggestions_from_br = blueprint_reviewer_output_json.get("structured_optimization_suggestions_json", [])
-                        if isinstance(suggestions_from_br, list):
-                            blueprint_reviewer_structured_suggestions = suggestions_from_br
-                            for sugg in blueprint_reviewer_structured_suggestions: # MODIFIED: Enrich with source_report
-                                sugg['source_report'] = 'BlueprintReviewer'
-                                all_structured_suggestions_for_llm.append(sugg)
-                        else:
-                             self._logger_instance.warning("Blueprint Reviewer 'structured_optimization_suggestions_json' was not a list.")
-
-                        self._logger_instance.info(f"Successfully parsed Blueprint Reviewer report. Found {len(blueprint_reviewer_structured_suggestions)} structured suggestions.")
-                    except json.JSONDecodeError as e:
-                        self._logger_instance.error(f"Failed to parse JSON from Blueprint Reviewer report {task_input.blueprint_reviewer_report_doc_id}: {e}")
-                        blueprint_reviewer_report_content_md = retrieved_blueprint_review_report.artifact_content
-                else:
-                    self._logger_instance.warning(f"Failed to retrieve Blueprint Reviewer report content: {retrieved_blueprint_review_report.message or retrieved_blueprint_review_report.error_message}")
-            except Exception as e:
-                self._logger_instance.error(f"Exception retrieving Blueprint Reviewer report: {e}", exc_info=True)
-
-        # --- Retrieve PRAA Risk Report (assuming it's still direct Markdown or handled by a different logic if JSON) ---
-        if task_input.praa_risk_report_doc_id and self._project_chroma_manager:
-            try:
-                self._logger_instance.info(f"Retrieving PRAA risk report: {task_input.praa_risk_report_doc_id}")
-                retrieved_praa_risk_report: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                    doc_id=task_input.praa_risk_report_doc_id,
-                    collection_name=RISK_ASSESSMENT_REPORTS_COLLECTION
-                )
-                if retrieved_praa_risk_report.status == "SUCCESS" and retrieved_praa_risk_report.artifact_content:
-                    # If PRAA Risk Report also became JSON, similar parsing to above would be needed.
-                    # For now, assuming it's direct Markdown as per current EXECUTION_PLAN focus.
-                    praa_risk_report_content_md = retrieved_praa_risk_report.artifact_content
-                    self._logger_instance.info(f"Successfully retrieved PRAA risk report content.")
-                else:
-                    self._logger_instance.warning(f"Failed to retrieve PRAA risk report content: {retrieved_praa_risk_report.message or retrieved_praa_risk_report.error_message}")
-            except Exception as e:
-                self._logger_instance.error(f"Exception retrieving PRAA risk report: {e}", exc_info=True)
+    # ADDED: Protocol phase execution logic
+    def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
+        """Execute agent-specific logic for each protocol phase."""
         
-        # --- Retrieve RTA Report (assuming it's still direct Markdown or handled by a different logic if JSON) ---
-        if task_input.rta_report_doc_id and self._project_chroma_manager:
-            try:
-                self._logger_instance.info(f"Retrieving RTA report: {task_input.rta_report_doc_id}")
-                retrieved_rta_report: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                    doc_id=task_input.rta_report_doc_id,
-                    collection_name=TRACEABILITY_REPORTS_COLLECTION
-                )
-                if retrieved_rta_report.status == "SUCCESS" and retrieved_rta_report.artifact_content:
-                    # If RTA Report also became JSON, similar parsing would be needed.
-                    # For now, assuming it's direct Markdown.
-                    rta_report_content_md = retrieved_rta_report.artifact_content
-                    self._logger_instance.info(f"Successfully retrieved RTA report content.")
-                else:
-                    self._logger_instance.warning(f"Failed to retrieve RTA report content: {retrieved_rta_report.message or retrieved_rta_report.error_message}")
-            except Exception as e:
-                self._logger_instance.error(f"Exception retrieving RTA report: {e}", exc_info=True)
-
-
-        # ARCA's main decision logic starts here. 
-        # It will use praa_risk_report_content_md, praa_optimization_report_content_md, 
-        # blueprint_reviewer_report_content_md, rta_report_content_md, 
-        # and the new 'all_structured_suggestions_for_llm' list.
-
-        # Log collected suggestions
-        if all_structured_suggestions_for_llm: # MODIFIED: Use new list name
-            self._logger_instance.info(f"ARCA collected a total of {len(all_structured_suggestions_for_llm)} structured optimization suggestions for LLM evaluation.")
+        # Generic phase handling - can be overridden by specific agents
+        if phase.name in ["discovery", "analysis", "planning", "execution", "validation"]:
+            return self._execute_generic_phase(phase)
         else:
-            self._logger_instance.info("ARCA found no structured optimization suggestions from PRAA or Blueprint Reviewer reports to send for LLM evaluation.")
+            self._logger.warning(f"Unknown protocol phase: {phase.name}")
+            return {"phase_completed": True, "method": "fallback"}
 
-        # Based on task_input.artifact_type, ARCA decides the next steps.
-        # This is a simplified placeholder for the complex decision tree.
+    def _execute_generic_phase(self, phase: ProtocolPhase) -> Dict[str, Any]:
+        """Execute generic phase logic suitable for most agents."""
+        return {
+            "phase_name": phase.name,
+            "status": "completed", 
+            "outputs": {"generic_result": f"Phase {phase.name} completed"},
+            "method": "generic_protocol_execution"
+        }
 
-        # --- Handle GenerateProjectDocumentation Task ---
-        
-        if task_input.artifact_type == ARCAReviewArtifactType.GENERATE_PROJECT_DOCUMENTATION: # Corrected typo: GenerateProjectDocumentation -> GENERATE_PROJECT_DOCUMENTATION
-            self._logger_instance.info(f"ARCA: Received GenerateProjectDocumentation task for project {task_input.project_id}, cycle {task_input.cycle_id}.")
-            if not (task_input.final_loprd_doc_id_for_docs and \
-                    task_input.final_blueprint_doc_id_for_docs and \
-                    task_input.final_plan_doc_id_for_docs and \
-                    task_input.final_code_root_path_for_docs):
-                decision = "ERROR"
-                reasoning = "Cannot proceed with documentation generation: Missing critical input document IDs (LOPRD, Blueprint, Plan) or code root path in ARCAReviewInput."
-                self._logger_instance.error(reasoning)
-            else:
-                doc_agent_input = ProjectDocumentationAgentInput(
-                    project_id=task_input.project_id,
-                    refined_user_goal_doc_id=task_input.final_loprd_doc_id_for_docs, # Assuming LOPRD acts as refined goal for docs
-                    project_blueprint_doc_id=task_input.final_blueprint_doc_id_for_docs,
-                    master_execution_plan_doc_id=task_input.final_plan_doc_id_for_docs,
-                    generated_code_root_path=task_input.final_code_root_path_for_docs,
-                    test_summary_doc_id=task_input.final_test_summary_doc_id_for_docs, # Optional
-                    cycle_id=task_input.cycle_id # Pass the cycle_id
-                )
-                decision = "PROCEED_TO_DOCUMENTATION"
-                reasoning = "Proceeding to generate project documentation based on provided final artifacts."
-                next_agent_for_refinement = ProjectDocumentationAgent_v1.AGENT_ID
-                next_agent_refinement_input = doc_agent_input
-                arca_confidence = ConfidenceScore(value=0.95, level="HIGH", method="ProgrammaticDecision", reasoning="Documentation generation triggered by explicit request.")
-                self._logger_instance.info(f"ARCA: Prepared input for ProjectDocumentationAgent_v1. Cycle ID: {task_input.cycle_id}")
-            
-            # Early exit for documentation task
-            # No further review or state updates related to a *reviewed artifact* are needed here.
-            # StateManager updates for cycle completion might still occur if this is the end of a cycle.
-            
-            # Log ARCA Decision Made
-            if self._project_chroma_manager:
-                await self._log_event_to_pcma(
-                    pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                    arca_task_id=task_input.task_id, event_type="ARCA_DECISION_MADE",
-                    event_details={
-                        "reviewed_artifact_doc_id": "N/A - Documentation Generation Task",
-                        "reviewed_artifact_type": task_input.artifact_type.value,
-                        "decision": decision,
-                        "reasoning_summary": reasoning[:200],
-                        "next_agent_id": next_agent_for_refinement,
-                    },
-                    severity="INFO"
-                )
+    def _extract_output_from_protocol_result(self, protocol_result: Dict[str, Any], task_input) -> Any:
+        """Extract agent output from protocol execution results."""
+        # Generic extraction - should be overridden by specific agents
+        return {
+            "status": "SUCCESS",
+            "message": "Task completed via protocol execution",
+            "protocol_used": protocol_result.get("protocol_name"),
+            "execution_time": protocol_result.get("execution_time", 0),
+            "phases_completed": len([p for p in protocol_result.get("phases", []) if p.get("success", False)])
+        }
 
-            return ARCAOutput(
-                task_id=task_input.task_id,
-                project_id=task_input.project_id,
-                reviewed_artifact_doc_id=task_input.artifact_doc_id or "N/A", # No specific artifact was "reviewed"
-                reviewed_artifact_type=task_input.artifact_type,
-                decision=decision,
-                reasoning=reasoning, # Changed from decision_reasoning
-                confidence_in_decision=arca_confidence,
-                next_agent_id_for_refinement=next_agent_for_refinement,
-                next_agent_input=next_agent_refinement_input.model_dump() if next_agent_refinement_input and hasattr(next_agent_refinement_input, 'model_dump') else next_agent_refinement_input,
-                final_artifact_doc_id=None # No artifact was accepted here
-            )
-        # --- End Handle GenerateProjectDocumentation Task ---
-
-        # Existing logic for other artifact types (LOPRD, Blueprint, etc.)
-        # ... (rest of the invoke_async method) ...
-
-        # --- Retrieve supporting documents (PRAA, RTA reports, Blueprint Review) ---
-        praa_risk_report_content: Optional[str] = None
-        praa_optimization_report_content: Optional[str] = None
-        rta_report_content: Optional[str] = None
-        blueprint_review_content: Optional[str] = None
-        
-        # NEW: Retrieve the main artifact content for summary
-        main_artifact_content: Optional[str] = None
-        main_artifact_collection_name: Optional[str] = None
-
-        if task_input.artifact_doc_id:
-            # Determine collection based on artifact_type (this is a simplified mapping)
-            # More robust mapping might be needed if artifact types to collection names are complex
-            if task_input.artifact_type == ARCAReviewArtifactType.LOPRD:
-                # Assuming LOPRDs are in a collection like 'loprd_collection' - this needs to be accurate
-                # For now, let's assume a generic 'project_artifacts_collection' or specific ones
-                # This part requires knowing where LOPRDs, Blueprints, etc. are stored by ProductAnalyst/Architect.
-                # Let's placeholder with a direct reference if available in full_context or a specific collection.
-                # For now, we will rely on the doc_id being universally unique or collection being passed.
-                # For this example, let's assume a generic collection if not specific.
-                # This needs to be refined based on where these artifacts are ACTUALLY stored by their generator agents.
-                # For MVP, we might need to pass the collection name or have a mapping.
-                # For now, this part of fetching main_artifact_content is illustrative and needs correct collections.
-                # Let's assume task_input.artifact_doc_id IS the content for simplicity or that a
-                # generic retrieval method exists that doesn't strictly need collection for main artifacts.
-                # THIS IS A CRITICAL POINT: How does ARCA get the content of the artifact it's reviewing?
-                # For now, we'll assume pcma_instance can retrieve it with just the doc_id from a known main collection
-                # or the doc_id itself might sometimes be a content placeholder.
-                # Given pcma_instance.retrieve_artifact needs a base_collection_name, we must define it.
-                # This will be a placeholder and likely incorrect until actual storage collections are known.
-                
-                # A more robust way: the agent that *created* the artifact_doc_id should also provide its collection.
-                # Or ARCA needs a mapping.
-                # For now, let's assume a hypothetical default or look it up.
-                # This lookup logic is simplified:
-                artifact_collection_map = {
-                    ARCAReviewArtifactType.LOPRD: "loprds_collection", # Example, needs to be correct
-                    ARCAReviewArtifactType.PROJECT_BLUEPRINT: "project_blueprints_collection", # Corrected
-                    ARCAReviewArtifactType.MASTER_EXECUTION_PLAN: "master_execution_plans_collection", # Corrected
-                    ARCAReviewArtifactType.CODE_MODULE: GENERATED_CODE_ARTIFACTS_COLLECTION,
-                    # Add other types if they need to be fetched for summarization
-                }
-                main_artifact_collection_name = artifact_collection_map.get(task_input.artifact_type)
-
-                if self._project_chroma_manager and main_artifact_collection_name:
-                    try:
-                        main_artifact_retrieved: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                            base_collection_name=main_artifact_collection_name,
-                            document_id=task_input.artifact_doc_id
-                        )
-                        if main_artifact_retrieved and main_artifact_retrieved.status == "SUCCESS" and main_artifact_retrieved.content:
-                            main_artifact_content = str(main_artifact_retrieved.content)
-                            self._logger_instance.info(f"Successfully retrieved main artifact ({task_input.artifact_type.value}) content for doc_id: {task_input.artifact_doc_id}")
-                        else:
-                            self._logger_instance.warning(f"Failed to retrieve main artifact ({task_input.artifact_type.value}) content for doc_id {task_input.artifact_doc_id}. Status: {main_artifact_retrieved.status if main_artifact_retrieved else 'N/A'}")
-                    except Exception as e_main_artifact:
-                        self._logger_instance.error(f"Exception retrieving main artifact ({task_input.artifact_type.value}) {task_input.artifact_doc_id}: {e_main_artifact}", exc_info=True)
-                elif not main_artifact_collection_name:
-                    self._logger_instance.warning(f"No collection mapping found for artifact type {task_input.artifact_type.value} to retrieve its content for summarization.")
-
-        # --- Ensure supporting documents (PRAA, RTA reports, Blueprint Review) are still fetched ---
-        # This block was unintentionally removed by a previous edit, restoring it.
-        if not self._project_chroma_manager:
-            self._logger_instance.error("ARCA: project_chroma_manager is not available for retrieving supporting documents. Cannot proceed effectively.")
-        else:
-            try:
-                if task_input.praa_risk_report_doc_id:
-                    doc_output: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                        doc_id=task_input.praa_risk_report_doc_id,
-                        collection_name=RISK_ASSESSMENT_REPORTS_COLLECTION
-                    )
-                    if doc_output and doc_output.status == "SUCCESS" and doc_output.artifact_content:
-                        praa_risk_report_content_md = str(doc_output.artifact_content)
-                    else:
-                        self._logger_instance.warning(f"PRAA risk report {task_input.praa_risk_report_doc_id} not found or content empty. Status: {doc_output.status if doc_output else 'N/A'}")
-
-                # praa_optimization_report_content_md is already fetched and parsed into structured suggestions and MD above
-                # rta_report_content_md is already fetched and parsed into structured suggestions and MD above
-                # blueprint_reviewer_report_content_md is already fetched and parsed into structured suggestions and MD above
-
-                if task_input.rta_report_doc_id: # Ensure RTA MD content is still fetched if needed by heuristics
-                    doc_output: RetrieveArtifactOutput = await self._project_chroma_manager.retrieve_artifact(
-                        doc_id=task_input.rta_report_doc_id,
-                        collection_name=TRACEABILITY_REPORTS_COLLECTION
-                    )
-                    if doc_output and doc_output.status == "SUCCESS" and doc_output.artifact_content:
-                        rta_report_content_md = str(doc_output.artifact_content)
-                    else:
-                        self._logger_instance.warning(f"RTA report {task_input.rta_report_doc_id} not found or content empty. Status: {doc_output.status if doc_output else 'N/A'}")
-                
-            except Exception as e_reports:
-                self._logger_instance.error(f"Exception while retrieving one or more supporting reports (risk/RTA): {e_reports}", exc_info=True)
-                pass        
-
-        # --- NEW: Evaluate Optimization Suggestions using LLM (Moved after main_artifact_content retrieval) ---
-        evaluated_optimizations_from_llm: Optional[List[Dict[str, Any]]] = None
-        llm_optimization_evaluation_summary: Optional[str] = None
-
-        if self._llm_provider and self._prompt_manager and all_structured_suggestions_for_llm: 
-            if not main_artifact_content: 
-                self._logger_instance.warning("Main artifact content still not available after attempting fetch, skipping LLM optimization evaluation.")
-            else:
-                try:
-                    all_suggestions_json_string = json.dumps(all_structured_suggestions_for_llm)
-                    optimization_eval_inputs = {
-                        "artifact_type": task_input.artifact_type.value,
-                        "artifact_content_summary": (main_artifact_content[:10000] if main_artifact_content else "Main artifact content not available."), 
-                        "all_structured_suggestions_json_string": all_suggestions_json_string, 
-                        "current_project_goal_summary": full_context.get("project_goal_summary", "No project goal summary provided.") if full_context else "No project goal summary provided."
-                    }
-
-                    self._logger_instance.info(f"Invoking LLM for optimization evaluation with prompt: {ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME}")
-                    
-                    if self._project_chroma_manager:
-                        await self._log_event_to_pcma(
-                            pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                            arca_task_id=task_input.task_id, event_type="SUB_AGENT_INVOCATION_START",
-                            event_details={
-                                "invoked_agent_id": "LLM_OptimizationEvaluator",
-                                "prompt_name": ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME,
-                                "input_summary": {
-                                    "artifact_type": optimization_eval_inputs["artifact_type"],
-                                    "num_suggestions_to_evaluate": len(all_structured_suggestions_for_llm)
-                                }
-                            },
-                            severity="INFO"
-                        )
-
-                    # llm_response_raw = await self._llm_provider.instruct_direct_async(
-                    #     prompt_name=ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME,
-                    #     prompt_manager=self._prompt_manager,
-                    #     input_vars=optimization_eval_inputs,
-                    #     # model_name, temperature, etc., could be configured via prompt_definition if needed
-                    # )
-                    llm_response_raw = await self._llm_provider.generate_text_async_with_prompt_manager(
-                        prompt_name=ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME,
-                        prompt_version="v1", # Assuming v1 from prompt name
-                        prompt_render_data=optimization_eval_inputs
-                        # expected_json_schema could be added here if a Pydantic model for the response exists
-                    )
-
-                    if llm_response_raw:
-                        self._logger_instance.debug(f"LLM Optimization Evaluation Raw Response: {llm_response_raw}")
-                        try:
-                            llm_response_json = json.loads(llm_response_raw)
-                            evaluated_optimizations_from_llm = llm_response_json.get("evaluated_optimizations")
-                            llm_optimization_evaluation_summary = llm_response_json.get("overall_summary_of_actions")
-                            self._logger_instance.info(f"Successfully parsed LLM optimization evaluation. Summary: {llm_optimization_evaluation_summary}")
-                            if self._project_chroma_manager: 
-                                await self._log_event_to_pcma(
-                                    pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                                    arca_task_id=task_input.task_id, event_type="SUB_AGENT_INVOCATION_END",
-                                    event_details={
-                                        "invoked_agent_id": "LLM_OptimizationEvaluator",
-                                        "status": "SUCCESS_PARSED",
-                                        "summary": llm_optimization_evaluation_summary,
-                                        "num_evaluated_optimizations": len(evaluated_optimizations_from_llm) if evaluated_optimizations_from_llm else 0
-                                    },
-                                    severity="INFO"
-                                )
-                        except json.JSONDecodeError as e_json:
-                            self._logger_instance.error(f"Failed to parse JSON from LLM optimization evaluation response: {e_json}. Response: {llm_response_raw}", exc_info=True)
-                            if self._project_chroma_manager: 
-                                await self._log_event_to_pcma(
-                                    pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                                    arca_task_id=task_input.task_id, event_type="SUB_AGENT_INVOCATION_END",
-                                    event_details={
-                                        "invoked_agent_id": "LLM_OptimizationEvaluator",
-                                        "status": "FAILURE_JSON_PARSE_ERROR",
-                                        "error": str(e_json)
-                                    },
-                                    severity="ERROR"
-                                )
-                    else:
-                        self._logger_instance.warning("LLM optimization evaluation returned an empty response.")
-                        if self._project_chroma_manager: 
-                             await self._log_event_to_pcma(
-                                pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                                arca_task_id=task_input.task_id, event_type="SUB_AGENT_INVOCATION_END",
-                                event_details={
-                                    "invoked_agent_id": "LLM_OptimizationEvaluator",
-                                    "status": "FAILURE_EMPTY_RESPONSE"
-                                },
-                                severity="WARNING"
-                            )
-
-                except Exception as e_llm_opt_eval:
-                    self._logger_instance.error(f"Error during LLM optimization evaluation: {e_llm_opt_eval}", exc_info=True)
-                    if self._project_chroma_manager: 
-                        await self._log_event_to_pcma(
-                            pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                            arca_task_id=task_input.task_id, event_type="SUB_AGENT_INVOCATION_END",
-                            event_details={
-                                "invoked_agent_id": "LLM_OptimizationEvaluator",
-                                "status": "FAILURE_EXCEPTION",
-                                "error": str(e_llm_opt_eval)
-                            },
-                            severity="ERROR"
-                        )
-        elif not all_structured_suggestions_for_llm: 
-            self._logger_instance.info("No structured optimization suggestions were available, skipping LLM optimization evaluation.")
-        elif not self._llm_provider or not self._prompt_manager:
-            self._logger_instance.warning("LLMProvider or PromptManager not available, skipping LLM optimization evaluation.")
-
-        # --- Decision Logic --- #
-        # Initialize decision variables
-        decision: Literal["ACCEPT_ARTIFACT", "REFINEMENT_REQUIRED", "ESCALATE_TO_USER", "TEST_FAILURE_HANDOFF", "PROCEED_TO_DOCUMENTATION", "PLAN_MODIFIED_NEW_TASKS_ADDED", "ERROR"] = "ACCEPT_ARTIFACT" 
-        reasoning = f"Initial assessment for {task_input.artifact_type.value} ID: {task_input.artifact_doc_id or task_input.code_module_file_path}."
-        next_agent_for_refinement: Optional[str] = None
-        next_agent_refinement_input: Optional[Union[pa_module.ProductAnalystAgentInput, ArchitectAgentInput, MasterPlannerInput, ProjectDocumentationAgentInput, DebuggingTaskInput, Dict[str, Any]]] = None 
-        final_doc_id_on_accept: Optional[str] = None
-        debugging_input_for_output: Optional[DebuggingTaskInput] = None 
-        arca_error_message: Optional[str] = None
-
-        # Incorporate LLM evaluation summary into overall reasoning
-        if llm_optimization_evaluation_summary:
-            reasoning += f" LLM Optimization Evaluation Summary: {llm_optimization_evaluation_summary}."
-        
-        llm_recommended_incorporations: List[Dict[str, Any]] = []
-        if evaluated_optimizations_from_llm:
-            for opt_eval in evaluated_optimizations_from_llm:
-                if opt_eval.get("recommendation") == "INCORPORATE" and opt_eval.get("incorporation_instructions_for_next_agent"):
-                    llm_recommended_incorporations.append(opt_eval)
-                elif isinstance(opt_eval, dict) and opt_eval.get("recommendation") == "NEW_TASK_FOR_PLAN":
-                    if opt_eval.get("new_task_details_for_plan"):
-                        new_tasks_to_add_to_plan.append(opt_eval["new_task_details_for_plan"])
-                        reasoning += f"\n- LLM recommended NEW_TASK_FOR_PLAN for suggestion: '{opt_eval.get('suggestion_id', 'N/A')}'. Details: {opt_eval['new_task_details_for_plan']}"
-                    else:
-                        reasoning += f"\n- LLM recommended NEW_TASK_FOR_PLAN for suggestion: '{opt_eval.get('suggestion_id', 'N/A')}' but new_task_details_for_plan was missing."
-                        self._logger_instance.warning(f"ARCA: LLM recommended NEW_TASK_FOR_PLAN but new_task_details_for_plan was missing for suggestion '{opt_eval.get('suggestion_id', 'N/A')}'.")
-
-        if llm_recommended_incorporations:
-            decision = "REFINEMENT_REQUIRED"
-            # Update reasoning to clearly state LLM forced the refinement
-            reasoning += f" Decision automatically set to REFINEMENT_REQUIRED due to {len(llm_recommended_incorporations)} LLM-evaluated optimization(s) recommended for incorporation."
-            self._logger_instance.info(f"ARCA: Decision forced to REFINEMENT_REQUIRED by LLM based on {len(llm_recommended_incorporations)} recommended incorporations.")
-
-        # Calculate combined metric (heuristic)
-        generator_confidence_val = task_input.generator_agent_confidence.score if task_input.generator_agent_confidence else self.MIN_GENERATOR_CONFIDENCE 
-        praa_confidence_val_num = 0.0 
-        if praa_risk_report_content_md: 
-            praa_confidence_val_num = 0.7 
-        rta_confidence_val_num = 0.0 
-        if rta_report_content_md: 
-            rta_confidence_val_num = 0.7
-
-        combined_metric = 0.0
-        if task_input.artifact_type == ARCAReviewArtifactType.LOPRD:
-            combined_metric = (generator_confidence_val * 0.6) + (praa_confidence_val_num * 0.4)
-        elif task_input.artifact_type == ARCAReviewArtifactType.PROJECT_BLUEPRINT: # Corrected
-            # For blueprint, RTA becomes more important, PRAA (risk) also.
-            combined_metric = (generator_confidence_val * 0.5) + (praa_confidence_val_num * 0.25) + (rta_confidence_val_num * 0.25)
-        elif task_input.artifact_type == ARCAReviewArtifactType.MASTER_EXECUTION_PLAN: # Corrected
-            # For plan, RTA (to blueprint) is critical. Generator confidence also high.
-            combined_metric = (generator_confidence_val * 0.4) + (praa_confidence_val_num * 0.2) + (rta_confidence_val_num * 0.4)
-        # No combined_metric for CodeModule or CodeModule_TestFailure if it needs specific handling,
-        # or can add a general case if appropriate.
-        elif task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE: # Corrected (was already correct but good to be explicit)
-            # For code, RTA (to plan/requirements) is important.
-            combined_metric = (generator_confidence_val * 0.5) + (praa_confidence_val_num * 0.2) + (rta_confidence_val_num * 0.3)
-        else: # Default for other types or if specific metrics aren't defined
-            combined_metric = generator_confidence_val # Fallback to generator's confidence
-
-        # Store heuristic reasoning separately for clarity, might append later if relevant
-        heuristic_reasoning_part = f" Heuristic confidence scores: Gen_Conf={generator_confidence_val:.2f}, PRAA_Risk_Conf(h)={praa_confidence_val_num:.2f}, RTA_Conf(h)={rta_confidence_val_num:.2f}. Combined_Heuristic_Metric={combined_metric:.2f}. Default_Accept_Threshold={self.DEFAULT_ACCEPTANCE_THRESHOLD:.2f}."
-
-        # Decision logic based on artifact type
-        if task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE: # Corrected
-            self._logger_instance.info(f"ARCA: Handling CodeModule_TestFailure for {task_input.code_module_file_path}.")
-            # This block sets its own 'decision' and 'reasoning'. 
-            # The initial 'decision' and 'reasoning' (including LLM eval for other artifacts) are effectively bypassed for this path.
-            
-            faulty_code_path_for_input = task_input.code_module_file_path
-            faulty_code_content_for_input: Optional[str] = None
-            failed_test_reports = task_input.failed_test_report_details
-
-            pcma_for_code_retrieval = self._project_chroma_manager 
-            if not pcma_for_code_retrieval:
-                self._logger_instance.error(f"ARCA: PCMA instance is not available for CodeModule_TestFailure handling of {task_input.code_module_file_path or task_input.artifact_doc_id}. Cannot proceed.")
-                decision = "ERROR" # Override
-                reasoning = "PCMA instance not available for code retrieval during debugging." # Override
-                arca_error_message = reasoning
-            else:
-                if not faulty_code_content_for_input and task_input.artifact_doc_id:
-                    try:
-                        code_doc_output: RetrieveArtifactOutput = await pcma_for_code_retrieval.retrieve_artifact(
-                            doc_id=task_input.artifact_doc_id, 
-                            collection_name=GENERATED_CODE_ARTIFACTS_COLLECTION 
-                        )
-                        if code_doc_output and code_doc_output.status == "SUCCESS" and code_doc_output.artifact_content: 
-                            faulty_code_content_for_input = str(code_doc_output.artifact_content) 
-                            self._logger_instance.info(f"Retrieved faulty code content from doc_id: {task_input.artifact_doc_id}")
-                            if not faulty_code_path_for_input:
-                                self._logger_instance.warning(f"Code content retrieved for {task_input.artifact_doc_id} but no file path provided to ARCA. Debugger might be limited.")
-                        else:
-                            self._logger_instance.error(f"Failed to retrieve faulty code content for doc_id {task_input.artifact_doc_id}. Status: {code_doc_output.status if code_doc_output else 'N/A'}")
-                            decision = "ERROR" # Override
-                            reasoning = f"Failed to retrieve source code for debugging from doc_id {task_input.artifact_doc_id}. Status: {code_doc_output.status if code_doc_output else 'N/A'}" # Override
-                            arca_error_message = reasoning
-                    except Exception as e_fetch_code:
-                        self._logger_instance.error(f"Exception fetching faulty code {task_input.artifact_doc_id}: {e_fetch_code}", exc_info=True)
-                        decision = "ERROR" # Override
-                        reasoning = f"Exception fetching source code for debugging from doc_id {task_input.artifact_doc_id}: {e_fetch_code}" # Override
-                        arca_error_message = reasoning
-                
-                if decision != "ERROR" and not faulty_code_content_for_input and not faulty_code_path_for_input:
-                    err_msg = "Cannot proceed with debugging: Neither code content nor a valid file path for the faulty code is available."
-                    self._logger_instance.error(err_msg)
-                    decision = "ERROR"; reasoning = err_msg; arca_error_message = err_msg # Override
-
-                if decision != "ERROR": # If no errors so far in fetching code for debugging
-                    relevant_loprd_ids = full_context.get("relevant_loprd_ids_for_debug", []) if full_context else []
-                    relevant_blueprint_ids = full_context.get("relevant_blueprint_ids_for_debug", []) if full_context else []
-                    previous_debugging_attempts_from_context = full_context.get("previous_debugging_attempts", []) if full_context else []
-
-                    debugging_input_for_output = DebuggingTaskInput( 
-                        project_id=task_input.project_id,
-                        faulty_code_path=faulty_code_path_for_input,
-                        faulty_code_content=faulty_code_content_for_input,
-                        failed_test_reports=failed_test_reports or [], 
-                        relevant_loprd_requirements_ids=relevant_loprd_ids,
-                        relevant_blueprint_section_ids=relevant_blueprint_ids,
-                        previous_debugging_attempts=previous_debugging_attempts_from_context,
-                        max_iterations_for_this_call=full_context.get("max_debug_iterations_per_call", 3) if full_context else 3,
-                        cycle_id=task_input.cycle_id
-                    )
-                    current_attempt_count = len(debugging_input_for_output.previous_debugging_attempts)
-                    max_attempts_for_module = (full_context.get("max_total_debugging_attempts_for_module", self.MAX_DEBUGGING_ATTEMPTS_PER_MODULE)
-                                              if full_context else self.MAX_DEBUGGING_ATTEMPTS_PER_MODULE)
-
-                    if current_attempt_count >= max_attempts_for_module:
-                        decision = "ESCALATE_TO_USER" # Override
-                        reasoning = f"Max debugging attempts ({max_attempts_for_module}) reached for module {faulty_code_path_for_input or task_input.artifact_doc_id}. Escalating. Last failed tests: {failed_test_reports}" # Override
-                        self._logger_instance.warning(reasoning)
-                    else:
-                        decision = "TEST_FAILURE_HANDOFF" # Override
-                        reasoning = f"Handing off to CodeDebuggingAgent for {faulty_code_path_for_input or task_input.artifact_doc_id}. Attempt {current_attempt_count + 1}." # Override
-                        self._logger_instance.info(reasoning)
-                        # next_agent_for_refinement and next_agent_refinement_input are not set here;
-                        # The orchestrator handles TEST_FAILURE_HANDOFF by invoking the debugger with debugging_input_for_output.
-            
-        elif decision != "ERROR" and decision != "ESCALATE_TO_USER": 
-            # ... (logic for non-CodeModule_TestFailure artifacts as applied in Chunk 3.3, this should be mostly correct now)
-            # ... This block relies on 'decision' potentially being REFINEMENT_REQUIRED due to LLM eval.
-            if decision == "REFINEMENT_REQUIRED": 
-                self._logger_instance.info(f"Decision is REFINEMENT_REQUIRED (possibly due to LLM). Appending heuristic info: {heuristic_reasoning_part}")
-                if heuristic_reasoning_part not in reasoning:
-                    reasoning += heuristic_reasoning_part
-            else: # LLM did not force refinement, so evaluate heuristic scores
-                if combined_metric >= self.DEFAULT_ACCEPTANCE_THRESHOLD and \
-                   generator_confidence_val >= self.MIN_GENERATOR_CONFIDENCE and \
-                   praa_confidence_val_num >= self.MIN_PRAA_CONFIDENCE and \
-                   (task_input.artifact_type == ARCAReviewArtifactType.LOPRD or rta_confidence_val_num >= self.MIN_RTA_CONFIDENCE):
-                    decision = "ACCEPT_ARTIFACT"
-                    if heuristic_reasoning_part not in reasoning: reasoning += heuristic_reasoning_part 
-                    reasoning += f" Artifact ACCEPTED based on heuristic confidence thresholds meeting/exceeding {self.DEFAULT_ACCEPTANCE_THRESHOLD:.2f}."
-                    final_doc_id_on_accept = task_input.artifact_doc_id
-                    self._logger_instance.info(f"ARCA Decision: ACCEPT_ARTIFACT for {task_input.artifact_doc_id or task_input.code_module_file_path} ({task_input.artifact_type.value}). Final Reasoning: {reasoning}")
-                else: 
-                    decision = "REFINEMENT_REQUIRED"
-                    if heuristic_reasoning_part not in reasoning: reasoning += heuristic_reasoning_part
-                    reasoning += f" Refinement indicated by heuristic confidence scores failing to meet thresholds (Combined: {combined_metric:.2f} vs {self.DEFAULT_ACCEPTANCE_THRESHOLD:.2f}, or individual scores low)."
-                    self._logger_instance.info(f"ARCA Decision: REFINEMENT_REQUIRED for {task_input.artifact_doc_id or task_input.code_module_file_path} ({task_input.artifact_type.value}). Final Reasoning: {reasoning}")
-            
-            if decision == "REFINEMENT_REQUIRED":
-                # ... (refinement_instructions_for_agent and next_agent selection logic as applied in Chunk 3.2, assumed correct)
-                refinement_instructions_list = []
-                if llm_recommended_incorporations:
-                    refinement_instructions_list.append("Based on LLM evaluation, please incorporate the following optimizations:")
-                    for opt_eval in llm_recommended_incorporations:
-                        refinement_instructions_list.append(
-                            f"  - Opt ID {opt_eval.get('optimization_id', 'N/A')} (Source: {opt_eval.get('source_report', 'N/A')}): {opt_eval['incorporation_instructions_for_next_agent']}"
-                        )
-                
-                if not llm_recommended_incorporations or (combined_metric < self.DEFAULT_ACCEPTANCE_THRESHOLD):
-                    general_instruction = f"General Refinement Note: Review overall quality for {task_input.artifact_type.value} (ID: {task_input.artifact_doc_id or task_input.code_module_file_path}). " \
-                                          f"Heuristic scores: Gen: {generator_confidence_val:.2f}, PRAA_h: {praa_confidence_val_num:.2f}, RTA_h: {rta_confidence_val_num:.2f}. Combined_h: {combined_metric:.2f}."
-                    if not llm_recommended_incorporations:
-                        refinement_instructions_list.append(general_instruction)
-                    else: 
-                        refinement_instructions_list.append(f"Additionally, {general_instruction}")
-                
-                if not refinement_instructions_list:
-                    refinement_instructions_list.append(
-                        f"General Refinement requested for {task_input.artifact_type.value} (ID: {task_input.artifact_doc_id or task_input.code_module_file_path}) due to ARCA internal logic. Please review for quality."
-                    )
-
-                refinement_instructions_for_agent = "\n".join(refinement_instructions_list)
-                self._logger_instance.debug(f"Final refinement instructions for next agent: {refinement_instructions_for_agent}")
-
-                initial_user_goal_for_paa = "User goal not available in ARCA context for refinement input." 
-                if full_context and full_context.get("intermediate_outputs", {}).get("initial_goal_setup", {}).get("initial_user_goal"):
-                    initial_user_goal_for_paa = full_context["intermediate_outputs"]["initial_goal_setup"]["initial_user_goal"]
-                elif full_context and full_context.get("initial_user_goal"):
-                     initial_user_goal_for_paa = full_context["initial_user_goal"]
-                
-                if task_input.artifact_type == ARCAReviewArtifactType.LOPRD:
-                    next_agent_for_refinement = pa_module.ProductAnalystAgent_v1.AGENT_ID
-                    next_agent_refinement_input = pa_module.ProductAnalystAgentInput(
-                        project_id=task_input.project_id,
-                        existing_loprd_doc_id=task_input.artifact_doc_id, 
-                        refinement_directives=refinement_instructions_for_agent, 
-                        initial_user_goal=initial_user_goal_for_paa, 
-                        cycle_id=task_input.cycle_id
-                    )
-                elif task_input.artifact_type == ARCAReviewArtifactType.PROJECT_BLUEPRINT: # Corrected
-                    next_agent_for_refinement = ArchitectAgentInput.AGENT_ID 
-                    loprd_id_for_architect = "unknown_loprd_id_for_blueprint_refinement" 
-                    if full_context and full_context.get("latest_accepted_loprd_doc_id"): 
-                        loprd_id_for_architect = full_context["latest_accepted_loprd_doc_id"]
-                    next_agent_refinement_input = ArchitectAgentInput(
-                        project_id=task_input.project_id,
-                        loprd_doc_id=loprd_id_for_architect, 
-                        existing_blueprint_doc_id=task_input.artifact_doc_id, 
-                        refinement_instructions=refinement_instructions_for_agent,
-                        cycle_id=task_input.cycle_id
-                    )
-                elif task_input.artifact_type == ARCAReviewArtifactType.MASTER_EXECUTION_PLAN: # Corrected
-                    next_agent_for_refinement = "SystemMasterPlannerAgent_v1" 
-                    blueprint_id_for_planner = "unknown_blueprint_id_for_plan_refinement"
-                    if full_context and full_context.get("latest_accepted_blueprint_doc_id"):
-                         blueprint_id_for_planner = full_context["latest_accepted_blueprint_doc_id"]
-                    next_agent_refinement_input = MasterPlannerInput( 
-                        project_id=task_input.project_id,
-                        blueprint_doc_id=blueprint_id_for_planner,
-                        refinement_instructions=refinement_instructions_for_agent,
-                        existing_plan_doc_id=task_input.artifact_doc_id 
-                    )
-                elif task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE:
-                    next_agent_for_refinement = "CoreCodeGeneratorAgent_v1" 
-                    code_spec_doc_id_for_refinement = "unknown_spec_for_code_refinement" 
-                    if full_context and full_context.get("current_task_specification_doc_id"): 
-                        code_spec_doc_id_for_refinement = full_context["current_task_specification_doc_id"]
-                    next_agent_refinement_input = {
-                        "project_id": task_input.project_id,
-                        "code_specification_doc_id": code_spec_doc_id_for_refinement, 
-                        "existing_code_doc_id": task_input.artifact_doc_id, 
-                        "refinement_instructions": refinement_instructions_for_agent,
-                        "cycle_id": task_input.cycle_id
-                    }
-                    self._logger_instance.warning(f"ARCA: CodeModule refinement input is a generic dict. Ensure {next_agent_for_refinement} can handle it.")
-                else: 
-                    current_reasoning_for_no_agent = " However, no specific refinement agent path is configured for this artifact type."
-                    if current_reasoning_for_no_agent not in reasoning:
-                        reasoning += current_reasoning_for_no_agent
-                    next_agent_for_refinement = None 
-                    next_agent_refinement_input = None
-                    self._logger_instance.warning(f"ARCA: Refinement decided for {task_input.artifact_type.value}, but no agent path defined. Final Reasoning: {reasoning}")
-
-        # AGENT DIAGNOSTIC: Right before final escalation check (L988)
-        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): decision == {decision}")
-        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): next_agent_for_refinement is None == {next_agent_for_refinement is None}")
-        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE == {task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE}")
-        self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): new_tasks_to_add_to_plan is empty == {not new_tasks_to_add_to_plan}")
-        if new_tasks_to_add_to_plan:
-            try:
-                self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): new_tasks_to_add_to_plan content: {json.dumps(new_tasks_to_add_to_plan, indent=2)}")
-            except TypeError as e_json:
-                self._logger_instance.warning(f"AGENT DIAGNOSTIC (L988_PRE_ESCALATE_CHECK): Could not serialize new_tasks_to_add_to_plan for logging: {e_json}. Content: {str(new_tasks_to_add_to_plan)}")
-        # END AGENT DIAGNOSTIC (L988)
-
-        # Final fallback for escalation if refinement was needed but no agent path found (outside CodeModule_TestFailure)
-        if decision == "REFINEMENT_REQUIRED" and not next_agent_for_refinement and task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE and not new_tasks_to_add_to_plan: # MODIFIED: Added 'and not new_tasks_to_add_to_plan'
-            decision = "ESCALATE_TO_USER"
-            escalation_reason = " Escalating: Refinement required by ARCA, but no automated agent refinement path was identified for this artifact type (and no new tasks were suggested by LLM to take precedence)."
-            if escalation_reason not in reasoning:
-                reasoning += escalation_reason
-            self._logger_instance.warning(f"ARCA: Changing decision to ESCALATE_TO_USER for {task_input.artifact_doc_id or task_input.code_module_file_path} as no refinement agent identified (and no new tasks from LLM). Final Reasoning: {reasoning}")
-
-        # --- Handle New Task Generation if any were identified ---
-        # Initialize new_plan_doc_id here for the ARCAOutput
-        new_plan_doc_id: Optional[str] = None
-        if new_tasks_to_add_to_plan and decision != "ERROR": # Only proceed if not already in an error state from prior logic
-            self._logger_instance.info(f"ARCA: Attempting to add {len(new_tasks_to_add_to_plan)} new tasks to the MasterExecutionPlan.")
-            
-            current_master_plan_doc_id: Optional[str] = None
-            try:
-                if self._state_manager:
-                    project_state = await self._state_manager.get_project_state_v2(task_input.project_id)
-                    if project_state and project_state.master_execution_plan_doc_id: # CHECKING FOR CORRECT FIELD
-                        current_master_plan_doc_id = project_state.master_execution_plan_doc_id
-                        self._logger_instance.info(f"ARCA: Retrieved current master plan doc ID: {current_master_plan_doc_id} from project state.")
-                    else:
-                        reasoning += "\n- Failed to add new tasks: MasterExecutionPlan doc ID not found in project state."
-                        self._logger_instance.error(f"ARCA: MasterExecutionPlan doc ID not found in project state for project {task_input.project_id} when trying to add new tasks.")
-                        decision = "ERROR"
-                        arca_error_message = "MasterExecutionPlan doc ID not found in project state."
-                else:
-                    reasoning += "\n- Failed to add new tasks: StateManager not available."
-                    self._logger_instance.error("ARCA: StateManager not available when trying to add new tasks.")
-                    decision = "ERROR"
-                    arca_error_message = "StateManager not available."
-            except Exception as e:
-                reasoning += f"\n- Failed to retrieve master plan doc id from state: {str(e)}"
-                self._logger_instance.error(f"ARCA: Error retrieving master plan doc id from state: {str(e)}", exc_info=True)
-                decision = "ERROR"
-                arca_error_message = f"Error retrieving master plan doc id from state: {str(e)}"
-
-            # AGENT DIAGNOSTIC: Check before new task handling
-            self._logger_instance.warning(f"AGENT DIAGNOSTIC: Before new task handling - decision == {decision}")
-            self._logger_instance.warning(f"AGENT DIAGNOSTIC: Before new task handling - new_tasks_to_add_to_plan is empty == {not new_tasks_to_add_to_plan}")
-            if new_tasks_to_add_to_plan:
-                try:
-                    self._logger_instance.warning(f"AGENT DIAGNOSTIC: Before new task handling - new_tasks_to_add_to_plan content: {json.dumps(new_tasks_to_add_to_plan, indent=2)}")
-                except TypeError as e_json: # Handle cases where content might not be directly JSON serializable for logging
-                    self._logger_instance.warning(f"AGENT DIAGNOSTIC: Could not serialize new_tasks_to_add_to_plan for logging: {e_json}. Content: {str(new_tasks_to_add_to_plan)}")
-            # END AGENT DIAGNOSTIC
-
-            if current_master_plan_doc_id and decision != "ERROR":
-                # Call the new helper method
-                decision, reasoning, new_plan_doc_id_from_helper, arca_error_message = await self._handle_new_task_generation_and_plan_modification(
-                    task_input=task_input,
-                    new_tasks_to_add_to_plan=new_tasks_to_add_to_plan,
-                    current_master_plan_doc_id=current_master_plan_doc_id,
-                    initial_reasoning=reasoning,
-                    initial_decision=decision # Corrected parameter name back
-                )
-                if new_plan_doc_id_from_helper:
-                    new_plan_doc_id = new_plan_doc_id_from_helper # Update the main new_plan_doc_id
-            elif decision != "ERROR":
-                reasoning += "\n- Could not proceed with adding new tasks: Master plan doc ID could not be retrieved, and not already in an ERROR state."
-                self._logger_instance.warning("ARCA: Could not proceed with adding new tasks as master plan doc ID was not retrieved (and not already in ERROR state from prior steps).")
-
-        # --- Final Output Preparation ---
-        arca_confidence = ConfidenceScore(value=0.9, reasoning="ARCA decision process completed.") # Placeholder, corrected score to value
-
-        code_module_path_for_output = task_input.code_module_file_path if task_input.artifact_type == ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE else None
-        output_reviewed_doc_id = task_input.artifact_doc_id or code_module_path_for_output or "N/A"
-
-        # Prepare final_artifact_doc_id for ARCAOutput
-        # If plan was modified, this should be the new plan's doc_id. Otherwise, if artifact was accepted, it's that artifact's doc_id.
-        output_final_artifact_doc_id = final_doc_id_on_accept # Initial value from acceptance path
-        if decision == "PLAN_MODIFIED_NEW_TASKS_ADDED" and new_plan_doc_id:
-            output_final_artifact_doc_id = new_plan_doc_id
-        elif decision == "PLAN_MODIFIED_NEW_TASKS_ADDED" and not new_plan_doc_id:
-             # This case should ideally not happen if decision is set correctly only after successful storage.
-             # If it does, it's an error state.
-            self._logger_instance.error("ARCA: Decision is PLAN_MODIFIED_NEW_TASKS_ADDED but new_plan_doc_id is not set. This indicates an issue.")
-            # Potentially override decision to ERROR here. For now, log and proceed with None.
-
-        final_arca_output = ARCAOutput(
-            task_id=task_input.task_id,
-            project_id=task_input.project_id,
-            reviewed_artifact_doc_id=output_reviewed_doc_id, 
-            reviewed_artifact_type=task_input.artifact_type,
-            decision=decision, 
-            reasoning=reasoning, 
-            confidence_in_decision=arca_confidence,
-            next_agent_id_for_refinement=next_agent_for_refinement,
-            next_agent_input=next_agent_refinement_input.model_dump() if next_agent_refinement_input and hasattr(next_agent_refinement_input, 'model_dump') else next_agent_refinement_input,
-            debugging_task_input=debugging_input_for_output, 
-            final_artifact_doc_id=output_final_artifact_doc_id, # Use the determined value
-            new_master_plan_doc_id=new_plan_doc_id if decision == "PLAN_MODIFIED_NEW_TASKS_ADDED" else None, # Populate this correctly
-            error_message=arca_error_message if decision == "ERROR" else None # Ensure arca_error_message is used
-        )
-
-        # PCMA Log for ARCA Decision (already correct)
-        if self._project_chroma_manager:
-            await self._log_event_to_pcma(
-                pcma_agent=self._project_chroma_manager, project_id=task_input.project_id, cycle_id=task_input.cycle_id,
-                arca_task_id=task_input.task_id, event_type="ARCA_DECISION_MADE",
-                event_details={
-                    "reviewed_artifact_doc_id": output_final_artifact_doc_id or output_reviewed_doc_id, # Use new plan ID if available
-                    "reviewed_artifact_type": task_input.artifact_type.value,
-                    "decision": final_arca_output.decision,
-                    "reasoning_summary": final_arca_output.reasoning[:200] if final_arca_output.reasoning else "N/A",
-                    "next_agent_id": final_arca_output.next_agent_id_for_refinement,
-                    "new_plan_doc_id": final_arca_output.new_master_plan_doc_id
-                },
-                severity="ERROR" if final_arca_output.decision == "ERROR" else "INFO"
-            )
-
-        # --- QA Log Entry Storing --- 
-        if self._project_chroma_manager:
-            try:
-                # ... (quality_status_mapping and action_taken_summary as before) ...
-
-                # AGENT DIAGNOSTIC PRINTS FOR OverallQualityStatus
-                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): __module__ == {OverallQualityStatus.__module__}")
-                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): __name__ == {OverallQualityStatus.__name__}")
-                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): members == {[member.name for member in OverallQualityStatus]}")
-                self._logger_instance.info(f"AGENT DIAGNOSTIC (OverallQualityStatus): final_arca_output.decision == {final_arca_output.decision}")
-                # END AGENT DIAGNOSTIC PRINTS
-
-                quality_status_mapping = {
-                    "ACCEPT_ARTIFACT": OverallQualityStatus.APPROVED_PASSED,
-                    "PROCEED_TO_DOCUMENTATION": OverallQualityStatus.APPROVED_PASSED, 
-                    "REFINEMENT_REQUIRED": OverallQualityStatus.REJECTED_NEEDS_REFINEMENT,
-                    "ESCALATE_TO_USER": OverallQualityStatus.FLAGGED_FOR_MANUAL_REVIEW,
-                    "TEST_FAILURE_HANDOFF": OverallQualityStatus.UNDER_REMEDIATION, 
-                    "ERROR": OverallQualityStatus.ERROR_IN_QA_PROCESS 
-                }
-                overall_quality_status = quality_status_mapping.get(final_arca_output.decision, OverallQualityStatus.FLAGGED_FOR_MANUAL_REVIEW)
-
-                action_taken_summary = f"ARCA decision: {final_arca_output.decision}."
-                if final_arca_output.decision == "REFINEMENT_REQUIRED" and final_arca_output.next_agent_id_for_refinement:
-                    action_taken_summary += f" Next agent: {final_arca_output.next_agent_id_for_refinement}."
-                elif final_arca_output.decision == "TEST_FAILURE_HANDOFF":
-                    action_taken_summary += " Handoff to CodeDebuggingAgent."
-
-                qa_log_entry_content = QualityAssuranceLogEntry(
-                    project_id=task_input.project_id,
-                    cycle_id=task_input.cycle_id,
-                    artifact_doc_id_assessed=final_arca_output.reviewed_artifact_doc_id,
-                    artifact_type_assessed=task_input.artifact_type.value, 
-                    qa_event_type=QAEventType.ARCA_ARTIFACT_ASSESSMENT,
-                    assessing_entity_id=self.AGENT_ID,
-                    summary_of_assessment=final_arca_output.reasoning[:1000] if final_arca_output.reasoning else "No reasoning provided.", 
-                    overall_quality_status=overall_quality_status,
-                    confidence_in_assessment=final_arca_output.confidence_in_decision.value if final_arca_output.confidence_in_decision else 0.0,
-                    action_taken_or_recommended=action_taken_summary,
-                    key_metrics_or_findings={
-                        "generator_agent_id": task_input.generator_agent_id,
-                        "generator_confidence": task_input.generator_agent_confidence.score if task_input.generator_agent_confidence else None,
-                        "arca_decision_confidence": final_arca_output.confidence_in_decision.value if final_arca_output.confidence_in_decision else None,
-                        "combined_heuristic_metric": combined_metric if task_input.artifact_type != ARCAReviewArtifactType.CODE_MODULE_TEST_FAILURE else None,
-                        "llm_eval_summary": llm_optimization_evaluation_summary, # Ensure this is populated
-                        "num_llm_recommended_incorporations": len(llm_recommended_incorporations) # Ensure this is populated
-                    }
-                )
-                await self._project_chroma_manager.store_artifact(
-                    StoreArtifactInput(
-                        base_collection_name=QUALITY_ASSURANCE_LOGS_COLLECTION,
-                        artifact_content=qa_log_entry_content.model_dump(mode='json'),
-                        metadata={
-                            "artifact_type": ARTIFACT_TYPE_QA_LOG_ENTRY_JSON,
-                            "project_id": task_input.project_id,
-                            "cycle_id": task_input.cycle_id,
-                            "assessed_artifact_id": final_arca_output.reviewed_artifact_doc_id,
-                            "assessed_artifact_type": task_input.artifact_type.value
-                        },
-                        cycle_id=task_input.cycle_id, # Pass cycle_id for lineage
-                        source_agent_id=self.AGENT_ID # ARCA is the source of this log
-                    )
-                )
-                self._logger_instance.info(f"Successfully stored QA log entry: {qa_log_entry_content.log_id} for artifact {final_arca_output.reviewed_artifact_doc_id}")
-            except Exception as e_qa_log:
-                self._logger_instance.error(f"Exception during QA log storing: {e_qa_log}", exc_info=True)
-
-        return final_arca_output
 
     async def _handle_new_task_generation_and_plan_modification(
         self,

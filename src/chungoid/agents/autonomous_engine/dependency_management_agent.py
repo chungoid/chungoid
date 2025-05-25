@@ -30,10 +30,12 @@ import tempfile
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union, ClassVar
+from typing import Any, Dict, List, Optional, Set, Union, ClassVar, Type
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, PrivateAttr
 
+from ..protocol_aware_agent import ProtocolAwareAgent
+from ...protocols.base.protocol_interface import ProtocolPhase
 from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.agent_registry import AgentCard, AgentCategory, AgentVisibility
 from chungoid.utils.exceptions import ChungoidError
@@ -56,7 +58,9 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 class DependencyFile(BaseModel):
-    """Represents a dependency file (requirements.txt, package.json, etc.)."""
+    """Represents a dependency file (requirements.txt, package.json, etc.).
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     file_path: Path = Field(..., description="Path to the dependency file")
     file_type: str = Field(..., description="Type of dependency file (requirements, package_json, pyproject, etc.)")
@@ -65,7 +69,9 @@ class DependencyFile(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional file metadata")
 
 class DependencyOperation(BaseModel):
-    """Represents a dependency operation (install, update, remove)."""
+    """Represents a dependency operation (install, update, remove).
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     operation: str = Field(..., description="Operation type: install, update, remove, analyze")
     dependencies: List[DependencyInfo] = Field(default_factory=list, description="Dependencies to operate on")
@@ -73,7 +79,9 @@ class DependencyOperation(BaseModel):
     options: Dict[str, Any] = Field(default_factory=dict, description="Operation-specific options")
 
 class ConflictResolution(BaseModel):
-    """Represents a dependency conflict and its resolution."""
+    """Represents a dependency conflict and its resolution.
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     conflict_type: str = Field(..., description="Type of conflict (version, compatibility, etc.)")
     conflicting_dependencies: List[DependencyInfo] = Field(..., description="Dependencies in conflict")
@@ -82,7 +90,9 @@ class ConflictResolution(BaseModel):
     reasoning: str = Field(..., description="LLM reasoning for the resolution")
 
 class DependencyManagementInput(BaseModel):
-    """Input schema for DependencyManagementAgent_v1."""
+    """Input schema for DependencyManagementAgent_v1.
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     # Core operation parameters
     operation: str = Field(..., description="Primary operation: analyze, install, update, remove, optimize")
@@ -114,7 +124,9 @@ class DependencyManagementInput(BaseModel):
     backup_existing: bool = Field(True, description="Whether to backup existing dependency files")
 
 class DependencyManagementOutput(AgentOutput):
-    """Output schema for DependencyManagementAgent_v1."""
+    """Output schema for DependencyManagementAgent_v1.
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     # Operation results
     operation_performed: str = Field(..., description="The operation that was performed")
@@ -149,7 +161,9 @@ class DependencyManagementOutput(AgentOutput):
 # =============================================================================
 
 class DependencyStrategy(ABC):
-    """Abstract base class for language-specific dependency management strategies."""
+    """Abstract base class for language-specific dependency management strategies.
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     def __init__(self, config_manager: ConfigurationManager):
         self.config_manager = config_manager
@@ -198,7 +212,9 @@ class DependencyStrategy(ABC):
         pass
 
 class PythonDependencyStrategy(DependencyStrategy):
-    """Strategy for managing Python dependencies."""
+    """Strategy for managing Python dependencies.
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     @property
     def supported_languages(self) -> List[str]:
@@ -477,7 +493,9 @@ class PythonDependencyStrategy(DependencyStrategy):
             raise Exception(f"Command failed: {' '.join(cmd)}: {e}")
 
 class NodeJSDependencyStrategy(DependencyStrategy):
-    """Strategy for managing Node.js dependencies."""
+    """Strategy for managing Node.js dependencies.
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     @property
     def supported_languages(self) -> List[str]:
@@ -697,7 +715,7 @@ class NodeJSDependencyStrategy(DependencyStrategy):
 # Main Dependency Management Agent
 # =============================================================================
 
-class DependencyManagementAgent_v1(BaseAgent[DependencyManagementInput, DependencyManagementOutput]):
+class DependencyManagementAgent_v1(ProtocolAwareAgent[DependencyManagementInput, DependencyManagementOutput]):
     """
     Comprehensive autonomous dependency management agent.
     
@@ -718,11 +736,21 @@ class DependencyManagementAgent_v1(BaseAgent[DependencyManagementInput, Dependen
     - Configuration Management: For user preferences and settings
     - Execution State Persistence: For resumable operations
     - LLM Provider: For conflict resolution and optimization suggestions
-    """
+    
+    
+    ✨ PURE PROTOCOL ARCHITECTURE - No backward compatibility, clean execution paths only."""
     
     AGENT_ID: ClassVar[str] = "chungoid.agents.autonomous_engine.dependency_management_agent.DependencyManagementAgent_v1"
+    AGENT_NAME: ClassVar[str] = "Dependency Management Agent v1"
+    AGENT_DESCRIPTION: ClassVar[str] = "Comprehensive autonomous dependency management with multi-language support and intelligent conflict resolution"
     VERSION: ClassVar[str] = "1.0.0"
-    DESCRIPTION: ClassVar[str] = "Comprehensive autonomous dependency management with multi-language support and intelligent conflict resolution"
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_INTEGRATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    
+    # ADDED: Protocol definitions following AI agent best practices
+    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['dependency_analysis']
+    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'tool_validation', 'context_sharing']
+
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -739,112 +767,6 @@ class DependencyManagementAgent_v1(BaseAgent[DependencyManagementInput, Dependen
         }
         
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-    
-    async def invoke_async(
-        self,
-        input_data: DependencyManagementInput,
-        full_context: Optional[Dict[str, Any]] = None
-    ) -> DependencyManagementOutput:
-        """
-        Process dependency management request with autonomous intelligence.
-        """
-        start_time = asyncio.get_event_loop().time()
-        
-        try:
-            self.logger.info(f"Starting dependency management operation: {input_data.operation}")
-            
-            # Step 1: Detect project type and languages
-            project_result = await self.project_type_detector.detect_project_type(input_data.project_path)
-            detected_languages = [project_result.primary_language]
-            
-            # Step 2: Auto-detect dependencies if requested
-            all_dependencies = input_data.dependencies or []
-            if input_data.auto_detect_dependencies:
-                dependencies_result = await self.dependency_analyzer.analyze_dependencies(
-                    input_data.project_path,
-                    project_type=project_result.primary_language
-                )
-                all_dependencies.extend(dependencies_result.dependencies)
-            
-            # Step 3: Detect existing dependency files
-            existing_files = await self._detect_existing_dependency_files(
-                input_data.project_path, detected_languages
-            )
-            
-            # Step 4: Resolve conflicts if requested
-            conflicts_found = []
-            if input_data.resolve_conflicts and all_dependencies:
-                conflicts_found = await self._resolve_dependency_conflicts(
-                    all_dependencies, input_data.project_path, full_context
-                )
-            
-            # Step 5: Perform the requested operation
-            installation_results = {}
-            successful_installations = []
-            failed_installations = []
-            
-            if input_data.operation == "install" and input_data.install_after_analysis:
-                installation_results = await self._install_dependencies(
-                    all_dependencies, input_data.project_path, detected_languages, input_data
-                )
-                successful_installations = installation_results.get("successful", [])
-                failed_installations = installation_results.get("failed", [])
-            
-            # Step 6: Security audit if requested
-            security_issues = []
-            if input_data.perform_security_audit:
-                security_issues = await self._perform_security_audit(
-                    input_data.project_path, detected_languages
-                )
-            
-            # Step 7: Generate recommendations
-            recommendations = await self._generate_recommendations(
-                all_dependencies, input_data.project_path, project_result, security_issues
-            )
-            
-            # Step 8: Generate optimization suggestions
-            optimization_suggestions = await self._generate_optimization_suggestions(
-                all_dependencies, existing_files, input_data
-            )
-            
-            # Calculate execution time
-            execution_time = asyncio.get_event_loop().time() - start_time
-            
-            return DependencyManagementOutput(
-                success=True,
-                message="Dependency management completed successfully",
-                operation_performed=input_data.operation,
-                dependencies_processed=all_dependencies,
-                dependency_files_updated=[f.file_path for f in existing_files],
-                detected_languages=detected_languages,
-                package_managers_used=list(set(self._get_package_managers_for_languages(detected_languages))),
-                conflicts_found=conflicts_found,
-                successful_installations=successful_installations,
-                failed_installations=failed_installations,
-                recommendations=recommendations,
-                security_issues=security_issues,
-                optimization_suggestions=optimization_suggestions,
-                total_dependencies=len(all_dependencies),
-                installation_time=execution_time
-            )
-            
-        except Exception as e:
-            error_msg = f"Dependency management failed: {str(e)}"
-            self.logger.error(error_msg)
-            
-            execution_time = asyncio.get_event_loop().time() - start_time
-            
-            return DependencyManagementOutput(
-                success=False,
-                message=error_msg,
-                operation_performed=input_data.operation,
-                dependencies_processed=[],
-                dependency_files_updated=[],
-                detected_languages=[],
-                package_managers_used=[],
-                total_dependencies=0,
-                installation_time=execution_time
-            )
     
     def _get_package_managers_for_languages(self, languages: List[str]) -> List[str]:
         """Get package managers for given languages."""
@@ -1017,12 +939,12 @@ class DependencyManagementAgent_v1(BaseAgent[DependencyManagementInput, Dependen
         return AgentCard(
             agent_id=DependencyManagementAgent_v1.AGENT_ID,
             name="Dependency Management Agent v1",
-            description=DependencyManagementAgent_v1.DESCRIPTION,
+            description=DependencyManagementAgent_v1.AGENT_DESCRIPTION,
             version=DependencyManagementAgent_v1.VERSION,
             input_schema=DependencyManagementInput.model_json_schema(),
             output_schema=DependencyManagementOutput.model_json_schema(),
-            categories=[AgentCategory.AUTONOMOUS_PROJECT_ENGINE.value],
-            visibility=AgentVisibility.PUBLIC,
+            categories=[DependencyManagementAgent_v1.CATEGORY.value],
+            visibility=DependencyManagementAgent_v1.VISIBILITY,
             capability_profile={
                 "autonomous_dependency_detection": True,
                 "multi_language_support": ["python", "javascript", "typescript"],

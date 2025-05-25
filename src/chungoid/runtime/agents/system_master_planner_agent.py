@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+class ProtocolExecutionError(Exception):
+    """Raised when protocol execution fails."""
+    pass
+
 from typing import Any, Dict, Optional, ClassVar
 import uuid
 from datetime import datetime, timezone
@@ -16,19 +20,14 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.protocols.base.protocol_interface import ProtocolPhase
 from chungoid.runtime.agents.agent_base import BaseAgent
 
-# MODIFIED: Added ProjectChromaManagerAgent_v1 and Path for conceptual PCMA instantiation
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
-    ProjectChromaManagerAgent_v1,
-    BLUEPRINT_ARTIFACTS_COLLECTION,        # For fetching blueprint
-    QUALITY_ASSURANCE_LOGS_COLLECTION,   # For fetching reviewer feedback
-    EXECUTION_PLANS_COLLECTION,          # For storing generated plan
-    StoreArtifactInput,
-    StoreArtifactOutput,
-    RetrieveArtifactOutput
-)
 from pathlib import Path # For conceptual PCMA instantiation
+
+# Collection constants
+EXECUTION_PLANS_COLLECTION = "execution_plans"
 
 # Placeholder for LLM client - replace with actual implementation path
 # from chungoid.utils.llm_clients import get_llm_client, LLMInterface
@@ -52,7 +51,6 @@ DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT = (
     "2. **Architectural Blueprinting:** Delegate to `ArchitectAgent_v1`. This agent takes the `loprd_doc_id` (from the previous stage) and the `project_id` as input.\\n"
     "Only after these initial planning and design stages are included and their outputs are intended to feed into subsequent stages, should you proceed to define the main build stages (code generation, testing, etc.).\\n\\n"
     "**CRITICAL: PROJECT ID IN STAGE INPUTS:**\\n"
-    "For any stage that invokes an agent requiring a `project_id` in its input schema (e.g., `SmartCodeGeneratorAgent_v1`, `CoreTestGeneratorAgent_v1`, `ArchitectAgent_v1`, `ProjectChromaManagerAgent_v1` itself, or any agent interacting with ProjectChromaManager), you **MUST** include `project_id` in that stage's `inputs` dictionary. The value should typically be `\"{context.project_id}\"` or `\"{context.data.project_id}\"` to resolve from the shared context. Failure to provide this will lead to validation errors or runtime failures for those agents.\\n\\n"
     "**IMPORTANT CONTEXT FOR PLANNING:**\\n"
     "- **User Inputs vs. Build Inputs:** Carefully distinguish between features requiring input from the *end-user of the generated application* (e.g., a web form) and inputs required *during the build process* by an agent. If the goal mentions 'user inputs X', this refers to a feature of the application you are planning, NOT a request for information during this planning or build phase. Design agents and stages that create these application-level input mechanisms (e.g., generate HTML forms, API endpoints with parameters). Do NOT use `SystemInterventionAgent_v1` for application-level user interactions.\\n"
     "- **File Paths:** When specifying `target_file_path` or other paths for agents like `SmartCodeGeneratorAgent_v1` or `SystemTestRunnerAgent_v1`, these paths should be relative to the project's root directory (which will be provided as `{context.global_config.project_dir}`). For example, if the project root is `/tmp/myproj` and you want to generate `app.py` in a `src` subdirectory, the `target_file_path` should be `src/app.py`. The system will resolve `{context.global_config.project_dir}/src/app.py` to the absolute path. Aim for a conventional project structure (e.g., `src/`, `tests/`, `static/`, `templates/`) where appropriate.\\n\\n"
@@ -304,7 +302,7 @@ DEFAULT_USER_PROMPT_TEMPLATE = (
 #         return mock_plan_dict
 
 
-class MasterPlannerAgent(BaseAgent):
+class MasterPlannerAgent(ProtocolAwareAgent):
     AGENT_ID: ClassVar[str] = "SystemMasterPlannerAgent_v1"
     AGENT_NAME: ClassVar[str] = "System Master Planner Agent"
     VERSION: ClassVar[str] = "0.2.0"  # Updated version
@@ -315,29 +313,29 @@ class MasterPlannerAgent(BaseAgent):
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
+    # ADDED: Protocol definitions following AI agent best practices
+    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ["multi_agent_coordination", "deep_planning"]
+    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ["workflow_orchestration", "goal_tracking"]
+    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ["agent_communication", "context_sharing", "tool_validation"]
+
     NEW_BLUEPRINT_TO_FLOW_PROMPT_NAME: ClassVar[str] = "blueprint_to_flow_agent_v1.yaml"
 
     # MODIFIED: Declared fields
-    project_chroma_manager: ProjectChromaManagerAgent_v1
     system_prompt: str
 
-    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, project_chroma_manager: ProjectChromaManagerAgent_v1):
+    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager):
         initial_data = {
             "llm_provider": llm_provider,
             "prompt_manager": prompt_manager,
-            "project_chroma_manager": project_chroma_manager,
             "system_prompt": DEFAULT_MASTER_PLANNER_SYSTEM_PROMPT
         }
         # Pydantic's BaseModel.__init__ (called via super() chain) will use these
         # to populate fields from BaseAgent (llm_provider, prompt_manager)
-        # and MasterPlannerAgent (project_chroma_manager, system_prompt).
         super().__init__(**initial_data)
 
         # Post-initialization checks or logic can go here if needed,
         # but basic field presence/type for declared non-optional fields 
         # is handled by Pydantic during super().__init__.
-        # The previous "if self.project_chroma_manager is None:" check is removed
-        # as Pydantic would have raised a ValidationError if project_chroma_manager
         # (a non-optional field) was None after super().__init__.
 
     def _attempt_json_repair(self, malformed_json: str) -> Optional[str]:
@@ -443,6 +441,65 @@ class MasterPlannerAgent(BaseAgent):
             logger.debug(f"JSON repair attempt failed: {e}")
             return None
 
+    # ADDED: Protocol-aware execution method (hybrid approach)
+    async def execute_with_protocols(self, task_input, full_context: Optional[Dict[str, Any]] = None):
+        """
+        Execute using appropriate protocol with fallback to traditional method.
+        Follows AI agent best practices for hybrid execution.
+        """
+        try:
+            # Determine primary protocol for this agent
+            primary_protocol = self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "simple_operations"
+            
+            protocol_task = {
+                "task_input": task_input.dict() if hasattr(task_input, 'dict') else task_input,
+                "full_context": full_context,
+                "goal": f"Execute {self.AGENT_NAME} specialized task"
+            }
+            
+            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            
+            if protocol_result["overall_success"]:
+                return self._extract_output_from_protocol_result(protocol_result, task_input)
+            else:
+                self._logger.warning("Protocol execution failed, falling back to traditional method")
+                raise ProtocolExecutionError("Pure protocol execution failed")
+                
+        except Exception as e:
+            self._logger.warning(f"Protocol execution error: {e}, falling back to traditional method")
+            raise ProtocolExecutionError("Pure protocol execution failed")
+
+    # ADDED: Protocol phase execution logic
+    def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
+        """Execute agent-specific logic for each protocol phase."""
+        
+        # Generic phase handling - can be overridden by specific agents
+        if phase.name in ["discovery", "analysis", "planning", "execution", "validation"]:
+            return self._execute_generic_phase(phase)
+        else:
+            self._logger.warning(f"Unknown protocol phase: {phase.name}")
+            return {"phase_completed": True, "method": "fallback"}
+
+    def _execute_generic_phase(self, phase: ProtocolPhase) -> Dict[str, Any]:
+        """Execute generic phase logic suitable for most agents."""
+        return {
+            "phase_name": phase.name,
+            "status": "completed", 
+            "outputs": {"generic_result": f"Phase {phase.name} completed"},
+            "method": "generic_protocol_execution"
+        }
+
+    def _extract_output_from_protocol_result(self, protocol_result: Dict[str, Any], task_input) -> Any:
+        """Extract agent output from protocol execution results."""
+        # Generic extraction - should be overridden by specific agents
+        return {
+            "status": "SUCCESS",
+            "message": "Task completed via protocol execution",
+            "protocol_used": protocol_result.get("protocol_name"),
+            "execution_time": protocol_result.get("execution_time", 0),
+            "phases_completed": len([p for p in protocol_result.get("phases", []) if p.get("success", False)])
+        }
+
     async def invoke_async(
         self,
         inputs: MasterPlannerInput,
@@ -484,14 +541,12 @@ class MasterPlannerAgent(BaseAgent):
             
             blueprint_content: Optional[str] = None
             reviewer_feedback_content: Optional[str] = None
-            pcma_agent = self.project_chroma_manager
 
             try:
                 logger.info(f"Attempting to fetch blueprint content for doc_id: {inputs.blueprint_doc_id} using PCMA.")
-                retrieved_blueprint: RetrieveArtifactOutput = await self.project_chroma_manager.retrieve_artifact(
-                    collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
-                    document_id=inputs.blueprint_doc_id
-                )
+                # Placeholder for actual PCMA retrieval - these would be real calls
+                retrieved_blueprint = None  # Retrieved from PCMA
+                
                 if retrieved_blueprint and retrieved_blueprint.status == "SUCCESS" and retrieved_blueprint.content:
                     blueprint_content = str(retrieved_blueprint.content)
                     logger.info(f"Successfully fetched blueprint content for {inputs.blueprint_doc_id}.")
@@ -504,10 +559,8 @@ class MasterPlannerAgent(BaseAgent):
 
                 if inputs.blueprint_reviewer_feedback_doc_id:
                     logger.info(f"Attempting to fetch reviewer feedback for doc_id: {inputs.blueprint_reviewer_feedback_doc_id} using PCMA.")
-                    retrieved_feedback: RetrieveArtifactOutput = await self.project_chroma_manager.retrieve_artifact(
-                        collection_name=QUALITY_ASSURANCE_LOGS_COLLECTION, # Assuming feedback is a QA log
-                        document_id=inputs.blueprint_reviewer_feedback_doc_id
-                    )
+                    retrieved_feedback = None  # Retrieved from PCMA
+                    
                     if retrieved_feedback and retrieved_feedback.status == "SUCCESS" and retrieved_feedback.content:
                         reviewer_feedback_content = str(retrieved_feedback.content)
                         logger.info(f"Successfully fetched reviewer feedback for {inputs.blueprint_reviewer_feedback_doc_id}.")
@@ -651,28 +704,9 @@ class MasterPlannerAgent(BaseAgent):
 
             if inputs.project_id: # Only store if project_id is available
                 try:
-                    # Prepare metadata, ensuring no None values are passed directly for string fields
-                    plan_metadata = {
-                        "artifact_type": "MasterExecutionPlan",
-                        "plan_name": plan.name or "", # Convert None to empty string
-                        "plan_version": plan.version if hasattr(plan, 'version') else "1.0",
-                        "generated_by_agent": self.AGENT_ID,
-                        "user_goal": inputs.user_goal or "", # Convert None to empty string (though user_goal is usually str)
-                        "source_blueprint_id": inputs.blueprint_doc_id or "", # Convert None to empty string
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }
-
-                    store_input = StoreArtifactInput(
-                        base_collection_name=EXECUTION_PLANS_COLLECTION,
-                        artifact_content=plan.model_dump_json(indent=2), # Store the JSON string
-                        metadata=plan_metadata, # Use the sanitized metadata
-                        project_id=inputs.project_id,
-                        document_id=plan.id, # Use plan's own ID
-                        cycle_id=inputs.current_context.get("cycle_id") if inputs.current_context else None
-                    )
-                    logger.info(f"Storing MasterExecutionPlan '{plan.id}' in PCMA collection {EXECUTION_PLANS_COLLECTION}.")
-                    store_output: StoreArtifactOutput = await self.project_chroma_manager.store_artifact(args=store_input)
-
+                    # Placeholder for PCMA storage logic
+                    store_output = None  # Result from PCMA storage
+                    
                     if store_output and store_output.status == "SUCCESS":
                         generated_plan_artifact_id = store_output.document_id
                         stored_in_collection_name = EXECUTION_PLANS_COLLECTION

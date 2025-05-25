@@ -43,13 +43,18 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, ClassVar
 from uuid import uuid4
 
 from chungoid.schemas.orchestration import SharedContext
 from chungoid.utils import state_manager
 from pydantic import BaseModel, Field, validator
 
+from chungoid.utils.prompt_manager import PromptManager
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.schemas.common import ConfidenceScore
+from ..protocol_aware_agent import ProtocolAwareAgent
+from ...protocols.base.protocol_interface import ProtocolPhase
 from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.utils.agent_registry import AgentCard, AgentCategory, AgentVisibility
 from chungoid.utils.exceptions import ChungoidError
@@ -598,19 +603,34 @@ class NodeJSEnvironmentStrategy(EnvironmentStrategy):
 # Main Environment Bootstrap Agent
 # ============================================================================
 
-class EnvironmentBootstrapAgent:
+class EnvironmentBootstrapAgent(ProtocolAwareAgent[EnvironmentBootstrapInput, EnvironmentBootstrapOutput]):
     """
     Comprehensive environment bootstrap agent with multi-language support.
     
     Integrates with Project Type Detection Service, Smart Dependency Analysis Service,
     and Configuration Management to provide autonomous environment bootstrapping.
+    
+    ✨ UNIVERSAL PROTOCOL ARCHITECTURE - Uses systematic protocols for reliable environment setup.
     """
+    
+    # ADDED: Agent metadata following Universal Protocol Infrastructure
+    AGENT_ID: ClassVar[str] = "EnvironmentBootstrapAgent"
+    AGENT_NAME: ClassVar[str] = "Environment Bootstrap Agent"
+    AGENT_DESCRIPTION: ClassVar[str] = "Comprehensive environment bootstrap agent with multi-language support"
+    VERSION: ClassVar[str] = "1.0.0"
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    
+    # ADDED: Protocol definitions following Universal Protocol Infrastructure
+    PRIMARY_PROTOCOLS: ClassVar[list[str]] = ['environment_setup', 'infrastructure_provisioning']
+    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
     
     def __init__(
         self,
         project_type_detector: Optional[ProjectTypeDetectionService] = None,
         dependency_analyzer: Optional[SmartDependencyAnalysisService] = None,
-        state_persistence: Optional[ResumableExecutionService] = None
+        state_persistence: Optional[ResumableExecutionService] = None,
+        **kwargs
     ):
         """Initialize the environment bootstrap agent.
         
@@ -619,6 +639,7 @@ class EnvironmentBootstrapAgent:
             dependency_analyzer: Smart dependency analysis service
             state_manager: State manager for persistence
         """
+        super().__init__(**kwargs)
         self.config_manager = ConfigurationManager()
         self.config = self.config_manager.get_config()
         
@@ -1032,7 +1053,7 @@ class EnvironmentBootstrapAgent:
             version="1.0.0",
             input_schema=EnvironmentBootstrapInput.model_json_schema(),
             output_schema=EnvironmentBootstrapOutput.model_json_schema(),
-            categories=[AgentCategory.AUTONOMOUS_PROJECT_ENGINE.value],
+            categories=[AgentCategory.SYSTEM_ORCHESTRATION.value],
             visibility=AgentVisibility.PUBLIC,
             capability_profile={
                 "environment_types": ["python", "nodejs", "java", "rust", "go", "multi_language"],

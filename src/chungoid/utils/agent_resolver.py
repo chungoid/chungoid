@@ -33,15 +33,8 @@ import re
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
 from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # MOVED TO MODULE LEVEL
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1 # ADDED IMPORT
-from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 # ADDED FOR SYSTEM TEST RUNNER
 # ADDED: Import ArchitectAgent_v1
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
-
-# ADDED: Import ProjectChromaManagerAgent_v1
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
-
-# REMOVED: Incorrect import for SmartCodeGeneratorAgent_v1
-# from chungoid.runtime.agents.smart_code_generator_agent import SmartCodeGeneratorAgent_v1
 
 # ADDED: Import for SystemMasterPlannerReviewerAgent_v1
 from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent # MODIFIED CLASS NAME
@@ -190,13 +183,11 @@ class RegistryAgentProvider:
         # MODIFIED: Add dependencies for agent instantiation
         llm_provider: Optional[LLMProvider] = None,
         prompt_manager: Optional[PromptManager] = None,
-        project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = None
     ) -> None:
         from .agent_registry import AgentRegistry as ConcreteAgentRegistry
         # MODIFIED: Import dependencies
         # from chungoid.utils.llm_provider import LLMProvider # MOVED UP
         # from chungoid.utils.prompt_manager import PromptManager # MOVED UP
-        from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
         # from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent # REMOVED FROM HERE
         # ADDED: Import for SystemFileSystemAgent_v1 to check its type
         from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
@@ -213,7 +204,6 @@ class RegistryAgentProvider:
         # MODIFIED: Store dependencies
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
-        self._project_chroma_manager = project_chroma_manager
         # ADDED: Store shared_context if provided, or initialize an empty one
         # This is a slight change in approach: self._shared_context will be set by the orchestrator
         # via a new method or during get() call, rather than __init__
@@ -267,20 +257,6 @@ class RegistryAgentProvider:
                         init_kwargs['llm_provider'] = self._llm_provider.actual_provider
                     if 'prompt_manager' in constructor_params and self._prompt_manager:
                         init_kwargs['prompt_manager'] = self._prompt_manager
-                    
-                    if self._project_chroma_manager:
-                        if 'pcma_agent' in constructor_params:
-                            init_kwargs['pcma_agent'] = self._project_chroma_manager
-                        elif 'project_chroma_manager' in constructor_params:
-                            init_kwargs['project_chroma_manager'] = self._project_chroma_manager
-                    
-                    # ADDED: Pass project_root_path_override if agent accepts it and context provides it
-                    if 'project_root_path_override' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'):
-                        project_root_val = shared_context.data.get('project_root_path')
-                        init_kwargs['project_root_path_override'] = project_root_val
-                        logger.info(f"RegistryAgentProvider: Passing project_root_path_override='{project_root_val}' to {identifier}")
-                    elif 'project_root_path' in constructor_params and shared_context and hasattr(shared_context, 'data') and shared_context.data.get('project_root_path'): # Alternative common name
-                        project_root_val = shared_context.data.get('project_root_path')
                         init_kwargs['project_root_path'] = project_root_val
                         logger.info(f"RegistryAgentProvider: Passing project_root_path='{project_root_val}' to {identifier}")
 
@@ -318,50 +294,6 @@ class RegistryAgentProvider:
             elif identifier == SystemRequirementsGatheringAgent_v1.AGENT_ID:
                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches SystemRequirementsGatheringAgent_v1. Instantiating...")
                 agent_instance = SystemRequirementsGatheringAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-            elif identifier == SystemTestRunnerAgent_v1.AGENT_ID: # ADDED FOR SYSTEM TEST RUNNER
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches SystemTestRunnerAgent_v1. Instantiating...")
-                agent_instance = SystemTestRunnerAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-            elif identifier == ArchitectAgent_v1.AGENT_ID: # ADDED FOR ArchitectAgent_v1
-                logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches ArchitectAgent_v1. Instantiating...")
-                agent_instance = ArchitectAgent_v1(llm_provider=self._llm_provider, prompt_manager=self._prompt_manager)
-            elif identifier == ProjectChromaManagerAgent_v1.AGENT_ID: # ADDED FOR ProjectChromaManagerAgent_v1
-                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches ProjectChromaManagerAgent_v1. Instantiating...")
-                 # Assuming ProjectChromaManager doesn't need LLM/PromptManager directly but a chroma_client_provider if anything
-                 # For now, pass common ones if its __init__ accepts them, or handle specific deps.
-                 # Based on its typical role, it might not need LLM deps. Let's assume a simple init or one with common deps.
-                 # If it has a specific constructor, that needs to be matched.
-                 # For now, try with common ones for consistency if constructor allows.
-                 init_kwargs_pcm = {}
-                 constructor_params_pcm = inspect.signature(ProjectChromaManagerAgent_v1.__init__).parameters
-                 if 'llm_provider' in constructor_params_pcm and self._llm_provider:
-                     init_kwargs_pcm['llm_provider'] = self._llm_provider
-                 if 'prompt_manager' in constructor_params_pcm and self._prompt_manager:
-                     init_kwargs_pcm['prompt_manager'] = self._prompt_manager
-                 # It's more likely to need something like `chroma_root_path` or `project_id` if it's managing Chroma instances
-                 # This dependency needs to be properly injected or configured.
-                 # For the purpose of this fix, we assume it can be instantiated or its dependencies are handled.
-                 # A real ProjectChromaManager would likely take `project_id` and `chroma_server_uri`/`chroma_root_path`.
-                 # This is a placeholder instantiation until its dependencies are clarified in this context.
-                 # For now, if it's simple:
-                 if not init_kwargs_pcm and len(constructor_params_pcm) == 1 and 'self' in constructor_params_pcm: # Only self
-                     agent_instance = ProjectChromaManagerAgent_v1()
-                 elif 'project_id' in constructor_params_pcm and 'chroma_client_provider' in constructor_params_pcm:
-                     # This is a more realistic scenario, but these values aren't directly available in RegistryAgentProvider
-                     # This highlights a potential dependency injection issue for complex agents not in fallback.
-                     # For now, this path will likely fail if ProjectChromaManager has these required args.
-                     logger.warning(f"RegistryAgentProvider: ProjectChromaManagerAgent_v1 has specific dependencies (project_id, chroma_client_provider) not directly available here. Instantiation might fail or be incorrect.")
-                     # Attempting a generic instantiation for now, which might fail if args are required.
-                     try:
-                        agent_instance = ProjectChromaManagerAgent_v1(**init_kwargs_pcm) # This will fail if required args missing
-                     except TypeError as te:
-                        logger.error(f"RegistryAgentProvider: TypeError instantiating ProjectChromaManagerAgent_v1: {te}. Check dependencies.")
-                        raise NoAgentFoundError(f"Failed to instantiate ProjectChromaManagerAgent_v1 '{identifier}' due to missing dependencies: {te}") from te
-                 else: # Try with whatever common deps were gathered
-                     try:
-                        agent_instance = ProjectChromaManagerAgent_v1(**init_kwargs_pcm)
-                     except TypeError as te:
-                        logger.error(f"RegistryAgentProvider: TypeError instantiating ProjectChromaManagerAgent_v1 with generic args: {te}")
-                        raise NoAgentFoundError(f"Failed to instantiate ProjectChromaManagerAgent_v1 '{identifier}' due to constructor mismatch: {te}") from te
             elif identifier == MasterPlannerReviewerAgent.AGENT_ID: # MODIFIED CLASS NAME
                 logger.info(f"RegistryAgentProvider: Identifier '{identifier}' matches MasterPlannerReviewerAgent. Instantiating...") # MODIFIED LOG
                 # Assuming MasterPlannerReviewerAgent also takes llm_provider and prompt_manager
@@ -885,18 +817,12 @@ class RegistryAgentProvider:
 
         # MODIFIED: Correct injection of ProjectChromaManagerAgent
         # Check if the agent's constructor expects 'pcma_agent' or 'project_chroma_manager'
-        # and if the provider has a ProjectChromaManagerAgent instance (self._project_chroma_manager)
         pcma_param_name_in_agent_constructor = None
         if 'pcma_agent' in constructor_params:
             pcma_param_name_in_agent_constructor = 'pcma_agent'
         elif 'project_chroma_manager' in constructor_params: # Fallback for alternative naming
             pcma_param_name_in_agent_constructor = 'project_chroma_manager'
 
-        if pcma_param_name_in_agent_constructor and self._project_chroma_manager:
-            agent_init_params[pcma_param_name_in_agent_constructor] = self._project_chroma_manager
-            logger.debug(f"Added self._project_chroma_manager as '{pcma_param_name_in_agent_constructor}' to init_params for {agent_class.__name__}")
-        elif pcma_param_name_in_agent_constructor and not self._project_chroma_manager:
-            logger.warning(f"Agent {agent_class.__name__} expects '{pcma_param_name_in_agent_constructor}' but self._project_chroma_manager is not available in provider.")
         
         # Crucially, pass the prepared system_context
         agent_init_params['system_context'] = agent_system_context
@@ -1020,7 +946,6 @@ ArchitectAgent_v1.model_rebuild() # ArchitectAgent_v1 also uses Optional['AgentP
 # e.g.:
 MasterPlannerAgent.model_rebuild() # SystemMasterPlannerAgent_v1
 # CoreCodeGeneratorAgent_v1.model_rebuild() # REMOVED: Not a Pydantic model (this one was missed)
-SystemTestRunnerAgent_v1.model_rebuild()
 
 # It's also good practice to rebuild any other models that might have unresolved
 # forward references due to TYPE_CHECKING blocks, if they are defined or imported
@@ -1032,17 +957,12 @@ SystemTestRunnerAgent_v1.model_rebuild()
 from chungoid.runtime.agents.agent_base import BaseAgent
 from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
 from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
-from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
 from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
 BaseAgent.model_rebuild()
-# CoreCodeGeneratorAgent_v1.model_rebuild() # REMOVED: Not a Pydantic model
-ProjectChromaManagerAgent_v1.model_rebuild()  # MOVED FIRST - dependencies before dependents
 MasterPlannerAgent.model_rebuild()
-SystemTestRunnerAgent_v1.model_rebuild()
 ArchitectAgent_v1.model_rebuild()
 SystemRequirementsGatheringAgent_v1.model_rebuild()
-CodeDebuggingAgent_v1.model_rebuild()  # MOVED AFTER ProjectChromaManagerAgent_v1 
+CodeDebuggingAgent_v1.model_rebuild() 

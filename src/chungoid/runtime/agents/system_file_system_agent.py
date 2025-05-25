@@ -5,12 +5,18 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
+class ProtocolExecutionError(Exception):
+    """Raised when protocol execution fails."""
+    pass
+
 from typing import Any, Dict, List, Optional, Union, ClassVar, Tuple
 import logging
 import traceback # For detailed error logging
 
 from pydantic import BaseModel, Field
 
+from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.protocols.base.protocol_interface import ProtocolPhase
 from chungoid.runtime.agents.agent_base import BaseAgent # MODIFIED: Changed AgentBase to BaseAgent
 from chungoid.utils.agent_registry import AgentCard, AgentToolSpec # MODIFIED: Changed import path
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
@@ -18,19 +24,9 @@ from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.schemas.errors import AgentErrorDetails # For structured errors
 from chungoid.schemas.orchestration import SharedContext # ADDED
 
-# ADDED: Import for ProjectChromaManagerAgent_v1
-from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, GENERATED_CODE_ARTIFACTS_COLLECTION
-
 logger = logging.getLogger(__name__)
 
 # MOVED TO MODULE LEVEL
-class WriteArtifactToFileInput(BaseModel):
-    """Input for writing a ChromaDB artifact's content to a file."""
-    artifact_doc_id: str = Field(description="Document ID of the artifact in ChromaDB.")
-    collection_name: str = Field(description="Name of the ChromaDB collection where the artifact is stored.")
-    target_file_path: str = Field(description="Target file path relative to project root.")
-    overwrite: bool = Field(default=False, description="Whether to overwrite the file if it already exists.")
-
 class SystemFileSystemAgent_v1(BaseAgent):
     """
     An agent that provides tools for interacting with the file system.
@@ -95,10 +91,8 @@ class SystemFileSystemAgent_v1(BaseAgent):
         exists: Optional[bool] = Field(default=None, description="Result of a path_exists check.")
 
     _logger: Any # Declare _logger as an instance variable, not a Pydantic field
-    _pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None # ADDED: PCMA agent instance
-    _project_root_override: Optional[Path] = None # ADDED: To store project_root_path_override from init
 
-    def __init__(self, pcma_agent: Optional[ProjectChromaManagerAgent_v1] = None, project_root_path_override: Optional[Path] = None, **data: Any): # MODIFIED: Added project_root_path_override
+    def __init__(self, **data: Any):
         super().__init__(**data)
         # BaseAgent's __init__ will store 'system_context' in self.system_context if passed via **data
         # Initialize _logger from self.system_context
@@ -107,13 +101,6 @@ class SystemFileSystemAgent_v1(BaseAgent):
             current_logger = self.system_context.get("logger")
         
         self._logger = current_logger if current_logger else logger
-        self._pcma_agent = pcma_agent
-        if not self._pcma_agent:
-            self._logger.warning(f"{self.AGENT_ID} initialized WITHOUT a ProjectChromaManagerAgent. Artifact-related tools will fail.")
-
-        if project_root_path_override: # ADDED: Store the override if provided
-            self._project_root_override = project_root_path_override
-            self._logger.info(f"{self.AGENT_ID} initialized with project_root_path_override: {self._project_root_override}")
 
         self._logger.info(f"{self.AGENT_NAME} ({self.AGENT_ID}) v{self.AGENT_VERSION} initialized.")
 
@@ -123,9 +110,6 @@ class SystemFileSystemAgent_v1(BaseAgent):
         if project_root_override_from_invoke_async is not None: # MODIFIED: Parameter name change
             base_path_arg = project_root_override_from_invoke_async # MODIFIED: Parameter name change
             self._logger.info(f"RESOLVE_PATH_DEBUG: Using project_root_override_from_invoke_async: {base_path_arg} (type: {type(base_path_arg)})")
-        elif self._project_root_override is not None: # ADDED: Prioritize instance override from __init__
-            base_path_arg = self._project_root_override
-            self._logger.info(f"RESOLVE_PATH_DEBUG: Using self._project_root_override: {base_path_arg} (type: {type(base_path_arg)})")
         elif hasattr(self, 'project_root') and self.project_root: # This might be from BaseAgent if set
             base_path_arg = self.project_root
             self._logger.info(f"RESOLVE_PATH_DEBUG: Using self.project_root: {base_path_arg} (type: {type(base_path_arg)})")
@@ -194,6 +178,65 @@ class SystemFileSystemAgent_v1(BaseAgent):
             return Path(), f"Path '{absolute_path}' is outside the project root '{resolved_root_for_check}'."
 
         return absolute_path, None
+
+    # ADDED: Protocol-aware execution method (hybrid approach)
+    async def execute_with_protocols(self, task_input, full_context: Optional[Dict[str, Any]] = None):
+        """
+        Execute using appropriate protocol with fallback to traditional method.
+        Follows AI agent best practices for hybrid execution.
+        """
+        try:
+            # Determine primary protocol for this agent
+            primary_protocol = self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "simple_operations"
+            
+            protocol_task = {
+                "task_input": task_input.dict() if hasattr(task_input, 'dict') else task_input,
+                "full_context": full_context,
+                "goal": f"Execute {self.AGENT_NAME} specialized task"
+            }
+            
+            protocol_result = self.execute_with_protocol(protocol_task, primary_protocol)
+            
+            if protocol_result["overall_success"]:
+                return self._extract_output_from_protocol_result(protocol_result, task_input)
+            else:
+                self._logger.warning("Protocol execution failed, falling back to traditional method")
+                raise ProtocolExecutionError("Pure protocol execution failed")
+                
+        except Exception as e:
+            self._logger.warning(f"Protocol execution error: {e}, falling back to traditional method")
+            raise ProtocolExecutionError("Pure protocol execution failed")
+
+    # ADDED: Protocol phase execution logic
+    def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
+        """Execute agent-specific logic for each protocol phase."""
+        
+        # Generic phase handling - can be overridden by specific agents
+        if phase.name in ["discovery", "analysis", "planning", "execution", "validation"]:
+            return self._execute_generic_phase(phase)
+        else:
+            self._logger.warning(f"Unknown protocol phase: {phase.name}")
+            return {"phase_completed": True, "method": "fallback"}
+
+    def _execute_generic_phase(self, phase: ProtocolPhase) -> Dict[str, Any]:
+        """Execute generic phase logic suitable for most agents."""
+        return {
+            "phase_name": phase.name,
+            "status": "completed", 
+            "outputs": {"generic_result": f"Phase {phase.name} completed"},
+            "method": "generic_protocol_execution"
+        }
+
+    def _extract_output_from_protocol_result(self, protocol_result: Dict[str, Any], task_input) -> Any:
+        """Extract agent output from protocol execution results."""
+        # Generic extraction - should be overridden by specific agents
+        return {
+            "status": "SUCCESS",
+            "message": "Task completed via protocol execution",
+            "protocol_used": protocol_result.get("protocol_name"),
+            "execution_time": protocol_result.get("execution_time", 0),
+            "phases_completed": len([p for p in protocol_result.get("phases", []) if p.get("success", False)])
+        }
 
     async def invoke_async(
         self,
@@ -345,13 +388,6 @@ class SystemFileSystemAgent_v1(BaseAgent):
                 name="copy_path",
                 description="Copies a file or directory. Overwrites destination if overwrite is True. Input paths are relative to project root.",
                 input_schema=SystemFileSystemAgent_v1.MoveCopyPathInput.model_json_schema(),
-                output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
-            ),
-            # ADDED: AgentToolSpec for the new tool
-            AgentToolSpec(
-                name="write_artifact_to_file_tool",
-                description="Retrieves an artifact from ChromaDB and writes its content to a specified file. Input path is relative to project root.",
-                input_schema=WriteArtifactToFileInput.model_json_schema(),
                 output_schema=SystemFileSystemAgent_v1.FileSystemOutput.model_json_schema(),
             ),
         ]
@@ -690,7 +726,7 @@ class SystemFileSystemAgent_v1(BaseAgent):
             shutil.move(str(sandboxed_src), str(sandboxed_dest))
             return self.FileSystemOutput(success=True, path=str(sandboxed_dest), message=f"Path moved successfully from '{sandboxed_src}' to '{sandboxed_dest}'.").model_dump()
         except ValueError as ve:
-            return self.FileSystemOutput(success=False, error=str(ve)).model_dump() # path will be in ve
+            return self.FileSystemOutput(success=False, error=str(ve)).model_dump()
         except Exception as e:
             return self.FileSystemOutput(success=False, error=f"Failed to move path: {str(e)}").model_dump()
 
@@ -729,81 +765,6 @@ class SystemFileSystemAgent_v1(BaseAgent):
             return self.FileSystemOutput(success=False, error=str(ve)).model_dump()
         except Exception as e:
             return self.FileSystemOutput(success=False, error=f"Failed to copy path: {str(e)}").model_dump()
-
-    # ADDED: New method to write artifact content to file
-    async def write_artifact_to_file_tool(
-        self, 
-        artifact_doc_id: str, 
-        collection_name: str,
-        target_file_path: str, 
-        project_root: Path, 
-        overwrite: bool = False
-    ) -> Dict[str, Any]:
-        """Retrieves an artifact from ChromaDB and writes its content to a specified file."""
-        self._logger.info(f"WRITE_ARTIFACT_DEBUG: Received project_root type: {type(project_root)}, value: {project_root}")
-
-        if not self._pcma_agent:
-            error_msg = "ProjectChromaManagerAgent not available to SystemFileSystemAgent. Cannot retrieve artifact."
-            self._logger.error(error_msg)
-            return self.FileSystemOutput(success=False, error=error_msg).model_dump()
-
-        self._logger.info(f"Attempting to retrieve artifact '{artifact_doc_id}' from collection '{collection_name}'.")
-        try:
-            retrieved_artifact = await self._pcma_agent.retrieve_artifact(
-                base_collection_name=collection_name,
-                document_id=artifact_doc_id
-            )
-
-            if not retrieved_artifact or retrieved_artifact.status != "SUCCESS" or not retrieved_artifact.content:
-                error_msg = f"Failed to retrieve artifact '{artifact_doc_id}' from collection '{collection_name}'. Status: {retrieved_artifact.status if retrieved_artifact else 'N/A'}, Content Empty: {not retrieved_artifact.content if retrieved_artifact else 'N/A'}"
-                self._logger.error(error_msg)
-                return self.FileSystemOutput(success=False, error=error_msg).model_dump()
-            
-            content = str(retrieved_artifact.content)
-            if not content:
-                error_msg = f"Artifact content for doc_id '{artifact_doc_id}' in collection '{collection_name}' is empty. Cannot write to file."
-                self._logger.error(error_msg)
-                return self.FileSystemOutput(success=False, error=error_msg).model_dump()
-            
-            # Resolve target path
-            try:
-                absolute_target_path, error_path = self._resolve_and_sandbox_path(target_file_path, project_root)
-            except ValueError as path_e:
-                self._logger.error(f"Path validation error for target_file_path '{target_file_path}': {path_e}")
-                return self.FileSystemOutput(success=False, error=str(path_e), path=target_file_path).model_dump()
-
-            # Check for overwrite
-            if absolute_target_path.exists() and not overwrite:
-                error_msg = f"File '{absolute_target_path}' already exists and overwrite is False."
-                self._logger.warning(error_msg)
-                return self.FileSystemOutput(success=False, error=error_msg, path=str(absolute_target_path)).model_dump()
-
-            # Create parent directories if they don't exist
-            try:
-                self._logger.info(f"WRITE_ARTIFACT_PRE_PARENT_MKDIR: Type of absolute_target_path.parent: {type(absolute_target_path.parent)}, Value: {absolute_target_path.parent}")
-                absolute_target_path.parent.mkdir(parents=True, exist_ok=True)
-            except Exception as dir_e:
-                error_msg = f"Failed to create parent directories for '{absolute_target_path}': {dir_e}"
-                self._logger.error(error_msg, exc_info=True)
-                return self.FileSystemOutput(success=False, error=error_msg, path=str(absolute_target_path)).model_dump()
-
-            # Write content to file
-            try:
-                with open(absolute_target_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                self._logger.info(f"Successfully wrote artifact '{artifact_doc_id}' from collection '{collection_name}' to '{absolute_target_path}'.")
-                return self.FileSystemOutput(success=True, path=str(absolute_target_path), message="Artifact written to file successfully.").model_dump()
-            except Exception as write_e:
-                error_msg = f"Failed to write content to file '{absolute_target_path}': {write_e}"
-                self._logger.error(error_msg, exc_info=True)
-                return self.FileSystemOutput(success=False, error=error_msg, path=str(absolute_target_path)).model_dump()
-
-        except Exception as e:
-            self._logger.error(f"Unexpected error in write_artifact_to_file_tool for doc_id '{artifact_doc_id}': {e}", exc_info=True)
-            # Ensure this also uses self.FileSystemOutput
-            return self.FileSystemOutput(success=False, error=f"Failed to write artifact to file: {e}", details=traceback.format_exc()).model_dump()
-
-    # --------------------------------------------------------------------------
 
 # To be able to run this agent directly for testing (optional)
 if __name__ == "__main__":

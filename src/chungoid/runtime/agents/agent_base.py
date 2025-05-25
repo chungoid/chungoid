@@ -11,10 +11,6 @@ from chungoid.schemas.errors import AgentErrorDetails
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager
 
-# MODIFIED: Wrap ProjectChromaManagerAgent_v1 import in TYPE_CHECKING
-if TYPE_CHECKING:
-    from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
-
 InputSchema = TypeVar('InputSchema', bound=BaseModel)
 OutputSchema = TypeVar('OutputSchema', bound=BaseModel)
 
@@ -28,7 +24,6 @@ class BaseAgent(BaseModel, Generic[InputSchema, OutputSchema], ABC):
     # Declared llm_provider and prompt_manager as fields
     llm_provider: Optional[LLMProvider] = Field(None, description="LLM provider instance for AI capabilities.")
     prompt_manager: Optional[PromptManager] = Field(None, description="Prompt manager for loading and rendering prompts.")
-    project_chroma_manager: Optional['ProjectChromaManagerAgent_v1'] = Field(None, description="Agent for managing project-specific ChromaDB collections.")
     
     # System context can hold things like logger instances, shared configuration, etc.
     # Passed down from the environment where the agent is run.

@@ -1,4 +1,12 @@
-"""Initializes and provides access to Autonomous Project Engine agent cards."""
+"""
+Autonomous Engine Agents
+
+This module contains all the specialized agents for the Autonomous Project Engine.
+These agents work together to handle different aspects of software development
+through the Autonomous Refinement Cycle Architecture (ARCA).
+
+All agents now use pure protocol architecture with MCP tool integration.
+"""
 
 from __future__ import annotations
 
@@ -9,16 +17,15 @@ from chungoid.schemas.common import AgentCallable
 # Import agent classes
 from .product_analyst_agent import ProductAnalystAgent_v1
 from .proactive_risk_assessor_agent import ProactiveRiskAssessorAgent_v1
-from .automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1
+from .automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1  # Re-enabled after cleanup
 from .architect_agent import ArchitectAgent_v1
 from .requirements_tracer_agent import RequirementsTracerAgent_v1
 from .blueprint_reviewer_agent import BlueprintReviewerAgent_v1
-from .project_chroma_manager_agent import ProjectChromaManagerAgent_v1
-from .project_documentation_agent import ProjectDocumentationAgent_v1
+from .project_documentation_agent import ProjectDocumentationAgent_v1  # Re-enabled after cleanup
 from .code_debugging_agent import CodeDebuggingAgent_v1
 from .environment_bootstrap_agent import EnvironmentBootstrapAgent
 from .dependency_management_agent import DependencyManagementAgent_v1
-from .test_failure_analysis_agent import TestFailureAnalysisAgent_v1
+# Removed: test_failure_analysis_agent - file doesn't exist
 # The "Smart" Code Generator and Integrator are enhancements of core agents.
 # Their registration will be handled by ensuring their core counterparts are updated
 # or by registering their specific "Smart" cards if they are distinct entities.
@@ -40,12 +47,10 @@ AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type[BaseAgent]] = [
     ArchitectAgent_v1,
     RequirementsTracerAgent_v1,
     BlueprintReviewerAgent_v1,
-    ProjectChromaManagerAgent_v1,
     ProjectDocumentationAgent_v1,
     CodeDebuggingAgent_v1,
     EnvironmentBootstrapAgent,
     DependencyManagementAgent_v1,
-    TestFailureAnalysisAgent_v1,
     # SmartCodeGeneratorAgent_v1, # if separate
 ]
 
@@ -94,15 +99,13 @@ __all__ = [
     "get_autonomous_engine_agent_fallback_map",
     "ProductAnalystAgent_v1",
     "ProactiveRiskAssessorAgent_v1",
-    "AutomatedRefinementCoordinatorAgent_v1",
+    AutomatedRefinementCoordinatorAgent_v1,
     "ArchitectAgent_v1",
     "RequirementsTracerAgent_v1",
     "BlueprintReviewerAgent_v1",
-    "ProjectChromaManagerAgent_v1",
-    "ProjectDocumentationAgent_v1",
+    ProjectDocumentationAgent_v1,
     "CodeDebuggingAgent_v1",
     "EnvironmentBootstrapAgent",
     "DependencyManagementAgent_v1",
-    "TestFailureAnalysisAgent_v1",
     # SmartCodeGeneratorAgent_v1, # if separate
 ] 
