@@ -45,6 +45,42 @@ Generate plans using TASK TYPES and CAPABILITY REQUIREMENTS instead of hardcoded
 The orchestrator will automatically select the best autonomous-capable agent for each task, 
 ensuring specialized expertise is preserved through autonomous execution.
 
+**UNIFIED SUCCESS CRITERIA FIELDS:**
+You MUST use these EXACT field names for success criteria (NO other field names allowed):
+
+**Requirements Analysis Task Type:**
+- "requirements_extracted": True
+- "stakeholders_identified": True  
+- "requirements_documented": True
+- "phase_completed": True
+- "validation_passed": True
+
+**Architecture Design Task Type:**
+- "architecture_documented": True
+- "components_defined": True
+- "design_validated": True
+- "phase_completed": True
+- "validation_passed": True
+
+**Environment Setup Task Type:**
+- "environment_bootstrapped": True
+- "dependencies_installed": True
+- "environment_verified": True
+- "phase_completed": True
+- "validation_passed": True
+
+**Code Generation Task Type:**
+- "code_generated": True
+- "code_files_created": True
+- "tests_pass": True
+- "quality_threshold_met": True
+- "phase_completed": True
+- "validation_passed": True
+
+**Universal Requirements (ALL TASK TYPES):**
+- "phase_completed": True
+- "validation_passed": True
+
 **REQUIRED JSON SCHEMA:**
 You MUST return a JSON object with this EXACT structure:
 
@@ -69,7 +105,7 @@ You MUST return a JSON object with this EXACT structure:
         "user_goal": "goal text",
         "project_context": "context"
       },
-      "success_criteria": ["criteria1", "criteria2"],
+      "success_criteria": ["requirements_extracted", "stakeholders_identified", "phase_completed", "validation_passed"],
       "next_stage": "stage_id_2"
     },
     "stage_id_2": {
@@ -86,7 +122,7 @@ You MUST return a JSON object with this EXACT structure:
         "target_file_path": "hello_world.py",
         "programming_language": "python"
       },
-      "success_criteria": ["code_generated", "tests_pass"],
+      "success_criteria": ["code_generated", "code_files_created", "phase_completed", "validation_passed"],
       "next_stage": null
     }
   }

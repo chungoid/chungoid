@@ -1259,7 +1259,7 @@ class AsyncOrchestrator(BaseOrchestrator):
         # Initialize services
         self.context_resolver = ContextResolutionService(shared_context=self.shared_context) # Pass None initially
         self.condition_evaluator = ConditionEvaluationService(logger=self.logger, context_resolver=self.context_resolver)
-        self.success_criteria_evaluator = SuccessCriteriaService(logger=self.logger, context_resolver=self.context_resolver) # Initialize here
+        self.success_criteria_evaluator = SuccessCriteriaService(logger=self.logger) # FIXED: Removed context_resolver parameter
         self.input_validator = InputValidationService(logger=self.logger) # ADDED
         
         # Initialize OrchestrationErrorHandlerService

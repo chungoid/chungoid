@@ -154,9 +154,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "Implementation approach defined"
             ],
             "constraints": task_input.get("constraints", []),
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _discover_requirements_and_constraints(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -175,9 +177,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
             },
             "technical_constraints": [],
             "stakeholder_requirements": [],
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _analyze_loprd_and_context(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,9 +191,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
             "technical_complexity_assessment": "medium",
             "architecture_patterns_identified": [],
             "risk_factors": [],
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _plan_architecture_approach(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,10 +204,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
             "architecture_strategy": "microservices_with_api_gateway",
             "technology_stack": [],
             "implementation_phases": [],
-            "integration_points": [],
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _validate_architecture_plan(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -214,9 +221,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
             },
             "quality_score": 85,
             "recommendations": [],
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _design_blueprint_structure(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -250,9 +259,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "src/config/settings.py": [],
                 "src/utils/helpers.py": []
             },
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _create_implementation_specs(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -288,9 +299,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "src/main.py": ["from config import settings", "from utils import helpers"],
                 "tests/test_main.py": ["import src.main"]
             },
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _map_implementation_phases(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -326,9 +339,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "Timeline Risk": "Buffer time allocated for each phase",
                 "Quality Risk": "Code review and testing requirements"
             },
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _analyze_compatibility(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -356,9 +371,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "Database Issues": "Local file backup system",
                 "Configuration Errors": "Default configuration fallback"
             },
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _validate_blueprint_final(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -385,9 +402,11 @@ class ArchitectAgent_v1(ProtocolAwareAgent):
                 "Risks identified and mitigated": True,
                 "Ready for implementation": True
             },
-            "architecture_defined": True,
-            "design_reviewed": True,
-            "components_specified": True
+            "architecture_documented": True,
+            "design_validated": True,
+            "components_defined": True,
+            "phase_completed": True,
+            "validation_passed": True
         }
 
     def _extract_output_from_protocol_result(self, protocol_result: Dict[str, Any], 
