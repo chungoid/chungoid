@@ -28,6 +28,11 @@ class CompletionReason(Enum):
     COMPLETION_CRITERIA_MET = "completion_criteria_met"
     ERROR_OCCURRED = "error_occurred"
     USER_REQUESTED_STOP = "user_requested_stop"
+    
+    # Compatibility aliases for common usage patterns
+    SUCCESS = "quality_threshold_met"  # Alias for successful completion
+    ERROR = "error_occurred"  # Alias for error
+    QUALITY_THRESHOLD = "quality_threshold_met"  # Alias for threshold met
 
 
 class ToolMode(Enum):

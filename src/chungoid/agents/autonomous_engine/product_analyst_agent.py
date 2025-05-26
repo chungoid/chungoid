@@ -29,13 +29,14 @@ from chungoid.registry import register_autonomous_engine_agent
 
 from chungoid.agents.unified_agent import UnifiedAgent
 
-from chungoid.schemas.agent_outputs import AgentOutput
+from chungoid.schemas.unified_execution_schemas import AgentOutput
 from ...schemas.unified_execution_schemas import (
     ExecutionContext as UEContext,
     AgentExecutionResult,
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -78,7 +79,7 @@ class ProductAnalystAgent_v1(UnifiedAgent):
     
     PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["requirements_analysis", "stakeholder_analysis"]
     SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "tool_validation"]
-    CAPABILITIES: ClassVar[List[str]] = ['requirements_analysis', 'stakeholder_analysis', 'documentation']
+    CAPABILITIES: ClassVar[List[str]] = ['requirements_analysis', 'stakeholder_analysis', 'documentation', 'complex_analysis']
 
     def __init__(self, 
                  llm_provider: LLMProvider,
@@ -99,13 +100,13 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         
         self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as autonomous protocol-aware agent.")
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        UAEI execute method - handles both single-pass and multi-iteration execution.
+        Phase 3 UAEI implementation - Core product analysis logic for single iteration.
         
         Runs the complete product analysis workflow:
         1. Discovery: Analyze user goals and extract requirements/stakeholders
@@ -113,7 +114,7 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         3. Validation: Validate LOPRD against schema
         4. Documentation: Generate final LOPRD document
         """
-        start_time = time.perf_counter()
+        self.logger.info(f"[ProductAnalyst] Starting iteration {iteration + 1}")
         
         # Convert inputs to proper type
         if isinstance(context.inputs, dict):
@@ -177,10 +178,10 @@ class ProductAnalystAgent_v1(UnifiedAgent):
                 validation_errors=None if validation_result.get("is_valid", False) else str(validation_result.get("issues", []))
             )
             
-            completion_reason = CompletionReason.SUCCESS if quality_score >= context.execution_config.quality_threshold else CompletionReason.QUALITY_THRESHOLD
+            tools_used = ["requirements_analysis", "loprd_generation", "validation"]
             
         except Exception as e:
-            self.logger.error(f"ProductAnalystAgent execution failed: {e}")
+            self.logger.error(f"ProductAnalystAgent iteration failed: {e}")
             
             # Create error output
             output = ProductAnalystAgentOutput(
@@ -194,26 +195,14 @@ class ProductAnalystAgent_v1(UnifiedAgent):
             )
             
             quality_score = 0.1
-            completion_reason = CompletionReason.ERROR
+            tools_used = []
         
-        execution_time = time.perf_counter() - start_time
-        
-        # Create execution metadata
-        metadata = ExecutionMetadata(
-            mode=execution_mode,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "requirements_analysis",
-            execution_time=execution_time,
-            iterations_planned=context.execution_config.max_iterations,
-            tools_utilized=None
-        )
-        
-        return AgentExecutionResult(
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
             output=output,
-            execution_metadata=metadata,
-            iterations_completed=1,  # Single iteration for requirements analysis
-            completion_reason=completion_reason,
             quality_score=quality_score,
-            protocol_used=metadata.protocol_used
+            tools_used=tools_used,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "requirements_analysis"
         )
     
     def _calculate_quality_score(self, validation_result: Dict[str, Any], final_loprd: Dict[str, Any], goal_analysis: Dict[str, Any]) -> float:

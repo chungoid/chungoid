@@ -9,7 +9,7 @@ import logging
 from typing import Dict, Any, Optional, Type, List, Union
 from pydantic import BaseModel, ValidationError
 
-from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.agents.unified_agent import UnifiedAgent
 # Legacy imports commented out during Phase-3 migration
 # from chungoid.runtime.agents.system_requirements_gathering_agent import (
 #     SystemRequirementsGatheringAgent_v1,

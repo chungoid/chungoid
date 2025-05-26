@@ -46,7 +46,7 @@ from chungoid.schemas.metrics import MetricEventType
 from chungoid.schemas.flows import PausedRunDetails
 # Legacy agents moved to agents-old - using stubs for now
 # from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_agent_card_static as get_reviewer_card
-from chungoid.runtime import UnifiedOrchestrator  # Phase-3 UAEI migration
+from chungoid.runtime.unified_orchestrator import UnifiedOrchestrator  # Phase-3 UAEI migration
 from chungoid.schemas.metrics import MetricEvent
 from chungoid.utils.agent_registry import AgentRegistry
 from chungoid.utils.state_manager import StateManager
@@ -80,9 +80,9 @@ from chungoid.schemas.user_goal_schemas import UserGoalRequest # <<< ADD THIS IM
 # Imports needed for new 'flow resume' command
 import asyncio
 import json as py_json # Alias to avoid conflict with click option
-from chungoid.runtime import UnifiedOrchestrator  # Phase-3 UAEI migration
+from chungoid.runtime.unified_orchestrator import UnifiedOrchestrator  # Phase-3 UAEI migration
 from chungoid.schemas.master_flow import MasterExecutionPlan # <<< Import MasterExecutionPlan
-from chungoid.utils.agent_resolver import RegistryAgentProvider, AgentCallable, AgentFallbackItem # MODIFIED
+# REMOVED: Legacy agent resolver imports - Phase 3 UAEI migration eliminates RegistryAgentProvider patterns
 # from chungoid.utils.flow_registry import FlowRegistry # No longer used directly for master plans
 from chungoid.utils.master_flow_registry import MasterFlowRegistry
 from chungoid.utils.agent_registry import AgentRegistry # Import AgentRegistry
@@ -142,7 +142,7 @@ from chungoid.schemas.common import AgentID # CORRECTED IMPORT
 # REMOVED: from chungoid.agents.autonomous_engine import get_autonomous_engine_agent_fallback_map
 # Legacy fallback map import removed - using registry-first architecture
 
-# For dependencies of RegistryAgentProvider and agents
+# For dependencies of agents and UnifiedAgentResolver
 from chungoid.utils.llm_provider import LLMProvider # Already imported but ensure it's available
 # from chungoid.utils.prompt_manager import PromptManager # Already imported but ensure it's available
 
@@ -299,7 +299,12 @@ def _get_llm_config(
         (project_config_llm_settings.get("api_key") if project_config_llm_settings else None)
     )
     if explicit_api_key:
-        llm_cfg["api_key"] = explicit_api_key
+        # Handle SecretStr objects from configuration
+        from pydantic import SecretStr
+        if isinstance(explicit_api_key, SecretStr):
+            llm_cfg["api_key"] = explicit_api_key.get_secret_value()
+        else:
+            llm_cfg["api_key"] = explicit_api_key
 
     base_url = (
         cli_params.get("llm_base_url") or # Assumes --llm-base-url CLI option
@@ -657,6 +662,13 @@ def flow_run(ctx: click.Context,
         config_manager.set_project_root(project_path)
         system_config = config_manager.get_config()
         project_config = system_config.model_dump()  # Convert to dict for backward compatibility
+        
+        # Handle SecretStr conversion for LLM configuration
+        if "llm" in project_config and "api_key" in project_config["llm"] and project_config["llm"]["api_key"] is not None:
+            from pydantic import SecretStr
+            if isinstance(project_config["llm"]["api_key"], SecretStr):
+                project_config["llm"]["api_key"] = project_config["llm"]["api_key"].get_secret_value()
+        
         logger.info(f"Loaded project config for flow run using ConfigurationManager from {project_path}")
     except ConfigurationError as e:
         logger.warning(f"Configuration error during flow run: {e}. Using default settings.")
@@ -715,7 +727,7 @@ def flow_run(ctx: click.Context,
     
     llm_manager_for_flow_run: Optional[LLMManager] = None
     try:
-        llm_project_settings = project_config.get("project_settings", {}).get("llm_config", {})
+        llm_project_settings = project_config.get("llm", {})
         
         flow_run_cli_params = {
             "llm_provider": llm_provider_cli,
@@ -775,17 +787,13 @@ def flow_run(ctx: click.Context,
         "state_manager": state_manager,
     }
 
-    # PHASE 1 MIGRATION: Replace AsyncOrchestrator with UnifiedOrchestrator
+    # PHASE 3 UAEI: Use UnifiedOrchestrator with UnifiedAgentResolver
     orchestrator = UnifiedOrchestrator(
-        config=project_config,  # Add config parameter 
+        config=project_config,
         state_manager=state_manager, 
-        agent_provider=agent_provider, 
-        metrics_store=MetricsStore(project_root=project_path)  # Add metrics_store
-        # REMOVED AsyncOrchestrator-specific parameters
-        # project_root_path_override=str(project_path),
-        # llm_manager=llm_manager_for_flow_run, 
-        # prompt_manager=prompt_manager_instance,
-        # initial_shared_context_override=current_shared_context
+        agent_resolver=agent_provider,  # Phase 3: agent_provider is now UnifiedAgentResolver
+        metrics_store=MetricsStore(project_root=project_path)
+        # REMOVED: Legacy AsyncOrchestrator parameters eliminated in Phase 3
     )
 
     async def do_run():
@@ -926,6 +934,13 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
         config_manager.set_project_root(project_path)
         system_config = config_manager.get_config()
         resumed_project_config = system_config.model_dump()  # Convert to dict for backward compatibility
+        
+        # Handle SecretStr conversion for LLM configuration
+        if "llm" in resumed_project_config and "api_key" in resumed_project_config["llm"] and resumed_project_config["llm"]["api_key"] is not None:
+            from pydantic import SecretStr
+            if isinstance(resumed_project_config["llm"]["api_key"], SecretStr):
+                resumed_project_config["llm"]["api_key"] = resumed_project_config["llm"]["api_key"].get_secret_value()
+        
         logger.info(f"Loaded project config for flow resume using ConfigurationManager from {project_path}")
     except ConfigurationError as e:
         logger.warning(f"Configuration error during flow resume: {e}. Using default settings.")
@@ -954,7 +969,7 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
 
         llm_manager_for_resume: Optional[LLMManager] = None
         try:
-            resumed_llm_project_settings = resumed_project_config.get("project_settings", {}).get("llm_config", {})
+            resumed_llm_project_settings = resumed_project_config.get("llm", {})
             
             resume_cli_params = {
                 "llm_provider": llm_provider_cli_resume,
@@ -1016,16 +1031,13 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
         }
 
         # PHASE 1 MIGRATION: Replace AsyncOrchestrator with UnifiedOrchestrator
+        # PHASE 3 UAEI: Use UnifiedOrchestrator with UnifiedAgentResolver
         resumed_orchestrator = UnifiedOrchestrator(
-            config=resumed_project_config,  # Add config parameter 
+            config=resumed_project_config,
             state_manager=resumed_sm, 
-            agent_provider=agent_provider_resume, 
-            metrics_store=MetricsStore(project_root=project_path)  # Add metrics_store
-            # REMOVED AsyncOrchestrator-specific parameters
-            # project_root_path_override=str(project_path),
-            # llm_manager=llm_manager_for_resume,
-            # prompt_manager=prompt_manager_instance_for_resume,
-            # initial_shared_context_override=resume_shared_context
+            agent_resolver=agent_provider_resume,  # Phase 3: agent_provider is now UnifiedAgentResolver
+            metrics_store=MetricsStore(project_root=project_path)
+            # REMOVED: Legacy AsyncOrchestrator parameters eliminated in Phase 3
         )
 
         inputs_dict: Optional[Dict[str, Any]] = None
@@ -1169,6 +1181,120 @@ def project_review(
 from chungoid.schemas.project_status_schema import HumanReviewRecord 
 
 # NEW BUILD COMMAND
+@cli.command("discuss", help="Interactive requirements gathering to create comprehensive project specifications.")
+@click.option("--goal-file", type=click.Path(file_okay=True, dir_okay=False, path_type=Path), default="./goal.txt", help="Path to the goal file to read/write. Will be created if it doesn't exist.")
+@click.option("--project-dir", "project_dir_opt", type=click.Path(file_okay=False, dir_okay=True, path_type=Path), default=".", help="Project directory to analyze. Defaults to current directory.")
+@click.option("--model", type=str, default=None, help="Override the default LLM model for requirements analysis.")
+@click.pass_context
+def discuss_requirements(ctx: click.Context, goal_file: Path, project_dir_opt: Path, model: Optional[str]):
+    """Interactive requirements gathering agent.
+    
+    This command runs an interactive conversation to gather comprehensive
+    project requirements and generates a structured goal file that can be
+    used with 'chungoid build' for any type of software project.
+    
+    Examples:
+        chungoid discuss --goal-file ./my_project_goal.txt --project-dir ./my_project
+        chungoid discuss  # Uses default goal.txt in current directory
+    """
+    
+    # Set up logging
+    setup_logging(ctx.obj.get("log_level", "INFO"))
+    
+    # Resolve paths
+    goal_file_path = goal_file.resolve()
+    project_dir_path = project_dir_opt.resolve()
+    
+    click.echo(f"🤖 Starting interactive requirements gathering...")
+    click.echo(f"📁 Project directory: {project_dir_path}")
+    click.echo(f"📄 Goal file: {goal_file_path}")
+    click.echo()
+    
+    async def do_discuss():
+        try:
+            # Initialize configuration
+            config_manager = ConfigurationManager()
+            config_manager.set_project_root(project_dir_path)
+            system_config = config_manager.get_config()
+            config = system_config.model_dump()
+            
+            # Initialize prompt manager first
+            script_dir = Path(__file__).parent.resolve()
+            core_root_dir = script_dir.parent.parent
+            server_prompts_dir = core_root_dir / "server_prompts"
+            prompt_manager = PromptManager(prompt_directory_paths=[server_prompts_dir])
+            
+            # Set up LLM configuration - handle SecretStr conversion
+            llm_settings = config.get("llm", {})
+            # Convert SecretStr objects to regular strings for LiteLLM compatibility
+            if "api_key" in llm_settings and llm_settings["api_key"] is not None:
+                from pydantic import SecretStr
+                if isinstance(llm_settings["api_key"], SecretStr):
+                    llm_settings["api_key"] = llm_settings["api_key"].get_secret_value()
+            
+            llm_config = _get_llm_config(
+                cli_params={"model": model} if model else {},
+                project_config_llm_settings=llm_settings
+            )
+            
+            # Initialize LLM provider
+            llm_manager = LLMManager(llm_config=llm_config, prompt_manager=prompt_manager)
+            llm_provider = llm_manager.actual_provider
+            
+            # Create InteractiveRequirementsAgent
+            from chungoid.agents.interactive_requirements_agent import InteractiveRequirementsAgent
+            
+            agent = InteractiveRequirementsAgent(
+                llm_provider=llm_provider,
+                prompt_manager=prompt_manager
+            )
+            
+            # Create execution context
+            from chungoid.schemas.unified_execution_schemas import ExecutionContext, ExecutionConfig, StageInfo
+            
+            context = ExecutionContext(
+                inputs={
+                    "goal_file_path": str(goal_file_path),
+                    "project_dir": str(project_dir_path)
+                },
+                shared_context={},
+                stage_info=StageInfo(stage_id="interactive_requirements"),
+                execution_config=ExecutionConfig(
+                    max_iterations=1,  # Single conversation session
+                    quality_threshold=0.9
+                )
+            )
+            
+            # Execute interactive requirements gathering
+            click.echo("Starting conversation...")
+            click.echo("=" * 60)
+            
+            result = await agent._execute_iteration(context, 0)
+            
+            click.echo("=" * 60)
+            
+            if result.quality_score > 0.8:
+                click.echo("✅ Successfully generated enhanced project specification!")
+                click.echo(f"📄 Enhanced goal file written to: {goal_file_path}")
+                click.echo()
+                click.echo("You can now run 'chungoid build' to start building your project:")
+                click.echo(f"  chungoid build --goal-file {goal_file_path} --project-dir {project_dir_path}")
+            else:
+                click.echo("❌ Requirements gathering encountered issues:")
+                if "error" in result.output:
+                    click.echo(f"Error: {result.output['error']}")
+                else:
+                    click.echo("Please try running the command again.")
+                    
+        except Exception as e:
+            logger.error(f"Error in interactive requirements gathering: {e}")
+            click.echo(f"❌ Error: {e}")
+            sys.exit(1)
+    
+    # Run the async function
+    asyncio.run(do_discuss())
+
+
 @cli.command("build", help="Build a project from a goal file.")
 @click.option("--goal-file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path), required=True, help="Path to the file containing the user goal.")
 @click.option("--project-dir", "project_dir_opt", type=click.Path(file_okay=False, dir_okay=True, path_type=Path), default=".", help="Target project directory. Defaults to current directory. Will be created if it doesn't exist.")
@@ -1457,7 +1583,7 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
         
         # ADDED: Registry-first agent provider (NO fallback maps)
         agent_provider = get_registry_agent_provider(
-            llm_provider=llm_manager,
+            llm_provider=llm_manager.actual_provider,  # Extract LLMProvider from LLMManager
             prompt_manager=prompt_manager
         )
         logger.info("Build: Registry-first AgentProvider initialized (no fallback maps).")
@@ -1490,15 +1616,13 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
         if parsed_initial_context: # Merge CLI initial context
             build_shared_context_data.update(parsed_initial_context)
 
-        # PHASE 1 MIGRATION: Replace AsyncOrchestrator with UnifiedOrchestrator
+        # PHASE 3 UAEI: Use UnifiedOrchestrator with UnifiedAgentResolver
         orchestrator = UnifiedOrchestrator(
             config=config,
             state_manager=state_manager,
-            agent_provider=agent_provider,
+            agent_resolver=agent_provider,  # Phase 3: agent_provider is now UnifiedAgentResolver
             metrics_store=metrics_store
-            # REMOVED AsyncOrchestrator-specific parameters that don't exist in UnifiedOrchestrator
-            # master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "system.master_planner_reviewer_agent_v1"),
-            # default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
+            # REMOVED: Legacy AsyncOrchestrator parameters eliminated in Phase 3
         )
 
         # Generate a unique run ID (already done as current_run_id from outer scope)

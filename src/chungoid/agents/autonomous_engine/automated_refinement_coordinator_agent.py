@@ -247,7 +247,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
     AGENT_DESCRIPTION: ClassVar[str] = "Coordinates the iterative refinement of project artifacts, invoking specialist agents as needed."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "automated_refinement_coordinator_agent_v1.yaml" # Points to server_prompts/autonomous_engine/
     AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["autonomous_coordination", "quality_gates", "refinement_orchestration"]
+    CAPABILITIES: ClassVar[List[str]] = ["autonomous_coordination", "quality_gates", "refinement_orchestration", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.AUTONOMOUS_COORDINATION # MODIFIED
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL # Usually internal, invoked by higher orchestrator
     INPUT_SCHEMA: ClassVar[Type[ARCAReviewInput]] = ARCAReviewInput
@@ -287,20 +287,20 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
         self._state_manager = state_manager
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        Pure UAEI implementation for automated refinement coordination.
+        Phase 3 UAEI implementation for automated refinement coordination.
         Runs comprehensive artifact review workflow: assessment → analysis → decision → coordination
         """
-        start_time = time.time()
-        
         try:
-            # Convert inputs to expected format
-            if hasattr(context.inputs, 'dict'):
+            # Convert inputs to expected format - handle both dict and object inputs
+            if isinstance(context.inputs, dict):
+                task_input = ARCAReviewInput(**context.inputs)
+            elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
                 task_input = ARCAReviewInput(**inputs)
             else:
@@ -331,7 +331,8 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 reasoning=coordination_result.get("reasoning", "Coordination completed"),
                 confidence_in_decision=ConfidenceScore(
                     value=quality_score,
-                    reasoning="Based on comprehensive artifact assessment and analysis"
+                    method="comprehensive_assessment",
+                    explanation="Based on comprehensive artifact assessment and analysis"
                 ),
                 next_agent_id_for_refinement=coordination_result.get("next_agent_id"),
                 next_agent_input=coordination_result.get("next_agent_input"),
@@ -340,23 +341,17 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 new_master_plan_doc_id=coordination_result.get("new_master_plan_doc_id")
             )
             
-            return AgentExecutionResult(
+            tools_used = ["artifact_assessment", "quality_analysis", "coordination_decision"]
+            
+            return IterationResult(
                 output=output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="refinement_coordination_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=["artifact_assessment", "quality_analysis", "coordination_decision"]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.SUCCESS,
                 quality_score=quality_score,
+                tools_used=tools_used,
                 protocol_used="refinement_coordination_protocol"
             )
             
         except Exception as e:
-            self.logger.error(f"Refinement coordination failed: {e}")
+            self.logger.error(f"Refinement coordination iteration failed: {e}")
             
             # Create error output
             error_output = ARCAOutput(
@@ -369,18 +364,10 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 error_message=str(e)
             )
             
-            return AgentExecutionResult(
+            return IterationResult(
                 output=error_output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="refinement_coordination_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=[]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.ERROR,
                 quality_score=0.0,
+                tools_used=[],
                 protocol_used="refinement_coordination_protocol"
             )
 

@@ -13,6 +13,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -82,7 +83,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
     DESCRIPTION: ClassVar[str] = "Analyzes faulty code with test failures and proposes fixes."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = CDA_PROMPT_NAME
     AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["code_debugging", "error_analysis", "automated_fixes"]
+    CAPABILITIES: ClassVar[List[str]] = ["code_debugging", "error_analysis", "automated_fixes", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_REMEDIATION 
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL 
 
@@ -103,20 +104,23 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
     ):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        Pure UAEI implementation for code debugging.
+        Phase 3 UAEI implementation - Core code debugging logic for single iteration.
+        
         Runs comprehensive debugging workflow: analysis → diagnosis → fix generation → validation
         """
-        start_time = time.time()
+        self.logger.info(f"[CodeDebugging] Starting iteration {iteration + 1}")
         
         try:
-            # Convert inputs to expected format
-            if hasattr(context.inputs, 'dict'):
+            # Convert inputs to expected format - handle both dict and object inputs
+            if isinstance(context.inputs, dict):
+                inputs = context.inputs
+            elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
             else:
                 inputs = context.inputs
@@ -145,7 +149,8 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 explanation_of_fix=fix_result.get("explanation"),
                 confidence_score=ConfidenceScore(
                     value=quality_score, 
-                    reasoning="Based on comprehensive analysis and validation"
+                    method="comprehensive_analysis",
+                    explanation="Based on comprehensive analysis and validation"
                 ),
                 areas_of_uncertainty=validation_result.get("uncertainties", []),
                 suggestions_for_ARCA=validation_result.get("suggestions"),
@@ -153,48 +158,36 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 message="Code debugging completed successfully" if fix_result.get("solution_type") in ["CODE_PATCH", "MODIFIED_SNIPPET"] else "No fix could be identified"
             )
             
-            return AgentExecutionResult(
-                output=output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="code_debugging_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=["code_analysis", "error_diagnosis", "fix_generation"]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.SUCCESS,
-                quality_score=quality_score,
-                protocol_used="code_debugging_protocol"
-            )
+            tools_used = ["code_analysis", "error_diagnosis", "fix_generation", "validation"]
             
         except Exception as e:
-            self.logger.error(f"Code debugging failed: {e}")
+            self.logger.error(f"Code debugging iteration failed: {e}")
             
             # Create error output
-            error_output = DebuggingTaskOutput(
+            output = DebuggingTaskOutput(
                 task_id=inputs.get("task_id", str(uuid.uuid4())),
                 project_id=inputs.get("project_id", "unknown"),
                 proposed_solution_type="NO_FIX_IDENTIFIED",
                 status="ERROR_INTERNAL",
                 message=f"Code debugging failed: {str(e)}",
-                error_message=str(e)
+                error_message=str(e),
+                confidence_score=ConfidenceScore(
+                    value=0.1,
+                    method="error_fallback",
+                    explanation="Execution failed with exception"
+                )
             )
             
-            return AgentExecutionResult(
-                output=error_output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="code_debugging_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=[]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.ERROR,
-                quality_score=0.0,
-                protocol_used="code_debugging_protocol"
-            )
+            quality_score = 0.1
+            tools_used = []
+        
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
+            output=output,
+            quality_score=quality_score,
+            tools_used=tools_used,
+            protocol_used="code_debugging_protocol"
+        )
 
 
     async def _analyze_code_and_failures(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:

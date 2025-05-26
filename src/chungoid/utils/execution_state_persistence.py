@@ -9,7 +9,7 @@ Key Features:
 - State integrity validation and corruption handling
 - Automatic cleanup of stale checkpoints
 - Performance monitoring and observability
-- Seamless integration with AsyncOrchestrator
+- Seamless integration with UnifiedOrchestrator
 
 Design Principles:
 - Autonomous resilience with minimal intervention required

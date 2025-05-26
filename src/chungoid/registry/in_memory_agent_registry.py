@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Type, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class AgentMetadata:
     registered_at: datetime = field(default_factory=datetime.now)
     
     @classmethod
-    def from_agent_class(cls, agent_class: Type[ProtocolAwareAgent]) -> 'AgentMetadata':
+    def from_agent_class(cls, agent_class: Type[UnifiedAgent]) -> 'AgentMetadata':
         """Create metadata from agent class"""
         return cls(
             agent_id=getattr(agent_class, 'AGENT_ID', agent_class.__name__),
@@ -54,11 +54,11 @@ class InMemoryAgentRegistry:
     """In-memory registry for protocol-aware agents"""
     
     def __init__(self):
-        self._agents: Dict[str, Type[ProtocolAwareAgent]] = {}
+        self._agents: Dict[str, Type[UnifiedAgent]] = {}
         self._metadata: Dict[str, AgentMetadata] = {}
         self.logger = logging.getLogger(__name__)
     
-    def register_agent(self, agent_class: Type[ProtocolAwareAgent], metadata: Optional[AgentMetadata] = None):
+    def register_agent(self, agent_class: Type[UnifiedAgent], metadata: Optional[AgentMetadata] = None):
         """Register a protocol-aware agent"""
         if not hasattr(agent_class, 'AGENT_ID'):
             raise ValueError(f"Agent class {agent_class.__name__} must have AGENT_ID attribute")
@@ -73,7 +73,7 @@ class InMemoryAgentRegistry:
         
         self.logger.info(f"Registered agent: {agent_id}")
     
-    def get_agent(self, agent_id: str) -> Optional[Type[ProtocolAwareAgent]]:
+    def get_agent(self, agent_id: str) -> Optional[Type[UnifiedAgent]]:
         """Get agent class by ID"""
         return self._agents.get(agent_id)
     
@@ -81,7 +81,7 @@ class InMemoryAgentRegistry:
         """Get agent metadata by ID"""
         return self._metadata.get(agent_id)
     
-    def list_agents(self) -> Dict[str, Type[ProtocolAwareAgent]]:
+    def list_agents(self) -> Dict[str, Type[UnifiedAgent]]:
         """List all registered agents"""
         return self._agents.copy()
     
@@ -89,7 +89,7 @@ class InMemoryAgentRegistry:
         """List all agent metadata"""
         return self._metadata.copy()
     
-    def discover_agents(self, capability: str = None, category: str = None) -> List[Type[ProtocolAwareAgent]]:
+    def discover_agents(self, capability: str = None, category: str = None) -> List[Type[UnifiedAgent]]:
         """Discover agents by capability or category"""
         results = []
         
@@ -105,7 +105,7 @@ class InMemoryAgentRegistry:
         
         return results
     
-    def get_agents_by_protocol(self, protocol: str) -> List[Type[ProtocolAwareAgent]]:
+    def get_agents_by_protocol(self, protocol: str) -> List[Type[UnifiedAgent]]:
         """Get agents that support a specific protocol"""
         results = []
         

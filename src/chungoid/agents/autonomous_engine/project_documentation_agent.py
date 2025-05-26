@@ -26,6 +26,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -81,7 +82,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
     AGENT_NAME: ClassVar[str] = "Project Documentation Agent v1"
     DESCRIPTION: ClassVar[str] = "Generates project documentation (README, API docs, dependency audit) from project artifacts and codebase context."
     AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["documentation_generation", "project_analysis", "comprehensive_reporting"]
+    CAPABILITIES: ClassVar[List[str]] = ["documentation_generation", "project_analysis", "comprehensive_reporting", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.DOCUMENTATION_GENERATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
 
@@ -102,11 +103,11 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
     ):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
         Pure UAEI implementation for project documentation generation.
         Runs comprehensive documentation workflow: discovery → analysis → documentation → validation
@@ -114,8 +115,10 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
         start_time = time.time()
         
         try:
-            # Convert inputs to expected format
-            if hasattr(context.inputs, 'dict'):
+            # Convert inputs to expected format - handle both dict and object inputs
+            if isinstance(context.inputs, dict):
+                inputs = context.inputs
+            elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
             else:
                 inputs = context.inputs
@@ -145,21 +148,18 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 release_notes_doc_id=documentation_result.get("release_notes_doc_id"),
                 status="SUCCESS",
                 message="Documentation generation completed successfully",
-                agent_confidence_score=ConfidenceScore(value=quality_score, reasoning="Based on comprehensive validation")
+                agent_confidence_score=ConfidenceScore(
+                    value=quality_score, 
+                    method="comprehensive_validation",
+                    explanation="Based on comprehensive validation"
+                )
             )
             
-            return AgentExecutionResult(
+            # Return iteration result for Phase 3 multi-iteration support
+            return IterationResult(
                 output=output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="documentation_generation_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=["project_analysis", "document_generation", "code_scanning"]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.SUCCESS,
                 quality_score=quality_score,
+                tools_used=["project_analysis", "document_generation", "code_scanning"],
                 protocol_used="documentation_generation_protocol"
             )
             
@@ -175,18 +175,11 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 error_message=str(e)
             )
             
-            return AgentExecutionResult(
+            # Return iteration result for Phase 3 multi-iteration support
+            return IterationResult(
                 output=error_output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="documentation_generation_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=[]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.ERROR,
                 quality_score=0.0,
+                tools_used=[],
                 protocol_used="documentation_generation_protocol"
             )
 

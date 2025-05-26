@@ -30,6 +30,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -80,7 +81,7 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
     DESCRIPTION: ClassVar[str] = "Analyzes LOPRDs, Blueprints, or Plans for potential risks, issues, and optimization opportunities."
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.RISK_ASSESSMENT
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
-    CAPABILITIES: ClassVar[List[str]] = ["risk_assessment", "deep_investigation", "impact_analysis"]  # Added required CAPABILITIES
+    CAPABILITIES: ClassVar[List[str]] = ["risk_assessment", "deep_investigation", "impact_analysis", "complex_analysis"]  # Added required CAPABILITIES
     INPUT_SCHEMA: ClassVar[Type[ProactiveRiskAssessorInput]] = ProactiveRiskAssessorInput
     OUTPUT_SCHEMA: ClassVar[Type[ProactiveRiskAssessorOutput]] = ProactiveRiskAssessorOutput
 
@@ -134,13 +135,13 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
         
         self._logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized with MCP tool integration.")
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        UAEI execute method - handles risk assessment workflow.
+        Phase 3 UAEI implementation - Core risk assessment logic for single iteration.
         
         Runs the complete risk assessment workflow:
         1. Discovery: Retrieve artifact to be assessed
@@ -149,7 +150,7 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
         4. Execution: Generate assessment reports
         5. Validation: Validate assessment quality
         """
-        start_time = time.perf_counter()
+        self._logger.info(f"[ProactiveRiskAssessor] Starting iteration {iteration + 1}")
         
         # Convert inputs to proper type
         if isinstance(context.inputs, dict):
@@ -197,20 +198,19 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
                 status="SUCCESS",
                 message="Risk assessment completed via UAEI workflow",
                 confidence_score=ConfidenceScore(
-                    score=int(quality_score * 100),
+                    value=quality_score,
                     reasoning=f"Quality based on validation ({validation_result.get('is_valid', False)}) and completeness"
                 ),
                 usage_metadata={
-                    "execution_mode": execution_mode.value,
                     "phases_executed": ["discovery", "analysis", "planning", "execution", "validation"],
                     "risks_identified": len(risks.get("critical_risks", [])) + len(risks.get("moderate_risks", []))
                 }
             )
             
-            completion_reason = CompletionReason.SUCCESS if quality_score >= context.execution_config.quality_threshold else CompletionReason.QUALITY_THRESHOLD
+            tools_used = ["risk_assessment", "artifact_analysis", "mitigation_planning", "report_generation"]
             
         except Exception as e:
-            self._logger.error(f"ProactiveRiskAssessorAgent execution failed: {e}")
+            self._logger.error(f"ProactiveRiskAssessorAgent iteration failed: {e}")
             
             # Create error output
             output = ProactiveRiskAssessorOutput(
@@ -222,32 +222,21 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
                 message=f"Risk assessment failed: {str(e)}",
                 error_message=str(e),
                 confidence_score=ConfidenceScore(
-                    score=10,
-                    reasoning="Execution failed with exception"
+                    value=0.1,
+                    method="error_fallback",
+                    explanation="Execution failed with exception"
                 )
             )
             
             quality_score = 0.1
-            completion_reason = CompletionReason.ERROR
+            tools_used = []
         
-        execution_time = time.perf_counter() - start_time
-        
-        # Create execution metadata
-        metadata = ExecutionMetadata(
-            mode=execution_mode,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "risk_assessment",
-            execution_time=execution_time,
-            iterations_planned=context.execution_config.max_iterations,
-            tools_utilized=None
-        )
-        
-        return AgentExecutionResult(
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
             output=output,
-            execution_metadata=metadata,
-            iterations_completed=1,  # Single iteration for risk assessment
-            completion_reason=completion_reason,
             quality_score=quality_score,
-            protocol_used=metadata.protocol_used
+            tools_used=tools_used,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "risk_assessment"
         )
 
     async def _discover_artifact(self, inputs: ProactiveRiskAssessorInput) -> Dict[str, Any]:

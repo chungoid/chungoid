@@ -3,7 +3,7 @@ import logging
 from pydantic import BaseModel
 import time
 
-from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
 # REMOVED: BaseAgent import - no longer exists
 # from chungoid.runtime.agents.agent_base import InputSchema, OutputSchema
@@ -34,24 +34,18 @@ class NoOpOutput(BaseModel):
 
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
-from chungoid.utils.llm_provider import LLMProvider
-from chungoid.utils.prompt_manager import PromptManager
-from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
 
 # Registry-first architecture import
 from chungoid.registry import register_system_agent
 
 from ...schemas.unified_execution_schemas import (
-    ExecutionContext,
-    AgentExecutionResult,
-    ExecutionMetadata,
-    ExecutionMode,
-    CompletionReason,
+    ExecutionContext as UEContext,
+    IterationResult,
 )
 
 @register_system_agent(capabilities=["simple_operations", "status_reporting"])
-class NoOpAgent_v1(ProtocolAwareAgent):
+class NoOpAgent_v1(UnifiedAgent):
     """
     A No-Operation Agent. It logs its invocation and returns a success message.
     It primarily serves as a placeholder in execution plans where an action is
@@ -59,7 +53,7 @@ class NoOpAgent_v1(ProtocolAwareAgent):
     """
     AGENT_ID: ClassVar[str] = "NoOpAgent_v1"
     AGENT_VERSION: ClassVar[str] = "1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["simple_operations", "status_reporting"]
+    CAPABILITIES: ClassVar[List[str]] = ["simple_operations", "status_reporting", "complex_analysis"]
 
     # ADDED: Protocol definitions following AI agent best practices
     PRIMARY_PROTOCOLS: ClassVar[list[str]] = ["simple_operations"]
@@ -128,7 +122,7 @@ class NoOpAgent_v1(ProtocolAwareAgent):
         task_input: NoOpInput,
         full_context: Optional[SharedContext] = None,
     ) -> NoOpOutput:
-        """Original invoke_async logic moved here for reference."""
+        """Legacy implementation consolidated into unified execute method."""
         logger.info(
             f"NoOpAgent_v1 (ID: {self.get_id()}) invoked. Input: {task_input}. Context: {full_context}"
         )
@@ -153,31 +147,50 @@ class NoOpAgent_v1(ProtocolAwareAgent):
         return NoOpOutput
 
     # ------------------------------------------------------------------
-    # UAEI wrapper ------------------------------------------------------
+    # Phase 3 UAEI implementation --------------------------------------
     # ------------------------------------------------------------------
-    async def execute(
-        self,
-        context: ExecutionContext,
-        execution_mode: ExecutionMode | None = None,
-    ) -> AgentExecutionResult:  # type: ignore[override]
-        start = time.perf_counter()
-        # Delegate to legacy implementation (Phase-1 behaviour)
-        legacy_out = await self._legacy_execute_impl(context.inputs, context.shared_context)
-        end = time.perf_counter()
+    async def _execute_iteration(
+        self, 
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
+        """Phase 3 UAEI implementation - Core no-op logic for single iteration."""
+        self.logger.info(f"[NoOp] Starting iteration {iteration + 1}")
+        
+        try:
+            # Convert inputs to proper type
+            if isinstance(context.inputs, dict):
+                task_input = NoOpInput(**context.inputs)
+            elif isinstance(context.inputs, NoOpInput):
+                task_input = context.inputs
+            else:
+                # Fallback for other types
+                task_input = NoOpInput(
+                    passthrough_data=getattr(context.inputs, 'passthrough_data', None)
+                )
 
-        meta = ExecutionMetadata(
-            mode=ExecutionMode.SINGLE_PASS,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else None,
-            execution_time=end - start,
-            iterations_planned=1,
-            tools_utilized=None,
-        )
-
-        return AgentExecutionResult(
-            output=legacy_out,
-            execution_metadata=meta,
-            iterations_completed=1,
-            completion_reason=CompletionReason.SUCCESS,
-            quality_score=1.0,
-            protocol_used=meta.protocol_used,
+            # Execute no-op operation
+            output = await self._legacy_execute_impl(task_input, context.shared_context)
+            
+            quality_score = 1.0
+            tools_used = []
+            
+        except Exception as e:
+            self.logger.error(f"NoOp execution failed: {str(e)}")
+            
+            # Create error output
+            output = NoOpOutput(
+                message=f"NoOp execution failed: {str(e)}",
+                passthrough_data=None
+            )
+            
+            quality_score = 0.1
+            tools_used = []
+        
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
+            output=output,
+            quality_score=quality_score,
+            tools_used=tools_used,
+            protocol_used="simple_operations"
         ) 

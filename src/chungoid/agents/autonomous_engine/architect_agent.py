@@ -23,6 +23,7 @@ from ...schemas.unified_execution_schemas import (
      ExecutionMetadata,
      ExecutionMode,
      CompletionReason,
+     IterationResult,
      StageInfo,
  )
 from ...utils.chromadb_migration_utils import migrate_store_artifact, migrate_retrieve_artifact
@@ -77,7 +78,7 @@ class ArchitectAgent_v1(UnifiedAgent):
     AGENT_DESCRIPTION: ClassVar[str] = "Generates a technical blueprint based on an LOPRD and project context."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "architect_agent_v1_prompt.yaml"
     AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["architecture_design", "system_planning", "blueprint_generation"]
+    CAPABILITIES: ClassVar[List[str]] = ["architecture_design", "system_planning", "blueprint_generation", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.PLANNING_AND_DESIGN 
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[ArchitectAgentInput]] = ArchitectAgentInput
@@ -106,13 +107,13 @@ class ArchitectAgent_v1(UnifiedAgent):
         
         self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as UAEI agent.")
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        UAEI execute method - handles architecture design workflow.
+        Phase 3 UAEI implementation - Core architecture design logic for single iteration.
         
         Runs the complete architecture design workflow:
         1. Discovery: Retrieve LOPRD and analyze requirements
@@ -121,7 +122,7 @@ class ArchitectAgent_v1(UnifiedAgent):
         4. Design: Create detailed blueprint structure
         5. Validation: Validate architecture design quality
         """
-        start_time = time.perf_counter()
+        self.logger.info(f"[Architect] Starting iteration {iteration + 1}")
         
         # Convert inputs to proper type
         if isinstance(context.inputs, dict):
@@ -192,16 +193,16 @@ class ArchitectAgent_v1(UnifiedAgent):
                     explanation=f"Quality based on validation (valid: {validation_result.get('is_valid', False)}) and completeness"
                 ),
                 usage_metadata={
-                    "execution_mode": execution_mode.value,
+                    "iteration": iteration + 1,
                     "phases_executed": ["discovery", "analysis", "planning", "design", "validation"],
                     "components_designed": len(blueprint.get("components", []))
                 }
             )
             
-            completion_reason = CompletionReason.SUCCESS if quality_score >= context.execution_config.quality_threshold else CompletionReason.QUALITY_THRESHOLD
+            tools_used = ["architecture_discovery", "requirements_analysis", "blueprint_design", "validation"]
             
         except Exception as e:
-            self.logger.error(f"ArchitectAgent execution failed: {e}")
+            self.logger.error(f"ArchitectAgent iteration failed: {e}")
             
             # Create error output
             output = ArchitectAgentOutput(
@@ -219,26 +220,14 @@ class ArchitectAgent_v1(UnifiedAgent):
             )
             
             quality_score = 0.1
-            completion_reason = CompletionReason.ERROR
+            tools_used = []
         
-        execution_time = time.perf_counter() - start_time
-        
-        # Create execution metadata
-        metadata = ExecutionMetadata(
-            mode=execution_mode,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "architecture_planning",
-            execution_time=execution_time,
-            iterations_planned=context.execution_config.max_iterations,
-            tools_utilized=None
-        )
-        
-        return AgentExecutionResult(
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
             output=output,
-            execution_metadata=metadata,
-            iterations_completed=1,  # Single iteration for architecture design
-            completion_reason=completion_reason,
             quality_score=quality_score,
-            protocol_used=metadata.protocol_used
+            tools_used=tools_used,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "architecture_planning"
         )
 
     async def _discover_loprd(self, inputs: ArchitectAgentInput) -> Dict[str, Any]:

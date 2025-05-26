@@ -62,6 +62,14 @@ def initialize_all_agents() -> Dict[str, bool]:
         logger.error(f"Failed to import autonomous engine agents: {e}")
         raise RuntimeError(f"Autonomous engine agent import failed: {e}")
     
+    # Interactive and utility agents
+    try:
+        from chungoid.agents.interactive_requirements_agent import InteractiveRequirementsAgent
+        logger.info("Interactive and utility agents imported successfully")
+    except Exception as e:
+        logger.error(f"Failed to import interactive and utility agents: {e}")
+        raise RuntimeError(f"Interactive and utility agent import failed: {e}")
+    
     # Get the global registry and validate all registered agents
     registry = get_global_agent_registry()
     
@@ -87,29 +95,28 @@ def initialize_all_agents() -> Dict[str, bool]:
     return validation_results
 
 def get_registry_agent_provider(llm_provider=None, prompt_manager=None):
-    """Create a registry-first agent provider with NO fallback maps.
+    """Create a unified agent resolver for Phase 3 UAEI architecture.
     
-    This replaces the old fallback map approach with pure registry lookups.
-    Explicitly initializes agents to ensure registry is populated.
+    PHASE 3 MIGRATION: This now returns UnifiedAgentResolver instead of legacy RegistryAgentProvider.
+    Eliminates all technical debt from complex resolver patterns.
     """
     from chungoid.registry import get_global_agent_registry  # Import here to avoid circular import
-    from chungoid.utils.agent_resolver import RegistryAgentProvider
+    from chungoid.runtime.unified_agent_resolver import UnifiedAgentResolver
     
     # Explicitly initialize all agents to populate the registry
-    logger.info("Initializing agents for registry-first provider...")
+    logger.info("Initializing agents for Phase 3 UAEI resolver...")
     try:
         initialize_all_agents()
         logger.info("Agent initialization completed successfully")
     except Exception as e:
         logger.error(f"Agent initialization failed: {e}")
-        raise RuntimeError(f"Failed to initialize agents for registry provider: {e}")
+        raise RuntimeError(f"Failed to initialize agents for UAEI resolver: {e}")
     
     registry = get_global_agent_registry()
     
-    # NO FALLBACK - Registry is the single source of truth
-    return RegistryAgentProvider(
-        registry=registry,
-        fallback=None,  # NO FALLBACK MAPS
+    # Phase 3: Use UnifiedAgentResolver - simple, single-path resolution
+    return UnifiedAgentResolver(
+        agent_registry=registry,
         llm_provider=llm_provider,
         prompt_manager=prompt_manager
     )

@@ -39,7 +39,8 @@ from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.agent_registry import AgentCard, AgentCategory, AgentVisibility
 from chungoid.utils.exceptions import ChungoidError
 from chungoid.utils.config_manager import ConfigurationManager
-from chungoid.utils.execution_state_persistence import ResumableExecutionService, AgentOutput
+from chungoid.utils.execution_state_persistence import ResumableExecutionService
+from chungoid.schemas.unified_execution_schemas import AgentOutput
 from chungoid.utils.project_type_detection import (
     ProjectTypeDetectionService,
     ProjectTypeDetectionResult
@@ -56,6 +57,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo
 )
 
@@ -753,7 +755,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
     AGENT_NAME: ClassVar[str] = "Dependency Management Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Comprehensive autonomous dependency management with multi-language support and intelligent conflict resolution"
     AGENT_VERSION: ClassVar[str] = "1.0.0"
-    CAPABILITIES: ClassVar[List[str]] = ["dependency_analysis", "package_management", "conflict_resolution"]
+    CAPABILITIES: ClassVar[List[str]] = ["dependency_analysis", "package_management", "conflict_resolution", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_INTEGRATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     
@@ -762,39 +764,44 @@ class DependencyManagementAgent_v1(UnifiedAgent):
     SECONDARY_PROTOCOLS: ClassVar[list[str]] = []
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'tool_validation', 'context_sharing']
 
-    
     def __init__(self, llm_provider=None, prompt_manager=None, **kwargs):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
-        self.config_manager = ConfigurationManager()
-        self.project_type_detector = ProjectTypeDetectionService()
-        self.dependency_analyzer = SmartDependencyAnalysisService()
-        self.state_persistence = ResumableExecutionService()
+        
+        # ✅ PHASE 3 UAEI: Core services only - no complex external state management
+        self._config_manager = ConfigurationManager()
+        self._project_type_detector = ProjectTypeDetectionService(llm_provider)
+        self._dependency_analyzer = SmartDependencyAnalysisService(llm_provider)
+        # ❌ REMOVED: ResumableExecutionService - Legacy complexity eliminated per enhanced_cycle.md
         
         # Initialize dependency strategies
-        self.strategies = {
-            "python": PythonDependencyStrategy(self.config_manager),
-            "javascript": NodeJSDependencyStrategy(self.config_manager),
-            "typescript": NodeJSDependencyStrategy(self.config_manager),
+        self._strategies = {
+            "python": PythonDependencyStrategy(self._config_manager),
+            "javascript": NodeJSDependencyStrategy(self._config_manager),
+            "typescript": NodeJSDependencyStrategy(self._config_manager),
         }
 
-    async def execute(
+    async def _execute_iteration(
         self, 
         context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        iteration: int
+    ) -> IterationResult:
         """
-        Pure UAEI implementation for comprehensive dependency management.
+        Phase 3 UAEI implementation for comprehensive dependency management.
         Runs dependency workflow: discovery → analysis → planning → operations → validation
         """
         start_time = time.time()
         
         try:
-            # Convert inputs to expected format
-            if hasattr(context.inputs, 'dict'):
+            # Convert inputs to expected format - handle both dict and object inputs
+            if isinstance(context.inputs, dict):
+                task_input = DependencyManagementInput(**context.inputs)
+            elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
                 task_input = DependencyManagementInput(**inputs)
             else:
                 task_input = context.inputs
+
+            self.logger.info(f"[DependencyAgent] Starting iteration {iteration}: {task_input.operation}")
 
             # Phase 1: Discovery - Detect project type and existing dependencies
             discovery_result = await self._discover_dependencies(task_input, context.shared_context)
@@ -832,23 +839,28 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 checkpoint_data=validation_result.get("checkpoint_data")
             )
             
-            return AgentExecutionResult(
+            # Determine tools used based on the operation performed
+            tools_used = ["project_detection", "dependency_analysis"]
+            if task_input.install_after_analysis:
+                tools_used.append("package_installation")
+            if task_input.perform_security_audit:
+                tools_used.append("security_audit")
+            
+            return IterationResult(
                 output=output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="dependency_management_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=["project_detection", "dependency_analysis", "package_installation"]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.SUCCESS,
                 quality_score=quality_score,
-                protocol_used="dependency_management_protocol"
+                protocol_used="dependency_management_protocol",
+                tools_used=tools_used,
+                iteration_metadata={
+                    "iteration_number": iteration,
+                    "operation_type": task_input.operation,
+                    "dependencies_count": len(validation_result.get("dependencies_processed", [])),
+                    "completion_status": "completed"
+                }
             )
             
         except Exception as e:
-            self.logger.error(f"Dependency management failed: {e}")
+            self.logger.error(f"Dependency management iteration {iteration} failed: {e}")
             
             # Create error output
             error_output = DependencyManagementOutput(
@@ -867,19 +879,17 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 installation_time=0.0
             )
             
-            return AgentExecutionResult(
+            return IterationResult(
                 output=error_output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="dependency_management_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=[]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.ERROR,
                 quality_score=0.0,
-                protocol_used="dependency_management_protocol"
+                protocol_used="dependency_management_protocol",
+                tools_used=[],
+                iteration_metadata={
+                    "iteration_number": iteration,
+                    "operation_type": getattr(task_input, 'operation', 'unknown'),
+                    "completion_status": "failed",
+                    "error_message": str(e)
+                }
             )
 
     async def _discover_dependencies(self, task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -888,7 +898,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         try:
             # Detect project type
-            project_result = await self.project_type_detector.detect_project_type(task_input.project_path)
+            project_result = self._project_type_detector.detect_project_type(task_input.project_path)
             
             # Determine target languages
             if task_input.target_languages:
@@ -903,7 +913,11 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             # Auto-detect dependencies if requested
             detected_dependencies = []
             if task_input.auto_detect_dependencies:
-                analysis_result = await self.dependency_analyzer.analyze_dependencies(task_input.project_path)
+                analysis_result = await self._dependency_analyzer.analyze_project(
+                    project_path=Path(task_input.project_path),
+                    project_type=project_result.primary_language,
+                    include_dev_dependencies=task_input.include_dev_dependencies
+                )
                 detected_dependencies = analysis_result.dependencies if analysis_result else []
             
             return {
@@ -1123,8 +1137,8 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         all_files = []
         
         for lang in languages:
-            if lang in self.strategies:
-                strategy = self.strategies[lang]
+            if lang in self._strategies:
+                strategy = self._strategies[lang]
                 files = await strategy.detect_dependency_files(project_path)
                 all_files.extend(files)
         
@@ -1182,8 +1196,8 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         lang_deps = self._group_dependencies_by_language(dependencies, languages)
         
         for lang, deps in lang_deps.items():
-            if lang in self.strategies:
-                strategy = self.strategies[lang]
+            if lang in self._strategies:
+                strategy = self._strategies[lang]
                 try:
                     results = await strategy.install_dependencies(deps, project_path)
                     all_results["successful"].extend(results.get("installed", []))
@@ -1203,8 +1217,8 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         all_issues = []
         
         for lang in languages:
-            if lang in self.strategies:
-                strategy = self.strategies[lang]
+            if lang in self._strategies:
+                strategy = self._strategies[lang]
                 try:
                     issues = await strategy.get_security_audit(project_path)
                     all_issues.extend(issues)
@@ -1282,11 +1296,11 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             agent_id=DependencyManagementAgent_v1.AGENT_ID,
             name="Dependency Management Agent v1",
             description=DependencyManagementAgent_v1.AGENT_DESCRIPTION,
-            version=DependencyManagementAgent_v1.VERSION,
+            version=DependencyManagementAgent_v1.AGENT_VERSION,
             input_schema=DependencyManagementInput.model_json_schema(),
             output_schema=DependencyManagementOutput.model_json_schema(),
             categories=[DependencyManagementAgent_v1.CATEGORY.value],
-            visibility=DependencyManagementAgent_v1.VISIBILITY,
+            visibility=DependencyManagementAgent_v1.VISIBILITY.value,
             capability_profile={
                 "autonomous_dependency_detection": True,
                 "multi_language_support": ["python", "javascript", "typescript"],
@@ -1303,56 +1317,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             }
         )
 
-    # ------------------------------------------------------------------
-    # Phase-3 UAEI hooks -------------------------------------------------
-    # ------------------------------------------------------------------
 
-    async def _legacy_execute_single_pass(
-        self, inputs: Any, context: UEContext
-    ) -> Dict[str, Any]:  # type: ignore[override]
-        """Temporary Phase-1 bridge that mimics previous single-pass behaviour.
-
-        The full dependency-management workflow is protocol-driven and will be
-        ported during Phase-3.  For now we simply acknowledge the request and
-        return a placeholder structure that downstream quality heuristics can
-        interpret (in particular the ``failed_installations`` key.)
-        """
-
-        # TODO(Phase-3): Integrate full protocol execution pipeline here.
-
-        return {
-            "success": True,
-            "failed_installations": [],
-            "message": "DependencyManagementAgent legacy execute stub."
-        }
-
-    async def _execute_iteration(
-        self, context: UEContext, iteration: int
-    ) -> AgentExecutionResult:  # noqa: D401
-        start = time.perf_counter()
-        result_dict = await self._legacy_execute_single_pass(context.inputs, context)
-        end = time.perf_counter()
-
-        # Quality heuristic: failures lower quality
-        failures = len(result_dict.get("failed_installations", [])) if isinstance(result_dict, dict) else 0
-        q_score = max(0.5, 1 - 0.1 * failures)
-
-        meta = ExecutionMetadata(
-            mode=ExecutionMode.MULTI_ITERATION,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else None,
-            execution_time=end - start,
-            iterations_planned=context.execution_config.max_iterations,
-            tools_utilized=None,
-        )
-
-        return AgentExecutionResult(
-            output=result_dict,
-            execution_metadata=meta,
-            iterations_completed=1,
-            completion_reason=CompletionReason.SUCCESS if failures == 0 else CompletionReason.QUALITY_THRESHOLD,
-            quality_score=q_score,
-            protocol_used=meta.protocol_used,
-        )
 
 # =============================================================================
 # MCP Tool Function

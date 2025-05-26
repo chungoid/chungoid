@@ -18,7 +18,6 @@ import inspect
 from typing import Type, List, Optional, Dict, Any, Callable, Union
 from functools import wraps
 
-from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from .in_memory_agent_registry import get_global_agent_registry, AgentMetadata
@@ -51,22 +50,33 @@ def register_agent(
             AGENT_ID: ClassVar[str] = "EnvironmentBootstrapAgent"
             # ... rest of implementation
     """
-    def decorator(agent_class: Type[ProtocolAwareAgent]):
+    def decorator(agent_class: Type[UnifiedAgent]):
         # Validate agent class
         if not hasattr(agent_class, 'AGENT_ID'):
             raise ValueError(f"Agent class {agent_class.__name__} must have AGENT_ID attribute")
         
-        if not hasattr(agent_class, 'invoke_async'):
-            logger.warning(f"Agent class {agent_class.__name__} missing invoke_async method")
+        # Phase 3 UAEI: Check for unified execute method, NOT legacy invoke_async
+        if not hasattr(agent_class, 'execute'):
+            raise ValueError(f"Agent class {agent_class.__name__} must implement UAEI execute() method")
+        
+        # Ensure no legacy methods remain
+        legacy_methods = ['invoke_async', 'execute_with_protocol', 'execute_with_protocols']
+        for method in legacy_methods:
+            if hasattr(agent_class, method):
+                logger.warning(f"Agent {agent_class.__name__} contains legacy method {method} - should be removed for UAEI compliance")
         
         # Create metadata
         metadata = AgentMetadata(
-            category=category,
+            agent_id=agent_class.AGENT_ID,
+            name=getattr(agent_class, 'AGENT_NAME', agent_class.__name__),
+            description=getattr(agent_class, 'AGENT_DESCRIPTION', ''),
+            version=agent_class.AGENT_VERSION,
+            category=AgentCategory.SYSTEM_ORCHESTRATION if category == "system" else AgentCategory.AUTONOMOUS_COORDINATION,
+            visibility=visibility,
             capabilities=capabilities or [],
-            module=agent_class.__module__,
-            class_name=agent_class.__name__,
-            priority=priority,
-            visibility=visibility
+            primary_protocols=list(getattr(agent_class, 'PRIMARY_PROTOCOLS', [])),
+            secondary_protocols=list(getattr(agent_class, 'SECONDARY_PROTOCOLS', [])),
+            priority=priority
         )
         
         # Register in global registry
@@ -82,7 +92,7 @@ def register_agent(
 
 def register_system_agent(capabilities: List[str]):
     """Register a system agent with specified capabilities"""
-    def decorator(agent_class: Type[ProtocolAwareAgent]):
+    def decorator(agent_class: Type[UnifiedAgent]):
         # Validate agent interface
         validate_agent_interface(agent_class)
         
@@ -116,7 +126,7 @@ def register_system_agent(capabilities: List[str]):
 
 def register_autonomous_engine_agent(capabilities: List[str]):
     """Register an autonomous engine agent with specified capabilities"""
-    def decorator(agent_class: Type[ProtocolAwareAgent]):
+    def decorator(agent_class: Type[UnifiedAgent]):
         # Validate agent interface
         validate_agent_interface(agent_class)
         
@@ -162,11 +172,11 @@ def register_test_agent(capabilities: Optional[List[str]] = None):
     )
 
 
-def validate_agent_interface(agent_class: Type[ProtocolAwareAgent]):
-    """Validate that agent class conforms to ProtocolAwareAgent interface"""
+def validate_agent_interface(agent_class: Type[UnifiedAgent]):
+    """Validate that agent class conforms to Phase 3 UAEI interface"""
     required_class_vars = [
         'AGENT_ID', 'AGENT_VERSION', 'PRIMARY_PROTOCOLS', 
-        'SECONDARY_PROTOCOLS', 'CAPABILITIES'
+        'CAPABILITIES'
     ]
     
     for var_name in required_class_vars:
@@ -205,7 +215,7 @@ def register_validated_agent(
     This is the recommended decorator for new agents as it ensures both
     interface compliance and automatic registration.
     """
-    def decorator(agent_class: Type[ProtocolAwareAgent]):
+    def decorator(agent_class: Type[UnifiedAgent]):
         # First validate interface
         validate_agent_interface(agent_class)
         

@@ -319,9 +319,9 @@ class OrchestrationErrorHandlerService:
 
         suggestion_output: Optional[MasterPlannerReviewerOutput] = None
         try:
-            # agent_provider.get() for MasterPlannerReviewerAgent is expected to return its invoke_async method directly.
+            # agent_provider.get() for MasterPlannerReviewerAgent is expected to return its execute method directly.
             # This method is already a coroutine function.
-            # The signature is: async def invoke_async(self, input_payload: MasterPlannerReviewerInput)
+            # The signature is: async def execute(self, context: ExecutionContext)
             suggestion_output = await reviewer_agent_callable(input_payload=reviewer_input) # MODIFIED: Direct call with correct arg name
 
             if not isinstance(suggestion_output, MasterPlannerReviewerOutput):

@@ -28,9 +28,9 @@ from .dependency_management_agent import DependencyManagementAgent_v1
 
 # Use TYPE_CHECKING to avoid circular import
 if TYPE_CHECKING:
-    from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+    from chungoid.agents.unified_agent import UnifiedAgent
 
-AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type['ProtocolAwareAgent']] = [
+AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type['UnifiedAgent']] = [
     ProductAnalystAgent_v1,
     ProactiveRiskAssessorAgent_v1,
     AutomatedRefinementCoordinatorAgent_v1,

@@ -55,7 +55,7 @@ from ..unified_agent import UnifiedAgent
 from chungoid.utils.agent_registry import AgentCard, AgentCategory, AgentVisibility
 from chungoid.utils.exceptions import ChungoidError
 from chungoid.utils.config_manager import ConfigurationManager
-from chungoid.utils.execution_state_persistence import AgentOutput
+from chungoid.schemas.unified_execution_schemas import AgentOutput
 from chungoid.utils.project_type_detection import (
     ProjectTypeDetectionService,
     ProjectTypeDetectionResult
@@ -75,6 +75,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -627,7 +628,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
     AGENT_NAME: ClassVar[str] = "Environment Bootstrap Agent"
     AGENT_DESCRIPTION: ClassVar[str] = "Comprehensive environment bootstrap agent with multi-language support"
     AGENT_VERSION: ClassVar[str] = "1.0.0"
-    CAPABILITIES: ClassVar[List[str]] = ["environment_setup", "dependency_management", "project_bootstrapping"]
+    CAPABILITIES: ClassVar[List[str]] = ["environment_setup", "dependency_management", "project_bootstrapping", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.SYSTEM_ORCHESTRATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     
@@ -638,6 +639,8 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
     
     def __init__(
         self,
+        llm_provider=None,
+        prompt_manager=None,
         project_type_detector: Optional[ProjectTypeDetectionService] = None,
         dependency_analyzer: Optional[SmartDependencyAnalysisService] = None,
         **kwargs
@@ -645,10 +648,12 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         """Initialize the environment bootstrap agent.
         
         Args:
+            llm_provider: LLM provider for agent execution
+            prompt_manager: Prompt manager for template handling
             project_type_detector: Project type detection service
             dependency_analyzer: Smart dependency analysis service
         """
-        super().__init__(**kwargs)
+        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
         
         # FIXED: Make all service attributes private to avoid Pydantic field conflicts
         self._config_manager = ConfigurationManager()
@@ -718,7 +723,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             
             return EnvironmentBootstrapOutput(
                 success=True,
-                message="Environment bootstrap completed successfully",
+                execution_time=total_time,
                 environments_created=environments_created,
                 dependencies_installed=dependencies_installed,
                 validation_results=validation_results,
@@ -739,7 +744,8 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             
             return EnvironmentBootstrapOutput(
                 success=False,
-                message=error_msg,
+                error_message=error_msg,
+                execution_time=total_time,
                 environments_created=[],
                 dependencies_installed={},
                 validation_results={},
@@ -815,7 +821,8 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             env_types.append(language_mapping[project_result.primary_language])
         
         # Add secondary languages if it's a multi-language project
-        for lang_info in project_result.languages:
+        language_characteristics = [char for char in project_result.characteristics if char.category == "language"]
+        for lang_info in language_characteristics:
             if lang_info.name != project_result.primary_language and lang_info.name in language_mapping:
                 env_type = language_mapping[lang_info.name]
                 if env_type not in env_types:
@@ -871,8 +878,8 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             try:
                 # Detect project type for dependency analysis
                 project_result = self._project_type_detector.detect_project_type(project_path)
-                dependencies_result = await self._dependency_analyzer.analyze_dependencies(
-                    project_path,
+                dependencies_result = await self._dependency_analyzer.analyze_project(
+                    project_path=project_path,
                     project_type=project_result.primary_language
                 )
                 project_dependencies = dependencies_result.dependencies
@@ -1044,16 +1051,14 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
     # UAEI Implementation -----------------------------------------------
     # ------------------------------------------------------------------
     
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        UAEI execute method - handles both single-pass and multi-iteration execution.
+        Phase 3 UAEI iteration method - handles environment bootstrap logic.
         """
-        start_time = time.perf_counter()
-        
         # Convert inputs to proper type
         if isinstance(context.inputs, dict):
             # Handle dict inputs from CLI
@@ -1087,15 +1092,16 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                 quality_score -= 0.1 * len(failed_envs)
             quality_score = max(0.1, min(quality_score, 1.0))
             
-            completion_reason = CompletionReason.SUCCESS if output.success else CompletionReason.ERROR
+            tools_used = ["environment_detection", "dependency_analysis", "environment_creation", "validation"]
             
         except Exception as e:
-            logger.error(f"EnvironmentBootstrapAgent execution failed: {e}")
+            logger.error(f"EnvironmentBootstrapAgent iteration failed: {e}")
             
             # Create error output
             output = EnvironmentBootstrapOutput(
                 success=False,
-                message=f"Bootstrap execution failed: {str(e)}",
+                error_message=f"Bootstrap execution failed: {str(e)}",
+                execution_time=0.0,
                 environments_created=[],
                 dependencies_installed={},
                 validation_results={},
@@ -1106,26 +1112,14 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             )
             
             quality_score = 0.1
-            completion_reason = CompletionReason.ERROR
+            tools_used = []
         
-        execution_time = time.perf_counter() - start_time
-        
-        # Create execution metadata
-        metadata = ExecutionMetadata(
-            mode=execution_mode,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "file_management",
-            execution_time=execution_time,
-            iterations_planned=context.execution_config.max_iterations,
-            tools_utilized=None
-        )
-        
-        return AgentExecutionResult(
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
             output=output,
-            execution_metadata=metadata,
-            iterations_completed=1,  # Single iteration for bootstrap
-            completion_reason=completion_reason,
             quality_score=quality_score,
-            protocol_used=metadata.protocol_used
+            tools_used=tools_used,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "file_management"
         )
 
 # ============================================================================

@@ -573,8 +573,8 @@ class AutonomousTeamFormationProtocol(ProtocolInterface):
         """Check if agent supports collaborative execution."""
         return (
             hasattr(agent_instance, 'PRIMARY_PROTOCOLS') and
-            hasattr(agent_instance, 'execute_with_protocol') and
-            callable(getattr(agent_instance, 'execute_with_protocol'))
+            hasattr(agent_instance, 'execute') and
+            callable(getattr(agent_instance, 'execute'))
         )
     
     async def _analyze_agent_capabilities(self, agent_instance, available_tools: Dict[str, Any]) -> List[AgentCapability]:

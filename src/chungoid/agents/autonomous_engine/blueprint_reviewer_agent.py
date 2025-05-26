@@ -28,6 +28,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -77,7 +78,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
     DESCRIPTION: ClassVar[str] = "Performs an advanced review of a Project Blueprint, suggesting optimizations, architectural alternatives, and identifying subtle flaws."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "blueprint_reviewer_agent_v1.yaml"
     AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["review_protocol", "quality_validation", "architectural_review"]
+    CAPABILITIES: ClassVar[List[str]] = ["complex_analysis", "review_protocol", "quality_validation", "architectural_review"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.QUALITY_ASSURANCE
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[BlueprintReviewerInput]] = BlueprintReviewerInput
@@ -99,20 +100,22 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
     ):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
 
-    async def execute(
+    async def _execute_iteration(
         self, 
         context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        iteration: int
+    ) -> IterationResult:
         """
-        Pure UAEI implementation for blueprint review and analysis.
+        Phase 3: Single iteration of blueprint review workflow.
         Runs comprehensive review workflow: discovery → analysis → planning → review generation → validation
         """
-        start_time = time.time()
+        self.logger.info(f"[UAEI] Blueprint reviewer iteration {iteration + 1}")
         
         try:
-            # Convert inputs to expected format
-            if hasattr(context.inputs, 'dict'):
+            # Convert inputs to expected format - handle both dict and object inputs
+            if isinstance(context.inputs, dict):
+                task_input = BlueprintReviewerInput(**context.inputs)
+            elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
                 task_input = BlueprintReviewerInput(**inputs)
             else:
@@ -146,23 +149,22 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 confidence_score=ConfidenceScore(value=quality_score, reasoning="Based on comprehensive blueprint analysis and validation")
             )
             
-            return AgentExecutionResult(
+            # Return IterationResult instead of AgentExecutionResult
+            return IterationResult(
                 output=output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="blueprint_review_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=["blueprint_retrieval", "architectural_analysis", "review_generation"]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.SUCCESS,
                 quality_score=quality_score,
-                protocol_used="blueprint_review_protocol"
+                tools_used=["blueprint_retrieval", "architectural_analysis", "review_generation"],
+                protocol_used="blueprint_review_protocol",
+                iteration_metadata={
+                    "discovery_success": discovery_result.get("discovery_success", False),
+                    "analysis_confidence": analysis_result.get("analysis_confidence", 0.0),
+                    "planning_confidence": planning_result.get("planning_confidence", 0.0),
+                    "validation_passed": validation_result.get("validation_passed", False)
+                }
             )
             
         except Exception as e:
-            self.logger.error(f"Blueprint review failed: {e}")
+            self.logger.error(f"Blueprint review iteration {iteration + 1} failed: {e}")
             
             # Create error output
             error_output = BlueprintReviewerOutput(
@@ -173,19 +175,13 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 error_message=str(e)
             )
             
-            return AgentExecutionResult(
+            # Return failed IterationResult
+            return IterationResult(
                 output=error_output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="blueprint_review_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=[]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.ERROR,
                 quality_score=0.0,
-                protocol_used="blueprint_review_protocol"
+                tools_used=[],
+                protocol_used="blueprint_review_protocol",
+                iteration_metadata={"error": str(e)}
             )
 
     async def _discover_blueprint(self, task_input: BlueprintReviewerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:

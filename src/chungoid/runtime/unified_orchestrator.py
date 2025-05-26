@@ -26,7 +26,7 @@ from ..schemas.master_flow import MasterExecutionPlan
 from ..schemas.agent_master_planner import MasterPlannerInput
 from ..schemas.common_enums import StageStatus, OnFailureAction
 from ..utils.state_manager import StateManager
-from ..utils.agent_resolver import RegistryAgentProvider
+from .unified_agent_resolver import UnifiedAgentResolver
 from ..utils.metrics_store import MetricsStore
 
 __all__ = ["UnifiedOrchestrator"]
@@ -44,12 +44,12 @@ class UnifiedOrchestrator:
         self,
         config: Dict[str, Any],
         state_manager: StateManager,
-        agent_provider: RegistryAgentProvider,
+        agent_resolver: UnifiedAgentResolver,
         metrics_store: MetricsStore
     ):
         self.config = config
         self.state_manager = state_manager
-        self.agent_provider = agent_provider
+        self.agent_resolver = agent_resolver
         self.metrics_store = metrics_store
         self.logger = logging.getLogger(self.__class__.__name__)
         
@@ -72,10 +72,8 @@ class UnifiedOrchestrator:
 
         self.logger.info("[UAEI] Executing stage %s (attempt %d) with agent %s", stage_id, attempt, agent_id)
 
-        # Get agent callable from provider  
-        agent_callable = self.agent_provider.get(agent_id, shared_context=self.shared_context)
-        if not agent_callable:
-            raise ValueError(f"Agent {agent_id} not found in provider")
+        # Phase 3: Resolve agent using UnifiedAgentResolver (single path)
+        agent = await self.agent_resolver.resolve_agent(agent_id)
 
         # Create execution context
         ctx = ExecutionContext(
@@ -84,12 +82,13 @@ class UnifiedOrchestrator:
             stage_info=StageInfo(stage_id=stage_id, attempt_number=attempt),
             execution_config=ExecutionConfig(
                 max_iterations=max_iterations,
-                execution_mode=ExecutionMode.SINGLE_PASS  # Phase-1: single-pass only
+                quality_threshold=0.85,  # Phase 3: Enable quality thresholds
+                completion_criteria=None  # Phase 3: Will be enhanced
             ),
         )
 
-        # Execute agent using callable (should be agent.execute)
-        result = await agent_callable(ctx)
+        # Phase 3: Execute using UnifiedAgent.execute() with ExecutionMode.OPTIMAL
+        result = await agent.execute(ctx, ExecutionMode.OPTIMAL)
 
         # Persist outputs in shared context under stage_id
         self.shared_context["outputs"][stage_id] = result.output
@@ -180,6 +179,12 @@ class UnifiedOrchestrator:
             stage_id="dependency_management",
             agent_id="DependencyManagementAgent_v1", 
             inputs={
+                "operation": "analyze",
+                "project_path": self.shared_context.get("project_root_path", "."),
+                "auto_detect_dependencies": True,
+                "install_after_analysis": True,
+                "resolve_conflicts": True,
+                "target_languages": ["python"],
                 "user_goal": master_planner_input.user_goal,
                 "technologies": ["scapy", "python"]  # Inferred from goal
             },

@@ -30,6 +30,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -87,7 +88,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
     DESCRIPTION: ClassVar[str] = "Generates a traceability report (Markdown) between two development artifacts (e.g., LOPRD to Blueprint)."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = RTA_PROMPT_NAME
     AGENT_VERSION: ClassVar[str] = "0.2.0"
-    CAPABILITIES: ClassVar[List[str]] = ["requirements_traceability", "artifact_analysis", "quality_validation"]
+    CAPABILITIES: ClassVar[List[str]] = ["requirements_traceability", "artifact_analysis", "quality_validation", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.REQUIREMENTS_ANALYSIS
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
     INPUT_SCHEMA: ClassVar[Type[RequirementsTracerInput]] = RequirementsTracerInput
@@ -111,20 +112,23 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
     ):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
 
-    async def execute(
+    async def _execute_iteration(
         self, 
-        context: UEContext,
-        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
-    ) -> AgentExecutionResult:
+        context: UEContext, 
+        iteration: int
+    ) -> IterationResult:
         """
-        Pure UAEI implementation for requirements traceability analysis.
+        Phase 3 UAEI implementation - Core requirements traceability logic for single iteration.
+        
         Runs comprehensive traceability workflow: discovery → analysis → planning → generation → validation
         """
-        start_time = time.time()
+        self.logger.info(f"[RequirementsTracer] Starting iteration {iteration + 1}")
         
         try:
-            # Convert inputs to expected format
-            if hasattr(context.inputs, 'dict'):
+            # Convert inputs to expected format - handle both dict and object inputs
+            if isinstance(context.inputs, dict):
+                task_input = RequirementsTracerInput(**context.inputs)
+            elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
                 task_input = RequirementsTracerInput(**inputs)
             else:
@@ -155,50 +159,42 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 traceability_report_doc_id=generation_result.get("report_doc_id"),
                 status="SUCCESS",
                 message="Traceability analysis completed successfully",
-                agent_confidence_score=ConfidenceScore(value=quality_score, reasoning="Based on comprehensive artifact analysis and validation")
+                agent_confidence_score=ConfidenceScore(
+                    value=quality_score, 
+                    method="comprehensive_analysis",
+                    explanation="Based on comprehensive artifact analysis and validation"
+                )
             )
             
-            return AgentExecutionResult(
-                output=output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="requirements_traceability_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=["artifact_retrieval", "traceability_mapping", "report_generation"]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.SUCCESS,
-                quality_score=quality_score,
-                protocol_used="requirements_traceability_protocol"
-            )
+            tools_used = ["artifact_retrieval", "traceability_mapping", "report_generation", "validation"]
             
         except Exception as e:
-            self.logger.error(f"Requirements traceability analysis failed: {e}")
+            self.logger.error(f"Requirements traceability iteration failed: {e}")
             
             # Create error output
-            error_output = RequirementsTracerOutput(
+            output = RequirementsTracerOutput(
                 task_id=getattr(task_input, 'task_id', str(uuid.uuid4())),
                 project_id=getattr(task_input, 'project_id', 'unknown'),
                 status="FAILURE_LLM",
                 message=f"Traceability analysis failed: {str(e)}",
-                error_message=str(e)
+                error_message=str(e),
+                agent_confidence_score=ConfidenceScore(
+                    value=0.1,
+                    method="error_fallback",
+                    explanation="Execution failed with exception"
+                )
             )
             
-            return AgentExecutionResult(
-                output=error_output,
-                execution_metadata=ExecutionMetadata(
-                    mode=execution_mode,
-                    protocol_used="requirements_traceability_protocol",
-                    execution_time=time.time() - start_time,
-                    iterations_planned=1,
-                    tools_utilized=[]
-                ),
-                iterations_completed=1,
-                completion_reason=CompletionReason.ERROR,
-                quality_score=0.0,
-                protocol_used="requirements_traceability_protocol"
-            )
+            quality_score = 0.1
+            tools_used = []
+        
+        # Return iteration result for Phase 3 multi-iteration support
+        return IterationResult(
+            output=output,
+            quality_score=quality_score,
+            tools_used=tools_used,
+            protocol_used="requirements_traceability_protocol"
+        )
 
     async def _discover_artifacts(self, task_input: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Discovery - Discover and retrieve artifacts using MCP tools."""
