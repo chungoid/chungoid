@@ -271,7 +271,24 @@ class UnifiedOrchestrator:
             max_iterations=1
         )
 
-        # 9. Project Documentation - ENHANCED: Generate comprehensive documentation
+        # 9. Code Generation - ENHANCED: Generate actual project code files
+        await self.execute_stage(
+            stage_id="code_generation",
+            agent_id="SmartCodeGeneratorAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", "."),
+                "project_id": master_planner_input.project_id or "intelligent_project",
+                "programming_language": project_specs.get("primary_language", "python"),
+                "target_languages": project_specs.get("target_languages", ["python"]),
+                "technologies": project_specs.get("technologies", [])
+            },
+            max_iterations=1
+        )
+
+        # 10. Project Documentation - ENHANCED: Generate comprehensive documentation
         await self.execute_stage(
             stage_id="project_documentation",
             agent_id="ProjectDocumentationAgent_v1",
@@ -284,7 +301,7 @@ class UnifiedOrchestrator:
             max_iterations=1
         )
 
-        # 10. Code Debugging - ENHANCED: Analyze and improve code quality
+        # 11. Code Debugging - ENHANCED: Analyze and improve code quality
         await self.execute_stage(
             stage_id="code_debugging",
             agent_id="CodeDebuggingAgent_v1",
@@ -297,7 +314,7 @@ class UnifiedOrchestrator:
             max_iterations=1
         )
 
-        # 11. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
+        # 12. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
         await self.execute_stage(
             stage_id="automated_refinement",
             agent_id="AutomatedRefinementCoordinatorAgent_v1",
@@ -305,12 +322,13 @@ class UnifiedOrchestrator:
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
                 "intelligent_context": True,
-                "project_path": self.shared_context.get("project_root_path", ".")
+                "project_path": self.shared_context.get("project_root_path", "."),
+                "project_id": master_planner_input.project_id or "intelligent_project"
             },
             max_iterations=1
         )
         
-        self.logger.info("[UAEI] Enhanced autonomous development pipeline completed with 11 stages")
+        self.logger.info("[UAEI] Enhanced autonomous development pipeline completed with 12 stages")
 
     # ------------------------------------------------------------------
     async def run(

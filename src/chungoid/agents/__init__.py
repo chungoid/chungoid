@@ -56,6 +56,7 @@ def initialize_all_agents() -> Dict[str, bool]:
         from chungoid.agents.autonomous_engine.requirements_tracer_agent import RequirementsTracerAgent_v1
         from chungoid.agents.autonomous_engine.project_documentation_agent import ProjectDocumentationAgent_v1
         from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
+        from chungoid.agents.autonomous_engine.smart_code_generator_agent import SmartCodeGeneratorAgent_v1
         from chungoid.agents.autonomous_engine.automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1
         logger.info("Autonomous engine agents imported successfully")
     except Exception as e:

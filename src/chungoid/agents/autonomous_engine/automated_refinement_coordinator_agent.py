@@ -82,6 +82,7 @@ from ...schemas.unified_execution_schemas import (
     ExecutionMetadata,
     ExecutionMode,
     CompletionReason,
+    IterationResult,
     StageInfo,
 )
 
@@ -142,7 +143,7 @@ class ARCAReviewInput(BaseModel):
     failed_test_report_details: Optional[List[FailedTestReport]] = Field(
         None, description="List of failed test report objects. Required if artifact_type is CodeModule_TestFailure."
     )
-    generator_agent_id: str = Field(..., description="ID of the agent that generated the artifact.")
+    generator_agent_id: Optional[str] = Field(None, description="ID of the agent that generated the artifact. Optional in intelligent context mode.")
     generator_agent_confidence: Optional[ConfidenceScore] = Field(None, description="Confidence score from the generating agent.")
     
     # Specific inputs based on artifact_type
@@ -169,11 +170,37 @@ class ARCAReviewInput(BaseModel):
 
     # Ensure that relevant report IDs are provided based on artifact type
     @model_validator(mode='after')
+    def check_intelligent_context_requirements(self) -> 'ARCAReviewInput':
+        """Validate requirements based on execution mode (intelligent context vs traditional)."""
+        
+        if self.intelligent_context:
+            # Intelligent context mode - requires project specifications and user goal
+            if not self.project_specifications:
+                raise ValueError("project_specifications is required when intelligent_context=True")
+            if not self.user_goal:
+                raise ValueError("user_goal is required when intelligent_context=True")
+            
+            # In intelligent context mode, traditional fields are optional
+            # The smart agent will use its LLM processing abilities to handle coordination
+            
+        else:
+            # Traditional mode - requires generator_agent_id and artifact details
+            if not self.generator_agent_id:
+                raise ValueError("generator_agent_id is required when intelligent_context=False")
+            if not self.artifact_type:
+                raise ValueError("artifact_type is required when intelligent_context=False")
+            if not self.artifact_doc_id:
+                raise ValueError("artifact_doc_id is required when intelligent_context=False")
+        
+        return self
+
+    @model_validator(mode='after')
     def check_report_ids(self) -> 'ARCAReviewInput':
-        if self.artifact_type in ["LOPRD", "Blueprint", "MasterExecutionPlan", "CodeModule"]:
+        # Only check report IDs in traditional mode
+        if not self.intelligent_context and self.artifact_type in ["LOPRD", "Blueprint", "MasterExecutionPlan", "CodeModule"]:
             if not self.praa_risk_report_doc_id or not self.praa_optimization_report_doc_id:
                 logger.warning(f"PRAA report IDs missing for {self.artifact_type} review in ARCA. This might limit decision quality.")
-        if self.artifact_type in ["Blueprint", "MasterExecutionPlan", "CodeModule"]:
+        if not self.intelligent_context and self.artifact_type in ["Blueprint", "MasterExecutionPlan", "CodeModule"]:
             if not self.rta_report_doc_id:
                 logger.warning(f"RTA report ID missing for {self.artifact_type} review in ARCA. This might limit decision quality.")
         return self
