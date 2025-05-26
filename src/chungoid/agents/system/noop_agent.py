@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional, ClassVar, List
 import logging
 from pydantic import BaseModel
+import time
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
 from chungoid.protocols.base.protocol_interface import ProtocolPhase
@@ -40,6 +41,14 @@ from chungoid.protocols.base.protocol_interface import ProtocolPhase
 
 # Registry-first architecture import
 from chungoid.registry import register_system_agent
+
+from ...schemas.unified_execution_schemas import (
+    ExecutionContext,
+    AgentExecutionResult,
+    ExecutionMetadata,
+    ExecutionMode,
+    CompletionReason,
+)
 
 @register_system_agent(capabilities=["simple_operations", "status_reporting"])
 class NoOpAgent_v1(ProtocolAwareAgent):
@@ -83,34 +92,6 @@ class NoOpAgent_v1(ProtocolAwareAgent):
         super().__init__(**kwargs_for_super)
         logger.info(f"NoOpAgent_v1 (ID: {self.get_id()}) initialized.")
 
-    # ADDED: Protocol-aware execution method (hybrid approach)
-    async def execute_with_protocols(self, task_input: NoOpInput, full_context: Optional[Dict[str, Any]] = None) -> NoOpOutput:
-        """
-        Execute using appropriate protocol with fallback to traditional method.
-        Follows AI agent best practices for hybrid execution.
-        """
-        try:
-            # Determine primary protocol for this agent
-            primary_protocol = self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "simple_operations"
-            
-            protocol_task = {
-                "task_input": task_input.dict() if hasattr(task_input, 'dict') else task_input,
-                "full_context": full_context,
-                "goal": f"Execute {self.AGENT_NAME} specialized task"
-            }
-            
-            protocol_result = await self.execute_with_protocol(protocol_task, primary_protocol)
-            
-            if protocol_result["overall_success"]:
-                return self._extract_output_from_protocol_result(protocol_result, task_input)
-            else:
-                logger.warning("Protocol execution failed, falling back to traditional method")
-                return await self.invoke_async(task_input, full_context)
-                
-        except Exception as e:
-            logger.warning(f"Protocol execution error: {e}, falling back to traditional method")
-            return await self.invoke_async(task_input, full_context)
-
     # ADDED: Protocol phase execution logic
     def _execute_phase_logic(self, phase: ProtocolPhase) -> Dict[str, Any]:
         """Execute agent-specific logic for each protocol phase."""
@@ -139,27 +120,28 @@ class NoOpAgent_v1(ProtocolAwareAgent):
             passthrough_data=task_input.passthrough_data
         )
 
-    # MAINTAINED: Original invoke_async method for backward compatibility
-    async def invoke_async(
+    # ------------------------------------------------------------------
+    # Legacy implementation preserved for Phase-2 consolidation ----------
+    # ------------------------------------------------------------------
+    async def _legacy_execute_impl(
         self,
         task_input: NoOpInput,
         full_context: Optional[SharedContext] = None,
     ) -> NoOpOutput:
+        """Original invoke_async logic moved here for reference."""
         logger.info(
             f"NoOpAgent_v1 (ID: {self.get_id()}) invoked. Input: {task_input}. Context: {full_context}"
         )
-        
+
         # Handle both Pydantic model and dictionary inputs
         if isinstance(task_input, dict):
-            # Convert dict to NoOpInput model
-            passthrough_data = task_input.get('passthrough_data')
+            passthrough_data = task_input.get("passthrough_data")
         else:
-            # Already a Pydantic model
             passthrough_data = task_input.passthrough_data
-            
+
         return NoOpOutput(
             message=f"NoOpAgent_v1 (ID: {self.get_id()}) executed successfully.",
-            passthrough_data=passthrough_data
+            passthrough_data=passthrough_data,
         )
 
     @classmethod
@@ -168,4 +150,34 @@ class NoOpAgent_v1(ProtocolAwareAgent):
 
     @classmethod
     def get_output_schema(cls) -> type:
-        return NoOpOutput 
+        return NoOpOutput
+
+    # ------------------------------------------------------------------
+    # UAEI wrapper ------------------------------------------------------
+    # ------------------------------------------------------------------
+    async def execute(
+        self,
+        context: ExecutionContext,
+        execution_mode: ExecutionMode | None = None,
+    ) -> AgentExecutionResult:  # type: ignore[override]
+        start = time.perf_counter()
+        # Delegate to legacy implementation (Phase-1 behaviour)
+        legacy_out = await self._legacy_execute_impl(context.inputs, context.shared_context)
+        end = time.perf_counter()
+
+        meta = ExecutionMetadata(
+            mode=ExecutionMode.SINGLE_PASS,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else None,
+            execution_time=end - start,
+            iterations_planned=1,
+            tools_utilized=None,
+        )
+
+        return AgentExecutionResult(
+            output=legacy_out,
+            execution_metadata=meta,
+            iterations_completed=1,
+            completion_reason=CompletionReason.SUCCESS,
+            quality_score=1.0,
+            protocol_used=meta.protocol_used,
+        ) 

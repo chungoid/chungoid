@@ -39,6 +39,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
@@ -46,19 +47,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, ClassVar
 from uuid import uuid4
 
-from chungoid.schemas.orchestration import SharedContext
-from chungoid.utils import state_manager
 from pydantic import BaseModel, Field, validator
 
 from chungoid.utils.prompt_manager import PromptManager
 from chungoid.utils.llm_provider import LLMProvider
-from chungoid.schemas.common import ConfidenceScore
-from ..protocol_aware_agent import ProtocolAwareAgent
-from ...protocols.base.protocol_interface import ProtocolPhase
+from ..unified_agent import UnifiedAgent
 from chungoid.utils.agent_registry import AgentCard, AgentCategory, AgentVisibility
 from chungoid.utils.exceptions import ChungoidError
 from chungoid.utils.config_manager import ConfigurationManager
-from chungoid.utils.execution_state_persistence import AgentOutput, CheckpointStatus, ExecutionContext, ResumableExecutionService, StageType, create_execution_checkpoint
+from chungoid.utils.execution_state_persistence import AgentOutput
 from chungoid.utils.project_type_detection import (
     ProjectTypeDetectionService,
     ProjectTypeDetectionResult
@@ -71,6 +68,15 @@ from chungoid.utils.smart_dependency_analysis import (
 
 # Registry-first architecture import
 from chungoid.registry import register_system_agent
+
+from ...schemas.unified_execution_schemas import (
+    ExecutionContext as UEContext,
+    AgentExecutionResult,
+    ExecutionMetadata,
+    ExecutionMode,
+    CompletionReason,
+    StageInfo,
+)
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -606,7 +612,7 @@ class NodeJSEnvironmentStrategy(EnvironmentStrategy):
 # ============================================================================
 
 @register_system_agent(capabilities=["environment_setup", "dependency_management", "project_bootstrapping"])
-class EnvironmentBootstrapAgent(ProtocolAwareAgent):
+class EnvironmentBootstrapAgent(UnifiedAgent):
     """
     Comprehensive environment bootstrap agent with multi-language support.
     
@@ -634,7 +640,6 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
         self,
         project_type_detector: Optional[ProjectTypeDetectionService] = None,
         dependency_analyzer: Optional[SmartDependencyAnalysisService] = None,
-        state_persistence: Optional[ResumableExecutionService] = None,
         **kwargs
     ):
         """Initialize the environment bootstrap agent.
@@ -642,7 +647,6 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
         Args:
             project_type_detector: Project type detection service
             dependency_analyzer: Smart dependency analysis service
-            state_persistence: State persistence service
         """
         super().__init__(**kwargs)
         
@@ -652,7 +656,6 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
         
         self._project_type_detector = project_type_detector or ProjectTypeDetectionService()
         self._dependency_analyzer = dependency_analyzer
-        self._state_persistence = state_persistence
         
         # Initialize environment strategies
         self._strategies = {
@@ -663,34 +666,12 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
         
         logger.info("EnvironmentBootstrapAgent initialized")
     
-    async def execute(self, inputs: EnvironmentBootstrapInput, context: SharedContext) -> EnvironmentBootstrapOutput:
-        """Execute environment bootstrap agent."""
+    async def _execute_bootstrap_logic(self, inputs: EnvironmentBootstrapInput) -> EnvironmentBootstrapOutput:
+        """Core environment bootstrap implementation."""
         start_time = datetime.now()
         logger.info(f"Starting environment bootstrap for {inputs.project_path}")
         
         try:
-            # Create execution context for state persistence
-            execution_context = None
-            if self._state_persistence:
-                execution_context = ExecutionContext(
-                    project_id=context.data.get("project_id", "unknown"),
-                    project_root_path=inputs.project_path,
-                    run_id=context.run_id,
-                    flow_id=context.flow_id,
-                    working_directory=inputs.project_path,
-                    execution_start_time=start_time
-                )
-                
-                # Create checkpoint at start
-                await create_execution_checkpoint(
-                    self._state_persistence,
-                    context.flow_id,
-                    "environment_bootstrap_start",
-                    StageType.AGENT_COMPLETE,
-                    CheckpointStatus.ACTIVE,
-                    execution_context
-                )
-            
             project_path = Path(inputs.project_path)
             if not project_path.exists():
                 raise EnvironmentBootstrapError(f"Project path does not exist: {project_path}")
@@ -733,17 +714,6 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
                 environments_created, validation_results
             )
             
-            # Create checkpoint at success
-            if execution_context:
-                await create_execution_checkpoint(
-                    self._state_persistence,
-                    context.flow_id,
-                    "environment_bootstrap_complete",
-                    StageType.AGENT_COMPLETE,
-                    CheckpointStatus.SUCCESS,
-                    execution_context
-                )
-            
             logger.info(f"Environment bootstrap completed successfully in {total_time:.2f} seconds")
             
             return EnvironmentBootstrapOutput(
@@ -764,17 +734,6 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
             # Cleanup on failure if requested
             if inputs.cleanup_on_failure and 'environments_created' in locals():
                 await self._cleanup_environments(environments_created)
-            
-            # Create checkpoint at failure
-            if execution_context:
-                await create_execution_checkpoint(
-                    self._state_persistence,
-                    context.flow_id,
-                    "environment_bootstrap_failed",
-                    StageType.AGENT_COMPLETE,
-                    CheckpointStatus.FAILED,
-                    execution_context
-                )
             
             total_time = (datetime.now() - start_time).total_seconds()
             
@@ -1081,72 +1040,93 @@ class EnvironmentBootstrapAgent(ProtocolAwareAgent):
             }
         )
 
-    async def _execute_phase_logic(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute environment bootstrap specific logic for each protocol phase."""
+    # ------------------------------------------------------------------
+    # UAEI Implementation -----------------------------------------------
+    # ------------------------------------------------------------------
+    
+    async def execute(
+        self, 
+        context: UEContext,
+        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
+    ) -> AgentExecutionResult:
+        """
+        UAEI execute method - handles both single-pass and multi-iteration execution.
+        """
+        start_time = time.perf_counter()
         
-        if phase.name == "discovery":
-            return self._discover_project_phase(phase, context)
-        elif phase.name == "planning":
-            return self._plan_environment_phase(phase, context)
-        elif phase.name == "execution":
-            return self._execute_bootstrap_phase(phase, context)
-        elif phase.name == "verification":
-            return self._validate_bootstrap_phase(phase, context)
+        # Convert inputs to proper type
+        if isinstance(context.inputs, dict):
+            # Handle dict inputs from CLI
+            if "user_goal" in context.inputs:
+                # Bootstrap based on user goal
+                inputs = EnvironmentBootstrapInput(
+                    project_path=context.shared_context.get("project_root_path", "."),
+                    strategy=BootstrapStrategy.AUTO_DETECT,
+                    install_dependencies=True,
+                    validate_environment=True
+                )
+            else:
+                inputs = EnvironmentBootstrapInput(**context.inputs)
+        elif isinstance(context.inputs, EnvironmentBootstrapInput):
+            inputs = context.inputs
         else:
-            self.logger.warning(f"Unknown protocol phase: {phase.name}")
-            return {"phase_completed": True, "method": "fallback"}
-
-    def _discover_project_phase(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 1: Discover project structure and requirements."""
-        return {
-            "phase_completed": True, 
-            "method": "project_discovery_completed",
-            "file_inventory": {"discovered_files": []},
-            "directory_structure": {"scanned": True},
-            "environment_bootstrapped": False,
-            "dependencies_installed": False,
-            "environment_verified": False,
-            "validation_passed": True
-        }
-
-    def _plan_environment_phase(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 2: Plan environment setup strategy."""
-        return {
-            "phase_completed": True, 
-            "method": "environment_planning_completed",
-            "operation_plan": {"steps": ["create_venv", "install_deps"]},
-            "backup_strategy": {"enabled": True},
-            "environment_bootstrapped": False,
-            "dependencies_installed": False,
-            "environment_verified": False,
-            "validation_passed": True
-        }
-
-    def _execute_bootstrap_phase(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 3: Execute environment bootstrap."""
-        return {
-            "phase_completed": True, 
-            "method": "bootstrap_execution_completed",
-            "operation_results": {"success": True},
-            "file_changes": {"logged": True},
-            "environment_bootstrapped": True,
-            "dependencies_installed": True,
-            "environment_verified": False,
-            "validation_passed": True
-        }
-
-    def _validate_bootstrap_phase(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 4: Validate created environments."""
-        return {
-            "phase_completed": True, 
-            "method": "bootstrap_validation_completed",
-            "verification_report": {"verified": True},
-            "rollback_plan": {"available": True},
-            "environment_bootstrapped": True,
-            "dependencies_installed": True,
-            "environment_verified": True,
-            "validation_passed": True
-        }
+            # Fallback for other types
+            inputs = EnvironmentBootstrapInput(
+                project_path=str(context.inputs.get("project_path", ".")),
+                strategy=BootstrapStrategy.AUTO_DETECT
+            )
+        
+        # Execute bootstrap logic
+        try:
+            output = await self._execute_bootstrap_logic(inputs)
+            
+            # Calculate quality score based on success
+            quality_score = 1.0 if output.success else 0.5
+            failed_envs = [env for env in output.environments_created if env.status == EnvironmentStatus.FAILED]
+            if failed_envs:
+                quality_score -= 0.1 * len(failed_envs)
+            quality_score = max(0.1, min(quality_score, 1.0))
+            
+            completion_reason = CompletionReason.SUCCESS if output.success else CompletionReason.ERROR
+            
+        except Exception as e:
+            logger.error(f"EnvironmentBootstrapAgent execution failed: {e}")
+            
+            # Create error output
+            output = EnvironmentBootstrapOutput(
+                success=False,
+                message=f"Bootstrap execution failed: {str(e)}",
+                environments_created=[],
+                dependencies_installed={},
+                validation_results={},
+                bootstrap_summary=f"Execution failed: {str(e)}",
+                recommendations=["Check logs", "Verify project structure"],
+                warnings=[str(e)],
+                total_setup_time=0.0
+            )
+            
+            quality_score = 0.1
+            completion_reason = CompletionReason.ERROR
+        
+        execution_time = time.perf_counter() - start_time
+        
+        # Create execution metadata
+        metadata = ExecutionMetadata(
+            mode=execution_mode,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "file_management",
+            execution_time=execution_time,
+            iterations_planned=context.execution_config.max_iterations,
+            tools_utilized=None
+        )
+        
+        return AgentExecutionResult(
+            output=output,
+            execution_metadata=metadata,
+            iterations_completed=1,  # Single iteration for bootstrap
+            completion_reason=completion_reason,
+            quality_score=quality_score,
+            protocol_used=metadata.protocol_used
+        )
 
 # ============================================================================
 # MCP Tool Wrappers
@@ -1197,18 +1177,27 @@ async def bootstrap_environment_tool(
             data={"project_id": Path(project_path).name}
         )
         
-        # Execute agent
+        # Execute agent via UAEI
         agent = EnvironmentBootstrapAgent()
-        result = await agent.execute(inputs, context)
-        
+
+        ue_ctx = UEContext(
+            inputs=inputs,
+            shared_context={"project_root_path": project_path},
+            stage_info=StageInfo(stage_id="environment_bootstrap_tool"),
+        )
+
+        result = await agent.execute(ue_ctx)
+
+        out = result.output  # EnvironmentBootstrapOutput
+
         return {
-            "success": result.success,
-            "message": result.message,
-            "environments_created": [env.dict() for env in result.environments_created],
-            "dependencies_installed": result.dependencies_installed,
-            "summary": result.bootstrap_summary,
-            "recommendations": result.recommendations,
-            "setup_time": result.total_setup_time
+            "success": getattr(out, "success", True),
+            "message": getattr(out, "message", ""),
+            "environments_created": [env.dict() for env in getattr(out, "environments_created", [])],
+            "dependencies_installed": getattr(out, "dependencies_installed", {}),
+            "summary": getattr(out, "bootstrap_summary", ""),
+            "recommendations": getattr(out, "recommendations", []),
+            "setup_time": getattr(out, "total_setup_time", 0.0),
         }
         
     except Exception as e:

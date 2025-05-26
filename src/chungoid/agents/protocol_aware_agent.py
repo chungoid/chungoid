@@ -18,11 +18,13 @@ from ..protocols.base.protocol_interface import PhaseStatus, ProtocolPhase
 from ..schemas.agent_outputs import AgentOutput
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager
+from .unified_agent import UnifiedAgent
+from ..schemas.unified_execution_schemas import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
-class ProtocolAwareAgent(BaseModel):
+class ProtocolAwareAgent(UnifiedAgent):
     """
     Streamlined autonomous agent base class for protocol-driven execution.
     
@@ -321,6 +323,26 @@ class ProtocolAwareAgent(BaseModel):
     def get_agent_card_static(cls):
         """Subclasses should override this to return their AgentCard."""
         raise NotImplementedError("Subclasses must implement get_agent_card_static to provide an AgentCard.")
+
+    # ---------------------------------------------------------------------
+    # UnifiedAgent compatibility bridge -----------------------------------
+    # ---------------------------------------------------------------------
+    async def _legacy_execute_single_pass(self, inputs: Any, context: ExecutionContext) -> Any:  # noqa: D401, arg-type
+        """Delegate single-pass execution to the existing *execute_with_protocol* implementation.
+
+        Phase-1 bridge: choose the first PRIMARY_PROTOCOL unless the caller
+        explicitly specified a preference via ``context.execution_config``.
+        """
+
+        # Determine which protocol to run
+        protocol_pref = getattr(context.execution_config, "protocol_preference", None)
+        chosen_protocol = protocol_pref or (self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "default")
+
+        # NOTE: Historically *inputs* already included the whole context dict
+        # expected by *execute_with_protocol*.
+        agent_output = await self.execute_with_protocol(chosen_protocol, inputs)
+
+        return agent_output
 
 
 # NO invoke_async method - completely removed

@@ -31,6 +31,11 @@ class MasterPlannerInput(BaseModel):
     project_id: Optional[str] = Field(None, description="Identifier for the current project, used when generating plan from blueprint.")
     blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the ProjectBlueprint.md to be transformed into a plan.")
     blueprint_reviewer_feedback_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the BlueprintReviewerAgent's feedback report.")
+    
+    # UAEI Phase-1 additions
+    run_id: Optional[str] = Field(None, description="Run ID for tracking execution")
+    initial_context: Optional[Dict[str, Any]] = Field(None, description="Initial execution context")
+    tags: Optional[List[str]] = Field(None, description="Tags for this execution")
 
     @model_validator(mode='before')
     def check_goal_or_blueprint_provided(cls, values):

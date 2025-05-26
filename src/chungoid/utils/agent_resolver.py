@@ -36,6 +36,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from chungoid.utils.llm_provider import LLMManager
 
+# UAEI Phase-1: reference base class for pre-migration agents
+from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+
 # REMOVED: All individual agent imports - registry-first architecture handles this
 # The registry will dynamically import and instantiate agents as needed
 
@@ -147,7 +150,8 @@ class RegistryAgentProvider:
         # MODIFIED: Import the correct registry types for registry-first architecture
         from chungoid.registry.in_memory_agent_registry import InMemoryAgentRegistry
         from chungoid.utils.llm_provider import LLMManager
-        from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
+        # Legacy import commented out during Phase-3 migration
+# from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
 
         # FIXED: Accept InMemoryAgentRegistry for registry-first architecture
         if not isinstance(registry, InMemoryAgentRegistry):
@@ -245,9 +249,15 @@ class RegistryAgentProvider:
                 agent_instance = self._instantiate_agent_class(agent_class, identifier)
                 if agent_instance:
                     logger.info(f"RegistryAgentProvider: Successfully instantiated agent '{identifier}' from registry.")
-                    # Return protocol adapter instead of invoke_async
-                    from .protocol_adapter import ProtocolExecutionAdapter
-                    return ProtocolExecutionAdapter(agent_instance)
+                    # Return UnifiedAgent.execute coroutine (single-pass) for Phase-1
+                    if hasattr(agent_instance, "execute"):
+                        return agent_instance.execute  # type: ignore[attr-defined]
+                    # Fallback: invoke_async if legacy agent (should be none)
+                    if hasattr(agent_instance, "invoke_async"):
+                        return agent_instance.invoke_async  # type: ignore[attr-defined]
+                    raise NoAgentFoundError(
+                        f"Resolved agent '{identifier}' lacks an executable interface."
+                    )
                 else:
                     raise NoAgentFoundError(f"Failed to instantiate agent '{identifier}' from registry.")
             else:

@@ -10,10 +10,11 @@ from typing import Dict, Any, Optional, Type, List, Union
 from pydantic import BaseModel, ValidationError
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
-from chungoid.runtime.agents.system_requirements_gathering_agent import (
-    SystemRequirementsGatheringAgent_v1,
-    SystemRequirementsGatheringInput
-)
+# Legacy imports commented out during Phase-3 migration
+# from chungoid.runtime.agents.system_requirements_gathering_agent import (
+#     SystemRequirementsGatheringAgent_v1,
+#     SystemRequirementsGatheringInput
+# )
 
 
 class InputValidationResult(BaseModel):
@@ -37,23 +38,24 @@ class InputValidationService:
     """
     
     # Agent input requirements and injection rules
+    # Legacy rules commented out during Phase-3 migration
     AGENT_INPUT_RULES = {
-        "SystemRequirementsGatheringAgent_v1": {
-            "input_schema": SystemRequirementsGatheringInput,
-            "required_fields": ["user_goal"],
-            "injection_rules": {
-                "user_goal": "initial_goal_str"  # Inject from orchestrator.initial_goal_str
-            },
-            "optional_fields": ["project_context_summary"]
-        },
-        "system_requirements_gathering_agent": {  # Alternative ID
-            "input_schema": SystemRequirementsGatheringInput,
-            "required_fields": ["user_goal"],
-            "injection_rules": {
-                "user_goal": "initial_goal_str"
-            },
-            "optional_fields": ["project_context_summary"]
-        }
+        # "SystemRequirementsGatheringAgent_v1": {
+        #     "input_schema": SystemRequirementsGatheringInput,
+        #     "required_fields": ["user_goal"],
+        #     "injection_rules": {
+        #         "user_goal": "initial_goal_str"  # Inject from orchestrator.initial_goal_str
+        #     },
+        #     "optional_fields": ["project_context_summary"]
+        # },
+        # "system_requirements_gathering_agent": {  # Alternative ID
+        #     "input_schema": SystemRequirementsGatheringInput,
+        #     "required_fields": ["user_goal"],
+        #     "injection_rules": {
+        #         "user_goal": "initial_goal_str"
+        #     },
+        #     "optional_fields": ["project_context_summary"]
+        # }
     }
     
     def __init__(self, logger: Optional[logging.Logger] = None):
@@ -140,10 +142,11 @@ class InputValidationService:
         if agent_id in self.AGENT_INPUT_RULES:
             return self.AGENT_INPUT_RULES[agent_id]
         
-        # Then try by instance type
+        # Legacy instance type checking commented out during Phase-3 migration
         if agent_instance:
-            if isinstance(agent_instance, SystemRequirementsGatheringAgent_v1):
-                return self.AGENT_INPUT_RULES["SystemRequirementsGatheringAgent_v1"]
+            # if isinstance(agent_instance, SystemRequirementsGatheringAgent_v1):
+            #     return self.AGENT_INPUT_RULES["SystemRequirementsGatheringAgent_v1"]
+            pass
         
         return None
     

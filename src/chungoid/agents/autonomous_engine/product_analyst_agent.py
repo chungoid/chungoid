@@ -12,8 +12,8 @@ import time
 from pydantic import BaseModel, Field, ValidationError
 
 # Chungoid imports using relative paths
-from ..protocol_aware_agent import ProtocolAwareAgent
-from ...protocols.base.protocol_interface import ProtocolPhase
+
+
 from ...utils.llm_provider import LLMProvider
 from ...utils.prompt_manager import PromptManager, PromptRenderError
 from ...schemas.autonomous_engine.loprd_schema import LOPRD
@@ -27,9 +27,17 @@ from ...utils.chromadb_migration_utils import migrate_store_artifact, migrate_re
 # Registry-first architecture import
 from chungoid.registry import register_autonomous_engine_agent
 
-from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
-from chungoid.protocols import get_protocol
+from chungoid.agents.unified_agent import UnifiedAgent
+
 from chungoid.schemas.agent_outputs import AgentOutput
+from ...schemas.unified_execution_schemas import (
+    ExecutionContext as UEContext,
+    AgentExecutionResult,
+    ExecutionMetadata,
+    ExecutionMode,
+    CompletionReason,
+    StageInfo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +67,7 @@ class ProductAnalystAgentOutput(BaseModel):
     validation_errors: Optional[str] = Field(None, description="Validation errors if the LLM output failed schema validation.")
 
 @register_autonomous_engine_agent(capabilities=["requirements_analysis", "stakeholder_analysis", "documentation"])
-class ProductAnalystAgent_v1(ProtocolAwareAgent):
+class ProductAnalystAgent_v1(UnifiedAgent):
     AGENT_ID: ClassVar[str] = "ProductAnalystAgent_v1"
     AGENT_VERSION: ClassVar[str] = "0.1.0"
     AGENT_NAME: ClassVar[str] = "Product Analyst Agent v1"
@@ -91,93 +99,143 @@ class ProductAnalystAgent_v1(ProtocolAwareAgent):
         
         self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as autonomous protocol-aware agent.")
 
-    async def _execute_phase_logic(self, phase: ProtocolPhase, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute protocol phase logic for product analysis."""
-        if phase.name == "discovery":
-            # Discover and analyze user goals
-            user_goal = context.get("refined_user_goal_md", "") or context.get("user_goal", "")
-            analysis = await self._analyze_user_goal(user_goal)
-            
-            # Return the required outputs that the protocol expects
-            return {
-                "raw_requirements": analysis.get("core_objectives", []),  # Protocol expects this
-                "stakeholder_list": analysis.get("key_stakeholders", []),  # Protocol expects this
-                "goal_analysis": analysis,  # Keep for internal use
-                "phase": "discovery",
-                # UNIFIED SUCCESS CRITERIA FIELDS
-                "requirements_extracted": True,                           # Requirements have been extracted
-                "stakeholders_identified": len(analysis.get("key_stakeholders", [])) > 0,  # STANDARDIZED from "stakeholder_needs_identified"
-                "requirements_documented": False,                        # Discovery phase - not yet documented
-                "phase_completed": True,                                  # UNIVERSAL REQUIREMENT
-                "validation_passed": True                                 # UNIVERSAL REQUIREMENT
-            }
-        elif phase.name == "analysis":
-            # Analyze requirements and create LOPRD structure
-            raw_requirements = context.get("raw_requirements", [])
-            stakeholder_list = context.get("stakeholder_list", [])
-            loprd_structure = await self._create_loprd_structure({"core_objectives": raw_requirements, "key_stakeholders": stakeholder_list})
-            
-            # Return the required outputs that the protocol expects
-            return {
-                "structured_requirements": loprd_structure,  # Protocol expects this
-                "dependencies": {"identified": True},  # Protocol expects this
-                "loprd_structure": loprd_structure,  # Keep for internal use
-                "phase": "analysis",
-                # UNIFIED SUCCESS CRITERIA FIELDS
-                "requirements_extracted": True,                           # Requirements were extracted in previous phase
-                "stakeholders_identified": len(stakeholder_list) > 0,     # Stakeholders were identified in previous phase
-                "requirements_documented": False,                        # Analysis phase - not yet fully documented
-                "phase_completed": True,                                  # UNIVERSAL REQUIREMENT
-                "validation_passed": True                                 # UNIVERSAL REQUIREMENT
-            }
-        elif phase.name == "validation":
-            # Validate LOPRD against schema
-            structured_requirements = context.get("structured_requirements", {})
-            validation_result = self._validate_loprd(structured_requirements)
-            
-            # Return the required outputs that the protocol expects
-            return {
-                "validated_requirements": {"status": "approved" if validation_result.get("is_valid", False) else "needs_revision"},  # Protocol expects this
-                "risk_assessment": {"level": "low" if validation_result.get("is_valid", False) else "medium"},  # Protocol expects this
-                "validation": validation_result,  # Keep for internal use
-                "phase": "validation",
-                # UNIFIED SUCCESS CRITERIA FIELDS
-                "requirements_extracted": True,                           # Requirements were extracted
-                "stakeholders_identified": True,                         # Stakeholders were identified
-                "requirements_documented": False,                        # Validation phase - not yet fully documented
-                "phase_completed": True,                                  # UNIVERSAL REQUIREMENT
-                "validation_passed": validation_result.get("is_valid", False)  # Based on actual validation results
-            }
-        elif phase.name == "documentation":
-            # Generate final LOPRD document
-            validated_requirements = context.get("validated_requirements", {})
-            final_loprd = self._generate_final_loprd(validated_requirements, context.get("risk_assessment", {}))
-            
-            # Return the required outputs that the protocol expects
-            return {
-                "requirements_document": final_loprd,  # Protocol expects this
-                "acceptance_criteria": final_loprd.get("acceptance_criteria", []),  # Protocol expects this
-                "final_loprd": final_loprd,  # Keep for internal use
-                "phase": "documentation",
-                # UNIFIED SUCCESS CRITERIA FIELDS
-                "requirements_extracted": True,                           # Requirements were extracted
-                "stakeholders_identified": True,                         # Stakeholders were identified
-                "requirements_documented": True,                         # Requirements are now fully documented
-                "phase_completed": True,                                  # UNIVERSAL REQUIREMENT
-                "validation_passed": True                                 # UNIVERSAL REQUIREMENT
-            }
+    async def execute(
+        self, 
+        context: UEContext,
+        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
+    ) -> AgentExecutionResult:
+        """
+        UAEI execute method - handles both single-pass and multi-iteration execution.
+        
+        Runs the complete product analysis workflow:
+        1. Discovery: Analyze user goals and extract requirements/stakeholders
+        2. Analysis: Create LOPRD structure from requirements  
+        3. Validation: Validate LOPRD against schema
+        4. Documentation: Generate final LOPRD document
+        """
+        start_time = time.perf_counter()
+        
+        # Convert inputs to proper type
+        if isinstance(context.inputs, dict):
+            inputs = ProductAnalystAgentInput(**context.inputs)
+        elif isinstance(context.inputs, ProductAnalystAgentInput):
+            inputs = context.inputs
         else:
-            # Default phase handling
-            return {
-                "phase": phase.name, 
-                "status": "completed",
-                # UNIFIED SUCCESS CRITERIA FIELDS (default values)
-                "requirements_extracted": False,                         # Unknown phase - conservative defaults
-                "stakeholders_identified": False,                        # Unknown phase - conservative defaults
-                "requirements_documented": False,                        # Unknown phase - conservative defaults
-                "phase_completed": True,                                  # UNIVERSAL REQUIREMENT
-                "validation_passed": True                                 # UNIVERSAL REQUIREMENT
-            }
+            # Fallback for other types
+            inputs = ProductAnalystAgentInput(
+                refined_user_goal_md=str(context.inputs.get("refined_user_goal_md", "")),
+                loprd_json_schema_str=str(context.inputs.get("loprd_json_schema_str", "{}"))
+            )
+        
+        try:
+            # Phase 1: Discovery - Analyze user goals
+            self.logger.info("Starting discovery phase")
+            goal_analysis = await self._analyze_user_goal(inputs.refined_user_goal_md)
+            
+            # Phase 2: Analysis - Create LOPRD structure
+            self.logger.info("Starting analysis phase") 
+            loprd_structure = await self._create_loprd_structure(goal_analysis)
+            
+            # Phase 3: Validation - Validate LOPRD
+            self.logger.info("Starting validation phase")
+            validation_result = self._validate_loprd(loprd_structure)
+            
+            # Phase 4: Documentation - Generate final LOPRD
+            self.logger.info("Starting documentation phase")
+            final_loprd = self._generate_final_loprd(loprd_structure, validation_result)
+            
+            # Store LOPRD artifact in Chroma (migrated from PCMA)
+            loprd_doc_id = f"loprd_{uuid.uuid4().hex[:8]}"
+            try:
+                await migrate_store_artifact(
+                    collection_name=LOPRD_ARTIFACTS_COLLECTION,
+                    document_id=loprd_doc_id,
+                    artifact_data=final_loprd,
+                    metadata={
+                        "agent_id": self.AGENT_ID,
+                        "artifact_type": ARTIFACT_TYPE_PRODUCT_ANALYSIS_JSON,
+                        "validation_passed": validation_result.get("is_valid", False),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+                self.logger.info(f"Stored LOPRD artifact with ID: {loprd_doc_id}")
+            except Exception as e:
+                self.logger.error(f"Failed to store LOPRD artifact: {e}")
+                loprd_doc_id = f"failed_storage_{uuid.uuid4().hex[:8]}"
+            
+            # Calculate quality score based on validation and completeness
+            quality_score = self._calculate_quality_score(validation_result, final_loprd, goal_analysis)
+            
+            # Create output
+            output = ProductAnalystAgentOutput(
+                loprd_doc_id=loprd_doc_id,
+                confidence_score=ConfidenceScore(
+                    value=quality_score,
+                    method="validation_and_completeness",
+                    explanation=f"Quality based on validation (valid: {validation_result.get('is_valid', False)}) and completeness"
+                ),
+                validation_errors=None if validation_result.get("is_valid", False) else str(validation_result.get("issues", []))
+            )
+            
+            completion_reason = CompletionReason.SUCCESS if quality_score >= context.execution_config.quality_threshold else CompletionReason.QUALITY_THRESHOLD
+            
+        except Exception as e:
+            self.logger.error(f"ProductAnalystAgent execution failed: {e}")
+            
+            # Create error output
+            output = ProductAnalystAgentOutput(
+                loprd_doc_id=f"error_{uuid.uuid4().hex[:8]}",
+                confidence_score=ConfidenceScore(
+                    value=0.1,
+                    method="error_fallback",
+                    explanation=f"Execution failed: {str(e)}"
+                ),
+                validation_errors=str(e)
+            )
+            
+            quality_score = 0.1
+            completion_reason = CompletionReason.ERROR
+        
+        execution_time = time.perf_counter() - start_time
+        
+        # Create execution metadata
+        metadata = ExecutionMetadata(
+            mode=execution_mode,
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "requirements_analysis",
+            execution_time=execution_time,
+            iterations_planned=context.execution_config.max_iterations,
+            tools_utilized=None
+        )
+        
+        return AgentExecutionResult(
+            output=output,
+            execution_metadata=metadata,
+            iterations_completed=1,  # Single iteration for requirements analysis
+            completion_reason=completion_reason,
+            quality_score=quality_score,
+            protocol_used=metadata.protocol_used
+        )
+    
+    def _calculate_quality_score(self, validation_result: Dict[str, Any], final_loprd: Dict[str, Any], goal_analysis: Dict[str, Any]) -> float:
+        """Calculate quality score based on validation and completeness."""
+        base_score = 1.0
+        
+        # Deduct for validation issues
+        if not validation_result.get("is_valid", False):
+            issues_count = len(validation_result.get("issues", []))
+            base_score -= 0.2 * min(issues_count, 3)  # Max 0.6 deduction for validation
+        
+        # Deduct for missing completeness
+        completeness_score = validation_result.get("completeness_score", 1.0)
+        base_score *= completeness_score
+        
+        # Bonus for rich analysis
+        if len(goal_analysis.get("core_objectives", [])) >= 3:
+            base_score += 0.1
+        if len(goal_analysis.get("key_stakeholders", [])) >= 2:
+            base_score += 0.1
+            
+        return max(0.1, min(base_score, 1.0))
 
     async def _analyze_user_goal(self, user_goal: str) -> Dict[str, Any]:
         """Analyze user goal to extract key insights."""
@@ -295,7 +353,7 @@ class ProductAnalystAgent_v1(ProtocolAwareAgent):
             }
         ]
 
-    def _generate_acceptance_criteria(self, goal_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _generate_acceptance_criteria(self, goal_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate acceptance criteria."""
         return [
             {
@@ -361,73 +419,7 @@ class ProductAnalystAgent_v1(ProtocolAwareAgent):
             }
         )
 
-    async def execute_with_protocol(self, protocol: str, context: Dict[str, Any]) -> AgentOutput:
-        """
-        Execute a task following a specific protocol.
-        Override to ensure correct output structure for success criteria.
-        """
-        self.logger.info(f"Executing with protocol: {protocol}")
-        
-        start_time = time.time()
-        
-        try:
-            # Load and initialize the protocol
-            self.current_protocol = get_protocol(protocol)
-            
-            # CRITICAL FIX: Setup the protocol to initialize phases and templates
-            self.current_protocol.setup(context)
-            
-            self.protocol_context = context.copy()
-            
-            # Execute all phases in sequence using the base class method
-            phases_completed = []
-            overall_success = True
-            
-            for phase in self.current_protocol.phases:
-                self.logger.info(f"Starting phase: {phase.name}")
-                
-                # Execute the phase using the base class method
-                phase_result = await self._execute_protocol_phase(phase)
-                phases_completed.append(phase.name)
-                
-                # Check if phase failed
-                if not phase_result["success"]:
-                    overall_success = False
-                    self.logger.error(f"Phase {phase.name} failed, stopping protocol execution")
-                    break
-                
-                # Update protocol context with phase outputs
-                self.protocol_context.update(phase_result.get("outputs", {}))
-            
-            execution_time = time.time() - start_time
-            
-            # Ensure the output has the expected structure for success criteria
-            output_data = self.protocol_context.copy()
-            
-            # Create standardized output
-            return AgentOutput(
-                success=overall_success,
-                data=output_data,
-                agent_id=self.agent_id,
-                protocol_used=protocol,
-                phases_completed=phases_completed,
-                execution_time=execution_time,
-                timestamp=datetime.now()
-            )
-            
-        except Exception as e:
-            execution_time = time.time() - start_time
-            self.logger.error(f"Protocol execution failed: {str(e)}")
-            
-            return AgentOutput(
-                success=False,
-                data={},
-                error=str(e),
-                agent_id=self.agent_id,
-                protocol_used=protocol,
-                execution_time=execution_time,
-                timestamp=datetime.now()
-            )
+
 
 # Example of how to get the card:
 # card = ProductAnalystAgent_v1.get_agent_card_static()

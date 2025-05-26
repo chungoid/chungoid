@@ -29,20 +29,21 @@ def initialize_all_agents() -> Dict[str, bool]:
     # Import all agent modules to trigger registration
     # This will cause all @register_agent decorators to execute
     
-    # System agents
+    # Legacy system agents temporarily disabled during Phase-3 migration
+    # These will be migrated to UnifiedAgent pattern and re-enabled
     try:
-        from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
-        from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
-        from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
-        from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
-        from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
-        from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
-        from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1
-        from chungoid.runtime.agents.system_intervention_agent import SystemInterventionAgent_v1
-        logger.info("System agents imported successfully")
+        # from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
+        # from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
+        # from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1
+        # from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
+        # from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
+        # from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
+        # from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1
+        # from chungoid.runtime.agents.system_intervention_agent import SystemInterventionAgent_v1
+        logger.info("Legacy system agents temporarily disabled during Phase-3 migration")
     except Exception as e:
-        logger.error(f"Failed to import system agents: {e}")
-        raise RuntimeError(f"System agent import failed: {e}")
+        logger.error(f"System agent import issue during Phase-3 migration: {e}")
+        # Don't raise during migration phase
     
     # Autonomous engine agents
     try:

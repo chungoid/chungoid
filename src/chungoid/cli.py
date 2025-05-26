@@ -44,8 +44,9 @@ from chungoid.core_utils import get_project_root_or_raise, init_project_structur
 from chungoid.schemas.master_flow import MasterExecutionPlan
 from chungoid.schemas.metrics import MetricEventType
 from chungoid.schemas.flows import PausedRunDetails
-from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_agent_card_static as get_reviewer_card
-from chungoid.runtime.orchestrator import AsyncOrchestrator
+# Legacy agents moved to agents-old - using stubs for now
+# from chungoid.runtime.agents.system_master_planner_reviewer_agent import get_agent_card_static as get_reviewer_card
+from chungoid.runtime import UnifiedOrchestrator  # Phase-3 UAEI migration
 from chungoid.schemas.metrics import MetricEvent
 from chungoid.utils.agent_registry import AgentRegistry
 from chungoid.utils.state_manager import StateManager
@@ -53,22 +54,15 @@ from chungoid.utils.metrics_store import MetricsStore
 from chungoid.utils.prompt_manager import PromptManager
 from chungoid.utils.llm_provider import MockLLMProvider, LLMManager # Keep MockLLMProvider for --use-mock-llm-provider flag
 
-# For Agent Cards (used in agent_registry.add())
-from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card
+# Legacy agent imports replaced with Phase-3 UAEI system
+# All legacy runtime.agents imports have been migrated to agents-old
+# Using the new autonomous_engine agents and UnifiedOrchestrator
 
-from chungoid.runtime.agents.system_master_planner_agent import get_agent_card_static as get_master_planner_agent_card
-from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
-
-# For Agent Classes (used in the fallback_agents_map and direct instantiation)
-from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent
-from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent
-
-# Real Agent Imports (ensure all necessary are here)
-from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
-from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
+# Core Phase-3 agents that exist
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
-from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1
-from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
+
+# Legacy agents are temporarily disabled during Phase-3 migration
+# These will be re-enabled as they are migrated to UnifiedAgent pattern
 # REMOVED: ProjectChromaManagerAgent_v1 import - replaced with MCP tools
 # from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
@@ -86,13 +80,14 @@ from chungoid.schemas.user_goal_schemas import UserGoalRequest # <<< ADD THIS IM
 # Imports needed for new 'flow resume' command
 import asyncio
 import json as py_json # Alias to avoid conflict with click option
-from chungoid.runtime.orchestrator import AsyncOrchestrator #, ExecutionPlan no longer primary
+from chungoid.runtime import UnifiedOrchestrator  # Phase-3 UAEI migration
 from chungoid.schemas.master_flow import MasterExecutionPlan # <<< Import MasterExecutionPlan
 from chungoid.utils.agent_resolver import RegistryAgentProvider, AgentCallable, AgentFallbackItem # MODIFIED
 # from chungoid.utils.flow_registry import FlowRegistry # No longer used directly for master plans
 from chungoid.utils.master_flow_registry import MasterFlowRegistry
 from chungoid.utils.agent_registry import AgentRegistry # Import AgentRegistry
-from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card, core_stage_executor_agent # <<< For registration
+# Legacy imports commented out during Phase-3 migration
+# from chungoid.runtime.agents.core_stage_executor import core_stage_executor_card, core_stage_executor_agent
 from chungoid.schemas.flows import PausedRunDetails # Ensure this is imported
 from chungoid.utils.config_manager import get_config # For default config
 # <<< Import patch and AsyncMock >>>
@@ -104,29 +99,26 @@ from chungoid.utils.metrics_store import MetricsStore
 from chungoid.schemas.metrics import MetricEventType
 from datetime import datetime, timezone # For summary display
 
-# Import for MasterPlannerReviewerAgent registration
-from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent, get_agent_card_static as get_master_planner_reviewer_agent_card
-# Import for MasterPlannerAgent registration
-from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent, get_agent_card_static as get_master_planner_agent_card
+# Legacy agent imports commented out during Phase-3 migration
+# from chungoid.runtime.agents.system_master_planner_reviewer_agent import MasterPlannerReviewerAgent, get_agent_card_static as get_master_planner_reviewer_agent_card
+# from chungoid.runtime.agents.system_master_planner_agent import MasterPlannerAgent, get_agent_card_static as get_master_planner_agent_card
 
 # New imports for MasterPlannerInput
 from chungoid.schemas.agent_master_planner import MasterPlannerInput # <<< ADD THIS IMPORT
 
-# Import for CoreCodeGeneratorAgent
-from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
-# Import for CoreTestGeneratorAgent
+# Legacy agent imports commented out during Phase-3 migration
+# from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
 # from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent  # COMMENTED OUT - Module doesn't exist
-# Import for CodeIntegrationAgent - UPDATED
-from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
+# from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
 from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 
 # New imports for MockTestGenerationAgentV1
 # from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGenerationAgentV1, get_agent_card_static as get_mock_test_generation_agent_v1_card
 
-# Import the new system_test_runner_agent
+# Legacy agent imports commented out during Phase-3 migration
 # from chungoid.runtime.agents import system_test_runner_agent # ADDED # OLD IMPORT
-# from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent # NEW IMPORT - COMMENTED OUT - Module doesn't exist
-from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1 # ADDED IMPORT
+# from chungoid.runtime.agents.system_test_runner_agent import SystemTestRunnerAgent_v1 as SystemTestRunnerAgent # NEW IMPORT - Module doesn't exist
+# from chungoid.runtime.agents.system_file_system_agent import SystemFileSystemAgent_v1 # ADDED IMPORT
 
 # Ensure AgentID type is available if used for keys, though strings are fine for dict keys.
 from chungoid.schemas.common import AgentID # CORRECTED IMPORT
@@ -145,8 +137,8 @@ from chungoid.schemas.common import AgentID # CORRECTED IMPORT
 # ADDED: Import MockNoOpAgent directly from its new file
 # from chungoid.runtime.agents.mocks.mock_noop_agent import MockNoOpAgent
 
-# ADDED: Imports for production system agents and dependencies
-from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
+# Legacy agent imports commented out during Phase-3 migration
+# from chungoid.runtime.agents.system_requirements_gathering_agent import SystemRequirementsGatheringAgent_v1
 # REMOVED: from chungoid.agents.autonomous_engine import get_autonomous_engine_agent_fallback_map
 # Legacy fallback map import removed - using registry-first architecture
 
@@ -157,8 +149,8 @@ from chungoid.utils.llm_provider import LLMProvider # Already imported but ensur
 # ADDED: Import ProjectChromaManagerAgent_v1 at the top for the map
 # from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1
 
-# ADDED: Import for NoOpAgent_v1
-from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1 
+# Legacy agent imports commented out during Phase-3 migration
+# from chungoid.runtime.agents.system_agents.noop_agent import NoOpAgent_v1 
 
 # ADDED: Import get_registry_agent_provider function
 from chungoid.agents import get_registry_agent_provider
@@ -783,13 +775,17 @@ def flow_run(ctx: click.Context,
         "state_manager": state_manager,
     }
 
-    orchestrator = AsyncOrchestrator(
-        project_root_path_override=str(project_path),
+    # PHASE 1 MIGRATION: Replace AsyncOrchestrator with UnifiedOrchestrator
+    orchestrator = UnifiedOrchestrator(
+        config=project_config,  # Add config parameter 
         state_manager=state_manager, 
         agent_provider=agent_provider, 
-        llm_manager=llm_manager_for_flow_run, # Pass LLMManager instance
-        prompt_manager=prompt_manager_instance,
-        initial_shared_context_override=current_shared_context # Pass the full shared context
+        metrics_store=MetricsStore(project_root=project_path)  # Add metrics_store
+        # REMOVED AsyncOrchestrator-specific parameters
+        # project_root_path_override=str(project_path),
+        # llm_manager=llm_manager_for_flow_run, 
+        # prompt_manager=prompt_manager_instance,
+        # initial_shared_context_override=current_shared_context
     )
 
     async def do_run():
@@ -1019,13 +1015,17 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
             "state_manager": resumed_sm,
         }
 
-        resumed_orchestrator = AsyncOrchestrator(
-            project_root_path_override=str(project_path),
+        # PHASE 1 MIGRATION: Replace AsyncOrchestrator with UnifiedOrchestrator
+        resumed_orchestrator = UnifiedOrchestrator(
+            config=resumed_project_config,  # Add config parameter 
             state_manager=resumed_sm, 
             agent_provider=agent_provider_resume, 
-            llm_manager=llm_manager_for_resume,
-            prompt_manager=prompt_manager_instance_for_resume,
-            initial_shared_context_override=resume_shared_context # Pass the full shared context for resume
+            metrics_store=MetricsStore(project_root=project_path)  # Add metrics_store
+            # REMOVED AsyncOrchestrator-specific parameters
+            # project_root_path_override=str(project_path),
+            # llm_manager=llm_manager_for_resume,
+            # prompt_manager=prompt_manager_instance_for_resume,
+            # initial_shared_context_override=resume_shared_context
         )
 
         inputs_dict: Optional[Dict[str, Any]] = None
@@ -1416,7 +1416,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
 
         # Agent Registry Setup
         agent_registry = AgentRegistry(project_root=abs_project_dir)
-        agent_registry.add(core_stage_executor_card, overwrite=True)
+        # PHASE 1 MIGRATION: Removed core_stage_executor_card - replaced with UnifiedOrchestrator registry pattern
+        # agent_registry.add(core_stage_executor_card, overwrite=True)
 
         # REMOVED: Project Chroma Manager - replaced with MCP tools
         # project_chroma_manager = ProjectChromaManagerAgent_v1(
@@ -1489,13 +1490,15 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
         if parsed_initial_context: # Merge CLI initial context
             build_shared_context_data.update(parsed_initial_context)
 
-        orchestrator = AsyncOrchestrator(
+        # PHASE 1 MIGRATION: Replace AsyncOrchestrator with UnifiedOrchestrator
+        orchestrator = UnifiedOrchestrator(
             config=config,
             state_manager=state_manager,
             agent_provider=agent_provider,
-            metrics_store=metrics_store,
-            master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "system.master_planner_reviewer_agent_v1"),
-            default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
+            metrics_store=metrics_store
+            # REMOVED AsyncOrchestrator-specific parameters that don't exist in UnifiedOrchestrator
+            # master_planner_reviewer_agent_id=config.get("orchestrator", {}).get("master_planner_reviewer_agent_id", "system.master_planner_reviewer_agent_v1"),
+            # default_on_failure_action=(default_on_failure_action_enum or OnFailureAction.INVOKE_REVIEWER)
         )
 
         # Generate a unique run ID (already done as current_run_id from outer scope)
@@ -1523,8 +1526,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
                     logger.error(f"Orchestrator final error details (raw): {final_error_details}")
             
             output_summary = "Build process completed."
-            if final_shared_context and final_shared_context.data:
-                output_summary += f" Final context keys: {list(final_shared_context.data.keys())}"
+            if final_shared_context:
+                output_summary += f" Final context keys: {list(final_shared_context.keys())}"
             else:
                 output_summary += " No final shared context data available."
             
@@ -1534,8 +1537,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             if final_status in [StageStatus.COMPLETED_SUCCESS, StageStatus.COMPLETED_WITH_WARNINGS]:
                 logger.info("Build process completed successfully.")
                 click.echo("Build process completed successfully.")
-                if final_shared_context and final_shared_context.data:
-                    click.echo(f"Final context keys: {list(final_shared_context.data.keys())}")
+                if final_shared_context:
+                    click.echo(f"Final context keys: {list(final_shared_context.keys())}")
                 else:
                     click.echo("No final shared context data available.")
             elif final_status == StageStatus.COMPLETED_FAILURE:
@@ -1548,8 +1551,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             else:
                 logger.warning("Build process completed with warnings.")
                 click.echo("Build process completed with warnings.")
-                if final_shared_context and final_shared_context.data:
-                    click.echo(f"Final context keys: {list(final_shared_context.data.keys())}")
+                if final_shared_context:
+                    click.echo(f"Final context keys: {list(final_shared_context.keys())}")
                 else:
                     click.echo("No final shared context data available.")
                 if final_error_details:

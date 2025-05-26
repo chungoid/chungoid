@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 import inspect
-from typing import Type, List, Optional, Dict, Any, Callable
+from typing import Type, List, Optional, Dict, Any, Callable, Union
 from functools import wraps
 
 from chungoid.agents.protocol_aware_agent import ProtocolAwareAgent
+from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from .in_memory_agent_registry import get_global_agent_registry, AgentMetadata
 
@@ -176,11 +177,17 @@ def validate_agent_interface(agent_class: Type[ProtocolAwareAgent]):
     if not agent_class.PRIMARY_PROTOCOLS:
         raise ValueError(f"Agent {agent_class.__name__} must have at least one PRIMARY_PROTOCOL")
     
-    # Validate required methods exist
-    required_methods = ['_execute_phase_logic', 'execute_with_protocol']
-    for method_name in required_methods:
-        if not hasattr(agent_class, method_name):
-            raise ValueError(f"Agent {agent_class.__name__} missing required method: {method_name}")
+    # UAEI: Only support unified interface (no legacy)
+    if not hasattr(agent_class, 'execute'):
+        raise ValueError(f"Agent {agent_class.__name__} must implement UAEI execute() method")
+    
+    # Ensure no legacy methods remain
+    legacy_methods = ['invoke_async', 'execute_with_protocol', 'execute_with_protocols']
+    for method in legacy_methods:
+        if hasattr(agent_class, method):
+            raise ValueError(f"Agent {agent_class.__name__} contains legacy method {method} - must be removed for UAEI compliance")
+    
+    logger.debug(f"Agent {agent_class.__name__} passed UAEI interface validation")
     
     logger.debug(f"Agent {agent_class.__name__} passed interface validation")
 

@@ -30,7 +30,8 @@ from .core_snapshot_utils import build_snapshot
 from .core_snapshot_utils import _get_tool_specs  # internal helper
 from .flow_registry import FlowRegistry, FlowCard  # NEW
 from .flow_api import get_router as get_flow_router
-from chungoid.runtime.orchestrator import ExecutionPlan, AsyncOrchestrator
+from chungoid.runtime import AsyncOrchestrator
+from chungoid.runtime.unified_orchestrator import UnifiedOrchestrator  # for ExecutionPlan removed
 from chungoid.utils.agent_resolver import AgentProvider, RegistryAgentProvider
 from chungoid.utils.state_manager import StateManager
 from chungoid.utils.llm_provider import MockLLMProvider

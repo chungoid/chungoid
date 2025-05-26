@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Header, HTTPException, Depends
 import os
 from pathlib import Path
-from chungoid.runtime.orchestrator import AsyncOrchestrator
+from chungoid.runtime import AsyncOrchestrator
 from chungoid.utils.agent_resolver import AgentProvider
 from chungoid.utils.state_manager import StateManager
 from chungoid.utils.metrics_store import MetricsStore
@@ -56,13 +56,7 @@ def get_router(api_key_checker):
         # Otherwise, if we must use master_plan_id:
         master_plan_id_to_pass = flow_id
 
-        orch = AsyncOrchestrator(
-            config=config, 
-            agent_provider=agent_provider, 
-            state_manager=state_manager,
-            metrics_store=metrics_store,
-            master_planner_reviewer_agent_id="system.master_planner_reviewer_agent_v1" # Use a placeholder string ID
-        )
+        orch = AsyncOrchestrator(project_root=Path.cwd())
         # result_context = await orch.run(plan=plan, context=context) # OLD WAY
         result_context = await orch.run(master_plan_id=master_plan_id_to_pass, initial_context=context) # NEW WAY
         return {"status": "ok", "result": result_context}
