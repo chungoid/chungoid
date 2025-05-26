@@ -143,11 +143,12 @@ class UnifiedOrchestrator:
         master_planner_input: MasterPlannerInput
     ) -> None:
         """
-        UAEI Phase-1: Simplified goal execution without master planner agent.
-        Instead of generating complex plans, directly execute relevant agents for the goal.
+        UAEI Phase-1: Enhanced goal execution with proper goal analysis.
+        Analyzes any goal content to extract real project specifications,
+        then executes relevant agents with the actual project information.
         """
         
-        self.logger.info(f"[UAEI] Executing simplified goal flow: {master_planner_input.user_goal[:100]}...")
+        self.logger.info(f"[UAEI] Executing enhanced goal flow: {master_planner_input.user_goal[:100]}...")
         
         # Update shared context
         self.shared_context.update({
@@ -160,38 +161,104 @@ class UnifiedOrchestrator:
         if master_planner_input.initial_context:
             self.shared_context.update(master_planner_input.initial_context)
         
-        # UAEI Phase-1: Execute a simplified flow of key agents
-        # This replaces the complex master planning with direct agent execution
+        # UAEI Phase-1: Enhanced flow with proper goal analysis
         
-        # 1. Environment setup
+        # 1. Goal analysis - ENHANCED: Direct YAML parsing (NO AGENT CALLS)
+        self.logger.info("[UAEI] Analyzing goal content directly (no agent interaction)")
+        
+        # Extract intelligent project information from goal content directly
+        project_specs = await self._extract_project_specifications(
+            goal_content=master_planner_input.user_goal,
+            analysis_result=None  # No agent result needed
+        )
+        
+        # 2. Environment setup - ENHANCED: Use extracted project information
         await self.execute_stage(
             stage_id="environment_bootstrap",
             agent_id="EnvironmentBootstrapAgent",
             inputs={
                 "user_goal": master_planner_input.user_goal,
-                "project_type": "cli_tool"  # Inferred from goal
+                "project_specifications": project_specs,  # Pass intelligent analysis!
+                "project_path": self.shared_context.get("project_root_path", "."),
+                "intelligent_context": True  # Signal that this is intelligent input
             },
             max_iterations=1
         )
-        
-        # 2. Dependency management  
+
+        # 3. Dependency management - ENHANCED: Use extracted project information
         await self.execute_stage(
             stage_id="dependency_management",
-            agent_id="DependencyManagementAgent_v1", 
+            agent_id="DependencyManagementAgent_v1",
             inputs={
                 "operation": "analyze",
                 "project_path": self.shared_context.get("project_root_path", "."),
                 "auto_detect_dependencies": True,
                 "install_after_analysis": True,
                 "resolve_conflicts": True,
-                "target_languages": ["python"],
+                "target_languages": project_specs.get("target_languages", ["python"]),
+                "perform_security_audit": True,
+                "optimize_versions": True,
+                "create_lock_files": True,
+                "project_specifications": project_specs,  # Pass intelligent analysis!
+                "intelligent_context": True,  # Signal that this is intelligent input
+                "user_goal": master_planner_input.user_goal
+            },
+            max_iterations=1
+        )
+
+        # 4. Product Analysis - ENHANCED: Analyze requirements and scope
+        await self.execute_stage(
+            stage_id="product_analysis",
+            agent_id="ProductAnalystAgent_v1",
+            inputs={
                 "user_goal": master_planner_input.user_goal,
-                "technologies": ["scapy", "python"]  # Inferred from goal
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
+
+        # 5. Architecture Design - ENHANCED: Design system architecture
+        await self.execute_stage(
+            stage_id="architecture_design",
+            agent_id="ArchitectAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
+
+        # 6. Requirements Tracing - ENHANCED: Trace and validate requirements
+        await self.execute_stage(
+            stage_id="requirements_tracing",
+            agent_id="RequirementsTracerAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
+
+        # 7. Risk Assessment - ENHANCED: Assess project risks
+        await self.execute_stage(
+            stage_id="risk_assessment",
+            agent_id="ProactiveRiskAssessorAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
             },
             max_iterations=1
         )
         
-        self.logger.info("[UAEI] Simplified goal execution completed")
+        self.logger.info("[UAEI] Enhanced autonomous development pipeline completed")
 
     # ------------------------------------------------------------------
     async def run(
@@ -266,4 +333,233 @@ class UnifiedOrchestrator:
     # ------------------------------------------------------------------
     def get_shared_outputs(self) -> Dict[str, Any]:
         """Get all stage outputs from shared context."""
-        return self.shared_context.get("outputs", {}) 
+        return self.shared_context.get("outputs", {})
+
+    async def _extract_project_specifications(
+        self, 
+        goal_content: str, 
+        analysis_result: Any
+    ) -> Dict[str, Any]:
+        """
+        Intelligently extract project specifications from goal content.
+        Uses YAML parsing and LLM analysis to understand project requirements.
+        """
+        
+        project_specs = {
+            "project_type": "cli_tool",
+            "primary_language": "python", 
+            "target_languages": ["python"],
+            "target_platforms": ["linux", "macos", "windows"],
+            "technologies": ["python"],
+            "required_dependencies": [],
+            "optional_dependencies": []
+        }
+        
+        try:
+            # First, try to parse as YAML using PyYAML
+            import yaml
+            
+            # Use safe_load to securely parse YAML content
+            parsed_goal = yaml.safe_load(goal_content)
+            
+            if parsed_goal and isinstance(parsed_goal, dict):
+                self.logger.info("[UAEI] Successfully parsed goal content as YAML")
+                
+                # Extract project type
+                project_type = self._extract_project_type(parsed_goal)
+                if project_type:
+                    project_specs["project_type"] = project_type
+                    self.logger.info(f"[UAEI] Extracted project type: {project_type}")
+                
+                # Extract technical specifications
+                tech_specs = self._extract_technical_specs(parsed_goal)
+                project_specs.update(tech_specs)
+                
+                # Extract dependencies
+                deps = self._extract_dependencies(parsed_goal)
+                project_specs.update(deps)
+                
+            else:
+                self.logger.info("[UAEI] Goal content is not valid YAML, using LLM analysis")
+                # Fallback to LLM-based analysis for non-YAML content
+                llm_specs = await self._analyze_goal_with_llm(goal_content)
+                project_specs.update(llm_specs)
+                
+        except yaml.YAMLError as e:
+            self.logger.info(f"[UAEI] YAML parsing failed: {e}, using LLM analysis")
+            # Fallback to LLM-based analysis
+            llm_specs = await self._analyze_goal_with_llm(goal_content)
+            project_specs.update(llm_specs)
+        except Exception as e:
+            self.logger.warning(f"[UAEI] Error extracting project specs: {e}")
+            # Return defaults if all else fails
+        
+        self.logger.info(f"[UAEI] Final project specifications: {project_specs}")
+        return project_specs
+    
+    def _extract_project_type(self, parsed_goal: Dict[str, Any]) -> str:
+        """Extract project type from parsed YAML goal"""
+        
+        # Look for explicit project type
+        if "project" in parsed_goal and "type" in parsed_goal["project"]:
+            return parsed_goal["project"]["type"]
+        
+        if "type" in parsed_goal:
+            return parsed_goal["type"]
+        
+        # Infer from project characteristics
+        if "technical" in parsed_goal:
+            tech = parsed_goal["technical"]
+            
+            # Check interface type
+            if "interface" in tech and "type" in tech["interface"]:
+                interface_type = tech["interface"]["type"]
+                if interface_type == "command_line":
+                    return "cli_tool"
+                elif interface_type in ["web_ui", "web"]:
+                    return "web_app"
+                elif interface_type in ["rest_api", "api"]:
+                    return "api"
+        
+        # Check for CLI indicators in description or name
+        description = parsed_goal.get("description", "").lower()
+        name = parsed_goal.get("name", "").lower()
+        
+        if any(term in description + name for term in ["cli", "command", "terminal", "scanner"]):
+            return "cli_tool"
+        elif any(term in description + name for term in ["web", "website", "app"]):
+            return "web_app"
+        elif any(term in description + name for term in ["api", "service"]):
+            return "api"
+        
+        return "cli_tool"  # Default
+    
+    def _extract_technical_specs(self, parsed_goal: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract technical specifications from parsed YAML goal"""
+        
+        specs = {}
+        
+        if "technical" in parsed_goal:
+            tech = parsed_goal["technical"]
+            
+            # Extract primary language
+            if "primary_language" in tech:
+                specs["primary_language"] = tech["primary_language"].lower()
+                specs["target_languages"] = [tech["primary_language"].lower()]
+            
+            # Extract secondary languages
+            if "secondary_languages" in tech and tech["secondary_languages"]:
+                languages = [lang.lower() for lang in tech["secondary_languages"]]
+                if "target_languages" in specs:
+                    specs["target_languages"].extend(languages)
+                else:
+                    specs["target_languages"] = languages
+            
+            # Extract target platforms
+            if "target_platforms" in tech and tech["target_platforms"]:
+                platforms = [platform.lower() for platform in tech["target_platforms"]]
+                specs["target_platforms"] = platforms
+            
+            # Extract technologies from various fields
+            technologies = set()
+            
+            # Add primary language as technology
+            if "primary_language" in specs:
+                technologies.add(specs["primary_language"])
+            
+            # Look for frameworks/libraries in dependencies
+            if "dependencies" in tech:
+                deps = tech["dependencies"]
+                if "required" in deps and deps["required"]:
+                    for dep in deps["required"]:
+                        if isinstance(dep, str):
+                            technologies.add(dep.lower())
+            
+            if technologies:
+                specs["technologies"] = list(technologies)
+        
+        return specs
+    
+    def _extract_dependencies(self, parsed_goal: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract dependency information from parsed YAML goal"""
+        
+        deps = {
+            "required_dependencies": [],
+            "optional_dependencies": []
+        }
+        
+        if "technical" in parsed_goal and "dependencies" in parsed_goal["technical"]:
+            tech_deps = parsed_goal["technical"]["dependencies"]
+            
+            # Extract required dependencies
+            if "required" in tech_deps and tech_deps["required"]:
+                required = tech_deps["required"]
+                if isinstance(required, list):
+                    deps["required_dependencies"] = [dep.lower() for dep in required if isinstance(dep, str)]
+                elif isinstance(required, str):
+                    deps["required_dependencies"] = [required.lower()]
+            
+            # Extract optional dependencies
+            if "optional" in tech_deps and tech_deps["optional"]:
+                optional = tech_deps["optional"]
+                if isinstance(optional, list):
+                    deps["optional_dependencies"] = [dep.lower() for dep in optional if isinstance(dep, str)]
+                elif isinstance(optional, str):
+                    deps["optional_dependencies"] = [optional.lower()]
+        
+        return deps
+    
+    async def _analyze_goal_with_llm(self, goal_content: str) -> Dict[str, Any]:
+        """Fallback LLM analysis for non-YAML goal content"""
+        
+        try:
+            analysis_prompt = f"""
+            Analyze this project goal and extract technical specifications:
+            
+            Goal: {goal_content}
+            
+            Extract and return ONLY a JSON object with these fields:
+            {{
+                "project_type": "cli_tool|web_app|api|library|other",
+                "primary_language": "python|javascript|java|etc",
+                "target_languages": ["list", "of", "languages"],
+                "target_platforms": ["linux", "macos", "windows"],
+                "technologies": ["list", "of", "technologies"],
+                "required_dependencies": ["list", "of", "required", "deps"],
+                "optional_dependencies": ["list", "of", "optional", "deps"]
+            }}
+            
+            Return only valid JSON, no other text.
+            """
+            
+            response = await self.llm_provider.generate(
+                prompt=analysis_prompt,
+                max_tokens=500,
+                temperature=0.1
+            )
+            
+            # Parse JSON response
+            import json
+            specs = json.loads(response.strip())
+            
+            # Validate and clean the response
+            validated_specs = {}
+            if "project_type" in specs:
+                validated_specs["project_type"] = specs["project_type"]
+            if "primary_language" in specs:
+                validated_specs["primary_language"] = specs["primary_language"].lower()
+                validated_specs["target_languages"] = [specs["primary_language"].lower()]
+            if "target_platforms" in specs and isinstance(specs["target_platforms"], list):
+                validated_specs["target_platforms"] = [p.lower() for p in specs["target_platforms"]]
+            if "technologies" in specs and isinstance(specs["technologies"], list):
+                validated_specs["technologies"] = [t.lower() for t in specs["technologies"]]
+            if "required_dependencies" in specs and isinstance(specs["required_dependencies"], list):
+                validated_specs["required_dependencies"] = [d.lower() for d in specs["required_dependencies"]]
+            if "optional_dependencies" in specs and isinstance(specs["optional_dependencies"], list):
+                validated_specs["optional_dependencies"] = [d.lower() for d in specs["optional_dependencies"]]
+            
+            return validated_specs
+            
+        except Exception as e:
+            self.logger.warning(f"[UAEI] LLM analysis failed: {e}")
+            return {}  # Return empty dict to use defaults 

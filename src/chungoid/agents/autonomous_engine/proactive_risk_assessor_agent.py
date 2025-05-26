@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal, ClassVar, Type
 import time
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from chungoid.agents.unified_agent import UnifiedAgent
 from ...utils.llm_provider import LLMProvider
@@ -46,13 +46,34 @@ class ProtocolExecutionError(Exception):
 
 class ProactiveRiskAssessorInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this assessment task.")
-    project_id: str = Field(..., description="Identifier for the current project.")
-    artifact_id: str = Field(..., description="ChromaDB ID of the artifact (LOPRD or Blueprint) to be assessed.")
-    artifact_type: Literal["LOPRD", "Blueprint", "MasterExecutionPlan"] = Field(..., description="Type of the artifact being assessed.")
+    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
+    artifact_id: Optional[str] = Field(None, description="ChromaDB ID of the artifact (LOPRD or Blueprint) to be assessed.")
+    artifact_type: Optional[Literal["LOPRD", "Blueprint", "MasterExecutionPlan"]] = Field(None, description="Type of the artifact being assessed.")
     loprd_document_id_for_blueprint_context: Optional[str] = Field(None, description="Optional LOPRD ID if artifact_type is Blueprint, to provide LOPRD context.")
     # Optional: Specific areas to focus on, or context about previous reviews
     focus_areas: Optional[List[str]] = Field(None, description="Optional list of specific areas to focus the risk assessment on.")
     # previous_assessment_ids: Optional[List[str]] = Field(None, description="IDs of previous assessment reports for context, if re-assessing.")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal when using intelligent context")
+    project_path: Optional[str] = Field(None, description="Project directory path")
+    
+    @validator('project_id', 'artifact_id', 'artifact_type', pre=True, always=True)
+    def validate_required_fields(cls, v, values):
+        """Ensure either traditional fields OR intelligent context fields are provided."""
+        intelligent_context = values.get('intelligent_context', False)
+        
+        if intelligent_context:
+            # When using intelligent context, traditional fields are optional
+            return v or "intelligent_analysis"
+        else:
+            # When not using intelligent context, traditional fields are required
+            # Note: We can't access field.name in Pydantic V2, so we check the value directly
+            if not v:
+                raise ValueError("Field is required when not using intelligent context")
+            return v
 
 class ProactiveRiskAssessorOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -159,16 +180,28 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
             inputs = context.inputs
         else:
             # Fallback for other types
+            input_dict = context.inputs.dict() if hasattr(context.inputs, 'dict') else dict(context.inputs)
             inputs = ProactiveRiskAssessorInput(
-                project_id=str(context.inputs.get("project_id", "default")),
-                artifact_id=str(context.inputs.get("artifact_id", "")),
-                artifact_type=context.inputs.get("artifact_type", "LOPRD")
+                project_id=input_dict.get("project_id", "default"),
+                artifact_id=input_dict.get("artifact_id", ""),
+                artifact_type=input_dict.get("artifact_type", "LOPRD"),
+                intelligent_context=input_dict.get("intelligent_context", False),
+                project_specifications=input_dict.get("project_specifications"),
+                user_goal=input_dict.get("user_goal"),
+                project_path=input_dict.get("project_path")
             )
         
         try:
             # Phase 1: Discovery - Retrieve artifact  
             self._logger.info("Starting artifact discovery phase")
-            artifact = await self._discover_artifact(inputs)
+            
+            # Check if we have intelligent project specifications from orchestrator
+            if inputs.project_specifications and inputs.intelligent_context:
+                self._logger.info("Using intelligent project specifications from orchestrator")
+                artifact = self._extract_artifact_from_intelligent_specs(inputs.project_specifications, inputs.user_goal)
+            else:
+                self._logger.info("Using traditional artifact retrieval")
+                artifact = await self._discover_artifact(inputs)
             
             # Phase 2: Analysis - Analyze risks
             self._logger.info("Starting risk analysis phase")
@@ -238,6 +271,38 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
             tools_used=tools_used,
             protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "risk_assessment"
         )
+
+    def _extract_artifact_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract artifact-like data from intelligent project specifications."""
+        
+        # Create mock artifact from project specifications
+        artifact = {
+            "status": "SUCCESS",
+            "content": {
+                "project_overview": {
+                    "name": project_specs.get("project_type", "Unknown Project"),
+                    "description": user_goal[:200] + "..." if len(user_goal) > 200 else user_goal,
+                    "type": project_specs.get("project_type", "unknown")
+                },
+                "technical_requirements": {
+                    "primary_language": project_specs.get("primary_language", "unknown"),
+                    "target_platforms": project_specs.get("target_platforms", []),
+                    "technologies": project_specs.get("technologies", []),
+                    "dependencies": {
+                        "required": project_specs.get("required_dependencies", []),
+                        "optional": project_specs.get("optional_dependencies", [])
+                    }
+                },
+                "project_specifications": project_specs,
+                "intelligent_analysis": True
+            },
+            "metadata": {
+                "source": "intelligent_orchestrator_analysis",
+                "confidence": 0.9
+            }
+        }
+        
+        return artifact
 
     async def _discover_artifact(self, inputs: ProactiveRiskAssessorInput) -> Dict[str, Any]:
         """Discover and retrieve artifact to be assessed."""

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal, ClassVar, Type, Union, List
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, validator, PrivateAttr
 
 from chungoid.agents.unified_agent import UnifiedAgent
 from ...utils.llm_provider import LLMProvider
@@ -55,13 +55,43 @@ class ProtocolExecutionError(Exception):
 
 class RequirementsTracerInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this traceability task.")
-    project_id: str = Field(..., description="Identifier for the current project.")
-    source_artifact_doc_id: str = Field(..., description="ChromaDB ID of the source artifact (e.g., LOPRD, previous plan).")
-    source_artifact_type: Literal["LOPRD", "Blueprint", "UserStories"] = Field(..., description="Type of the source artifact.")
-    target_artifact_doc_id: str = Field(..., description="ChromaDB ID of the target artifact (e.g., Blueprint, MasterExecutionPlan).")
-    target_artifact_type: Literal["Blueprint", "MasterExecutionPlan", "CodeModules"] = Field(..., description="Type of the target artifact.")
+    
+    # Traditional fields - optional when using intelligent context
+    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
+    source_artifact_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the source artifact (e.g., LOPRD, previous plan).")
+    source_artifact_type: Optional[Literal["LOPRD", "Blueprint", "UserStories"]] = Field(None, description="Type of the source artifact.")
+    target_artifact_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the target artifact (e.g., Blueprint, MasterExecutionPlan).")
+    target_artifact_type: Optional[Literal["Blueprint", "MasterExecutionPlan", "CodeModules"]] = Field(None, description="Type of the target artifact.")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
+    project_path: Optional[str] = Field(None, description="Project path for context")
+    
     # Optional: Specific aspects to trace or previous reports for context
     # focus_aspects: Optional[List[str]] = Field(None, description="Specific aspects or requirement categories to focus the trace on.")
+    
+    @validator('project_id')
+    def validate_traditional_or_intelligent_context(cls, v, values):
+        """Ensure either traditional fields or intelligent context is provided."""
+        intelligent_context = values.get('intelligent_context', False)
+        user_goal = values.get('user_goal')
+        project_specifications = values.get('project_specifications')
+        
+        if intelligent_context:
+            # When using intelligent context, user_goal and project_specifications are required
+            if not user_goal:
+                raise ValueError("user_goal is required when intelligent_context=True")
+            if not project_specifications:
+                raise ValueError("project_specifications is required when intelligent_context=True")
+            # Traditional fields are optional in this case
+            return v or "intelligent_project"
+        else:
+            # When not using intelligent context, traditional fields are required
+            if not v:
+                raise ValueError("project_id is required when intelligent_context=False")
+            return v
 
 class RequirementsTracerOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -135,7 +165,12 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 task_input = context.inputs
 
             # Phase 1: Discovery - Discover and retrieve artifacts
-            discovery_result = await self._discover_artifacts(task_input, context.shared_context)
+            if task_input.intelligent_context and task_input.project_specifications:
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                discovery_result = self._extract_artifacts_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+            else:
+                self.logger.info("Using traditional artifact retrieval")
+                discovery_result = await self._discover_artifacts(task_input, context.shared_context)
             
             # Phase 2: Analysis - Analyze traceability between artifacts
             analysis_result = await self._analyze_traceability(discovery_result, task_input, context.shared_context)
@@ -174,7 +209,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             # Create error output
             output = RequirementsTracerOutput(
                 task_id=getattr(task_input, 'task_id', str(uuid.uuid4())),
-                project_id=getattr(task_input, 'project_id', 'unknown'),
+                project_id=getattr(task_input, 'project_id', None) or 'unknown',
                 status="FAILURE_LLM",
                 message=f"Traceability analysis failed: {str(e)}",
                 error_message=str(e),
@@ -195,6 +230,62 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             tools_used=tools_used,
             protocol_used="requirements_traceability_protocol"
         )
+
+    def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract artifact-like data from intelligent project specifications."""
+        
+        # Create mock LOPRD artifact from project specifications
+        loprd_artifact = {
+            "status": "SUCCESS",
+            "content": {
+                "project_overview": {
+                    "name": project_specs.get("project_type", "Unknown Project"),
+                    "description": user_goal[:200] + "..." if len(user_goal) > 200 else user_goal,
+                    "type": project_specs.get("project_type", "unknown")
+                },
+                "functional_requirements": [
+                    f"Implement {tech} functionality" for tech in project_specs.get("technologies", [])[:5]
+                ],
+                "user_stories": [
+                    {
+                        "id": "US001",
+                        "as_a": "user",
+                        "i_want": f"to use a {project_specs.get('project_type', 'tool')}",
+                        "so_that": "I can accomplish my goals efficiently"
+                    }
+                ]
+            }
+        }
+        
+        # Create mock Blueprint artifact from project specifications
+        blueprint_artifact = {
+            "status": "SUCCESS", 
+            "content": {
+                "title": f"Technical Blueprint - {project_specs.get('project_type', 'Project')}",
+                "architecture_pattern": "modular",
+                "technology_stack": {
+                    "primary_language": project_specs.get("primary_language", "python"),
+                    "technologies": project_specs.get("technologies", []),
+                    "dependencies": project_specs.get("required_dependencies", [])
+                },
+                "components": [
+                    {
+                        "name": f"Component_{i+1}",
+                        "responsibility": tech,
+                        "interfaces": ["API"]
+                    } for i, tech in enumerate(project_specs.get("technologies", [])[:3])
+                ]
+            }
+        }
+        
+        return {
+            "source_artifact": loprd_artifact,
+            "target_artifact": blueprint_artifact,
+            "artifacts_retrieved": True,
+            "source_type": "LOPRD",
+            "target_type": "Blueprint",
+            "intelligent_analysis": True
+        }
 
     async def _discover_artifacts(self, task_input: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Discovery - Discover and retrieve artifacts using MCP tools."""
@@ -264,6 +355,10 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         source_artifact = discovery_result.get("source_artifact", {})
         target_artifact = discovery_result.get("target_artifact", {})
         
+        # Handle intelligent context where artifact types might be None
+        source_type = task_input.source_artifact_type or "LOPRD"
+        target_type = task_input.target_artifact_type or "Blueprint"
+        
         # Simulate traceability analysis
         # In a real implementation, this would analyze the actual artifact content
         analysis = {
@@ -271,7 +366,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             "traceability_score": 0.85,  # Mock score
             "missing_requirements": [],
             "uncovered_elements": [],
-            "analysis_summary": f"Analyzed traceability from {task_input.source_artifact_type} to {task_input.target_artifact_type}",
+            "analysis_summary": f"Analyzed traceability from {source_type} to {target_type}",
             "confidence": 0.8
         }
         
@@ -322,15 +417,21 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 "error": "Cannot generate report without completed planning"
             }
         
+        # Handle intelligent context where artifact types might be None
+        source_type = task_input.source_artifact_type or "LOPRD"
+        target_type = task_input.target_artifact_type or "Blueprint"
+        source_id = task_input.source_artifact_doc_id or "intelligent_analysis"
+        target_id = task_input.target_artifact_doc_id or "intelligent_analysis"
+        
         # Generate mock report (in real implementation, would use LLM)
         report_content = f"""# Traceability Report
 
 ## Executive Summary
-Traceability analysis between {task_input.source_artifact_type} and {task_input.target_artifact_type}.
+Traceability analysis between {source_type} and {target_type}.
 
 ## Artifact Overview
-- Source: {task_input.source_artifact_doc_id}
-- Target: {task_input.target_artifact_doc_id}
+- Source: {source_id}
+- Target: {target_id}
 
 ## Traceability Matrix
 [Generated traceability matrix would appear here]
@@ -369,13 +470,17 @@ Traceability analysis between {task_input.source_artifact_type} and {task_input.
         report_content = generation_result.get("report_content", "")
         report_length = generation_result.get("report_length", 0)
         
+        # Handle intelligent context where artifact types might be None
+        source_type = task_input.source_artifact_type or "LOPRD"
+        target_type = task_input.target_artifact_type or "Blueprint"
+        
         validation = {
             "validation_completed": True,
             "quality_checks": {
                 "has_content": len(report_content) > 100,
                 "has_sections": "## " in report_content,
                 "adequate_length": report_length > 200,
-                "includes_artifacts": task_input.source_artifact_type in report_content and task_input.target_artifact_type in report_content
+                "includes_artifacts": source_type in report_content and target_type in report_content
             },
             "validation_score": 0.0,
             "issues_found": []

@@ -174,6 +174,11 @@ class EnvironmentBootstrapInput(BaseModel):
     nodejs_version: Optional[str] = Field(None, description="Specific Node.js version requirement")
     java_version: Optional[str] = Field(None, description="Specific Java version requirement")
     cleanup_on_failure: bool = Field(default=True, description="Clean up partial environments on failure")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
 
 class EnvironmentBootstrapOutput(AgentOutput):
     """Output from Environment Bootstrap Agent."""
@@ -763,44 +768,37 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         """Detect what environments are needed for the project."""
         requirements = []
         
-        if inputs.strategy == BootstrapStrategy.EXPLICIT and inputs.environment_types:
-            # Use explicitly specified environment types
-            for env_type in inputs.environment_types:
-                if env_type in self._strategies:
-                    try:
-                        requirement = await self._strategies[env_type].detect_requirements(project_path)
-                        
-                        # Apply version overrides
-                        if env_type == EnvironmentType.PYTHON and inputs.python_version:
-                            requirement.version_requirement = inputs.python_version
-                        elif env_type == EnvironmentType.NODEJS and inputs.nodejs_version:
-                            requirement.version_requirement = inputs.nodejs_version
-                        elif env_type == EnvironmentType.JAVA and inputs.java_version:
-                            requirement.version_requirement = inputs.java_version
-                        
-                        requirements.append(requirement)
-                    except EnvironmentDetectionError as e:
-                        logger.warning(f"Could not detect requirements for {env_type}: {e}")
+        # Check if we have intelligent project specifications from orchestrator
+        if inputs.project_specifications and inputs.intelligent_context:
+            # Use intelligent LLM analysis instead of file-system detection
+            self.logger.info("Using intelligent project specifications from orchestrator")
+            return await self._analyze_environment_requirements_with_llm(
+                project_specifications=inputs.project_specifications,
+                project_path=str(project_path),
+                user_goal=inputs.user_goal or ""
+            )
         else:
-            # Auto-detect using Project Type Detection Service
+            # Fall back to legacy file-system detection
+            self.logger.info("Using file-system-based project type detection (legacy)")
+            
+            # Detect project type using file system analysis
             project_result = self._project_type_detector.detect_project_type(project_path)
             
-            # Determine environments needed based on detected project type
-            env_types_needed = self._determine_environment_types(project_result)
+            # Check confidence and warn if low
+            if project_result.overall_confidence < 0.5:
+                self.logger.warning(f"Low confidence project detection: {project_result.primary_language} ({project_result.overall_confidence:.2f})")
             
-            for env_type in env_types_needed:
+            # Determine environment types needed
+            env_types = self._determine_environment_types(project_result)
+            
+            # Create requirements for each environment type
+            for env_type in env_types:
                 if env_type in self._strategies:
-                    try:
-                        requirement = await self._strategies[env_type].detect_requirements(project_path)
-                        requirements.append(requirement)
-                    except EnvironmentDetectionError as e:
-                        logger.warning(f"Could not detect requirements for {env_type}: {e}")
-        
-        if not requirements:
-            raise EnvironmentBootstrapError("No suitable environments detected for project")
-        
-        logger.info(f"Detected requirements for {len(requirements)} environment(s)")
-        return requirements
+                    strategy = self._strategies[env_type]
+                    requirement = await strategy.detect_requirements(project_path)
+                    requirements.append(requirement)
+            
+            return requirements
     
     def _determine_environment_types(self, project_result: ProjectTypeDetectionResult) -> List[EnvironmentType]:
         """Determine needed environment types from project detection result."""
@@ -1056,30 +1054,23 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         context: UEContext, 
         iteration: int
     ) -> IterationResult:
-        """
-        Phase 3 UAEI iteration method - handles environment bootstrap logic.
-        """
-        # Convert inputs to proper type
+        """Execute a single iteration of environment bootstrap."""
+        
+        logger = self.logger
+        logger.info(f"Starting environment bootstrap for {context.inputs.get('project_path', 'unknown path')}")
+        
+        # Convert inputs to expected format - handle both dict and object inputs
         if isinstance(context.inputs, dict):
-            # Handle dict inputs from CLI
-            if "user_goal" in context.inputs:
-                # Bootstrap based on user goal
-                inputs = EnvironmentBootstrapInput(
-                    project_path=context.shared_context.get("project_root_path", "."),
-                    strategy=BootstrapStrategy.AUTO_DETECT,
-                    install_dependencies=True,
-                    validate_environment=True
-                )
-            else:
-                inputs = EnvironmentBootstrapInput(**context.inputs)
-        elif isinstance(context.inputs, EnvironmentBootstrapInput):
-            inputs = context.inputs
+            inputs = EnvironmentBootstrapInput(**context.inputs)
+        elif hasattr(context.inputs, 'dict'):
+            input_dict = context.inputs.dict()
+            inputs = EnvironmentBootstrapInput(**input_dict)
         else:
-            # Fallback for other types
-            inputs = EnvironmentBootstrapInput(
-                project_path=str(context.inputs.get("project_path", ".")),
-                strategy=BootstrapStrategy.AUTO_DETECT
-            )
+            inputs = context.inputs
+        
+        # Ensure inputs is EnvironmentBootstrapInput type
+        if not isinstance(inputs, EnvironmentBootstrapInput):
+            raise ValueError(f"Expected EnvironmentBootstrapInput, got {type(inputs)}")
         
         # Execute bootstrap logic
         try:
@@ -1121,6 +1112,164 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             tools_used=tools_used,
             protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "file_management"
         )
+
+    async def _analyze_environment_requirements_with_llm(
+        self,
+        project_specifications: Dict[str, Any],
+        project_path: str,
+        user_goal: str
+    ) -> List[EnvironmentRequirement]:
+        """
+        Intelligent LLM-powered analysis of environment requirements.
+        Uses project specifications from orchestrator instead of file-system detection.
+        """
+        
+        # Extract key information from project specifications
+        project_type = project_specifications.get("project_type", "unknown")
+        primary_language = project_specifications.get("primary_language", "python")
+        technologies = project_specifications.get("technologies", [])
+        target_platforms = project_specifications.get("target_platforms", ["linux"])
+        required_deps = project_specifications.get("required_dependencies", [])
+        optional_deps = project_specifications.get("optional_dependencies", [])
+        
+        # Create intelligent prompt for LLM analysis
+        analysis_prompt = f"""
+You are an expert DevOps engineer setting up development environments. 
+Analyze this project specification and determine the optimal environment setup:
+
+PROJECT SPECIFICATION:
+- Project Type: {project_type}
+- Primary Language: {primary_language}
+- Technologies: {', '.join(technologies) if technologies else 'None specified'}
+- Target Platforms: {', '.join(target_platforms) if target_platforms else 'Cross-platform'}
+- Required Dependencies: {', '.join(required_deps) if required_deps else 'None specified'}
+- Optional Dependencies: {', '.join(optional_deps) if optional_deps else 'None specified'}
+- User Goal: {user_goal[:200]}...
+
+ANALYSIS REQUIRED:
+1. What programming language environment is needed?
+2. What version of the language runtime should be used?
+3. What type of virtual environment is most appropriate?
+4. What system-level dependencies might be required?
+5. What development tools should be set up?
+
+Provide a structured analysis focusing on practical environment setup decisions.
+Be specific about versions and tools based on the project requirements.
+"""
+
+        try:
+            # Use LLM to analyze environment requirements
+            llm_response = await self.llm_provider.generate(
+                prompt=analysis_prompt,
+                model_id=self.llm_provider.default_model,
+                max_tokens=1000,
+                temperature=0.1  # Low temperature for consistent analysis
+            )
+            
+            # Parse LLM response and create environment requirements
+            requirements = await self._parse_llm_environment_analysis(
+                llm_response, project_specifications
+            )
+            
+            self.logger.info(f"LLM analysis identified {len(requirements)} environment requirement(s)")
+            return requirements
+            
+        except Exception as e:
+            self.logger.warning(f"LLM environment analysis failed: {e}")
+            # Fallback to intelligent defaults based on project specifications
+            return self._create_fallback_requirements(project_specifications)
+    
+    async def _parse_llm_environment_analysis(
+        self,
+        llm_response: str,
+        project_specifications: Dict[str, Any]
+    ) -> List[EnvironmentRequirement]:
+        """Parse LLM analysis response into structured environment requirements."""
+        
+        requirements = []
+        primary_language = project_specifications.get("primary_language", "python")
+        
+        # Create environment requirement based on primary language
+        if primary_language.lower() == "python":
+            # Extract Python version from LLM response or use sensible default
+            python_version = self._extract_version_from_response(llm_response, "python") or "3.11"
+            
+            requirement = EnvironmentRequirement(
+                environment_type=EnvironmentType.PYTHON,
+                version_requirement=python_version,
+                dependencies=[],  # Will be handled by dependency management agent
+                tools_required=["pip", "venv"],
+                configuration={
+                    "virtual_env_type": "venv",
+                    "project_type": project_specifications.get("project_type", "unknown"),
+                    "intelligent_analysis": True
+                },
+                priority=1
+            )
+            requirements.append(requirement)
+            
+        elif primary_language.lower() in ["javascript", "typescript"]:
+            node_version = self._extract_version_from_response(llm_response, "node") or "18"
+            
+            requirement = EnvironmentRequirement(
+                environment_type=EnvironmentType.NODEJS,
+                version_requirement=node_version,
+                dependencies=[],
+                tools_required=["npm", "npx"],
+                configuration={
+                    "package_manager": "npm",
+                    "project_type": project_specifications.get("project_type", "unknown"),
+                    "intelligent_analysis": True
+                },
+                priority=1
+            )
+            requirements.append(requirement)
+        
+        return requirements
+    
+    def _extract_version_from_response(self, response: str, language: str) -> Optional[str]:
+        """Extract version information from LLM response."""
+        import re
+        
+        # Simple regex patterns to extract versions
+        patterns = {
+            "python": r"python\s*(\d+\.\d+)",
+            "node": r"node(?:js)?\s*(\d+)",
+        }
+        
+        if language in patterns:
+            match = re.search(patterns[language], response.lower())
+            if match:
+                return match.group(1)
+        
+        return None
+    
+    def _create_fallback_requirements(
+        self,
+        project_specifications: Dict[str, Any]
+    ) -> List[EnvironmentRequirement]:
+        """Create sensible fallback requirements when LLM analysis fails."""
+        
+        requirements = []
+        primary_language = project_specifications.get("primary_language", "python")
+        
+        if primary_language.lower() == "python":
+            requirement = EnvironmentRequirement(
+                environment_type=EnvironmentType.PYTHON,
+                version_requirement="3.11",  # Sensible default
+                dependencies=[],
+                tools_required=["pip", "venv"],
+                configuration={
+                    "virtual_env_type": "venv",
+                    "project_type": project_specifications.get("project_type", "unknown"),
+                    "fallback_analysis": True
+                },
+                priority=1
+            )
+            requirements.append(requirement)
+        
+        self.logger.info(f"Created {len(requirements)} fallback environment requirement(s)")
+        return requirements
 
 # ============================================================================
 # MCP Tool Wrappers

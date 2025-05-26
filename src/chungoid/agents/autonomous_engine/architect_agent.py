@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, ClassVar
 import time
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from chungoid.agents.unified_agent import UnifiedAgent
 from ...utils.llm_provider import LLMProvider
@@ -47,11 +47,40 @@ class ProtocolExecutionError(Exception):
 class ArchitectAgentInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this Blueprint generation task.")
     project_id: Optional[str] = Field(None, description="Identifier for the current project.")
-    loprd_doc_id: str = Field(..., description="ChromaDB ID of the LOPRD (JSON artifact) to be used as input.")
+    
+    # Traditional fields - optional when using intelligent context
+    loprd_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the LOPRD (JSON artifact) to be used as input.")
     existing_blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of an existing Blueprint to refine, if any.")
     refinement_instructions: Optional[str] = Field(None, description="Specific instructions for refining an existing Blueprint.")
     cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
     # target_technologies: Optional[List[str]] = Field(None, description="Preferred technologies or constraints for the architecture.")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
+    project_path: Optional[str] = Field(None, description="Project path for context")
+    
+    @validator('loprd_doc_id')
+    def validate_traditional_or_intelligent_context(cls, v, values):
+        """Ensure either traditional fields or intelligent context is provided."""
+        intelligent_context = values.get('intelligent_context', False)
+        user_goal = values.get('user_goal')
+        project_specifications = values.get('project_specifications')
+        
+        if intelligent_context:
+            # When using intelligent context, user_goal and project_specifications are required
+            if not user_goal:
+                raise ValueError("user_goal is required when intelligent_context=True")
+            if not project_specifications:
+                raise ValueError("project_specifications is required when intelligent_context=True")
+            # loprd_doc_id is optional in this case
+            return v
+        else:
+            # When not using intelligent context, loprd_doc_id is required
+            if not v:
+                raise ValueError("loprd_doc_id is required when intelligent_context=False")
+            return v
 
 class ArchitectAgentOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -131,15 +160,23 @@ class ArchitectAgent_v1(UnifiedAgent):
             inputs = context.inputs
         else:
             # Fallback for other types
+            input_dict = context.inputs.dict() if hasattr(context.inputs, 'dict') else {}
             inputs = ArchitectAgentInput(
-                project_id=str(context.inputs.get("project_id", "default")),
-                loprd_doc_id=str(context.inputs.get("loprd_doc_id", ""))
+                project_id=str(input_dict.get("project_id", "default")),
+                loprd_doc_id=str(input_dict.get("loprd_doc_id", ""))
             )
         
         try:
             # Phase 1: Discovery - Retrieve LOPRD
             self.logger.info("Starting LOPRD discovery phase")
-            loprd_data = await self._discover_loprd(inputs)
+            
+            # Check if we have intelligent project specifications from orchestrator
+            if inputs.project_specifications and inputs.intelligent_context:
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                loprd_data = self._extract_loprd_from_intelligent_specs(inputs.project_specifications, inputs.user_goal)
+            else:
+                self.logger.info("Using traditional LOPRD retrieval")
+                loprd_data = await self._discover_loprd(inputs)
             
             # Phase 2: Analysis - Analyze requirements
             self.logger.info("Starting requirements analysis phase")
@@ -163,7 +200,7 @@ class ArchitectAgent_v1(UnifiedAgent):
                 await migrate_store_artifact(
                     collection_name=BLUEPRINT_ARTIFACTS_COLLECTION,
                     document_id=blueprint_doc_id,
-                    artifact_data=blueprint,
+                    content=blueprint,
                     metadata={
                         "agent_id": self.AGENT_ID,
                         "artifact_type": ARTIFACT_TYPE_PROJECT_BLUEPRINT_MD,
@@ -229,6 +266,47 @@ class ArchitectAgent_v1(UnifiedAgent):
             tools_used=tools_used,
             protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "architecture_planning"
         )
+
+    def _extract_loprd_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract LOPRD-like data from intelligent project specifications."""
+        
+        # Convert intelligent project specifications to LOPRD format
+        loprd_content = {
+            "project_overview": {
+                "name": project_specs.get("project_type", "Unknown Project"),
+                "description": user_goal[:200] + "..." if len(user_goal) > 200 else user_goal,
+                "type": project_specs.get("project_type", "unknown"),
+                "target_audience": ["End users", "Developers"]
+            },
+            "functional_requirements": [
+                f"Implement {tech} functionality" for tech in project_specs.get("technologies", [])[:5]
+            ],
+            "non_functional_requirements": [
+                {"category": "Performance", "requirement": "System should be responsive"},
+                {"category": "Security", "requirement": "Secure data handling"},
+                {"category": "Scalability", "requirement": f"Support {project_specs.get('target_platforms', ['multiple platforms'])}"}
+            ],
+            "user_stories": [
+                {
+                    "id": "US001",
+                    "as_a": "user",
+                    "i_want": f"to use a {project_specs.get('project_type', 'tool')}",
+                    "so_that": "I can accomplish my goals efficiently"
+                }
+            ],
+            "technical_specifications": {
+                "architecture": "modular",
+                "technologies": project_specs.get("technologies", []),
+                "dependencies": project_specs.get("required_dependencies", []),
+                "deployment": f"Compatible with {', '.join(project_specs.get('target_platforms', ['Linux']))}"
+            }
+        }
+        
+        return {
+            "status": "SUCCESS",
+            "content": loprd_content,
+            "source": "intelligent_specifications"
+        }
 
     async def _discover_loprd(self, inputs: ArchitectAgentInput) -> Dict[str, Any]:
         """Discover and retrieve LOPRD artifact."""

@@ -132,6 +132,11 @@ class DependencyManagementInput(BaseModel):
     optimize_versions: bool = Field(True, description="Whether to optimize version constraints")
     create_lock_files: bool = Field(True, description="Whether to create/update lock files")
     backup_existing: bool = Field(True, description="Whether to backup existing dependency files")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
 
 class DependencyManagementOutput(AgentOutput):
     """Output schema for DependencyManagementAgent_v1.
@@ -897,15 +902,37 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         self.logger.info("Starting dependency discovery")
         
         try:
-            # Detect project type
-            project_result = self._project_type_detector.detect_project_type(task_input.project_path)
+            # Check if we have intelligent project specifications from orchestrator
+            if task_input.project_specifications and task_input.intelligent_context:
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                
+                # Extract project information from intelligent analysis
+                project_specs = task_input.project_specifications
+                primary_language = project_specs.get("primary_language", "python")
+                target_languages = project_specs.get("target_languages", [primary_language])
+                
+                # Create a mock project result with intelligent data
+                project_result = type('ProjectResult', (), {
+                    'primary_language': primary_language,
+                    'secondary_languages': [lang for lang in target_languages if lang != primary_language],
+                    'overall_confidence': 0.95,  # High confidence from intelligent analysis
+                    'project_type': project_specs.get("project_type", "unknown"),
+                    'technologies': project_specs.get("technologies", []),
+                    'intelligent_analysis': True
+                })()
+                
+            else:
+                # Fall back to file-system-based project type detection
+                self.logger.info("Using file-system-based project type detection (legacy)")
+                project_result = self._project_type_detector.detect_project_type(task_input.project_path)
             
             # Determine target languages
             if task_input.target_languages:
                 languages = task_input.target_languages
             else:
                 languages = [project_result.primary_language] if project_result.primary_language else []
-                languages.extend(project_result.secondary_languages)
+                if hasattr(project_result, 'secondary_languages'):
+                    languages.extend(project_result.secondary_languages)
             
             # Detect existing dependency files
             existing_files = await self._detect_existing_dependency_files(task_input.project_path, languages)
@@ -913,12 +940,47 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             # Auto-detect dependencies if requested
             detected_dependencies = []
             if task_input.auto_detect_dependencies:
-                analysis_result = await self._dependency_analyzer.analyze_project(
-                    project_path=Path(task_input.project_path),
-                    project_type=project_result.primary_language,
-                    include_dev_dependencies=task_input.include_dev_dependencies
-                )
-                detected_dependencies = analysis_result.dependencies if analysis_result else []
+                # Use intelligent specifications for dependency analysis if available
+                if task_input.project_specifications and task_input.intelligent_context:
+                    # Extract dependencies from intelligent analysis
+                    required_deps = task_input.project_specifications.get("required_dependencies", [])
+                    optional_deps = task_input.project_specifications.get("optional_dependencies", [])
+                    
+                    # Convert to DependencyInfo objects using proper schema
+                    for dep_name in required_deps:
+                        # Parse dependency name (handle "package (description)" format)
+                        clean_name = dep_name.split(' (')[0] if ' (' in dep_name else dep_name
+                        detected_dependencies.append(DependencyInfo(
+                            package_name=clean_name,
+                            version_constraint=None,  # Let package manager determine version
+                            import_name=clean_name,  # Assume import name = package name
+                            description=f"Dependency from intelligent analysis: {dep_name}",
+                            confidence=0.95,  # High confidence from intelligent analysis
+                            is_dev_dependency=False
+                        ))
+                    
+                    # Also handle optional dependencies as dev dependencies
+                    for dep_name in optional_deps:
+                        # Parse dependency name (handle "package (description)" format)
+                        clean_name = dep_name.split(' (')[0] if ' (' in dep_name else dep_name
+                        detected_dependencies.append(DependencyInfo(
+                            package_name=clean_name,
+                            version_constraint=None,  # Let package manager determine version
+                            import_name=clean_name,  # Assume import name = package name
+                            description=f"Optional dependency from intelligent analysis: {dep_name}",
+                            confidence=0.90,  # Slightly lower confidence for optional deps
+                            is_dev_dependency=True
+                        ))
+                    
+                    self.logger.info(f"Extracted {len(detected_dependencies)} dependencies from intelligent analysis ({len(required_deps)} required, {len(optional_deps)} optional)")
+                else:
+                    # Fall back to Smart Dependency Analysis Service
+                    analysis_result = await self._dependency_analyzer.analyze_project(
+                        project_path=Path(task_input.project_path),
+                        project_type=project_result.primary_language,
+                        include_dev_dependencies=task_input.include_dev_dependencies
+                    )
+                    detected_dependencies = analysis_result.dependencies if analysis_result else []
             
             return {
                 "discovery_completed": True,
@@ -926,7 +988,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 "detected_languages": languages,
                 "existing_files": existing_files,
                 "detected_dependencies": detected_dependencies,
-                "discovery_confidence": 0.9
+                "discovery_confidence": 0.95 if (task_input.project_specifications and task_input.intelligent_context) else 0.9
             }
             
         except Exception as e:

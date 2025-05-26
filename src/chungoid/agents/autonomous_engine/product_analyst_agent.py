@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, TypeVar, Generic, ClassVar, TYPE_CHECKIN
 import json
 import time
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, validator, ValidationError
 
 # Chungoid imports using relative paths
 
@@ -56,10 +56,48 @@ ARTIFACT_TYPE_PRODUCT_ANALYSIS_JSON = "ProductAnalysis_JSON"
 # --- Input and Output Schemas for the Agent --- #
 
 class ProductAnalystAgentInput(BaseModel):
-    refined_user_goal_md: str = Field(..., description="The refined user goal in Markdown format.")
+    # Traditional fields - optional when using intelligent context
+    refined_user_goal_md: Optional[str] = Field(None, description="The refined user goal in Markdown format.")
     assumptions_and_ambiguities_md: Optional[str] = Field(None, description="Assumptions and ambiguities related to the goal.")
     arca_feedback_md: Optional[str] = Field(None, description="Feedback from ARCA on previous LOPRD generation attempts.")
-    loprd_json_schema_str: str = Field(..., description="The JSON schema string that the LOPRD output must conform to.")
+    loprd_json_schema_str: Optional[str] = Field(None, description="The JSON schema string that the LOPRD output must conform to.")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
+    project_path: Optional[str] = Field(None, description="Project path for context")
+    
+    @validator('refined_user_goal_md')
+    def validate_traditional_or_intelligent_context(cls, v, values):
+        """Ensure either traditional fields or intelligent context is provided."""
+        intelligent_context = values.get('intelligent_context', False)
+        user_goal = values.get('user_goal')
+        project_specifications = values.get('project_specifications')
+        
+        if intelligent_context:
+            # When using intelligent context, user_goal and project_specifications are required
+            if not user_goal:
+                raise ValueError("user_goal is required when intelligent_context=True")
+            if not project_specifications:
+                raise ValueError("project_specifications is required when intelligent_context=True")
+            # refined_user_goal_md is optional in this case
+            return v
+        else:
+            # When not using intelligent context, traditional fields are required
+            if not v:
+                raise ValueError("refined_user_goal_md is required when intelligent_context=False")
+            return v
+    
+    @validator('loprd_json_schema_str')
+    def validate_loprd_schema(cls, v, values):
+        """Ensure loprd_json_schema_str is provided when not using intelligent context."""
+        intelligent_context = values.get('intelligent_context', False)
+        
+        if not intelligent_context and not v:
+            raise ValueError("loprd_json_schema_str is required when intelligent_context=False")
+        
+        return v
 
 class ProductAnalystAgentOutput(BaseModel):
     loprd_doc_id: str = Field(..., description="Document ID of the generated LOPRD JSON artifact in Chroma.")
@@ -123,15 +161,27 @@ class ProductAnalystAgent_v1(UnifiedAgent):
             inputs = context.inputs
         else:
             # Fallback for other types
+            input_dict = context.inputs.dict() if hasattr(context.inputs, 'dict') else {}
             inputs = ProductAnalystAgentInput(
-                refined_user_goal_md=str(context.inputs.get("refined_user_goal_md", "")),
-                loprd_json_schema_str=str(context.inputs.get("loprd_json_schema_str", "{}"))
+                refined_user_goal_md=str(input_dict.get("refined_user_goal_md", "")),
+                loprd_json_schema_str=str(input_dict.get("loprd_json_schema_str", "{}"))
             )
         
         try:
             # Phase 1: Discovery - Analyze user goals
             self.logger.info("Starting discovery phase")
-            goal_analysis = await self._analyze_user_goal(inputs.refined_user_goal_md)
+            
+            # Check if we have intelligent project specifications from orchestrator
+            if inputs.project_specifications and inputs.intelligent_context:
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                goal_analysis = self._extract_analysis_from_intelligent_specs(inputs.project_specifications, inputs.user_goal)
+                
+                # Provide default LOPRD schema when using intelligent context
+                if not inputs.loprd_json_schema_str:
+                    inputs.loprd_json_schema_str = self._get_default_loprd_schema()
+            else:
+                self.logger.info("Using traditional goal analysis")
+                goal_analysis = await self._analyze_user_goal(inputs.refined_user_goal_md)
             
             # Phase 2: Analysis - Create LOPRD structure
             self.logger.info("Starting analysis phase") 
@@ -151,7 +201,7 @@ class ProductAnalystAgent_v1(UnifiedAgent):
                 await migrate_store_artifact(
                     collection_name=LOPRD_ARTIFACTS_COLLECTION,
                     document_id=loprd_doc_id,
-                    artifact_data=final_loprd,
+                    content=final_loprd,
                     metadata={
                         "agent_id": self.AGENT_ID,
                         "artifact_type": ARTIFACT_TYPE_PRODUCT_ANALYSIS_JSON,
@@ -302,6 +352,126 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         final_loprd["generated_at"] = "2025-01-25T00:00:00Z"  # Placeholder
         return final_loprd
 
+    def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract goal analysis from intelligent project specifications."""
+        
+        # Extract core objectives from project specifications
+        core_objectives = []
+        if "project_type" in project_specs:
+            core_objectives.append(f"Build a {project_specs['project_type']} application")
+        if "technologies" in project_specs:
+            core_objectives.append(f"Implement using {', '.join(project_specs['technologies'][:3])}")
+        
+        # Extract stakeholders based on project type
+        key_stakeholders = ["End users", "Development team"]
+        if project_specs.get("project_type") == "cli_tool":
+            key_stakeholders.extend(["System administrators", "Power users"])
+        elif project_specs.get("project_type") == "web_app":
+            key_stakeholders.extend(["Web users", "Content managers"])
+        elif project_specs.get("project_type") == "api":
+            key_stakeholders.extend(["API consumers", "Integration partners"])
+        
+        # Extract success criteria from requirements
+        success_criteria = []
+        if "required_dependencies" in project_specs:
+            success_criteria.append("All required dependencies are properly integrated")
+        if "target_platforms" in project_specs:
+            platforms = project_specs["target_platforms"]
+            success_criteria.append(f"Application runs on {', '.join(platforms)}")
+        success_criteria.append("Application meets functional requirements")
+        success_criteria.append("Application is maintainable and well-documented")
+        
+        # Identify potential challenges
+        potential_challenges = []
+        if len(project_specs.get("technologies", [])) > 5:
+            potential_challenges.append("Complex technology stack integration")
+        if len(project_specs.get("target_platforms", [])) > 2:
+            potential_challenges.append("Multi-platform compatibility")
+        if project_specs.get("project_type") == "cli_tool":
+            potential_challenges.append("Command-line interface usability")
+        potential_challenges.append("Performance optimization")
+        potential_challenges.append("Error handling and edge cases")
+        
+        return {
+            "core_objectives": core_objectives,
+            "key_stakeholders": key_stakeholders,
+            "success_criteria": success_criteria,
+            "potential_challenges": potential_challenges,
+            "intelligent_analysis": True,
+            "project_specifications": project_specs
+        }
+
+    def _get_default_loprd_schema(self) -> str:
+        """Get default LOPRD JSON schema for intelligent context mode."""
+        default_schema = {
+            "type": "object",
+            "properties": {
+                "project_overview": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "type": {"type": "string"},
+                        "target_audience": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["name", "description", "type"]
+                },
+                "functional_requirements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "acceptance_criteria": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["id", "title", "description", "priority"]
+                    }
+                },
+                "non_functional_requirements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string"},
+                            "requirement": {"type": "string"},
+                            "target_value": {"type": "string"}
+                        },
+                        "required": ["category", "requirement"]
+                    }
+                },
+                "user_stories": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "as_a": {"type": "string"},
+                            "i_want": {"type": "string"},
+                            "so_that": {"type": "string"},
+                            "acceptance_criteria": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["id", "as_a", "i_want", "so_that"]
+                    }
+                },
+                "technical_specifications": {
+                    "type": "object",
+                    "properties": {
+                        "architecture": {"type": "string"},
+                        "technologies": {"type": "array", "items": {"type": "string"}},
+                        "dependencies": {"type": "array", "items": {"type": "string"}},
+                        "deployment": {"type": "string"}
+                    }
+                }
+            },
+            "required": ["project_overview", "functional_requirements", "user_stories"]
+        }
+        
+        import json
+        return json.dumps(default_schema, indent=2)
+
     def _generate_fallback_analysis(self, user_goal: str) -> Dict[str, Any]:
         """Generate fallback analysis when LLM fails."""
         return {
@@ -342,7 +512,7 @@ class ProductAnalystAgent_v1(UnifiedAgent):
             }
         ]
 
-    async def _generate_acceptance_criteria(self, goal_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _generate_acceptance_criteria(self, goal_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate acceptance criteria."""
         return [
             {
