@@ -57,7 +57,7 @@ chungoid build --goal-file goal.txt --project-dir ./my-api
 ```bash
 # Clone the repository
 git clone https://github.com/chungoid/chungoid.git
-cd chungoid-core
+cd chungoid
 
 # Install in development mode
 pip install -e .
