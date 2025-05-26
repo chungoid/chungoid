@@ -190,7 +190,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             # Create output
             output = RequirementsTracerOutput(
                 task_id=task_input.task_id,
-                project_id=task_input.project_id,
+                project_id=task_input.project_id or "intelligent_project",
                 traceability_report_doc_id=generation_result.get("report_doc_id"),
                 status="SUCCESS",
                 message="Traceability analysis completed successfully",
@@ -209,7 +209,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             # Create error output
             output = RequirementsTracerOutput(
                 task_id=getattr(task_input, 'task_id', str(uuid.uuid4())),
-                project_id=getattr(task_input, 'project_id', None) or 'unknown',
+                project_id=getattr(task_input, 'project_id', None) or 'intelligent_project',
                 status="FAILURE_LLM",
                 message=f"Traceability analysis failed: {str(e)}",
                 error_message=str(e),

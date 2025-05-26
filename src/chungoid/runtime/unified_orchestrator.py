@@ -257,8 +257,60 @@ class UnifiedOrchestrator:
             },
             max_iterations=1
         )
+
+        # 8. Blueprint Review - ENHANCED: Review and validate architecture
+        await self.execute_stage(
+            stage_id="blueprint_review",
+            agent_id="BlueprintReviewerAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
+
+        # 9. Project Documentation - ENHANCED: Generate comprehensive documentation
+        await self.execute_stage(
+            stage_id="project_documentation",
+            agent_id="ProjectDocumentationAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
+
+        # 10. Code Debugging - ENHANCED: Analyze and improve code quality
+        await self.execute_stage(
+            stage_id="code_debugging",
+            agent_id="CodeDebuggingAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
+
+        # 11. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
+        await self.execute_stage(
+            stage_id="automated_refinement",
+            agent_id="AutomatedRefinementCoordinatorAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=1
+        )
         
-        self.logger.info("[UAEI] Enhanced autonomous development pipeline completed")
+        self.logger.info("[UAEI] Enhanced autonomous development pipeline completed with 11 stages")
 
     # ------------------------------------------------------------------
     async def run(

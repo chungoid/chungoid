@@ -48,10 +48,18 @@ class ProtocolExecutionError(Exception):
 
 class BlueprintReviewerInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this review task.")
-    project_id: str = Field(..., description="Identifier for the current project.")
-    blueprint_doc_id: str = Field(..., description="ChromaDB ID of the Project Blueprint (Markdown) to be reviewed.")
+    
+    # Traditional fields - optional when using intelligent context
+    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
+    blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the Project Blueprint (Markdown) to be reviewed.")
     previous_review_doc_ids: Optional[List[str]] = Field(None, description="ChromaDB IDs of any previous review reports for this blueprint, for context.")
     specific_focus_areas: Optional[List[str]] = Field(None, description="List of specific areas or concerns to focus the review on.")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
+    project_path: Optional[str] = Field(None, description="Project path for context")
 
 class BlueprintReviewerOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -122,7 +130,12 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 task_input = context.inputs
 
             # Phase 1: Discovery - Discover and retrieve blueprint
-            discovery_result = await self._discover_blueprint(task_input, context.shared_context)
+            if task_input.intelligent_context and task_input.project_specifications:
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                discovery_result = self._extract_blueprint_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+            else:
+                self.logger.info("Using traditional blueprint retrieval")
+                discovery_result = await self._discover_blueprint(task_input, context.shared_context)
             
             # Phase 2: Analysis - Analyze blueprint content
             analysis_result = await self._analyze_blueprint(discovery_result, task_input, context.shared_context)
@@ -142,11 +155,11 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
             # Create output
             output = BlueprintReviewerOutput(
                 task_id=task_input.task_id,
-                project_id=task_input.project_id,
+                project_id=task_input.project_id or "intelligent_project",
                 review_report_doc_id=review_result.get("review_doc_id"),
                 status="SUCCESS",
                 message="Blueprint review completed successfully",
-                confidence_score=ConfidenceScore(value=quality_score, reasoning="Based on comprehensive blueprint analysis and validation")
+                confidence_score=ConfidenceScore(value=quality_score, method="comprehensive_analysis", explanation="Based on comprehensive blueprint analysis and validation")
             )
             
             # Return IterationResult instead of AgentExecutionResult
@@ -183,6 +196,47 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 protocol_used="blueprint_review_protocol",
                 iteration_metadata={"error": str(e)}
             )
+
+    def _extract_blueprint_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract blueprint-like data from intelligent project specifications."""
+        
+        # Create mock blueprint artifact from project specifications
+        blueprint_artifact = {
+            "status": "SUCCESS",
+            "content": {
+                "title": f"Technical Blueprint - {project_specs.get('project_type', 'Project')}",
+                "project_overview": {
+                    "name": project_specs.get("project_type", "Unknown Project"),
+                    "description": user_goal[:200] + "..." if len(user_goal) > 200 else user_goal,
+                    "type": project_specs.get("project_type", "unknown")
+                },
+                "architecture_pattern": "modular",
+                "technology_stack": {
+                    "primary_language": project_specs.get("primary_language", "python"),
+                    "technologies": project_specs.get("technologies", []),
+                    "dependencies": project_specs.get("required_dependencies", [])
+                },
+                "components": [
+                    {
+                        "name": f"Component_{i+1}",
+                        "responsibility": tech,
+                        "interfaces": ["API"]
+                    } for i, tech in enumerate(project_specs.get("technologies", [])[:3])
+                ],
+                "quality_attributes": {
+                    "performance": "high",
+                    "scalability": "moderate", 
+                    "maintainability": "high",
+                    "security": "standard"
+                }
+            }
+        }
+        
+        return {
+            "blueprint_artifact": blueprint_artifact,
+            "discovery_success": True,
+            "intelligent_analysis": True
+        }
 
     async def _discover_blueprint(self, task_input: BlueprintReviewerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Discovery - Discover and retrieve blueprint using MCP tools."""

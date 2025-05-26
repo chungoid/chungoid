@@ -41,23 +41,21 @@ PROMPT_SUB_DIR = "autonomous_engine"
 
 class ProjectDocumentationAgentInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this documentation task.")
-    project_id: str = Field(..., description="Identifier for the current project.")
     
-    refined_user_goal_doc_id: str = Field(..., description="Document ID of the refined user goal specification.")
-    project_blueprint_doc_id: str = Field(..., description="Document ID of the project blueprint.")
-    master_execution_plan_doc_id: str = Field(..., description="Document ID of the master execution plan.")
-    
-    # Path to the root of the generated codebase. Agent will conceptually scan this.
-    generated_code_root_path: str = Field(..., description="Path to the root directory of the generated codebase.")
-    
+    # Traditional fields - optional when using intelligent context
+    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
+    refined_user_goal_doc_id: Optional[str] = Field(None, description="Document ID of the refined user goal specification.")
+    project_blueprint_doc_id: Optional[str] = Field(None, description="Document ID of the project blueprint.")
+    master_execution_plan_doc_id: Optional[str] = Field(None, description="Document ID of the master execution plan.")
+    generated_code_root_path: Optional[str] = Field(None, description="Path to the root directory of the generated codebase.")
     test_summary_doc_id: Optional[str] = Field(None, description="Optional document ID of the test summary report.")
-    
-    # For ARCA feedback loop if any (not used in initial MVP generation, but schema-ready)
-    # arca_feedback_doc_id: Optional[str] = Field(None, description="Document ID for feedback from ARCA for refinement.")
     cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
     
-    # Optional: Specific documents or sections to focus on or regenerate
-    # focus_sections: Optional[List[str]] = Field(None, description="Specific document sections to focus on or regenerate.")
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
+    project_path: Optional[str] = Field(None, description="Project path for context")
 
 class ProjectDocumentationAgentOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -124,7 +122,12 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 inputs = context.inputs
 
             # Phase 1: Discovery - Analyze project artifacts and codebase
-            discovery_result = await self._discover_project_artifacts(inputs, context.shared_context)
+            if inputs.get("intelligent_context") and inputs.get("project_specifications"):
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                discovery_result = self._extract_artifacts_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
+            else:
+                self.logger.info("Using traditional artifact discovery")
+                discovery_result = await self._discover_project_artifacts(inputs, context.shared_context)
             
             # Phase 2: Analysis - Understand project structure and requirements
             analysis_result = await self._analyze_project_structure(discovery_result, inputs, context.shared_context)
@@ -141,7 +144,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             # Create output
             output = ProjectDocumentationAgentOutput(
                 task_id=inputs.get("task_id", str(uuid.uuid4())),
-                project_id=inputs.get("project_id", "unknown"),
+                project_id=inputs.get("project_id") or "intelligent_project",
                 readme_doc_id=documentation_result.get("readme_doc_id"),
                 docs_directory_doc_id=documentation_result.get("docs_directory_doc_id"),
                 codebase_dependency_audit_doc_id=documentation_result.get("codebase_dependency_audit_doc_id"),
@@ -183,6 +186,25 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 protocol_used="documentation_generation_protocol"
             )
 
+
+    def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract artifact-like data from intelligent project specifications."""
+        
+        # Create comprehensive artifact discovery from project specifications
+        artifacts = {
+            "refined_goal_available": True,  # We have the user goal
+            "blueprint_available": True,     # We can derive blueprint info
+            "execution_plan_available": True, # We can derive execution info
+            "codebase_available": False,     # No actual code yet
+            "test_summary_available": False, # No tests yet
+            "artifacts_found": ["refined_user_goal", "project_blueprint", "master_execution_plan"],
+            "intelligent_analysis": True,
+            "project_type": project_specs.get("project_type", "unknown"),
+            "technologies": project_specs.get("technologies", []),
+            "dependencies": project_specs.get("required_dependencies", [])
+        }
+        
+        return artifacts
 
     async def _discover_project_artifacts(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Discovery - Analyze project artifacts and codebase structure."""

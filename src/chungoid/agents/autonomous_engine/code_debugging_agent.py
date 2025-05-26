@@ -51,14 +51,22 @@ class PreviousDebuggingAttempt(BaseModel):
 
 class DebuggingTaskInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this debugging task.")
-    project_id: str = Field(..., description="Identifier for the current project.")
-    faulty_code_path: str = Field(..., description="Path to the code file needing debugging.")
+    
+    # Traditional fields - optional when using intelligent context
+    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
+    faulty_code_path: Optional[str] = Field(None, description="Path to the code file needing debugging.")
     faulty_code_snippet: Optional[str] = Field(None, description="(Optional) The specific code snippet if already localized.")
-    failed_test_reports: List[FailedTestReport] = Field(..., description="List of structured test failure objects.")
-    relevant_loprd_requirements_ids: List[str] = Field(..., description="List of LOPRD requirement IDs relevant to the faulty code.")
+    failed_test_reports: Optional[List[FailedTestReport]] = Field(None, description="List of structured test failure objects.")
+    relevant_loprd_requirements_ids: Optional[List[str]] = Field(None, description="List of LOPRD requirement IDs relevant to the faulty code.")
     relevant_blueprint_section_ids: Optional[List[str]] = Field(None, description="List of Blueprint section IDs relevant to the code's design.")
     previous_debugging_attempts: Optional[List[PreviousDebuggingAttempt]] = Field(None, description="(Optional) List of previous fixes attempted for this issue.")
     max_iterations_for_this_call: Optional[int] = Field(None, description="(Optional) A limit set by ARCA for this specific debugging invocation's internal reasoning.")
+    
+    # ADDED: Intelligent project analysis from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    user_goal: Optional[str] = Field(None, description="Original user goal for context")
+    project_path: Optional[str] = Field(None, description="Project path for context")
 
 class DebuggingTaskOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -126,7 +134,12 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 inputs = context.inputs
 
             # Phase 1: Analysis - Analyze code and test failures
-            analysis_result = await self._analyze_code_and_failures(inputs, context.shared_context)
+            if inputs.get("intelligent_context") and inputs.get("project_specifications"):
+                self.logger.info("Using intelligent project specifications from orchestrator")
+                analysis_result = self._extract_analysis_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
+            else:
+                self.logger.info("Using traditional code analysis")
+                analysis_result = await self._analyze_code_and_failures(inputs, context.shared_context)
             
             # Phase 2: Diagnosis - Identify root causes
             diagnosis_result = await self._diagnose_bug(analysis_result, inputs, context.shared_context)
@@ -143,7 +156,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
             # Create output
             output = DebuggingTaskOutput(
                 task_id=inputs.get("task_id", str(uuid.uuid4())),
-                project_id=inputs.get("project_id", "unknown"),
+                project_id=inputs.get("project_id") or "intelligent_project",
                 proposed_solution_type=fix_result.get("solution_type", "NO_FIX_IDENTIFIED"),
                 proposed_code_changes=fix_result.get("code_changes"),
                 explanation_of_fix=fix_result.get("explanation"),
@@ -189,6 +202,28 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
             protocol_used="code_debugging_protocol"
         )
 
+
+    def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract analysis-like data from intelligent project specifications."""
+        
+        # Create mock analysis for intelligent context (no actual code to debug yet)
+        analysis = {
+            "code_location": "intelligent_analysis",
+            "has_code_snippet": False,
+            "failure_count": 0,  # No failures yet in planning phase
+            "failure_patterns": [],
+            "analysis_confidence": 0.8,
+            "intelligent_analysis": True,
+            "project_type": project_specs.get("project_type", "unknown"),
+            "technologies": project_specs.get("technologies", []),
+            "potential_issues": [
+                "Dependency compatibility",
+                "Configuration errors", 
+                "Integration challenges"
+            ]
+        }
+        
+        return analysis
 
     async def _analyze_code_and_failures(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Analysis - Analyze code and test failures."""

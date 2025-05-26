@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal, ClassVar, Type
 import time
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator
 
 from chungoid.agents.unified_agent import UnifiedAgent
 from ...utils.llm_provider import LLMProvider
@@ -60,20 +60,33 @@ class ProactiveRiskAssessorInput(BaseModel):
     user_goal: Optional[str] = Field(None, description="Original user goal when using intelligent context")
     project_path: Optional[str] = Field(None, description="Project directory path")
     
-    @validator('project_id', 'artifact_id', 'artifact_type', pre=True, always=True)
-    def validate_required_fields(cls, v, values):
+    @model_validator(mode='before')
+    @classmethod
+    def validate_required_fields(cls, data):
         """Ensure either traditional fields OR intelligent context fields are provided."""
-        intelligent_context = values.get('intelligent_context', False)
+        if isinstance(data, dict):
+            intelligent_context = data.get('intelligent_context', False)
+            
+            if intelligent_context:
+                # When using intelligent context, user_goal and project_specifications are required
+                if not data.get('user_goal'):
+                    raise ValueError("user_goal is required when intelligent_context=True")
+                if not data.get('project_specifications'):
+                    raise ValueError("project_specifications is required when intelligent_context=True")
+                # Set default values for traditional fields if not provided
+                data.setdefault('project_id', 'intelligent_project')
+                data.setdefault('artifact_id', 'intelligent_analysis')
+                data.setdefault('artifact_type', 'LOPRD')
+            else:
+                # When not using intelligent context, traditional fields are required
+                if not data.get('project_id'):
+                    raise ValueError("project_id is required when intelligent_context=False")
+                if not data.get('artifact_id'):
+                    raise ValueError("artifact_id is required when intelligent_context=False")
+                if not data.get('artifact_type'):
+                    raise ValueError("artifact_type is required when intelligent_context=False")
         
-        if intelligent_context:
-            # When using intelligent context, traditional fields are optional
-            return v or "intelligent_analysis"
-        else:
-            # When not using intelligent context, traditional fields are required
-            # Note: We can't access field.name in Pydantic V2, so we check the value directly
-            if not v:
-                raise ValueError("Field is required when not using intelligent context")
-            return v
+        return data
 
 class ProactiveRiskAssessorOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
@@ -232,7 +245,8 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
                 message="Risk assessment completed via UAEI workflow",
                 confidence_score=ConfidenceScore(
                     value=quality_score,
-                    reasoning=f"Quality based on validation ({validation_result.get('is_valid', False)}) and completeness"
+                    method="comprehensive_assessment",
+                    explanation=f"Quality based on validation ({validation_result.get('is_valid', False)}) and completeness"
                 ),
                 usage_metadata={
                     "phases_executed": ["discovery", "analysis", "planning", "execution", "validation"],
@@ -410,7 +424,7 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
             await migrate_store_artifact(
                 collection_name=self.RISK_ASSESSMENT_REPORTS_COLLECTION,
                 document_id=risk_report_id,
-                artifact_data=risk_report_content,
+                content=risk_report_content,
                 metadata={
                     "agent_id": self.AGENT_ID,
                     "artifact_type": self.ARTIFACT_TYPE_RISK_ASSESSMENT_REPORT_MD,
@@ -422,7 +436,7 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
             await migrate_store_artifact(
                 collection_name=self.OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION,
                 document_id=optimization_report_id,
-                artifact_data=optimization_report_content,
+                content=optimization_report_content,
                 metadata={
                     "agent_id": self.AGENT_ID,
                     "artifact_type": self.ARTIFACT_TYPE_OPTIMIZATION_SUGGESTION_REPORT_MD,
