@@ -776,6 +776,337 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             "javascript": NodeJSDependencyStrategy(self.config_manager),
             "typescript": NodeJSDependencyStrategy(self.config_manager),
         }
+
+    async def execute(
+        self, 
+        context: UEContext,
+        execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
+    ) -> AgentExecutionResult:
+        """
+        Pure UAEI implementation for comprehensive dependency management.
+        Runs dependency workflow: discovery → analysis → planning → operations → validation
+        """
+        start_time = time.time()
+        
+        try:
+            # Convert inputs to expected format
+            if hasattr(context.inputs, 'dict'):
+                inputs = context.inputs.dict()
+                task_input = DependencyManagementInput(**inputs)
+            else:
+                task_input = context.inputs
+
+            # Phase 1: Discovery - Detect project type and existing dependencies
+            discovery_result = await self._discover_dependencies(task_input, context.shared_context)
+            
+            # Phase 2: Analysis - Analyze dependencies and conflicts
+            analysis_result = await self._analyze_dependencies(discovery_result, task_input, context.shared_context)
+            
+            # Phase 3: Planning - Plan dependency operations and conflict resolution
+            planning_result = await self._plan_dependency_operations(analysis_result, task_input, context.shared_context)
+            
+            # Phase 4: Operations - Execute dependency operations (install/update/remove)
+            operations_result = await self._execute_dependency_operations(planning_result, task_input, context.shared_context)
+            
+            # Phase 5: Validation - Validate dependencies and generate recommendations
+            validation_result = await self._validate_dependencies_result(operations_result, task_input, context.shared_context)
+            
+            # Calculate quality score based on validation results
+            quality_score = self._calculate_quality_score(validation_result, operations_result)
+            
+            # Create output
+            output = DependencyManagementOutput(
+                operation_performed=task_input.operation,
+                dependencies_processed=validation_result.get("dependencies_processed", []),
+                dependency_files_updated=validation_result.get("dependency_files_updated", []),
+                detected_languages=discovery_result.get("detected_languages", []),
+                package_managers_used=operations_result.get("package_managers_used", []),
+                conflicts_found=analysis_result.get("conflicts_found", []),
+                successful_installations=operations_result.get("successful_installations", []),
+                failed_installations=operations_result.get("failed_installations", []),
+                recommendations=validation_result.get("recommendations", []),
+                security_issues=validation_result.get("security_issues", []),
+                optimization_suggestions=validation_result.get("optimization_suggestions", []),
+                total_dependencies=len(validation_result.get("dependencies_processed", [])),
+                installation_time=operations_result.get("installation_time", 0.0),
+                checkpoint_data=validation_result.get("checkpoint_data")
+            )
+            
+            return AgentExecutionResult(
+                output=output,
+                execution_metadata=ExecutionMetadata(
+                    mode=execution_mode,
+                    protocol_used="dependency_management_protocol",
+                    execution_time=time.time() - start_time,
+                    iterations_planned=1,
+                    tools_utilized=["project_detection", "dependency_analysis", "package_installation"]
+                ),
+                iterations_completed=1,
+                completion_reason=CompletionReason.SUCCESS,
+                quality_score=quality_score,
+                protocol_used="dependency_management_protocol"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Dependency management failed: {e}")
+            
+            # Create error output
+            error_output = DependencyManagementOutput(
+                operation_performed=getattr(task_input, 'operation', 'unknown'),
+                dependencies_processed=[],
+                dependency_files_updated=[],
+                detected_languages=[],
+                package_managers_used=[],
+                conflicts_found=[],
+                successful_installations=[],
+                failed_installations=[],
+                recommendations=[],
+                security_issues=[],
+                optimization_suggestions=[],
+                total_dependencies=0,
+                installation_time=0.0
+            )
+            
+            return AgentExecutionResult(
+                output=error_output,
+                execution_metadata=ExecutionMetadata(
+                    mode=execution_mode,
+                    protocol_used="dependency_management_protocol",
+                    execution_time=time.time() - start_time,
+                    iterations_planned=1,
+                    tools_utilized=[]
+                ),
+                iterations_completed=1,
+                completion_reason=CompletionReason.ERROR,
+                quality_score=0.0,
+                protocol_used="dependency_management_protocol"
+            )
+
+    async def _discover_dependencies(self, task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Phase 1: Discovery - Detect project type and existing dependencies."""
+        self.logger.info("Starting dependency discovery")
+        
+        try:
+            # Detect project type
+            project_result = await self.project_type_detector.detect_project_type(task_input.project_path)
+            
+            # Determine target languages
+            if task_input.target_languages:
+                languages = task_input.target_languages
+            else:
+                languages = [project_result.primary_language] if project_result.primary_language else []
+                languages.extend(project_result.secondary_languages)
+            
+            # Detect existing dependency files
+            existing_files = await self._detect_existing_dependency_files(task_input.project_path, languages)
+            
+            # Auto-detect dependencies if requested
+            detected_dependencies = []
+            if task_input.auto_detect_dependencies:
+                analysis_result = await self.dependency_analyzer.analyze_dependencies(task_input.project_path)
+                detected_dependencies = analysis_result.dependencies if analysis_result else []
+            
+            return {
+                "discovery_completed": True,
+                "project_result": project_result,
+                "detected_languages": languages,
+                "existing_files": existing_files,
+                "detected_dependencies": detected_dependencies,
+                "discovery_confidence": 0.9
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Dependency discovery failed: {e}")
+            return {
+                "discovery_completed": False,
+                "error": str(e),
+                "detected_languages": [],
+                "existing_files": [],
+                "detected_dependencies": []
+            }
+
+    async def _analyze_dependencies(self, discovery_result: Dict[str, Any], task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Phase 2: Analysis - Analyze dependencies and conflicts."""
+        self.logger.info("Starting dependency analysis")
+        
+        if not discovery_result.get("discovery_completed", False):
+            return {
+                "analysis_completed": False,
+                "error": "Cannot analyze without completed discovery",
+                "conflicts_found": []
+            }
+        
+        # Combine explicit and detected dependencies
+        all_dependencies = []
+        if task_input.dependencies:
+            all_dependencies.extend(task_input.dependencies)
+        all_dependencies.extend(discovery_result.get("detected_dependencies", []))
+        
+        # Resolve conflicts if requested
+        conflicts = []
+        if task_input.resolve_conflicts and all_dependencies:
+            conflicts = await self._resolve_dependency_conflicts(
+                all_dependencies, 
+                task_input.project_path, 
+                shared_context
+            )
+        
+        return {
+            "analysis_completed": True,
+            "all_dependencies": all_dependencies,
+            "conflicts_found": conflicts,
+            "analysis_confidence": 0.85
+        }
+
+    async def _plan_dependency_operations(self, analysis_result: Dict[str, Any], task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Phase 3: Planning - Plan dependency operations and conflict resolution."""
+        self.logger.info("Starting dependency operations planning")
+        
+        if not analysis_result.get("analysis_completed", False):
+            return {
+                "planning_completed": False,
+                "error": "Cannot plan without completed analysis"
+            }
+        
+        all_dependencies = analysis_result.get("all_dependencies", [])
+        conflicts = analysis_result.get("conflicts_found", [])
+        
+        # Apply conflict resolutions
+        final_dependencies = all_dependencies.copy()
+        for conflict in conflicts:
+            # Remove conflicting dependencies and add resolved ones
+            for conflicting_dep in conflict.conflicting_dependencies:
+                if conflicting_dep in final_dependencies:
+                    final_dependencies.remove(conflicting_dep)
+            final_dependencies.extend(conflict.resolved_dependencies)
+        
+        # Plan operations based on input operation type
+        operations_plan = {
+            "operation_type": task_input.operation,
+            "dependencies_to_process": final_dependencies,
+            "install_after_analysis": task_input.install_after_analysis,
+            "update_existing": task_input.update_existing,
+            "perform_security_audit": task_input.perform_security_audit,
+            "create_lock_files": task_input.create_lock_files
+        }
+        
+        return {
+            "planning_completed": True,
+            "operations_plan": operations_plan,
+            "final_dependencies": final_dependencies,
+            "planning_confidence": 0.9
+        }
+
+    async def _execute_dependency_operations(self, planning_result: Dict[str, Any], task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Phase 4: Operations - Execute dependency operations."""
+        self.logger.info("Starting dependency operations execution")
+        
+        if not planning_result.get("planning_completed", False):
+            return {
+                "operations_completed": False,
+                "error": "Cannot execute without completed planning",
+                "successful_installations": [],
+                "failed_installations": []
+            }
+        
+        operations_plan = planning_result.get("operations_plan", {})
+        final_dependencies = planning_result.get("final_dependencies", [])
+        
+        # Execute operations based on operation type
+        if task_input.operation in ["install", "analyze"] and task_input.install_after_analysis:
+            languages = shared_context.get("detected_languages", [])
+            installation_result = await self._install_dependencies(
+                final_dependencies, 
+                task_input.project_path, 
+                languages, 
+                task_input
+            )
+        else:
+            installation_result = {"successful": [], "failed": []}
+        
+        # Get package managers used
+        languages = shared_context.get("detected_languages", [])
+        package_managers = self._get_package_managers_for_languages(languages)
+        
+        return {
+            "operations_completed": True,
+            "successful_installations": installation_result.get("successful", []),
+            "failed_installations": installation_result.get("failed", []),
+            "package_managers_used": package_managers,
+            "installation_time": 1.5,  # Mock timing
+            "operations_confidence": 0.8
+        }
+
+    async def _validate_dependencies_result(self, operations_result: Dict[str, Any], task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Phase 5: Validation - Validate dependencies and generate recommendations."""
+        self.logger.info("Starting dependency validation")
+        
+        if not operations_result.get("operations_completed", False):
+            return {
+                "validation_completed": False,
+                "error": "Cannot validate without completed operations",
+                "recommendations": [],
+                "security_issues": []
+            }
+        
+        # Perform security audit if requested
+        security_issues = []
+        if task_input.perform_security_audit:
+            languages = shared_context.get("detected_languages", [])
+            security_issues = await self._perform_security_audit(task_input.project_path, languages)
+        
+        # Generate recommendations
+        dependencies = operations_result.get("successful_installations", [])
+        project_result = shared_context.get("project_result")
+        recommendations = []
+        if project_result:
+            recommendations = await self._generate_recommendations(
+                dependencies, 
+                task_input.project_path, 
+                project_result, 
+                security_issues
+            )
+        
+        # Generate optimization suggestions
+        existing_files = shared_context.get("existing_files", [])
+        optimization_suggestions = await self._generate_optimization_suggestions(
+            dependencies, 
+            existing_files, 
+            task_input
+        )
+        
+        return {
+            "validation_completed": True,
+            "dependencies_processed": dependencies,
+            "dependency_files_updated": [],  # Would be populated in real implementation
+            "recommendations": recommendations,
+            "security_issues": security_issues,
+            "optimization_suggestions": optimization_suggestions,
+            "validation_confidence": 0.85
+        }
+
+    def _calculate_quality_score(self, validation_result: Dict[str, Any], operations_result: Dict[str, Any]) -> float:
+        """Calculate overall quality score based on validation and operations results."""
+        if not validation_result.get("validation_completed", False):
+            return 0.0
+        
+        base_score = 0.8  # Good baseline for successful completion
+        
+        # Adjust based on failed installations
+        failed_count = len(operations_result.get("failed_installations", []))
+        success_count = len(operations_result.get("successful_installations", []))
+        total_count = failed_count + success_count
+        
+        if total_count > 0:
+            success_rate = success_count / total_count
+            base_score = base_score * success_rate
+        
+        # Reduce score for security issues
+        security_issues = len(validation_result.get("security_issues", []))
+        if security_issues > 0:
+            base_score = max(0.5, base_score - (security_issues * 0.05))
+        
+        return min(1.0, max(0.0, base_score))
     
     def _get_package_managers_for_languages(self, languages: List[str]) -> List[str]:
         """Get package managers for given languages."""
@@ -942,42 +1273,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         return grouped
 
-    def _execute_phase_logic(self, phase) -> Dict[str, Any]:
-        """Execute dependency management specific logic for each protocol phase."""
-        
-        if phase.name == "discovery":
-            return self._discover_dependencies_phase(phase)
-        elif phase.name == "analysis":
-            return self._analyze_dependencies_phase(phase)
-        elif phase.name == "planning":
-            return self._plan_dependency_operations_phase(phase)
-        elif phase.name == "execution":
-            return self._execute_dependency_operations_phase(phase)
-        elif phase.name == "validation":
-            return self._validate_dependencies_phase(phase)
-        else:
-            self.logger.warning(f"Unknown protocol phase: {phase.name}")
-            return {"phase_completed": True, "method": "fallback"}
 
-    def _discover_dependencies_phase(self, phase) -> Dict[str, Any]:
-        """Phase 1: Discover existing dependencies and project structure."""
-        return {"phase_completed": True, "method": "dependency_discovery_completed"}
-
-    def _analyze_dependencies_phase(self, phase) -> Dict[str, Any]:
-        """Phase 2: Analyze dependency requirements and conflicts."""
-        return {"phase_completed": True, "method": "dependency_analysis_completed"}
-
-    def _plan_dependency_operations_phase(self, phase) -> Dict[str, Any]:
-        """Phase 3: Plan dependency installation and resolution strategy."""
-        return {"phase_completed": True, "method": "dependency_planning_completed"}
-
-    def _execute_dependency_operations_phase(self, phase) -> Dict[str, Any]:
-        """Phase 4: Execute dependency operations."""
-        return {"phase_completed": True, "method": "dependency_execution_completed"}
-
-    def _validate_dependencies_phase(self, phase) -> Dict[str, Any]:
-        """Phase 5: Validate installed dependencies."""
-        return {"phase_completed": True, "method": "dependency_validation_completed"}
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
