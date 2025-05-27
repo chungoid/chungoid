@@ -268,7 +268,9 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 
                 if response:
                     try:
-                        analysis = json.loads(response)
+                        # Extract JSON from markdown code blocks if present
+                        json_content = self._extract_json_from_response(response)
+                        analysis = json.loads(json_content)
                         # Add metadata about the intelligent analysis
                         analysis["intelligent_analysis"] = True
                         analysis["project_specifications"] = project_specs
