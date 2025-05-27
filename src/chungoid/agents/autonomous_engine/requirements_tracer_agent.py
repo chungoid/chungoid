@@ -235,7 +235,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         """Extract artifacts from intelligent project specifications using LLM processing."""
         
         try:
-            if self._llm_provider:
+            if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and create traceability artifacts
                 prompt = f"""
                 You are a requirements tracer agent. Analyze the following project specifications and user goal to create intelligent artifacts for requirements traceability analysis.
@@ -324,7 +324,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 }}
                 """
                 
-                response = await self._llm_provider.generate_response(prompt)
+                response = await self.llm_provider.generate(prompt)
                 
                 if response:
                     try:

@@ -1168,7 +1168,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                 }}
                 """
                 
-                response = await self.llm_provider.generate_response(prompt)
+                response = await self.llm_provider.generate(prompt)
                 
                 if response:
                     try:

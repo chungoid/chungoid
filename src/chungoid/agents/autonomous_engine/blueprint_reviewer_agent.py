@@ -202,7 +202,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         """Extract blueprint-like data from intelligent project specifications using LLM processing."""
         
         try:
-            if self._llm_provider:
+            if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and create review criteria
                 prompt = f"""
                 You are a blueprint reviewer agent. Analyze the following project specifications and user goal to create intelligent review criteria and focus areas for blueprint assessment.
@@ -239,7 +239,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 }}
                 """
                 
-                response = await self._llm_provider.generate_response(prompt)
+                response = await self.llm_provider.generate(prompt)
                 
                 if response:
                     try:

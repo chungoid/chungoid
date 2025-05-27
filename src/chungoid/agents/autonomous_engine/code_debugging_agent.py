@@ -207,7 +207,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         """Extract analysis from intelligent project specifications using LLM processing."""
         
         try:
-            if self._llm_provider:
+            if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and plan debugging strategy
                 prompt = f"""
                 You are a code debugging agent. Analyze the following project specifications and user goal to create an intelligent debugging and quality assurance strategy.
@@ -264,7 +264,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 }}
                 """
                 
-                response = await self._llm_provider.generate_response(prompt)
+                response = await self.llm_provider.generate(prompt)
                 
                 if response:
                     try:

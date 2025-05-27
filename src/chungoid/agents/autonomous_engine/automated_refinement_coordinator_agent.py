@@ -415,7 +415,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         """Extract assessment from intelligent project specifications using LLM processing."""
         
         try:
-            if self._llm_provider:
+            if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and plan refinement coordination strategy
                 prompt = f"""
                 You are an automated refinement coordinator agent. Analyze the following project specifications and user goal to create an intelligent refinement coordination and quality assurance strategy.
@@ -476,7 +476,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 }}
                 """
                 
-                response = await self._llm_provider.generate_response(prompt)
+                response = await self.llm_provider.generate(prompt)
                 
                 if response:
                     try:
