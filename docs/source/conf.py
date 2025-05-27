@@ -9,8 +9,8 @@
 import os  # Add os import
 import sys  # Add sys import
 
-# Make project source code findable by Sphinx
-sys.path.insert(0, os.path.abspath(".."))
+# Make project source code findable by Sphinx - updated for new structure
+sys.path.insert(0, os.path.abspath("../../src"))
 
 project = "Chungoid MCP Server"
 copyright = "2025, AI Assistant"  # Update copyright year if needed

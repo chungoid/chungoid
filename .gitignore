@@ -8,5 +8,9 @@ llms-txt/
 offline_library_docs/
 dummy_projects/
 
+# Sphinx documentation build directories
+docs/_build/
+docs/build/
+
 dev_chroma_db/chroma.sqlite3
 .chungoid
