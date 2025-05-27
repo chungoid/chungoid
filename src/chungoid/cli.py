@@ -792,7 +792,8 @@ def flow_run(ctx: click.Context,
         config=project_config,
         state_manager=state_manager, 
         agent_resolver=agent_provider,  # Phase 3: agent_provider is now UnifiedAgentResolver
-        metrics_store=MetricsStore(project_root=project_path)
+        metrics_store=MetricsStore(project_root=project_path),
+        llm_provider=llm_manager_for_flow_run.actual_provider if llm_manager_for_flow_run else None  # Add LLM provider for goal analysis
         # REMOVED: Legacy AsyncOrchestrator parameters eliminated in Phase 3
     )
 
@@ -1036,7 +1037,8 @@ def flow_resume(ctx: click.Context, run_id: str, project_dir_opt: Path, action: 
             config=resumed_project_config,
             state_manager=resumed_sm, 
             agent_resolver=agent_provider_resume,  # Phase 3: agent_provider is now UnifiedAgentResolver
-            metrics_store=MetricsStore(project_root=project_path)
+            metrics_store=MetricsStore(project_root=project_path),
+            llm_provider=llm_manager_for_resume.actual_provider if llm_manager_for_resume else None  # Add LLM provider for goal analysis
             # REMOVED: Legacy AsyncOrchestrator parameters eliminated in Phase 3
         )
 
@@ -1621,7 +1623,8 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             config=config,
             state_manager=state_manager,
             agent_resolver=agent_provider,  # Phase 3: agent_provider is now UnifiedAgentResolver
-            metrics_store=metrics_store
+            metrics_store=metrics_store,
+            llm_provider=llm_manager.actual_provider if llm_manager else None  # Add LLM provider for goal analysis
             # REMOVED: Legacy AsyncOrchestrator parameters eliminated in Phase 3
         )
 

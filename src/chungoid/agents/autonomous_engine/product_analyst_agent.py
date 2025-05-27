@@ -307,8 +307,9 @@ class ProductAnalystAgent_v1(UnifiedAgent):
                 
                 if response:
                     try:
-                        # LiteLLMProvider returns a string directly, not an object with .content
-                        return json.loads(response)
+                        # Extract JSON from markdown code blocks if present
+                        json_content = self._extract_json_from_response(response)
+                        return json.loads(json_content)
                     except json.JSONDecodeError:
                         pass
             
@@ -398,7 +399,9 @@ class ProductAnalystAgent_v1(UnifiedAgent):
                 
                 if response:
                     try:
-                        analysis = json.loads(response)
+                        # Extract JSON from markdown code blocks if present
+                        json_content = self._extract_json_from_response(response)
+                        analysis = json.loads(json_content)
                         # Add metadata about the intelligent analysis
                         analysis["intelligent_analysis"] = True
                         analysis["project_specifications"] = project_specs
@@ -535,6 +538,47 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         
         import json
         return json.dumps(default_schema, indent=2)
+
+    def _extract_json_from_response(self, response: str) -> str:
+        """Extract JSON content from LLM response, handling markdown code blocks."""
+        response = response.strip()
+        
+        # Check if response is wrapped in markdown code blocks
+        if response.startswith('```json'):
+            # Find the end of the code block
+            lines = response.split('\n')
+            json_lines = []
+            in_json_block = False
+            
+            for line in lines:
+                if line.strip() == '```json':
+                    in_json_block = True
+                    continue
+                elif line.strip() == '```' and in_json_block:
+                    break
+                elif in_json_block:
+                    json_lines.append(line)
+            
+            return '\n'.join(json_lines)
+        elif response.startswith('```'):
+            # Handle generic code blocks
+            lines = response.split('\n')
+            json_lines = []
+            in_code_block = False
+            
+            for line in lines:
+                if line.strip().startswith('```') and not in_code_block:
+                    in_code_block = True
+                    continue
+                elif line.strip() == '```' and in_code_block:
+                    break
+                elif in_code_block:
+                    json_lines.append(line)
+            
+            return '\n'.join(json_lines)
+        else:
+            # Response is already clean JSON
+            return response
 
     def _generate_fallback_analysis(self, user_goal: str) -> Dict[str, Any]:
         """Generate fallback analysis when LLM fails."""

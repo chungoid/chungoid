@@ -28,6 +28,7 @@ from ..schemas.common_enums import StageStatus, OnFailureAction
 from ..utils.state_manager import StateManager
 from .unified_agent_resolver import UnifiedAgentResolver
 from ..utils.metrics_store import MetricsStore
+from ..utils.llm_provider import LLMProvider
 
 __all__ = ["UnifiedOrchestrator"]
 
@@ -45,12 +46,14 @@ class UnifiedOrchestrator:
         config: Dict[str, Any],
         state_manager: StateManager,
         agent_resolver: UnifiedAgentResolver,
-        metrics_store: MetricsStore
+        metrics_store: MetricsStore,
+        llm_provider: Optional[LLMProvider] = None
     ):
         self.config = config
         self.state_manager = state_manager
         self.agent_resolver = agent_resolver
         self.metrics_store = metrics_store
+        self.llm_provider = llm_provider  # Add LLM provider for goal analysis
         self.logger = logging.getLogger(self.__class__.__name__)
         
         # Initialize shared context
