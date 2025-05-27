@@ -174,7 +174,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 self.logger.info("Using traditional project analysis")
                 analysis_result = await self._analyze_project_requirements(task_input, context.shared_context)
             
-            # Phase 2: Planning - Plan code structure and files
+            # Phase 2: Planning - Plan code structure and files based on LLM analysis
             planning_result = await self._plan_code_structure(analysis_result, task_input, context.shared_context)
             
             # Phase 3: Generation - Generate code files
@@ -591,79 +591,243 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         return analysis
 
     async def _plan_code_structure(self, analysis_result: Dict[str, Any], task_input: SmartCodeGeneratorInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 2: Planning - Plan code structure and files."""
-        self.logger.info("Starting code structure planning")
+        """Phase 2: Planning - Plan code structure and files based on LLM analysis."""
+        self.logger.info("Starting LLM-driven code structure planning")
         
-        project_type = analysis_result.get("project_type", "cli_tool")
-        primary_language = analysis_result.get("primary_language", "python")
+        # Extract file structure from LLM analysis instead of hardcoded templates
+        code_generation_strategy = analysis_result.get("code_generation_strategy", {})
+        file_structure = code_generation_strategy.get("file_structure", [])
+        complexity_assessment = analysis_result.get("complexity_assessment", {})
+        estimated_files = complexity_assessment.get("estimated_files", 3)
         
-        # Plan files based on project type
-        if project_type == "cli_tool" and primary_language == "python":
-            planned_files = [
-                {
-                    "file_path": "scanner.py",
-                    "file_type": "main_module",
-                    "description": "Main CLI application module",
-                    "priority": 1
-                },
-                {
-                    "file_path": "requirements.txt",
+        planned_files = []
+        
+        # If LLM provided specific file structure, use it
+        if file_structure:
+            for i, file_desc in enumerate(file_structure):
+                # Extract meaningful file names from LLM descriptions
+                file_path = self._extract_file_path_from_description(
+                    file_desc, 
+                    analysis_result.get("primary_language", "python"),
+                    i
+                )
+                file_type = self._determine_file_type_from_description(file_desc)
+                
+                planned_files.append({
+                    "file_path": file_path,
+                    "file_type": file_type,
+                    "description": file_desc,
+                    "priority": i + 1,
+                    "llm_specified": True
+                })
+        else:
+            # Fallback: Create generic structure based on project type and language
+            primary_language = analysis_result.get("primary_language", "python")
+            project_type = analysis_result.get("project_type", "application")
+            
+            # Generate main module
+            main_file_path = self._generate_main_file_path(project_type, primary_language, task_input)
+            planned_files.append({
+                "file_path": main_file_path,
+                "file_type": "main_module", 
+                "description": f"Main {project_type} module",
+                "priority": 1,
+                "llm_specified": False
+            })
+            
+            # Add dependency file if needed
+            if self._needs_dependency_file(analysis_result):
+                dep_file = self._get_dependency_file_name(primary_language)
+                planned_files.append({
+                    "file_path": dep_file,
                     "file_type": "dependency_file",
-                    "description": "Python dependencies",
-                    "priority": 2
-                },
-                {
+                    "description": f"{primary_language.title()} dependencies",
+                    "priority": 2,
+                    "llm_specified": False
+                })
+            
+            # Add documentation if specified
+            if self._needs_documentation(analysis_result):
+                planned_files.append({
                     "file_path": "README.md",
                     "file_type": "documentation",
                     "description": "Project documentation",
-                    "priority": 3
-                }
-            ]
-        else:
-            # Generic file structure
-            planned_files = [
-                {
-                    "file_path": f"main.{self._get_file_extension(primary_language)}",
-                    "file_type": "main_module",
-                    "description": "Main application module",
-                    "priority": 1
-                }
-            ]
+                    "priority": 3,
+                    "llm_specified": False
+                })
         
         planning = {
             "planned_files": planned_files,
             "total_files": len(planned_files),
-            "structure_complexity": "medium",
+            "structure_complexity": complexity_assessment.get("level", "medium"),
+            "estimated_lines": complexity_assessment.get("estimated_lines", 200),
+            "llm_driven": bool(file_structure),
+            "analysis_method": analysis_result.get("analysis_method", "unknown"),
             "planning_timestamp": datetime.datetime.now().isoformat()
         }
         
+        self.logger.info(f"Planned {len(planned_files)} files using {'LLM-driven' if file_structure else 'fallback'} planning")
         return planning
 
+    def _extract_file_path_from_description(self, file_desc: str, language: str, index: int) -> str:
+        """Extract meaningful file path from LLM file description."""
+        file_desc_lower = file_desc.lower()
+        
+        # Look for explicit file names in the description
+        if ".py" in file_desc_lower and language == "python":
+            # Extract .py filename if mentioned
+            import re
+            py_files = re.findall(r'(\w+\.py)', file_desc_lower)
+            if py_files:
+                return py_files[0]
+        
+        if ".js" in file_desc_lower and language == "javascript":
+            # Extract .js filename if mentioned
+            import re
+            js_files = re.findall(r'(\w+\.js)', file_desc_lower)
+            if js_files:
+                return js_files[0]
+        
+        # Generate meaningful names based on description content
+        extension = self._get_file_extension(language)
+        
+        if "main" in file_desc_lower or "entry" in file_desc_lower:
+            return f"main.{extension}"
+        elif "wifi" in file_desc_lower or "wireless" in file_desc_lower:
+            return f"wifi_scanner.{extension}"
+        elif "network" in file_desc_lower and "scanner" in file_desc_lower:
+            return f"network_scanner.{extension}"
+        elif "scanner" in file_desc_lower:
+            return f"scanner.{extension}"
+        elif "config" in file_desc_lower or "setting" in file_desc_lower:
+            return f"config.{extension}"
+        elif "util" in file_desc_lower or "helper" in file_desc_lower:
+            return f"utils.{extension}"
+        elif "cli" in file_desc_lower or "command" in file_desc_lower:
+            return f"cli.{extension}"
+        elif "api" in file_desc_lower:
+            return f"api.{extension}"
+        elif "server" in file_desc_lower:
+            return f"server.{extension}"
+        elif "client" in file_desc_lower:
+            return f"client.{extension}"
+        elif "database" in file_desc_lower or "db" in file_desc_lower:
+            return f"database.{extension}"
+        elif "test" in file_desc_lower:
+            return f"test_{index}.{extension}"
+        else:
+            # Generic module name based on index
+            return f"module_{index + 1}.{extension}"
+
+    def _determine_file_type_from_description(self, file_desc: str) -> str:
+        """Determine file type from LLM description."""
+        file_desc_lower = file_desc.lower()
+        
+        if "main" in file_desc_lower or "entry" in file_desc_lower:
+            return "main_module"
+        elif "test" in file_desc_lower:
+            return "test_module"
+        elif "config" in file_desc_lower:
+            return "config_module"
+        elif "util" in file_desc_lower or "helper" in file_desc_lower:
+            return "utility_module"
+        elif "api" in file_desc_lower:
+            return "api_module"
+        elif "cli" in file_desc_lower:
+            return "cli_module"
+        elif "database" in file_desc_lower or "db" in file_desc_lower:
+            return "database_module"
+        else:
+            return "code_module"
+
+    def _generate_main_file_path(self, project_type: str, language: str, task_input: SmartCodeGeneratorInput) -> str:
+        """Generate appropriate main file path based on project type and language."""
+        extension = self._get_file_extension(language)
+        
+        # Use goal content to determine appropriate name
+        if task_input.user_goal:
+            goal_lower = task_input.user_goal.lower()
+            if "scanner" in goal_lower:
+                return f"scanner.{extension}"
+            elif "api" in goal_lower:
+                return f"api.{extension}"
+            elif "server" in goal_lower:
+                return f"server.{extension}"
+            elif "cli" in goal_lower or "command" in goal_lower:
+                return f"cli.{extension}"
+            elif "app" in goal_lower:
+                return f"app.{extension}"
+        
+        # Default based on project type
+        if project_type == "cli_tool":
+            return f"cli.{extension}"
+        elif project_type == "web_app":
+            return f"app.{extension}"
+        elif project_type == "api":
+            return f"api.{extension}"
+        elif project_type == "library":
+            return f"lib.{extension}"
+        else:
+            return f"main.{extension}"
+
+    def _needs_dependency_file(self, analysis_result: Dict[str, Any]) -> bool:
+        """Determine if a dependency file is needed."""
+        required_deps = analysis_result.get("required_dependencies", [])
+        optional_deps = analysis_result.get("optional_dependencies", [])
+        return len(required_deps) > 0 or len(optional_deps) > 0
+
+    def _get_dependency_file_name(self, language: str) -> str:
+        """Get appropriate dependency file name for language."""
+        if language == "python":
+            return "requirements.txt"
+        elif language == "javascript" or language == "typescript":
+            return "package.json"
+        elif language == "java":
+            return "pom.xml"
+        elif language == "csharp":
+            return "packages.config"
+        elif language == "go":
+            return "go.mod"
+        elif language == "rust":
+            return "Cargo.toml"
+        else:
+            return "dependencies.txt"
+
+    def _needs_documentation(self, analysis_result: Dict[str, Any]) -> bool:
+        """Determine if documentation should be generated."""
+        quality_reqs = analysis_result.get("quality_requirements", {})
+        doc_level = quality_reqs.get("documentation_level", "standard")
+        return doc_level in ["standard", "detailed", "comprehensive"]
+
     async def _generate_code_files(self, planning_result: Dict[str, Any], task_input: SmartCodeGeneratorInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 3: Generation - Generate code files."""
-        self.logger.info("Starting code file generation")
+        """Phase 3: Generation - Generate LLM-driven code files."""
+        self.logger.info("Starting LLM-driven code file generation")
         
         planned_files = planning_result.get("planned_files", [])
         generated_files = []
         project_path = Path(task_input.project_path or ".")
         
+        # Get refinement context for content generation
+        refinement_context = shared_context.get("refinement_context")
+        
         for file_plan in planned_files:
             file_path = file_plan["file_path"]
             file_type = file_plan["file_type"]
+            description = file_plan["description"]
+            llm_specified = file_plan.get("llm_specified", False)
             
-            # Generate content based on file type
-            if file_type == "main_module":
-                content = self._generate_main_module_content(task_input)
-            elif file_type == "dependency_file":
-                content = self._generate_dependency_file_content(task_input)
-            elif file_type == "documentation":
-                content = self._generate_documentation_content(task_input)
-            else:
-                content = f"# Generated {file_type} file\n# TODO: Implement {file_path}\n"
-            
-            # Write file to project directory
-            full_path = project_path / file_path
             try:
+                # Generate content using LLM instead of hardcoded templates
+                if llm_specified or self.llm_provider:
+                    content = await self._generate_llm_code_content(
+                        file_plan, task_input, shared_context, refinement_context
+                    )
+                else:
+                    # Only use minimal fallback if LLM is completely unavailable
+                    content = self._generate_minimal_fallback_content(file_plan, task_input)
+                
+                # Write file to project directory
+                full_path = project_path / file_path
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 full_path.write_text(content, encoding='utf-8')
                 
@@ -672,564 +836,299 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                     "full_path": str(full_path),
                     "file_type": file_type,
                     "content_length": len(content),
-                    "status": "success"
+                    "status": "success",
+                    "generation_method": "llm_driven" if llm_specified or self.llm_provider else "fallback",
+                    "description": description
                 })
                 
-                self.logger.info(f"Generated file: {file_path}")
+                self.logger.info(f"Generated file: {file_path} ({len(content)} characters)")
                 
             except Exception as e:
-                self.logger.error(f"Failed to write file {file_path}: {e}")
+                self.logger.error(f"Failed to generate file {file_path}: {e}")
                 generated_files.append({
                     "file_path": file_path,
-                    "full_path": str(full_path),
+                    "full_path": str(project_path / file_path),
                     "file_type": file_type,
                     "status": "error",
-                    "error": str(e)
+                    "error": str(e),
+                    "description": description
                 })
         
         generation = {
             "generated_files": generated_files,
             "total_generated": len([f for f in generated_files if f["status"] == "success"]),
             "total_failed": len([f for f in generated_files if f["status"] == "error"]),
+            "llm_driven_files": len([f for f in generated_files if f.get("generation_method") == "llm_driven"]),
             "generation_timestamp": datetime.datetime.now().isoformat()
         }
         
         return generation
 
-    async def _validate_generated_code(self, generation_result: Dict[str, Any], task_input: SmartCodeGeneratorInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 4: Validation - Validate generated code quality."""
-        self.logger.info("Starting code validation")
+    async def _generate_llm_code_content(
+        self, 
+        file_plan: Dict[str, Any], 
+        task_input: SmartCodeGeneratorInput, 
+        shared_context: Dict[str, Any],
+        refinement_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Generate code content for a specific file using LLM."""
         
-        generated_files = generation_result.get("generated_files", [])
-        successful_files = [f for f in generated_files if f["status"] == "success"]
+        file_path = file_plan["file_path"]
+        file_type = file_plan["file_type"]
+        description = file_plan["description"]
         
-        validation = {
-            "files_generated": len(successful_files),
-            "files_failed": len(generated_files) - len(successful_files),
-            "validation_checks": {
-                "files_created": len(successful_files) > 0,
-                "main_module_exists": any(f["file_type"] == "main_module" for f in successful_files),
-                "no_generation_errors": all(f["status"] == "success" for f in generated_files),
-                "adequate_content": all(f.get("content_length", 0) > 50 for f in successful_files)
-            },
-            "validation_score": 0.0,
-            "validation_timestamp": datetime.datetime.now().isoformat()
-        }
+        # Build comprehensive prompt for code generation
+        prompt_parts = []
         
-        # Calculate validation score
-        checks = validation["validation_checks"]
-        score = sum(1 for check in checks.values() if check) / len(checks)
-        validation["validation_score"] = score
-        
-        return validation
+        # Base generation request
+        prompt_parts.append(f"""Generate complete, production-ready code for the file: {file_path}
 
-    def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
-        """Calculate iteration-aware quality score based on validation results, goal alignment, and improvements."""
-        
-        # Get base validation score
-        base_score = validation_result.get("validation_score", 0.0)
-        
-        # Try to get refinement context for iteration awareness
-        refinement_context = getattr(self, '_current_refinement_context', None)
-        
-        if refinement_context:
-            # ITERATION-AWARE SCORING
-            previous_outputs = refinement_context.get("previous_outputs", [])
-            iteration = refinement_context.get("iteration", 0)
-            current_state = refinement_context.get("current_state", {})
-            
-            self.logger.info(f"[Quality] Calculating iteration-aware quality score for iteration {iteration + 1}")
-            
-            # Factor 1: Base validation (0.0 - 0.4)
-            validation_factor = base_score * 0.4
-            
-            # Factor 2: Goal alignment assessment (0.0 - 0.3)
-            goal_alignment_factor = self._calculate_goal_alignment_score(
-                validation_result, current_state
-            ) * 0.3
-            
-            # Factor 3: Improvement over previous iterations (0.0 - 0.2)
-            improvement_factor = 0.0
-            if iteration > 0 and previous_outputs:
-                improvement_factor = self._calculate_improvement_score(
-                    validation_result, previous_outputs
-                ) * 0.2
-            
-            # Factor 4: Content quality and completeness (0.0 - 0.1)
-            content_factor = self._calculate_content_quality_score(validation_result) * 0.1
-            
-            # Calculate final score
-            final_score = validation_factor + goal_alignment_factor + improvement_factor + content_factor
-            
-            self.logger.info(f"[Quality] Iteration-aware scoring breakdown: "
-                           f"validation={validation_factor:.3f}, "
-                           f"goal_alignment={goal_alignment_factor:.3f}, "
-                           f"improvement={improvement_factor:.3f}, "
-                           f"content={content_factor:.3f}, "
-                           f"final={final_score:.3f}")
-            
-        else:
-            # FALLBACK: Standard scoring for non-refinement iterations
-            final_score = base_score
-            self.logger.info(f"[Quality] Standard scoring (no refinement context): {final_score:.3f}")
-        
-        # Ensure score is within bounds
-        final_score = max(0.0, min(final_score, 1.0))
-        
-        return final_score
+File Description: {description}
+File Type: {file_type}
+User Goal: {task_input.user_goal}""")
 
-    def _calculate_goal_alignment_score(self, validation_result: Dict[str, Any], current_state: Dict[str, Any]) -> float:
-        """Calculate how well the generated code aligns with the user goal."""
-        
-        # Try to extract goal content
-        goal_content = ""
-        if current_state and 'user_goal' in current_state:
-            goal_content = str(current_state['user_goal'])
-        elif hasattr(self, 'shared_context') and self.shared_context and 'user_goal' in self.shared_context:
-            goal_content = str(self.shared_context['user_goal'])
-        
-        if not goal_content or len(goal_content) < 20:
-            # No goal content available, use moderate score
-            return 0.7
-        
-        # Analyze goal content for key requirements
-        goal_lower = goal_content.lower()
-        generated_files = validation_result.get("files_generated", 0)
-        
-        alignment_score = 0.5  # Base alignment score
-        
-        # Check for specific goal requirements fulfillment
-        if "scanner" in goal_lower and generated_files > 0:
-            alignment_score += 0.2  # Goal mentions scanner and we generated files
-        
-        if "python" in goal_lower and any(
-            f.get("file_path", "").endswith(".py") 
-            for f in validation_result.get("generated_files", [])
-        ):
-            alignment_score += 0.1  # Goal mentions Python and we generated Python files
-        
-        if "cli" in goal_lower or "command" in goal_lower:
-            # Check if we generated a main module that could be a CLI
-            has_main = validation_result.get("validation_checks", {}).get("main_module_exists", False)
-            if has_main:
-                alignment_score += 0.1
-        
-        if "requirements" in goal_lower or "dependencies" in goal_lower:
-            # Check if we generated dependency files
-            has_deps = any(
-                "requirements" in f.get("file_path", "").lower() or 
-                "setup" in f.get("file_path", "").lower()
-                for f in validation_result.get("generated_files", [])
-            )
-            if has_deps:
-                alignment_score += 0.1
-        
-        return min(1.0, alignment_score)
-
-    def _calculate_improvement_score(self, validation_result: Dict[str, Any], previous_outputs: List[Dict]) -> float:
-        """Calculate improvement over previous iterations."""
-        
-        if not previous_outputs:
-            return 0.5  # No previous outputs to compare against
-        
-        current_files = validation_result.get("files_generated", 0)
-        current_quality = validation_result.get("validation_score", 0.0)
-        
-        # Get the most recent previous output
-        latest_previous = previous_outputs[-1]
-        prev_content = latest_previous.get('content', {})
-        
-        # Extract previous metrics
-        prev_files = 0
-        prev_quality = 0.0
-        
-        if isinstance(prev_content, dict):
-            if 'generated_files' in prev_content:
-                prev_files = len(prev_content['generated_files'])
-            prev_quality = latest_previous.get('quality_score', 0.0)
-        
-        improvement_score = 0.5  # Base improvement score
-        
-        # Check for file count improvement
-        if current_files > prev_files:
-            improvement_score += 0.2
-        elif current_files == prev_files and current_files > 0:
-            improvement_score += 0.1  # Maintained file count
-        
-        # Check for quality improvement
-        quality_improvement = current_quality - prev_quality
-        if quality_improvement > 0.1:
-            improvement_score += 0.2  # Significant quality improvement
-        elif quality_improvement > 0.0:
-            improvement_score += 0.1  # Some quality improvement
-        elif quality_improvement == 0.0:
-            improvement_score += 0.05  # Maintained quality
-        
-        # Check for content length improvement (more comprehensive code)
-        current_total_length = sum(
-            f.get("content_length", 0) 
-            for f in validation_result.get("generated_files", [])
-        )
-        
-        prev_total_length = 0
-        if isinstance(prev_content, dict) and 'generated_files' in prev_content:
-            prev_total_length = sum(
-                f.get("content_length", 0) 
-                for f in prev_content['generated_files']
-            )
-        
-        if current_total_length > prev_total_length * 1.1:  # 10% more content
-            improvement_score += 0.1
-        
-        return min(1.0, improvement_score)
-
-    def _calculate_content_quality_score(self, validation_result: Dict[str, Any]) -> float:
-        """Calculate content quality based on generated code characteristics."""
-        
-        generated_files = validation_result.get("generated_files", [])
-        if not generated_files:
-            return 0.0
-        
-        quality_score = 0.0
-        
-        # Check for diverse file types
-        file_types = set(f.get("file_type", "unknown") for f in generated_files)
-        if len(file_types) > 1:
-            quality_score += 0.3  # Multiple file types generated
-        elif len(file_types) == 1:
-            quality_score += 0.2  # At least one file type
-        
-        # Check for adequate content length
-        total_content_length = sum(f.get("content_length", 0) for f in generated_files)
-        if total_content_length > 1000:
-            quality_score += 0.3  # Substantial content
-        elif total_content_length > 500:
-            quality_score += 0.2  # Moderate content
-        elif total_content_length > 100:
-            quality_score += 0.1  # Minimal content
-        
-        # Check for successful file generation
-        successful_files = [f for f in generated_files if f.get("status") == "success"]
-        success_ratio = len(successful_files) / len(generated_files) if generated_files else 0
-        quality_score += success_ratio * 0.4  # Up to 0.4 for 100% success rate
-        
-        return min(1.0, quality_score)
-
-    def _generate_main_module_content(self, task_input: SmartCodeGeneratorInput) -> str:
-        """Generate content for the main module file."""
-        if task_input.project_specifications:
-            project_name = task_input.project_specifications.get("project_type", "CLI Tool")
-            technologies = task_input.project_specifications.get("technologies", [])
-            
-            # Check if it's a network scanner based on technologies
-            if any("scapy" in tech.lower() or "network" in tech.lower() for tech in technologies):
-                return self._generate_network_scanner_content()
-        
-        # Default CLI tool content
-        return '''#!/usr/bin/env python3
-"""
-Dynamic CLI Tool
-
-A lightweight, user-friendly command-line interface tool.
-"""
-
-import argparse
-import sys
-from pathlib import Path
-
-
-def main():
-    """Main entry point for the CLI tool."""
-    parser = argparse.ArgumentParser(
-        description="Dynamic CLI Tool - A lightweight command-line interface"
-    )
-    
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="1.0.0"
-    )
-    
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    
-    parser.add_argument(
-        "command",
-        nargs="?",
-        help="Command to execute"
-    )
-    
-    args = parser.parse_args()
-    
-    if args.verbose:
-        print("Verbose mode enabled")
-    
-    if args.command:
-        print(f"Executing command: {args.command}")
-    else:
-        print("Welcome to the Dynamic CLI Tool!")
-        print("Use --help for more information.")
-
-
-if __name__ == "__main__":
-    main()
-'''
-
-    def _generate_network_scanner_content(self) -> str:
-        """Generate content for a network scanner CLI tool."""
-        return '''#!/usr/bin/env python3
-"""
-Dynamic Network Scanner CLI Tool
-
-A lightweight, user-friendly network scanning tool with pattern matching
-and output formatting capabilities.
-"""
-
-import argparse
-import json
-import csv
-import sys
-from pathlib import Path
-from typing import List, Dict, Any
-
-try:
-    import scapy.all as scapy
-    from rich.console import Console
-    from rich.table import Table
-    DEPENDENCIES_AVAILABLE = True
-except ImportError:
-    DEPENDENCIES_AVAILABLE = False
-
-console = Console()
-
-
-class NetworkScanner:
-    """Network scanner with pattern matching and output formatting."""
-    
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.console = console
-    
-    def scan_network(self, target: str) -> List[Dict[str, Any]]:
-        """Scan network for active hosts."""
-        if not DEPENDENCIES_AVAILABLE:
-            self.console.print("[red]Error: Required dependencies not installed.[/red]")
-            self.console.print("Please install: pip install scapy rich")
-            return []
-        
-        if self.verbose:
-            self.console.print(f"[blue]Scanning network: {target}[/blue]")
-        
-        # Create ARP request
-        arp_request = scapy.ARP(pdst=target)
-        broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
-        arp_request_broadcast = broadcast / arp_request
-        
-        # Send request and receive response
-        answered_list = scapy.srp(arp_request_broadcast, timeout=2, verbose=False)[0]
-        
-        hosts = []
-        for element in answered_list:
-            host_dict = {
-                "ip": element[1].psrc,
-                "mac": element[1].hwsrc
-            }
-            hosts.append(host_dict)
-        
-        return hosts
-    
-    def format_output(self, hosts: List[Dict[str, Any]], format_type: str = "table") -> None:
-        """Format and display scan results."""
-        if not hosts:
-            self.console.print("[yellow]No hosts found.[/yellow]")
-            return
-        
-        if format_type == "table":
-            table = Table(title="Network Scan Results")
-            table.add_column("IP Address", style="cyan")
-            table.add_column("MAC Address", style="magenta")
-            
-            for host in hosts:
-                table.add_row(host["ip"], host["mac"])
-            
-            self.console.print(table)
-        
-        elif format_type == "json":
-            print(json.dumps(hosts, indent=2))
-        
-        elif format_type == "csv":
-            if hosts:
-                writer = csv.DictWriter(sys.stdout, fieldnames=hosts[0].keys())
-                writer.writeheader()
-                writer.writerows(hosts)
-
-
-def main():
-    """Main entry point for the network scanner."""
-    parser = argparse.ArgumentParser(
-        description="Dynamic Network Scanner CLI Tool"
-    )
-    
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="1.0.0"
-    )
-    
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    
-    parser.add_argument(
-        "--target", "-t",
-        required=True,
-        help="Target network to scan (e.g., 192.168.1.0/24)"
-    )
-    
-    parser.add_argument(
-        "--format", "-f",
-        choices=["table", "json", "csv"],
-        default="table",
-        help="Output format (default: table)"
-    )
-    
-    parser.add_argument(
-        "--output", "-o",
-        help="Output file path"
-    )
-    
-    args = parser.parse_args()
-    
-    # Check dependencies
-    if not DEPENDENCIES_AVAILABLE:
-        console.print("[red]Error: Required dependencies not installed.[/red]")
-        console.print("Please install: pip install scapy rich")
-        sys.exit(1)
-    
-    # Create scanner
-    scanner = NetworkScanner(verbose=args.verbose)
-    
-    # Perform scan
-    hosts = scanner.scan_network(args.target)
-    
-    # Handle output
-    if args.output:
-        # Redirect output to file
-        with open(args.output, 'w') as f:
-            original_stdout = sys.stdout
-            sys.stdout = f
-            scanner.format_output(hosts, args.format)
-            sys.stdout = original_stdout
-        console.print(f"[green]Results saved to {args.output}[/green]")
-    else:
-        scanner.format_output(hosts, args.format)
-
-
-if __name__ == "__main__":
-    main()
-'''
-
-    def _generate_dependency_file_content(self, task_input: SmartCodeGeneratorInput) -> str:
-        """Generate content for requirements.txt or similar dependency file."""
-        if task_input.project_specifications:
-            dependencies = task_input.project_specifications.get("required_dependencies", [])
-            
-            # Extract actual package names from descriptions
-            packages = []
-            for dep in dependencies:
-                if isinstance(dep, str):
-                    # Extract package name from description
-                    if "scapy" in dep.lower():
-                        packages.append("scapy>=2.4.5")
-                    elif "rich" in dep.lower():
-                        packages.append("rich>=13.0.0")
-                    elif "argparse" in dep.lower():
-                        # argparse is built-in, skip
-                        continue
-                    elif "json" in dep.lower() or "csv" in dep.lower():
-                        # Built-in modules, skip
-                        continue
-                    else:
-                        # Generic package
-                        package_name = dep.split()[0].lower()
-                        packages.append(package_name)
-            
-            if packages:
-                return "\n".join(packages) + "\n"
-        
-        # Default dependencies
-        return """# Project dependencies
-click>=8.0.0
-rich>=13.0.0
-"""
-
-    def _generate_documentation_content(self, task_input: SmartCodeGeneratorInput) -> str:
-        """Generate content for README.md."""
-        project_name = "Dynamic CLI Tool"
+        # Add project specifications if available
         if task_input.project_specifications:
             specs = task_input.project_specifications
-            if "network" in str(specs).lower() or "scanner" in str(specs).lower():
-                project_name = "Dynamic Network Scanner CLI Tool"
+            prompt_parts.append(f"""
+Project Specifications:
+- Project Type: {specs.get('project_type', 'unknown')}
+- Primary Language: {specs.get('primary_language', 'unknown')}
+- Technologies: {specs.get('technologies', [])}
+- Required Dependencies: {specs.get('required_dependencies', [])}""")
+
+        # Add refinement context if this is a refinement iteration
+        if refinement_context:
+            previous_outputs = refinement_context.get("previous_outputs", [])
+            if previous_outputs:
+                latest_output = previous_outputs[-1]
+                prompt_parts.append(f"""
+REFINEMENT CONTEXT:
+This is iteration {refinement_context.get('iteration', 1)} of refinement.
+Previous quality score: {latest_output.get('quality_score', 'unknown')}
+
+Previous implementation issues to address:
+{refinement_context.get('refinement_needs', 'General quality improvement needed')}
+
+Please generate IMPROVED code that addresses these specific issues.""")
+
+        # Add specific requirements based on file type
+        if file_type == "main_module":
+            prompt_parts.append("""
+Requirements for main module:
+- Include proper shebang line if executable
+- Implement complete functionality as described in the user goal
+- Include proper error handling and logging
+- Follow best practices for the target language
+- Include comprehensive docstrings/comments""")
+        elif file_type in ["code_module", "api_module", "cli_module", "utility_module"]:
+            prompt_parts.append(f"""
+Requirements for {file_type}:
+- Implement the specific functionality described in the file description
+- Include proper class/function definitions
+- Add comprehensive error handling
+- Include type hints if using Python
+- Follow modular design principles""")
+
+        # Final instructions
+        prompt_parts.append("""
+CRITICAL REQUIREMENTS:
+1. Generate COMPLETE, working code - not pseudocode or templates
+2. Code must be syntactically correct and runnable
+3. Include all necessary imports and dependencies
+4. Follow language-specific best practices
+5. Add comprehensive documentation
+6. Ensure code aligns with the user goal
+
+Return ONLY the complete source code for this file, no explanations or markdown formatting.""")
+
+        prompt = "\n".join(prompt_parts)
         
-        return f'''# {project_name}
+        try:
+            if self.llm_provider:
+                response = await self.llm_provider.generate(
+                    prompt=prompt,
+                    max_tokens=4000,  # Allow for larger code files
+                    temperature=0.1   # Lower temperature for more consistent code
+                )
+                
+                if response and response.strip():
+                    # Clean up any markdown formatting if present
+                    cleaned_content = self._clean_code_response(response)
+                    return cleaned_content
+                else:
+                    self.logger.warning(f"Empty LLM response for {file_path}, using fallback")
+                    return self._generate_minimal_fallback_content(file_plan, task_input)
+            else:
+                self.logger.warning(f"No LLM provider available for {file_path}, using fallback")
+                return self._generate_minimal_fallback_content(file_plan, task_input)
+                
+        except Exception as e:
+            self.logger.error(f"LLM code generation failed for {file_path}: {e}")
+            return self._generate_minimal_fallback_content(file_plan, task_input)
 
-A lightweight, user-friendly command-line interface tool built with Python.
+    def _clean_code_response(self, response: str) -> str:
+        """Clean LLM response to extract pure code content."""
+        response = response.strip()
+        
+        # Remove markdown code blocks if present
+        if response.startswith('```'):
+            lines = response.split('\n')
+            code_lines = []
+            in_code_block = False
+            
+            for line in lines:
+                if line.strip().startswith('```') and not in_code_block:
+                    in_code_block = True
+                    continue
+                elif line.strip() == '```' and in_code_block:
+                    break
+                elif in_code_block:
+                    code_lines.append(line)
+            
+            if code_lines:
+                return '\n'.join(code_lines)
+        
+        # Return original if no code blocks found
+        return response
 
-## Features
+    def _generate_minimal_fallback_content(self, file_plan: Dict[str, Any], task_input: SmartCodeGeneratorInput) -> str:
+        """Generate minimal fallback content when LLM is unavailable."""
+        file_path = file_plan["file_path"]
+        file_type = file_plan["file_type"]
+        description = file_plan["description"]
+        
+        # Determine language from file extension
+        if file_path.endswith('.py'):
+            return self._generate_python_fallback(file_plan, task_input)
+        elif file_path.endswith('.js'):
+            return self._generate_javascript_fallback(file_plan, task_input)
+        elif file_path.endswith('.md'):
+            return self._generate_markdown_fallback(file_plan, task_input)
+        elif file_path.endswith('.txt'):
+            return self._generate_text_fallback(file_plan, task_input)
+        else:
+            return f"""# {description}
+# TODO: Implement {file_path}
+# Generated as fallback when LLM was unavailable
 
-- Command-line interface with argument parsing
-- Verbose output mode
-- Cross-platform compatibility
-- Easy to use and extend
+# File type: {file_type}
+# User goal: {task_input.user_goal or 'Not specified'}
+"""
+
+    def _generate_python_fallback(self, file_plan: Dict[str, Any], task_input: SmartCodeGeneratorInput) -> str:
+        """Generate minimal Python fallback."""
+        file_path = file_plan["file_path"]
+        description = file_plan["description"]
+        
+        is_executable = file_plan.get("file_type") == "main_module"
+        shebang = "#!/usr/bin/env python3\n" if is_executable else ""
+        
+        return f"""{shebang}\"\"\"
+{description}
+
+Generated as minimal fallback implementation.
+TODO: Implement full functionality for: {task_input.user_goal or 'user requirements'}
+\"\"\"
+
+import sys
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def main():
+    \"\"\"Main function - implement core functionality here.\"\"\"
+    logger.info(f"Starting {file_path}")
+    
+    # TODO: Implement functionality for: {task_input.user_goal or 'user requirements'}
+    print(f"This is a placeholder implementation of {file_path}")
+    print(f"Goal: {task_input.user_goal or 'Not specified'}")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+"""
+
+    def _generate_javascript_fallback(self, file_plan: Dict[str, Any], task_input: SmartCodeGeneratorInput) -> str:
+        """Generate minimal JavaScript fallback."""
+        description = file_plan["description"]
+        
+        return f"""/**
+ * {description}
+ * 
+ * Generated as minimal fallback implementation.
+ * TODO: Implement full functionality for: {task_input.user_goal or 'user requirements'}
+ */
+
+console.log('Starting application');
+
+// TODO: Implement functionality for: {task_input.user_goal or 'user requirements'}
+
+function main() {{
+    console.log('This is a placeholder implementation');
+    console.log('Goal: {task_input.user_goal or 'Not specified'}');
+}}
+
+// Run main function
+main();
+"""
+
+    def _generate_markdown_fallback(self, file_plan: Dict[str, Any], task_input: SmartCodeGeneratorInput) -> str:
+        """Generate minimal Markdown fallback."""
+        project_type = "Project"
+        if task_input.project_specifications:
+            project_type = task_input.project_specifications.get("project_type", "Project").title()
+        
+        return f"""# {project_type}
+
+{task_input.user_goal or 'Project description not specified'}
+
+## Overview
+
+This is a minimal documentation template generated as fallback.
 
 ## Installation
 
-1. Clone this repository:
-   ```bash
-   git clone <repository-url>
-   cd <project-directory>
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+# Add installation instructions here
+```
 
 ## Usage
 
-Run the tool with:
-
 ```bash
-python scanner.py --help
+# Add usage examples here
 ```
 
-### Basic Usage
+## Features
 
-```bash
-# Show help
-python scanner.py --help
-
-# Run with verbose output
-python scanner.py --verbose
-
-# Execute a command
-python scanner.py command_name
-```
+- TODO: Add project features
+- TODO: Document functionality
 
 ## Requirements
 
-- Python 3.7+
-- Dependencies listed in requirements.txt
+- TODO: List requirements and dependencies
 
 ## License
 
-This project is licensed under the MIT License.
-'''
+TODO: Add license information
+"""
+
+    def _generate_text_fallback(self, file_plan: Dict[str, Any], task_input: SmartCodeGeneratorInput) -> str:
+        """Generate minimal text file fallback."""
+        if "requirements" in file_plan["file_path"].lower():
+            # Basic requirements.txt
+            if task_input.project_specifications:
+                deps = task_input.project_specifications.get("required_dependencies", [])
+                if deps:
+                    return "\n".join(deps) + "\n"
+            return "# Add project dependencies here\n"
+        else:
+            return f"# {file_plan['description']}\n# TODO: Add content for {file_plan['file_path']}\n"
 
     def _get_file_extension(self, language: str) -> str:
         """Get file extension for programming language."""
