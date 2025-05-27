@@ -24,6 +24,7 @@ class ExecutionMode(Enum):
 class CompletionReason(Enum):
     """Why execution stopped"""
     QUALITY_THRESHOLD_MET = "quality_threshold_met"
+    QUALITY_THRESHOLD_NOT_MET = "quality_threshold_not_met"
     MAX_ITERATIONS_REACHED = "max_iterations_reached"
     COMPLETION_CRITERIA_MET = "completion_criteria_met"
     ERROR_OCCURRED = "error_occurred"

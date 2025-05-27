@@ -61,6 +61,11 @@ class UnifiedOrchestrator:
             "project_root_path": str(state_manager.target_dir_path),
             "outputs": {},
         }
+        
+        # Log refinement configuration
+        refinement_config = config.get("refinement", {})
+        if refinement_config.get("enabled_agents"):
+            self.logger.info(f"Refinement enabled for agents: {refinement_config['enabled_agents']}")
 
     # ---------------------------------------------------------------------
     async def execute_stage(

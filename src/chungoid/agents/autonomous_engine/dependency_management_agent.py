@@ -770,7 +770,13 @@ class DependencyManagementAgent_v1(UnifiedAgent):
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'tool_validation', 'context_sharing']
 
     def __init__(self, llm_provider=None, prompt_manager=None, **kwargs):
-        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        # Enable refinement capabilities by default (can be overridden to False via config)
+        super().__init__(
+            llm_provider=llm_provider, 
+            prompt_manager=prompt_manager, 
+            enable_refinement=True,  # Default to True, can be overridden
+            **kwargs
+        )
         
         # ✅ PHASE 3 UAEI: Core services only - no complex external state management
         self._config_manager = ConfigurationManager()

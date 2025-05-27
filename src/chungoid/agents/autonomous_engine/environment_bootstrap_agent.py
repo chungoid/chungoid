@@ -660,7 +660,13 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             project_type_detector: Project type detection service
             dependency_analyzer: Smart dependency analysis service
         """
-        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        # Enable refinement capabilities by default (can be overridden to False via config)
+        super().__init__(
+            llm_provider=llm_provider, 
+            prompt_manager=prompt_manager, 
+            enable_refinement=True,  # Default to True, can be overridden
+            **kwargs
+        )
         
         # FIXED: Make all service attributes private to avoid Pydantic field conflicts
         self._config_manager = ConfigurationManager()
@@ -1249,7 +1255,18 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             # Extract environment requirements from analysis
             env_requirements = analysis_result.get("environment_requirements", [])
             
+            # Handle both list of dicts and list of strings/other types
             for req_data in env_requirements:
+                # Ensure req_data is a dictionary
+                if not isinstance(req_data, dict):
+                    self.logger.warning(f"Expected dict for requirement data, got {type(req_data)}: {req_data}")
+                    # Try to convert string to basic requirement
+                    if isinstance(req_data, str):
+                        req_data = {"environment_type": req_data}
+                    else:
+                        self.logger.warning(f"Skipping invalid requirement data: {req_data}")
+                        continue
+                
                 # Map environment type string to enum
                 env_type_str = req_data.get("environment_type", "python")
                 try:
@@ -1258,18 +1275,24 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                     self.logger.warning(f"Unknown environment type: {env_type_str}, defaulting to python")
                     env_type = EnvironmentType.PYTHON
                 
+                # Safely extract configuration with error handling
+                configuration_needed = req_data.get("configuration_needed", {})
+                if not isinstance(configuration_needed, dict):
+                    self.logger.warning(f"Expected dict for configuration_needed, got {type(configuration_needed)}")
+                    configuration_needed = {}
+                
                 # Create EnvironmentRequirement object
                 requirement = EnvironmentRequirement(
                     environment_type=env_type,
                     version_requirement=req_data.get("version_requirement"),
                     dependencies=[],  # Dependencies will be handled separately
-                    tools_required=req_data.get("tools_required", []),
+                    tools_required=req_data.get("tools_required", []) if isinstance(req_data.get("tools_required", []), list) else [],
                     configuration={
                         "intelligent_analysis": True,
                         "analysis_method": analysis_result.get("analysis_method", "llm_processing"),
-                        **req_data.get("configuration_needed", {})
+                        **configuration_needed
                     },
-                    priority=req_data.get("priority", 1)
+                    priority=req_data.get("priority", 1) if isinstance(req_data.get("priority", 1), int) else 1
                 )
                 
                 requirements.append(requirement)

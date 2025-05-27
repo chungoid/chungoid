@@ -25,6 +25,7 @@ from .project_documentation_agent import ProjectDocumentationAgent_v1
 from .code_debugging_agent import CodeDebuggingAgent_v1
 from .environment_bootstrap_agent import EnvironmentBootstrapAgent
 from .dependency_management_agent import DependencyManagementAgent_v1
+from .smart_code_generator_agent import SmartCodeGeneratorAgent_v1
 
 # Use TYPE_CHECKING to avoid circular import
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type['UnifiedAgent']] = [
     CodeDebuggingAgent_v1,
     EnvironmentBootstrapAgent,
     DependencyManagementAgent_v1,
+    SmartCodeGeneratorAgent_v1,
 ]
 
 def get_autonomous_engine_agent_cards() -> List[AgentCard]:
@@ -74,4 +76,5 @@ __all__ = [
     "CodeDebuggingAgent_v1",
     "EnvironmentBootstrapAgent",
     "DependencyManagementAgent_v1",
+    "SmartCodeGeneratorAgent_v1",
 ] 

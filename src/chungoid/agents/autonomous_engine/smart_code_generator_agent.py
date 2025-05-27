@@ -11,10 +11,6 @@ Key Features:
 - Project structure awareness
 - Quality-driven iterative generation
 - MCP tool integration for file operations
-
-Author: Claude (Autonomous Agent)
-Version: 1.0.0
-Created: 2025-01-26
 """
 
 from __future__ import annotations
@@ -130,7 +126,13 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         prompt_manager: PromptManager,
         **kwargs
     ):
-        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        # Enable refinement capabilities for intelligent code generation
+        super().__init__(
+            llm_provider=llm_provider, 
+            prompt_manager=prompt_manager,
+            enable_refinement=True,  # Enable intelligent refinement
+            **kwargs
+        )
 
     async def _execute_iteration(
         self, 
@@ -139,7 +141,10 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
     ) -> IterationResult:
         """
         Phase 3 UAEI implementation for smart code generation.
+        Enhanced with Phase 4 refinement capabilities.
+        
         Runs comprehensive code generation workflow: analysis → planning → generation → validation
+        With refinement: previous work analysis → current state analysis → intelligent refinement
         """
         try:
             # Convert inputs to expected format
@@ -151,8 +156,15 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             else:
                 task_input = context.inputs
 
-            # Phase 1: Analysis - Analyze project requirements and structure
-            if task_input.intelligent_context and task_input.project_specifications:
+            # Phase 4: Check for refinement context
+            refinement_context = context.shared_context.get("refinement_context")
+            if self.enable_refinement and refinement_context:
+                self.logger.info(f"[Refinement] Using refinement context with {len(refinement_context.get('previous_outputs', []))} previous outputs")
+                # Use refinement-aware analysis that considers previous work
+                analysis_result = await self._analyze_with_refinement_context(
+                    task_input, context.shared_context, refinement_context
+                )
+            elif task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
                 analysis_result = await self._extract_analysis_from_intelligent_specs(
                     task_input.project_specifications, 
@@ -323,6 +335,185 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             "intelligent_analysis": True,
             "analysis_method": "fallback_extraction",
             "code_generation_needed": True
+        }
+        
+        return analysis
+
+    async def _analyze_with_refinement_context(
+        self, 
+        task_input: SmartCodeGeneratorInput, 
+        shared_context: Dict[str, Any], 
+        refinement_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Analyze project requirements with refinement context from previous iterations."""
+        
+        try:
+            previous_outputs = refinement_context.get("previous_outputs", [])
+            current_state = refinement_context.get("current_state", {})
+            iteration = refinement_context.get("iteration", 0)
+            previous_quality = refinement_context.get("previous_quality_score", 0.0)
+            
+            # Build refinement-aware prompt using the base class method
+            refinement_prompt = self._build_refinement_prompt(task_input, refinement_context)
+            
+            if self.llm_provider:
+                # Enhanced prompt for code generation refinement
+                enhanced_prompt = f"""
+                {refinement_prompt}
+                
+                SPECIFIC CODE GENERATION REFINEMENT INSTRUCTIONS:
+                
+                Previous Code Generation Analysis:
+                """
+                
+                # Add analysis of previous code generation attempts
+                for output in previous_outputs[-2:]:  # Last 2 outputs
+                    enhanced_prompt += f"""
+                    
+                Iteration {output['iteration']}:
+                - Quality Score: {output['quality_score']:.2f}
+                - Generated Files: {len(output.get('metadata', {}).get('generated_files', []))} files
+                - Status: {output.get('metadata', {}).get('status', 'unknown')}
+                """
+                
+                # Add current project state analysis
+                if current_state.get('code_analysis'):
+                    enhanced_prompt += f"""
+                    
+                Current Code State:
+                - Existing code analysis: {current_state['code_analysis']}
+                """
+                
+                if current_state.get('file_structure'):
+                    enhanced_prompt += f"""
+                - File structure: {current_state['file_structure']}
+                """
+                
+                enhanced_prompt += f"""
+                
+                REFINEMENT GOALS:
+                1. Improve upon previous code generation quality (current: {previous_quality:.2f})
+                2. Address any issues identified in previous iterations
+                3. Ensure better integration with existing project structure
+                4. Generate more robust and maintainable code
+                5. Improve error handling and documentation
+                
+                Provide a refined analysis in the same JSON format as before, but with improvements based on the refinement context.
+                """
+                
+                response = await self.llm_provider.generate(enhanced_prompt)
+                
+                if response:
+                    try:
+                        json_content = self._extract_json_from_response(response)
+                        analysis = json.loads(json_content)
+                        
+                        # Add refinement metadata
+                        analysis["refinement_analysis"] = True
+                        analysis["refinement_iteration"] = iteration
+                        analysis["previous_quality_score"] = previous_quality
+                        analysis["refinement_improvements"] = [
+                            "Enhanced based on previous iterations",
+                            "Improved integration with existing code",
+                            "Better error handling and validation"
+                        ]
+                        analysis["analysis_method"] = "llm_refinement_processing"
+                        
+                        return analysis
+                        
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse refinement LLM response as JSON: {e}")
+            
+            # Fallback: enhance previous analysis with refinement insights
+            self.logger.info("Using fallback refinement analysis")
+            return self._generate_fallback_refinement_analysis(task_input, previous_outputs, current_state)
+            
+        except Exception as e:
+            self.logger.error(f"Error in refinement analysis: {e}")
+            # Fall back to standard analysis
+            if task_input.intelligent_context and task_input.project_specifications:
+                return await self._extract_analysis_from_intelligent_specs(
+                    task_input.project_specifications, task_input.user_goal
+                )
+            else:
+                return await self._analyze_project_requirements(task_input, shared_context)
+    
+    def _generate_fallback_refinement_analysis(
+        self, 
+        task_input: SmartCodeGeneratorInput, 
+        previous_outputs: List[Dict[str, Any]], 
+        current_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Generate fallback refinement analysis when LLM is unavailable."""
+        
+        # Start with base analysis
+        if task_input.intelligent_context and task_input.project_specifications:
+            base_analysis = {
+                "project_type": task_input.project_specifications.get("project_type", "cli_tool"),
+                "primary_language": task_input.project_specifications.get("primary_language", "python"),
+                "target_languages": task_input.project_specifications.get("target_languages", ["python"]),
+                "technologies": task_input.project_specifications.get("technologies", []),
+                "required_dependencies": task_input.project_specifications.get("required_dependencies", []),
+                "optional_dependencies": task_input.project_specifications.get("optional_dependencies", [])
+            }
+        else:
+            base_analysis = {
+                "project_type": "cli_tool",
+                "primary_language": "python",
+                "target_languages": ["python"],
+                "technologies": [],
+                "required_dependencies": [],
+                "optional_dependencies": []
+            }
+        
+        # Enhance with refinement insights
+        refinement_improvements = []
+        if previous_outputs:
+            avg_quality = sum(output.get('quality_score', 0.0) for output in previous_outputs) / len(previous_outputs)
+            if avg_quality < 0.7:
+                refinement_improvements.extend([
+                    "Focus on code quality improvements",
+                    "Add comprehensive error handling",
+                    "Improve documentation and comments"
+                ])
+            elif avg_quality < 0.9:
+                refinement_improvements.extend([
+                    "Fine-tune implementation details",
+                    "Optimize performance and structure",
+                    "Enhance testing coverage"
+                ])
+        
+        # Add current state insights
+        if current_state.get('file_structure'):
+            refinement_improvements.append("Integrate with existing file structure")
+        if current_state.get('code_analysis'):
+            refinement_improvements.append("Build upon existing code patterns")
+        
+        analysis = {
+            **base_analysis,
+            "code_generation_strategy": {
+                "approach": "refinement_based",
+                "file_structure": ["improved main module", "enhanced dependencies", "comprehensive documentation"],
+                "implementation_priorities": ["quality improvement", "integration", "error handling", "documentation"],
+                "architectural_patterns": ["modular design", "error resilience", "maintainability"]
+            },
+            "complexity_assessment": {
+                "level": "medium",
+                "factors": ["refinement requirements", "integration complexity"],
+                "estimated_files": max(3, len(previous_outputs) + 1),
+                "estimated_lines": 250  # Slightly more for refinement
+            },
+            "quality_requirements": {
+                "testing_strategy": "comprehensive",
+                "documentation_level": "detailed",
+                "code_standards": ["PEP8", "type hints"] if base_analysis.get("primary_language") == "python" else ["standard", "documentation"]
+            },
+            "implementation_considerations": refinement_improvements or ["quality improvement", "integration"],
+            "potential_challenges": ["maintaining backward compatibility", "improving quality metrics"],
+            "refinement_analysis": True,
+            "analysis_method": "fallback_refinement",
+            "code_generation_needed": True,
+            "refinement_improvements": refinement_improvements
         }
         
         return analysis

@@ -146,10 +146,12 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
         system_context: Optional[Dict[str, Any]] = None,
         **kwargs # To catch other potential ProtocolAwareAgent args like config, agent_id
     ):
+        # Enable refinement capabilities for intelligent risk assessment
         super().__init__(
             llm_provider=llm_provider,
             prompt_manager=prompt_manager,
             system_context=system_context,
+            enable_refinement=True,  # Enable intelligent refinement
             **kwargs
         )
         self._llm_provider = llm_provider

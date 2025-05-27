@@ -40,6 +40,83 @@ except ImportError:
     # Graceful degradation if dependencies not available
     pass
 
+def get_mcp_tools_registry():
+    """
+    Get registry of available MCP tools for refinement capabilities.
+    
+    Returns a simple registry that agents can use to access MCP tools
+    for analyzing project state, querying previous work, and enhancing
+    context during refinement cycles.
+    
+    Returns:
+        Dict containing available MCP tool functions organized by category
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Return a basic registry with available tool categories
+        # This provides a foundation for refinement capabilities
+        # without circular imports or heavy engine initialization
+        
+        registry = {
+            "filesystem": [
+                {
+                    "name": "list_files",
+                    "description": "List files in project directory",
+                    "category": "filesystem"
+                },
+                {
+                    "name": "read_file", 
+                    "description": "Read file contents",
+                    "category": "filesystem"
+                }
+            ],
+            "chromadb": [
+                {
+                    "name": "query_collection",
+                    "description": "Query ChromaDB collection",
+                    "category": "chromadb"
+                },
+                {
+                    "name": "store_document",
+                    "description": "Store document in ChromaDB",
+                    "category": "chromadb"
+                }
+            ],
+            "project": [
+                {
+                    "name": "get_project_status",
+                    "description": "Get current project status",
+                    "category": "project"
+                },
+                {
+                    "name": "analyze_project_structure",
+                    "description": "Analyze project structure and dependencies",
+                    "category": "project"
+                }
+            ],
+            "available": True,
+            "initialized": True
+        }
+        
+        logger.info("Initialized basic MCP tools registry for refinement capabilities")
+        return registry
+        
+    except Exception as e:
+        logger.warning(f"Failed to initialize MCP tools registry: {e}")
+        
+        return {
+            "filesystem": [],
+            "chromadb": [],
+            "terminal": [],
+            "project": [],
+            "analysis": [],
+            "available": False,
+            "error": str(e)
+        }
+
+# Export the registry function
 __all__ = [
     # ChromaDB tools
     "chroma_list_collections",
@@ -103,4 +180,6 @@ __all__ = [
     "get_tool_composition_recommendations", 
     "get_tool_performance_analytics",
     "tool_discovery",
+    # Registry function for refinement capabilities
+    "get_mcp_tools_registry",
 ] 

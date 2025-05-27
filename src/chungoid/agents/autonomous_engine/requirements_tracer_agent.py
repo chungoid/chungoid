@@ -140,7 +140,13 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         prompt_manager: PromptManager, 
         **kwargs
     ):
-        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        # Enable refinement capabilities for intelligent requirements tracing
+        super().__init__(
+            llm_provider=llm_provider, 
+            prompt_manager=prompt_manager, 
+            enable_refinement=True,  # Enable intelligent refinement
+            **kwargs
+        )
 
     async def _execute_iteration(
         self, 

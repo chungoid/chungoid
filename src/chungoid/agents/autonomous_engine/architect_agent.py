@@ -123,11 +123,13 @@ class ArchitectAgent_v1(UnifiedAgent):
                  system_context: Optional[Dict[str, Any]] = None,
                  agent_id: Optional[str] = None,
                  **kwargs):
+        # Enable refinement capabilities for intelligent architecture design
         super().__init__(
             llm_provider=llm_provider,
             prompt_manager=prompt_manager,
             system_context=system_context,
             agent_id=agent_id or self.AGENT_ID,
+            enable_refinement=True,  # Enable intelligent refinement
             **kwargs
         )
         

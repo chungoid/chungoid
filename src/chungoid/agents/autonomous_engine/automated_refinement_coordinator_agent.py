@@ -319,7 +319,13 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         state_manager: Optional[StateManager] = None,
         **kwargs
     ):
-        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        # Enable refinement capabilities for intelligent coordination
+        super().__init__(
+            llm_provider=llm_provider, 
+            prompt_manager=prompt_manager, 
+            enable_refinement=True,  # Enable intelligent refinement
+            **kwargs
+        )
         self._state_manager = state_manager
 
     async def _execute_iteration(

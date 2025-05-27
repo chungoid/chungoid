@@ -35,14 +35,24 @@ class UnifiedAgentResolver:
         self,
         agent_registry: AgentRegistry,
         llm_provider: LLMProvider,
-        prompt_manager: PromptManager
+        prompt_manager: PromptManager,
+        config: Optional[Dict[str, Any]] = None
     ):
         self.agent_registry = agent_registry
         self.llm_provider = llm_provider
         self.prompt_manager = prompt_manager
+        self.config = config or {}
         self.logger = logging.getLogger(__name__)
         
+        # Extract refinement configuration
+        self.refinement_config = self.config.get("refinement", {})
+        self.disabled_refinement_agents = set(self.refinement_config.get("disabled_agents", []))
+        
         self.logger.info("UnifiedAgentResolver initialized - Phase 3 UAEI architecture")
+        if self.disabled_refinement_agents:
+            self.logger.info(f"Refinement disabled for agents: {list(self.disabled_refinement_agents)}")
+        else:
+            self.logger.info("Refinement enabled for all agents (default behavior)")
     
     async def resolve_agent(self, agent_id: str) -> UnifiedAgent:
         """
@@ -70,11 +80,37 @@ class UnifiedAgentResolver:
                     f"All agents must inherit from UnifiedAgent in Phase 3."
                 )
             
-            # 3. Instantiate agent (simple, direct)
-            agent_instance = agent_class(
-                llm_provider=self.llm_provider,
-                prompt_manager=self.prompt_manager
-            )
+            # 3. Instantiate agent (refinement defaults to True, can be overridden to False)
+            # Check if refinement should be explicitly disabled for this agent
+            disable_refinement = agent_id in self.refinement_config.get("disabled_agents", [])
+            
+            agent_kwargs = {
+                "llm_provider": self.llm_provider,
+                "prompt_manager": self.prompt_manager,
+            }
+            
+            # Only pass enable_refinement=False if explicitly disabled in config
+            # Otherwise let agents default to True
+            if disable_refinement:
+                agent_kwargs["enable_refinement"] = False
+                self.logger.info(f"Refinement explicitly disabled for {agent_id}")
+            else:
+                # Log that refinement is enabled (default behavior)
+                self.logger.info(f"Refinement enabled for {agent_id} (default)")
+                
+                # Add MCP tools and ChromaDB configuration for refinement
+                mcp_config = self.refinement_config.get("mcp_tools", {})
+                chroma_config = self.refinement_config.get("chroma_db", {})
+                
+                if mcp_config.get("enabled", True):
+                    # MCP tools will be initialized by the agent itself
+                    self.logger.info(f"MCP tools enabled for {agent_id}")
+                
+                if chroma_config:
+                    # ChromaDB will be initialized by the agent itself
+                    self.logger.info(f"ChromaDB refinement enabled for {agent_id}")
+            
+            agent_instance = agent_class(**agent_kwargs)
             
             self.logger.info(f"Successfully resolved UnifiedAgent: {agent_id}")
             return agent_instance
