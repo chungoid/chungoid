@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import datetime
+import json
 import uuid
 import time
 
@@ -124,7 +125,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             # Phase 1: Discovery - Analyze project artifacts and codebase
             if inputs.get("intelligent_context") and inputs.get("project_specifications"):
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                discovery_result = self._extract_artifacts_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
+                discovery_result = await self._extract_artifacts_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
             else:
                 self.logger.info("Using traditional artifact discovery")
                 discovery_result = await self._discover_project_artifacts(inputs, context.shared_context)
@@ -187,10 +188,95 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             )
 
 
-    def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract artifact-like data from intelligent project specifications."""
+    async def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract artifact-like data from intelligent project specifications using LLM processing."""
         
-        # Create comprehensive artifact discovery from project specifications
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and plan documentation strategy
+                prompt = f"""
+                You are a project documentation agent. Analyze the following project specifications and user goal to create an intelligent documentation strategy and artifact analysis.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Based on this information, provide a detailed JSON analysis for documentation planning with the following structure:
+                {{
+                    "documentation_strategy": {{
+                        "readme_sections": ["section1", "section2", "section3"],
+                        "api_documentation_needed": true|false,
+                        "user_guide_sections": ["section1", "section2"],
+                        "developer_guide_sections": ["section1", "section2"]
+                    }},
+                    "artifact_analysis": {{
+                        "refined_goal_available": true,
+                        "blueprint_available": true,
+                        "execution_plan_available": true,
+                        "codebase_available": false,
+                        "test_summary_available": false,
+                        "artifacts_found": ["artifact1", "artifact2"]
+                    }},
+                    "documentation_priorities": ["priority1", "priority2", "priority3"],
+                    "content_sources": ["source1", "source2"],
+                    "complexity_assessment": "simple|medium|complex",
+                    "estimated_documentation_scope": "minimal|standard|comprehensive",
+                    "special_considerations": ["consideration1", "consideration2"],
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "explanation of documentation approach"
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        
+                        # Create intelligent artifact discovery based on LLM analysis
+                        artifacts = {
+                            "refined_goal_available": analysis.get("artifact_analysis", {}).get("refined_goal_available", True),
+                            "blueprint_available": analysis.get("artifact_analysis", {}).get("blueprint_available", True),
+                            "execution_plan_available": analysis.get("artifact_analysis", {}).get("execution_plan_available", True),
+                            "codebase_available": analysis.get("artifact_analysis", {}).get("codebase_available", False),
+                            "test_summary_available": analysis.get("artifact_analysis", {}).get("test_summary_available", False),
+                            "artifacts_found": analysis.get("artifact_analysis", {}).get("artifacts_found", ["refined_user_goal", "project_blueprint", "master_execution_plan"]),
+                            "intelligent_analysis": True,
+                            "project_type": project_specs.get("project_type", "unknown"),
+                            "technologies": project_specs.get("technologies", []),
+                            "dependencies": project_specs.get("required_dependencies", []),
+                            "documentation_strategy": analysis.get("documentation_strategy", {}),
+                            "documentation_priorities": analysis.get("documentation_priorities", []),
+                            "complexity_assessment": analysis.get("complexity_assessment", "medium"),
+                            "estimated_scope": analysis.get("estimated_documentation_scope", "standard"),
+                            "special_considerations": analysis.get("special_considerations", []),
+                            "llm_confidence": analysis.get("confidence_score", 0.8),
+                            "analysis_method": "llm_intelligent_processing"
+                        }
+                        
+                        return artifacts
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback artifact analysis due to LLM unavailability")
+            return self._generate_fallback_artifact_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent artifact specs analysis: {e}")
+            return self._generate_fallback_artifact_analysis(project_specs, user_goal)
+
+    def _generate_fallback_artifact_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback artifact analysis when LLM is unavailable."""
+        
+        # Create basic artifact discovery from project specifications
         artifacts = {
             "refined_goal_available": True,  # We have the user goal
             "blueprint_available": True,     # We can derive blueprint info
@@ -201,7 +287,8 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             "intelligent_analysis": True,
             "project_type": project_specs.get("project_type", "unknown"),
             "technologies": project_specs.get("technologies", []),
-            "dependencies": project_specs.get("required_dependencies", [])
+            "dependencies": project_specs.get("required_dependencies", []),
+            "analysis_method": "fallback_extraction"
         }
         
         return artifacts

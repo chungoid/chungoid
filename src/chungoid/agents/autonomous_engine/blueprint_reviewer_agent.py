@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import datetime
+import json
 import uuid
 import time
 from typing import Any, Dict, Optional, ClassVar, List, Type
@@ -132,7 +133,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
             # Phase 1: Discovery - Discover and retrieve blueprint
             if task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                discovery_result = self._extract_blueprint_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+                discovery_result = await self._extract_blueprint_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
             else:
                 self.logger.info("Using traditional blueprint retrieval")
                 discovery_result = await self._discover_blueprint(task_input, context.shared_context)
@@ -197,10 +198,97 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 iteration_metadata={"error": str(e)}
             )
 
-    def _extract_blueprint_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract blueprint-like data from intelligent project specifications."""
+    async def _extract_blueprint_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract blueprint-like data from intelligent project specifications using LLM processing."""
         
-        # Create mock blueprint artifact from project specifications
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and create review criteria
+                prompt = f"""
+                You are a blueprint reviewer agent. Analyze the following project specifications and user goal to create intelligent review criteria and focus areas for blueprint assessment.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Based on this information, provide a detailed JSON analysis for blueprint review with the following structure:
+                {{
+                    "review_focus_areas": ["area1", "area2", "area3"],
+                    "architectural_concerns": ["concern1", "concern2"],
+                    "technology_assessment": {{
+                        "compatibility_risks": ["risk1", "risk2"],
+                        "optimization_opportunities": ["opp1", "opp2"]
+                    }},
+                    "quality_criteria": {{
+                        "performance_expectations": "description",
+                        "scalability_requirements": "description",
+                        "maintainability_standards": "description",
+                        "security_considerations": "description"
+                    }},
+                    "review_depth": "comprehensive|detailed|focused",
+                    "expected_blueprint_sections": ["section1", "section2"],
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "explanation of analysis approach"
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        
+                        # Create intelligent blueprint artifact based on LLM analysis
+                        blueprint_artifact = {
+                            "status": "SUCCESS",
+                            "content": {
+                                "title": f"Intelligent Blueprint Analysis - {project_specs.get('project_type', 'Project')}",
+                                "project_overview": {
+                                    "name": project_specs.get("project_type", "Unknown Project"),
+                                    "description": user_goal,
+                                    "type": project_specs.get("project_type", "unknown"),
+                                    "intelligent_analysis": True
+                                },
+                                "review_criteria": analysis.get("quality_criteria", {}),
+                                "focus_areas": analysis.get("review_focus_areas", []),
+                                "architectural_concerns": analysis.get("architectural_concerns", []),
+                                "technology_assessment": analysis.get("technology_assessment", {}),
+                                "expected_sections": analysis.get("expected_blueprint_sections", []),
+                                "review_depth": analysis.get("review_depth", "comprehensive")
+                            },
+                            "llm_analysis": analysis,
+                            "intelligent_processing": True
+                        }
+                        
+                        return {
+                            "blueprint_artifact": blueprint_artifact,
+                            "discovery_success": True,
+                            "intelligent_analysis": True,
+                            "llm_confidence": analysis.get("confidence_score", 0.8),
+                            "analysis_method": "llm_intelligent_processing"
+                        }
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback blueprint analysis due to LLM unavailability")
+            return self._generate_fallback_blueprint_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent blueprint specs analysis: {e}")
+            return self._generate_fallback_blueprint_analysis(project_specs, user_goal)
+
+    def _generate_fallback_blueprint_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback blueprint analysis when LLM is unavailable."""
+        
+        # Create basic blueprint artifact from project specifications
         blueprint_artifact = {
             "status": "SUCCESS",
             "content": {
@@ -235,7 +323,8 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         return {
             "blueprint_artifact": blueprint_artifact,
             "discovery_success": True,
-            "intelligent_analysis": True
+            "intelligent_analysis": True,
+            "analysis_method": "fallback_extraction"
         }
 
     async def _discover_blueprint(self, task_input: BlueprintReviewerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:

@@ -34,6 +34,7 @@ Architecture:
 """
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -772,11 +773,13 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         if inputs.project_specifications and inputs.intelligent_context:
             # Use intelligent LLM analysis instead of file-system detection
             self.logger.info("Using intelligent project specifications from orchestrator")
-            return await self._analyze_environment_requirements_with_llm(
-                project_specifications=inputs.project_specifications,
-                project_path=str(project_path),
-                user_goal=inputs.user_goal or ""
+            analysis_result = await self._extract_analysis_from_intelligent_specs(
+                inputs.project_specifications, 
+                inputs.user_goal or ""
             )
+            
+            # Convert analysis result to EnvironmentRequirement objects
+            return self._convert_analysis_to_requirements(analysis_result)
         else:
             # Fall back to legacy file-system detection
             self.logger.info("Using file-system-based project type detection (legacy)")
@@ -1112,6 +1115,127 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             tools_used=tools_used,
             protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "file_management"
         )
+
+    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract environment analysis from intelligent project specifications using LLM processing."""
+        
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and plan environment strategy
+                prompt = f"""
+                You are an environment bootstrap agent. Analyze the following project specifications and user goal to create an intelligent environment setup strategy.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Based on this information, provide a detailed JSON analysis for environment setup with the following structure:
+                {{
+                    "environment_strategy": {{
+                        "primary_environment": "python|nodejs|java|rust|go",
+                        "secondary_environments": ["env1", "env2"],
+                        "environment_priority": ["env1", "env2", "env3"],
+                        "setup_complexity": "simple|moderate|complex"
+                    }},
+                    "environment_requirements": [
+                        {{
+                            "environment_type": "python|nodejs|java|rust|go",
+                            "version_requirement": "version_string",
+                            "tools_required": ["tool1", "tool2"],
+                            "configuration_needed": ["config1", "config2"],
+                            "priority": 1
+                        }}
+                    ],
+                    "dependency_strategy": {{
+                        "package_managers": ["pip", "npm", "yarn"],
+                        "virtual_environment": true|false,
+                        "dependency_isolation": "strict|moderate|loose"
+                    }},
+                    "setup_recommendations": ["recommendation1", "recommendation2"],
+                    "potential_issues": ["issue1", "issue2"],
+                    "validation_criteria": ["criteria1", "criteria2"],
+                    "estimated_setup_time": "time_estimate",
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "explanation of environment setup approach"
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        
+                        # Create intelligent environment analysis based on LLM analysis
+                        environment_analysis = {
+                            "analysis_completed": True,
+                            "intelligent_analysis": True,
+                            "project_type": project_specs.get("project_type", "unknown"),
+                            "primary_language": project_specs.get("primary_language", "python"),
+                            "target_languages": project_specs.get("target_languages", []),
+                            "technologies": project_specs.get("technologies", []),
+                            "environment_strategy": analysis.get("environment_strategy", {}),
+                            "environment_requirements": analysis.get("environment_requirements", []),
+                            "dependency_strategy": analysis.get("dependency_strategy", {}),
+                            "setup_recommendations": analysis.get("setup_recommendations", []),
+                            "potential_issues": analysis.get("potential_issues", []),
+                            "validation_criteria": analysis.get("validation_criteria", []),
+                            "estimated_setup_time": analysis.get("estimated_setup_time", "unknown"),
+                            "llm_confidence": analysis.get("confidence_score", 0.8),
+                            "analysis_method": "llm_intelligent_processing"
+                        }
+                        
+                        return environment_analysis
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback environment analysis due to LLM unavailability")
+            return self._generate_fallback_environment_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent environment specs analysis: {e}")
+            return self._generate_fallback_environment_analysis(project_specs, user_goal)
+
+    def _generate_fallback_environment_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback environment analysis when LLM is unavailable."""
+        
+        # Create basic environment analysis from project specifications
+        environment_analysis = {
+            "analysis_completed": True,
+            "intelligent_analysis": True,
+            "project_type": project_specs.get("project_type", "unknown"),
+            "primary_language": project_specs.get("primary_language", "python"),
+            "target_languages": project_specs.get("target_languages", []),
+            "technologies": project_specs.get("technologies", []),
+            "environment_strategy": {
+                "primary_environment": project_specs.get("primary_language", "python"),
+                "setup_complexity": "moderate"
+            },
+            "environment_requirements": [
+                {
+                    "environment_type": project_specs.get("primary_language", "python"),
+                    "version_requirement": None,
+                    "tools_required": [],
+                    "priority": 1
+                }
+            ],
+            "dependency_strategy": {
+                "package_managers": ["pip"] if project_specs.get("primary_language") == "python" else ["npm"],
+                "virtual_environment": True
+            },
+            "setup_recommendations": ["Create virtual environment", "Install dependencies"],
+            "analysis_method": "fallback_extraction"
+        }
+        
+        return environment_analysis
 
     async def _analyze_environment_requirements_with_llm(
         self,

@@ -897,6 +897,176 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 }
             )
 
+    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract dependency analysis from intelligent project specifications using LLM processing."""
+        
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and plan dependency strategy
+                prompt = f"""
+                You are a dependency management agent. Analyze the following project specifications and user goal to create an intelligent dependency management strategy.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Based on this information, provide a detailed JSON analysis for dependency management with the following structure:
+                {{
+                    "dependency_strategy": {{
+                        "primary_package_manager": "pip|npm|yarn|poetry|pipenv",
+                        "secondary_package_managers": ["manager1", "manager2"],
+                        "dependency_file_types": ["requirements.txt", "package.json", "pyproject.toml"],
+                        "version_strategy": "latest|stable|conservative"
+                    }},
+                    "dependency_analysis": {{
+                        "required_dependencies": [
+                            {{"name": "package_name", "version": "version_constraint", "purpose": "description"}}
+                        ],
+                        "optional_dependencies": [
+                            {{"name": "package_name", "version": "version_constraint", "purpose": "description"}}
+                        ],
+                        "dev_dependencies": [
+                            {{"name": "package_name", "version": "version_constraint", "purpose": "description"}}
+                        ]
+                    }},
+                    "conflict_prevention": {{
+                        "potential_conflicts": ["conflict1", "conflict2"],
+                        "resolution_strategies": ["strategy1", "strategy2"]
+                    }},
+                    "optimization_recommendations": ["recommendation1", "recommendation2"],
+                    "security_considerations": ["consideration1", "consideration2"],
+                    "installation_order": ["step1", "step2", "step3"],
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "explanation of dependency management approach"
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        
+                        # Create intelligent dependency discovery based on LLM analysis
+                        discovery_result = {
+                            "discovery_completed": True,
+                            "intelligent_analysis": True,
+                            "project_type": project_specs.get("project_type", "unknown"),
+                            "primary_language": project_specs.get("primary_language", "python"),
+                            "target_languages": project_specs.get("target_languages", []),
+                            "technologies": project_specs.get("technologies", []),
+                            "dependency_strategy": analysis.get("dependency_strategy", {}),
+                            "dependency_analysis": analysis.get("dependency_analysis", {}),
+                            "conflict_prevention": analysis.get("conflict_prevention", {}),
+                            "optimization_recommendations": analysis.get("optimization_recommendations", []),
+                            "security_considerations": analysis.get("security_considerations", []),
+                            "installation_order": analysis.get("installation_order", []),
+                            "llm_confidence": analysis.get("confidence_score", 0.8),
+                            "analysis_method": "llm_intelligent_processing",
+                            "detected_dependencies": self._convert_to_dependency_info(analysis.get("dependency_analysis", {}))
+                        }
+                        
+                        return discovery_result
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback dependency analysis due to LLM unavailability")
+            return self._generate_fallback_dependency_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent dependency specs analysis: {e}")
+            return self._generate_fallback_dependency_analysis(project_specs, user_goal)
+
+    def _convert_to_dependency_info(self, dependency_analysis: Dict[str, Any]) -> List[DependencyInfo]:
+        """Convert LLM dependency analysis to DependencyInfo objects."""
+        dependencies = []
+        
+        # Process required dependencies
+        for dep in dependency_analysis.get("required_dependencies", []):
+            dependencies.append(DependencyInfo(
+                package_name=dep.get("name", "unknown"),
+                version_constraint=dep.get("version"),
+                import_name=dep.get("name", "unknown"),
+                description=dep.get("purpose", "Required dependency from intelligent analysis"),
+                confidence=0.95,
+                is_dev_dependency=False
+            ))
+        
+        # Process optional dependencies
+        for dep in dependency_analysis.get("optional_dependencies", []):
+            dependencies.append(DependencyInfo(
+                package_name=dep.get("name", "unknown"),
+                version_constraint=dep.get("version"),
+                import_name=dep.get("name", "unknown"),
+                description=dep.get("purpose", "Optional dependency from intelligent analysis"),
+                confidence=0.90,
+                is_dev_dependency=False
+            ))
+        
+        # Process dev dependencies
+        for dep in dependency_analysis.get("dev_dependencies", []):
+            dependencies.append(DependencyInfo(
+                package_name=dep.get("name", "unknown"),
+                version_constraint=dep.get("version"),
+                import_name=dep.get("name", "unknown"),
+                description=dep.get("purpose", "Development dependency from intelligent analysis"),
+                confidence=0.85,
+                is_dev_dependency=True
+            ))
+        
+        return dependencies
+
+    def _generate_fallback_dependency_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback dependency analysis when LLM is unavailable."""
+        
+        # Create basic dependency discovery from project specifications
+        discovery_result = {
+            "discovery_completed": True,
+            "intelligent_analysis": True,
+            "project_type": project_specs.get("project_type", "unknown"),
+            "primary_language": project_specs.get("primary_language", "python"),
+            "target_languages": project_specs.get("target_languages", []),
+            "technologies": project_specs.get("technologies", []),
+            "detected_dependencies": [],
+            "analysis_method": "fallback_extraction"
+        }
+        
+        # Convert basic dependencies from project specs
+        required_deps = project_specs.get("required_dependencies", [])
+        optional_deps = project_specs.get("optional_dependencies", [])
+        
+        for dep_name in required_deps:
+            clean_name = dep_name.split(' (')[0] if ' (' in dep_name else dep_name
+            discovery_result["detected_dependencies"].append(DependencyInfo(
+                package_name=clean_name,
+                version_constraint=None,
+                import_name=clean_name,
+                description=f"Required dependency: {dep_name}",
+                confidence=0.85,
+                is_dev_dependency=False
+            ))
+        
+        for dep_name in optional_deps:
+            clean_name = dep_name.split(' (')[0] if ' (' in dep_name else dep_name
+            discovery_result["detected_dependencies"].append(DependencyInfo(
+                package_name=clean_name,
+                version_constraint=None,
+                import_name=clean_name,
+                description=f"Optional dependency: {dep_name}",
+                confidence=0.80,
+                is_dev_dependency=True
+            ))
+        
+        return discovery_result
+
     async def _discover_dependencies(self, task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Discovery - Detect project type and existing dependencies."""
         self.logger.info("Starting dependency discovery")
@@ -905,21 +1075,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             # Check if we have intelligent project specifications from orchestrator
             if task_input.project_specifications and task_input.intelligent_context:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                
-                # Extract project information from intelligent analysis
-                project_specs = task_input.project_specifications
-                primary_language = project_specs.get("primary_language", "python")
-                target_languages = project_specs.get("target_languages", [primary_language])
-                
-                # Create a mock project result with intelligent data
-                project_result = type('ProjectResult', (), {
-                    'primary_language': primary_language,
-                    'secondary_languages': [lang for lang in target_languages if lang != primary_language],
-                    'overall_confidence': 0.95,  # High confidence from intelligent analysis
-                    'project_type': project_specs.get("project_type", "unknown"),
-                    'technologies': project_specs.get("technologies", []),
-                    'intelligent_analysis': True
-                })()
+                return await self._extract_analysis_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
                 
             else:
                 # Fall back to file-system-based project type detection
