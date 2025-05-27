@@ -1,0 +1,206 @@
+###### THIS IS A TEMPLATE CONFIG FILE ######
+###### MOVE TO YOURPROJECT/.CHUNGOID/config.yaml ######
+
+# Chungoid High-Precision Configuration
+# Optimized for maximum accuracy and quality over speed
+# Based on RAG optimization research and production best practices
+
+# ============================================================================
+# LLM Configuration
+# ============================================================================
+llm:
+  provider: "openai"
+  default_model: "gpt-4o"                    # High-performance model for maximum accuracy
+  fallback_model: "gpt-4o-mini-2024-07-18"  # Reliable fallback
+  timeout: 180                               # Extended timeout for complex reasoning
+  max_retries: 5                             # Multiple retries for robustness
+  retry_delay: 2.0                           # Conservative retry delay
+  rate_limit_rpm: 60
+  max_tokens_per_request: 8000               # Higher token limit for comprehensive responses
+  enable_cost_tracking: true
+  monthly_budget_limit: 200.0                # Higher budget for quality work
+
+# ============================================================================
+# ChromaDB Configuration  
+# ============================================================================
+chromadb:
+  host: "localhost"
+  port: 8000
+  use_ssl: false
+  default_collection_prefix: "chungoid_prod"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  connection_timeout: 60                     # Extended timeouts for reliability
+  query_timeout: 120                        # Longer query timeout for complex searches
+  max_batch_size: 200                       # Larger batches for better throughput
+  auto_cleanup_enabled: true
+  cleanup_retention_days: 30                # Longer retention for historical context
+
+# ============================================================================
+# Project Configuration
+# ============================================================================
+project:
+  name: "precision_project"
+  project_type: "web_app"
+  description: "High-precision configuration for production-quality results"
+  auto_detect_dependencies: true
+  auto_detect_project_type: true
+  enable_smart_caching: true
+  # File and directory settings - using only available options
+  exclude_patterns:                         # File patterns to exclude from analysis
+    - "__pycache__"                         # Python cache files
+    - "node_modules"                        # Node.js dependencies  
+    - ".git"                                # Git repository files
+    - "*.pyc"                               # Compiled Python files
+    - "*.log"                               # Log files
+    - ".venv"                               # Python virtual environments
+    - "*.tmp"                               # Temporary files
+    - ".coverage"                           # Coverage data files
+    - "htmlcov/"                            # Coverage HTML reports
+    - "build/"                              # Build artifacts
+    - "dist/"                               # Distribution artifacts
+    - "*.egg-info/"                         # Python package metadata
+
+  include_hidden_files: false               # Include hidden files in analysis
+  max_file_size_mb: 25                      # Higher file size limit for comprehensive analysis (1-100)
+  analysis_depth: 10                        # Deep analysis for complete understanding (1-20)
+  enable_content_analysis: true             # Enable file content analysis
+  preferred_language_models:
+    - "gpt-4o"
+    - "gpt-4o-mini-2024-07-18"
+
+# ============================================================================
+# Agent Configuration - Optimized for Maximum Precision
+# ============================================================================
+agents:
+  default_timeout: 900                       # Extended timeout for thorough work (15 minutes)
+  max_concurrent_agents: 1                   # Higher concurrency for complex projects
+  enable_parallel_execution: false
+  max_retries: 5                             # Multiple retries for robust execution
+  retry_exponential_backoff: true
+  base_retry_delay: 3.0                      # Conservative retry timing
+  enable_automatic_checkpoints: true
+  checkpoint_frequency: 3                    # Frequent checkpoints for reliability
+  enable_state_compression: true
+  enable_performance_monitoring: true
+  log_agent_outputs: true
+  enable_health_checks: true
+  
+  # Global max iterations override for high precision
+  default_max_iterations: 12                 # High iteration count for thorough refinement
+  
+  # Stage-specific iteration limits - optimized for quality
+  stage_max_iterations:
+    product_analysis: 8                      # Thorough requirements analysis
+    architecture_design: 10                 # Comprehensive system design
+    blueprint_review: 6                     # Multiple review cycles
+    code_generation: 15                     # Extensive code development and refinement
+    code_debugging: 12                      # Thorough debugging and optimization
+    documentation_generation: 8            # Comprehensive documentation
+    dependency_management: 5               # Careful dependency resolution
+    environment_bootstrap: 3              # Robust environment setup
+    requirements_tracing: 6               # Detailed traceability
+    automated_refinement_coordination: 10  # Extensive quality assurance
+  
+  # Per-agent timeout overrides for precision work
+  agent_timeouts:
+    "EnvironmentBootstrapAgent": 300               # 5 minutes for environment setup
+    "DependencyManagementAgent_v1": 450           # 7.5 minutes for dependency resolution
+    "ProductAnalystAgent_v1": 600                 # 10 minutes for thorough analysis
+    "ArchitectAgent_v1": 900                      # 15 minutes for system architecture
+    "RequirementsTracerAgent_v1": 450             # 7.5 minutes for traceability
+    "ProactiveRiskAssessorAgent_v1": 600          # 10 minutes for risk assessment
+    "BlueprintReviewerAgent_v1": 600              # 10 minutes for blueprint review
+    "SmartCodeGeneratorAgent_v1": 1200            # 20 minutes for code generation
+    "ProjectDocumentationAgent_v1": 600           # 10 minutes for documentation
+    "CodeDebuggingAgent_v1": 900                  # 15 minutes for debugging
+    "AutomatedRefinementCoordinatorAgent_v1": 900 # 15 minutes for coordination
+  
+  # Per-agent retry limits for robust execution
+  agent_retry_limits:
+    "EnvironmentBootstrapAgent": 3
+    "DependencyManagementAgent_v1": 4
+    "ProductAnalystAgent_v1": 5
+    "ArchitectAgent_v1": 5
+    "RequirementsTracerAgent_v1": 3
+    "ProactiveRiskAssessorAgent_v1": 4
+    "BlueprintReviewerAgent_v1": 4
+    "SmartCodeGeneratorAgent_v1": 5
+    "ProjectDocumentationAgent_v1": 3
+    "CodeDebuggingAgent_v1": 5
+    "AutomatedRefinementCoordinatorAgent_v1": 4
+  
+
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+logging:
+  level: "INFO"
+  enable_file_logging: true
+  log_directory: "logs"
+  enable_structured_logging: true
+  include_timestamps: true
+  include_caller_info: true                  # Detailed logging for debugging
+  max_log_size_mb: 100                      # Larger log files for comprehensive tracking
+  log_retention_days: 14                    # Extended retention for analysis
+  compress_old_logs: true
+  mask_secrets: true
+  log_api_requests: true                     # Track API usage for optimization
+  enable_debug_logging: false               # Keep disabled for performance
+  
+
+
+# ============================================================================
+# System Configuration
+# ============================================================================
+config_version: "1.0.0"
+environment: "production"
+enable_telemetry: false                     # Disable for privacy
+data_directory: "~/.chungoid"
+
+# ============================================================================
+# High-Precision Profile Summary
+# ============================================================================
+# 
+# This configuration is optimized for:
+# - Maximum accuracy with up to 15 iterations per critical stage
+# - Extended timeouts allowing thorough analysis and generation
+# - Higher-performance GPT-4o model for superior reasoning
+# - Comprehensive logging and monitoring for quality assurance
+# - Deep project analysis for complete understanding
+# - Robust error handling with multiple retries
+# - Quality gates ensuring high-confidence outputs
+# 
+# Performance Characteristics:
+# - Code generation: Up to 15 iterations for optimal results
+# - Architecture design: Up to 10 iterations for comprehensive planning
+# - Debugging: Up to 12 iterations for thorough issue resolution
+# - Documentation: Up to 8 iterations for complete coverage
+# - Quality assurance: 85% confidence threshold requirement
+# 
+# Environment Variables Required:
+# - OPENAI_API_KEY: Your OpenAI API key
+# 
+# Usage:
+# 1. Copy this file to your project's .chungoid/config.yaml
+# 2. Or use globally at ~/.chungoid/config.yaml for all projects
+# 3. Run: chungoid build --goal-file goal.txt --project-dir .
+# 
+# Expected Behavior:
+# - Thorough analysis with deep iteration cycles
+# - High-quality outputs with multiple refinement passes
+# - Comprehensive documentation and testing
+# - Robust error handling and recovery
+# - Production-ready code with extensive validation
+# 
+# Cost Considerations:
+# - Uses GPT-4o for maximum quality (higher cost)
+# - Extended iterations increase token usage
+# - Budget limit set to $200/month - adjust as needed
+# - Monitor costs with enable_cost_tracking: true
+# 
+# Environment Variable Overrides:
+# - CHUNGOID_LLM_DEFAULT_MODEL=gpt-4o (use high-performance model)
+# - CHUNGOID_MAX_ITERATIONS=12 (override max iterations)
+# - CHUNGOID_LLM_MONTHLY_BUDGET_LIMIT=200.0 (adjust budget)
+# - CHUNGOID_AGENT_TIMEOUT=900 (15-minute agent timeouts)

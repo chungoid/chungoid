@@ -1,0 +1,761 @@
+# Configuration Reference
+
+This comprehensive reference covers all configuration options for Chungoid, including LiteLLM provider settings, ChromaDB configuration, agent orchestration, and system-wide settings.
+
+## Table of Contents
+
+1. [Configuration Overview](#configuration-overview)
+2. [LLM Configuration](#llm-configuration)
+3. [LiteLLM Provider Settings](#litellm-provider-settings)
+4. [ChromaDB Configuration](#chromadb-configuration)
+5. [Agent Configuration](#agent-configuration)
+6. [Project Configuration](#project-configuration)
+7. [Logging Configuration](#logging-configuration)
+8. [Environment Variables](#environment-variables)
+9. [Configuration Hierarchy](#configuration-hierarchy)
+10. [Examples](#examples)
+
+## Configuration Overview
+
+Chungoid uses a hierarchical YAML-based configuration system with the following precedence:
+
+1. **Environment Variables** (highest precedence) - `CHUNGOID_*` prefix
+2. **Project Configuration** - `.chungoid/config.yaml` in project root
+3. **Global Configuration** - `~/.chungoid/config.yaml`
+4. **Default Values** - Built-in defaults (lowest precedence)
+
+### Configuration File Locations
+
+```bash
+# Project-specific configuration
+{project_directory}/.chungoid/config.yaml
+
+# Global user configuration
+~/.chungoid/config.yaml
+
+# Template configuration (for reference)
+config/config.yaml
+```
+
+## LLM Configuration
+
+Chungoid uses LiteLLM as the underlying provider, supporting 100+ LLM providers including OpenAI, Anthropic, Azure, Google, Ollama, and more.
+
+### Basic LLM Settings
+
+```yaml
+llm:
+  # Provider selection (uses LiteLLM)
+  provider: "openai"                    # Provider type: openai, anthropic, azure, ollama, etc.
+  
+  # Model configuration
+  default_model: "gpt-4o-mini-2024-07-18"  # Primary model for all operations
+  fallback_model: "gpt-3.5-turbo"          # Fallback if primary model fails
+  
+  # API configuration (secrets via environment variables only)
+  api_key: null                         # Set via OPENAI_API_KEY environment variable
+  api_base_url: null                    # Custom API endpoint (for Ollama, Azure, etc.)
+  
+  # Performance settings
+  timeout: 60                           # Request timeout in seconds (1-600)
+  max_retries: 3                        # Maximum retry attempts (0-10)
+  retry_delay: 1.0                      # Delay between retries in seconds (0.1-30.0)
+  rate_limit_rpm: 60                    # Rate limit requests per minute
+  
+  # Token and cost management
+  max_tokens_per_request: 4000          # Maximum tokens per request
+  enable_cost_tracking: true            # Track API usage and costs
+  monthly_budget_limit: 50.0            # Monthly spending limit in USD (optional)
+```
+
+### Advanced LLM Settings
+
+```yaml
+llm:
+  # Provider-specific environment variables
+  provider_env_vars:
+    AZURE_API_VERSION: "2024-02-15-preview"
+    AZURE_DEPLOYMENT_NAME: "gpt-4"
+  
+  # Response format preferences
+  response_format_preference: "json"    # Default response format for agents
+  
+  # Debugging and logging
+  enable_full_logging: false            # Enable detailed request/response logging
+  log_api_requests: false               # Log all API requests (performance impact)
+  
+  # Model-specific overrides
+  model_overrides:
+    "ProductAnalystAgent_v1": "gpt-4o"  # Use powerful model for specific agents
+    "CodeDebuggingAgent_v1": "gpt-4o"
+```
+
+## LiteLLM Provider Settings
+
+Chungoid leverages LiteLLM's extensive provider support. Here are configuration examples for popular providers:
+
+### OpenAI Configuration
+
+```yaml
+llm:
+  provider: "openai"
+  default_model: "gpt-4o-mini-2024-07-18"
+  api_base_url: null                    # Uses OpenAI's default endpoint
+  # Set OPENAI_API_KEY environment variable
+```
+
+**Environment Variables:**
+```bash
+export OPENAI_API_KEY="sk-your-openai-api-key"
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o"
+```
+
+### Anthropic Configuration
+
+```yaml
+llm:
+  provider: "anthropic"
+  default_model: "claude-3-5-sonnet-20241022"
+  fallback_model: "claude-3-haiku-20240307"
+```
+
+**Environment Variables:**
+```bash
+export ANTHROPIC_API_KEY="sk-ant-your-anthropic-key"
+export CHUNGOID_LLM_PROVIDER="anthropic"
+```
+
+### Azure OpenAI Configuration
+
+```yaml
+llm:
+  provider: "azure"
+  default_model: "azure/gpt-4o-deployment"
+  api_base_url: "https://your-resource.openai.azure.com"
+  provider_env_vars:
+    AZURE_API_VERSION: "2024-02-15-preview"
+    AZURE_API_BASE: "https://your-resource.openai.azure.com"
+```
+
+**Environment Variables:**
+```bash
+export AZURE_API_KEY="your-azure-api-key"
+export AZURE_API_BASE="https://your-resource.openai.azure.com"
+export AZURE_API_VERSION="2024-02-15-preview"
+```
+
+### Ollama Configuration
+
+```yaml
+llm:
+  provider: "ollama"
+  default_model: "ollama/codellama:13b"
+  api_base_url: "http://localhost:11434"
+  timeout: 120                          # Longer timeout for local models
+  max_tokens_per_request: 2048
+```
+
+**Environment Variables:**
+```bash
+export OLLAMA_BASE_URL="http://localhost:11434"
+export CHUNGOID_LLM_PROVIDER="ollama"
+```
+
+### Google Gemini Configuration
+
+```yaml
+llm:
+  provider: "google"
+  default_model: "gemini/gemini-1.5-pro"
+  fallback_model: "gemini/gemini-1.5-flash"
+```
+
+**Environment Variables:**
+```bash
+export GOOGLE_API_KEY="your-google-api-key"
+export CHUNGOID_LLM_PROVIDER="google"
+```
+
+### Hugging Face Configuration
+
+```yaml
+llm:
+  provider: "huggingface"
+  default_model: "huggingface/microsoft/DialoGPT-medium"
+  api_base_url: "https://api-inference.huggingface.co/models"
+```
+
+**Environment Variables:**
+```bash
+export HUGGINGFACE_API_KEY="hf_your-token"
+export HF_TOKEN="hf_your-token"
+```
+
+### Multi-Provider Setup
+
+```yaml
+llm:
+  provider: "openai"
+  default_model: "gpt-4o-mini-2024-07-18"
+  
+  # Provider fallback chain
+  provider_fallbacks:
+    - provider: "anthropic"
+      model: "claude-3-haiku-20240307"
+    - provider: "ollama"
+      model: "ollama/llama2:7b"
+      api_base_url: "http://localhost:11434"
+```
+
+## ChromaDB Configuration
+
+ChromaDB is used for vector storage, semantic search, and agent memory management.
+
+### Basic ChromaDB Settings
+
+```yaml
+chromadb:
+  # Connection settings
+  host: "localhost"                     # ChromaDB server host
+  port: 8000                           # ChromaDB server port (1-65535)
+  auth_token: null                     # Authentication token (via env var)
+  use_ssl: false                       # Use SSL/TLS connection
+  
+  # Database settings
+  default_collection_prefix: "chungoid"    # Prefix for collection names
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"  # Embedding model
+  
+  # Performance settings
+  connection_timeout: 30               # Connection timeout in seconds (1-300)
+  query_timeout: 60                    # Query timeout in seconds (1-600)
+  max_batch_size: 100                  # Maximum batch size for operations (1-1000)
+  
+  # Data management
+  auto_cleanup_enabled: true           # Enable automatic cleanup
+  cleanup_retention_days: 30           # Retention period for cleanup (≥1)
+```
+
+### Advanced ChromaDB Settings
+
+```yaml
+chromadb:
+  # Collection management
+  collection_strategies:
+    requirements: "persistent"          # Storage strategy for requirements
+    artifacts: "ephemeral"             # Storage strategy for artifacts
+    feedback: "persistent"             # Storage strategy for feedback
+  
+  # Performance tuning
+  batch_processing:
+    max_concurrent_batches: 5
+    batch_retry_attempts: 3
+    batch_timeout: 120
+  
+  # Embedding configuration
+  embedding_config:
+    model_device: "cpu"                # Device for embedding model: cpu, cuda
+    normalize_embeddings: true         # Normalize embeddings
+    embedding_dimension: 384           # Embedding dimension (model-specific)
+  
+  # Persistence settings
+  persistence:
+    backup_enabled: true
+    backup_interval: "24h"
+    backup_retention: 7                # Keep 7 days of backups
+```
+
+### ChromaDB Cloud Configuration
+
+```yaml
+chromadb:
+  host: "your-cluster.chromadb.cloud"
+  port: 443
+  use_ssl: true
+  auth_token: null                     # Set CHUNGOID_CHROMADB_AUTH_TOKEN
+```
+
+**Environment Variables:**
+```bash
+export CHUNGOID_CHROMADB_AUTH_TOKEN="your-cloud-auth-token"
+export CHUNGOID_CHROMADB_HOST="your-cluster.chromadb.cloud"
+export CHUNGOID_CHROMADB_PORT="443"
+export CHUNGOID_CHROMADB_USE_SSL="true"
+```
+
+## Agent Configuration
+
+Controls agent behavior, orchestration, and execution parameters.
+
+### Basic Agent Settings
+
+```yaml
+agents:
+  # Execution settings
+  default_timeout: 300                 # Default agent timeout in seconds
+  max_concurrent_agents: 5             # Maximum concurrent agents
+  enable_parallel_execution: true      # Enable parallel agent execution
+  max_retries: 3                       # Maximum retry attempts for failed agents
+  
+  # Retry behavior
+  retry_exponential_backoff: true      # Use exponential backoff for retries
+  base_retry_delay: 2.0               # Base delay for retries in seconds
+  
+  # State management
+  enable_automatic_checkpoints: true   # Enable automatic checkpoint creation
+  checkpoint_frequency: 5             # Save state every N stages
+  enable_state_compression: true      # Compress state data
+  
+  # Monitoring
+  enable_performance_monitoring: true  # Track agent performance metrics
+  log_agent_outputs: true             # Log agent outputs for debugging
+  enable_health_checks: true          # Enable agent health monitoring
+```
+
+### Advanced Agent Configuration
+
+```yaml
+agents:
+  # Global iteration control (overrides all agent defaults)
+  default_max_iterations: 5            # Override ALL agent max_iterations
+  
+  # Per-stage iteration limits
+  stage_max_iterations:
+    product_analysis: 2
+    architecture_design: 3
+    blueprint_review: 2
+    code_generation: 5
+    code_debugging: 3
+    documentation_generation: 2
+    dependency_management: 2
+    environment_bootstrap: 1
+    requirements_tracing: 2
+    automated_refinement_coordination: 3
+  
+  # Per-agent timeout overrides
+  agent_timeouts:
+    "EnvironmentBootstrapAgent": 60
+    "DependencyManagementAgent_v1": 90
+    "ProductAnalystAgent_v1": 120
+    "ArchitectAgent_v1": 150
+    "SmartCodeGeneratorAgent_v1": 300
+    "CodeDebuggingAgent_v1": 180
+    "ProjectDocumentationAgent_v1": 120
+  
+  # Per-agent retry limits
+  agent_retry_limits:
+    "EnvironmentBootstrapAgent": 1
+    "DependencyManagementAgent_v1": 2
+    "ProductAnalystAgent_v1": 3
+    "SmartCodeGeneratorAgent_v1": 2
+    "CodeDebuggingAgent_v1": 3
+  
+  # Agent-specific model overrides
+  agent_models:
+    "ProductAnalystAgent_v1": "gpt-4o"
+    "ArchitectAgent_v1": "gpt-4o"
+    "SmartCodeGeneratorAgent_v1": "gpt-4o"
+    "CodeDebuggingAgent_v1": "gpt-4o"
+  
+  # Memory and context management
+  context_management:
+    max_context_size: 32000            # Maximum context size per agent
+    context_overlap: 1000              # Overlap between context windows
+    enable_context_compression: true   # Compress context for large inputs
+  
+  # Quality assurance
+  quality_gates:
+    enable_output_validation: true     # Validate agent outputs
+    validation_retries: 2             # Retries for validation failures
+    confidence_threshold: 0.8         # Minimum confidence score
+```
+
+## Project Configuration
+
+Project-specific settings that affect analysis and code generation.
+
+### Basic Project Settings
+
+```yaml
+project:
+  # Project metadata
+  name: "my_project"                   # Project name
+  project_type: "web_app"             # Type: cli_tool, web_app, library, api, etc.
+  description: "Project description"   # Brief project description
+  
+  # Analysis settings
+  auto_detect_dependencies: true       # Automatically detect dependencies
+  auto_detect_project_type: true      # Automatically detect project type
+  enable_smart_caching: true          # Enable intelligent caching
+  
+  # File processing
+  exclude_patterns:                    # Patterns to exclude from analysis
+    - "__pycache__"
+    - "node_modules"
+    - ".git"
+    - "*.pyc"
+    - "*.log"
+    - ".venv"
+    - ".DS_Store"
+  
+  include_hidden_files: false          # Include hidden files in analysis
+  max_file_size_mb: 10                # Maximum file size for processing (MB)
+  analysis_depth: 5                   # Maximum directory depth to analyze
+  enable_content_analysis: true       # Enable file content analysis
+```
+
+### Advanced Project Settings
+
+```yaml
+project:
+  # Language and framework preferences
+  preferred_languages: ["python", "typescript", "javascript"]
+  preferred_frameworks: ["fastapi", "react", "django"]
+  preferred_tools: ["pytest", "eslint", "black", "mypy"]
+  
+  # Code generation preferences
+  code_generation:
+    style_guide: "pep8"               # Code style guide
+    include_type_hints: true          # Include type hints
+    include_docstrings: true          # Include docstrings
+    include_tests: true               # Generate tests
+    test_framework: "pytest"          # Testing framework
+  
+  # Documentation preferences
+  documentation:
+    format: "markdown"                # Documentation format
+    include_api_docs: true            # Include API documentation
+    include_examples: true            # Include code examples
+    auto_generate_readme: true        # Auto-generate README.md
+  
+  # Quality settings
+  quality_standards:
+    code_coverage_target: 80          # Target code coverage percentage
+    complexity_threshold: 10          # Maximum cyclomatic complexity
+    enable_security_scanning: true    # Enable security analysis
+    enable_performance_analysis: true # Enable performance analysis
+```
+
+## Logging Configuration
+
+Controls logging behavior across the system.
+
+### Basic Logging Settings
+
+```yaml
+logging:
+  # Basic settings
+  level: "INFO"                        # Log level: DEBUG, INFO, WARNING, ERROR
+  enable_file_logging: true            # Enable logging to files
+  log_directory: "logs"               # Directory for log files
+  
+  # Output format
+  enable_structured_logging: true     # Use JSON format for logs
+  include_timestamps: true            # Include timestamps in logs
+  include_caller_info: false          # Include caller information
+  
+  # File management
+  max_log_size_mb: 50                 # Maximum log file size (MB)
+  log_retention_days: 30              # Log retention period
+  compress_old_logs: true             # Compress rotated logs
+  
+  # Security and privacy
+  mask_secrets: true                  # Mask sensitive information
+  log_api_requests: false             # Log API requests (performance impact)
+  enable_debug_logging: false         # Enable debug-level logging
+```
+
+### Advanced Logging Settings
+
+```yaml
+logging:
+  # Component-specific log levels
+  component_levels:
+    agents: "INFO"
+    llm_provider: "WARNING"
+    chromadb: "INFO"
+    orchestrator: "DEBUG"
+  
+  # External library log levels
+  external_loggers:
+    httpx: "WARNING"
+    chromadb.client: "WARNING"
+    litellm: "WARNING"
+  
+  # Performance logging
+  performance:
+    enable_timing_logs: true          # Log execution times
+    enable_memory_logs: false         # Log memory usage
+    enable_token_usage_logs: true     # Log LLM token usage
+  
+  # Custom log formats
+  formatters:
+    console: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file: "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
+  
+  # Log filtering
+  filters:
+    exclude_patterns:
+      - "HTTPSConnectionPool"
+      - "Starting new HTTPS connection"
+    include_only_patterns: []
+```
+
+## Environment Variables
+
+Complete list of supported environment variables for configuration override.
+
+### LLM Environment Variables
+
+```bash
+# Provider and model settings
+export CHUNGOID_LLM_PROVIDER="openai"
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
+export CHUNGOID_LLM_FALLBACK_MODEL="gpt-3.5-turbo"
+
+# API configuration
+export CHUNGOID_LLM_API_BASE_URL="https://api.openai.com/v1"
+export CHUNGOID_LLM_TIMEOUT="60"
+export CHUNGOID_LLM_MAX_RETRIES="3"
+
+# Cost management
+export CHUNGOID_LLM_MAX_TOKENS="4000"
+export CHUNGOID_LLM_MONTHLY_BUDGET_LIMIT="100.0"
+export CHUNGOID_LLM_ENABLE_COST_TRACKING="true"
+
+# Provider-specific API keys
+export OPENAI_API_KEY="sk-your-openai-key"
+export ANTHROPIC_API_KEY="sk-ant-your-anthropic-key"
+export AZURE_API_KEY="your-azure-key"
+export GOOGLE_API_KEY="your-google-key"
+export HUGGINGFACE_API_KEY="hf_your-hf-token"
+
+# Azure-specific
+export AZURE_API_BASE="https://your-resource.openai.azure.com"
+export AZURE_API_VERSION="2024-02-15-preview"
+export AZURE_DEPLOYMENT_NAME="gpt-4"
+
+# Ollama-specific
+export OLLAMA_BASE_URL="http://localhost:11434"
+```
+
+### ChromaDB Environment Variables
+
+```bash
+# Connection settings
+export CHUNGOID_CHROMADB_HOST="localhost"
+export CHUNGOID_CHROMADB_PORT="8000"
+export CHUNGOID_CHROMADB_AUTH_TOKEN="your-auth-token"
+export CHUNGOID_CHROMADB_USE_SSL="false"
+
+# Performance settings
+export CHUNGOID_CHROMADB_CONNECTION_TIMEOUT="30"
+export CHUNGOID_CHROMADB_QUERY_TIMEOUT="60"
+export CHUNGOID_CHROMADB_MAX_BATCH_SIZE="100"
+```
+
+### Agent Environment Variables
+
+```bash
+# Execution settings
+export CHUNGOID_AGENT_TIMEOUT="300"
+export CHUNGOID_AGENT_MAX_CONCURRENT="5"
+export CHUNGOID_AGENT_MAX_RETRIES="3"
+
+# Iteration control
+export CHUNGOID_MAX_ITERATIONS="5"
+export CHUNGOID_ENABLE_PARALLEL_EXECUTION="true"
+export CHUNGOID_ENABLE_CHECKPOINTS="true"
+```
+
+### System Environment Variables
+
+```bash
+# System settings
+export CHUNGOID_ENVIRONMENT="production"
+export CHUNGOID_DATA_DIRECTORY="~/.chungoid"
+export CHUNGOID_LOG_LEVEL="INFO"
+export CHUNGOID_ENABLE_TELEMETRY="false"
+
+# Debug settings
+export CHUNGOID_ENABLE_DEBUG="false"
+export CHUNGOID_FULL_LLM_LOGGING="false"
+```
+
+## Configuration Hierarchy
+
+The configuration system follows a strict hierarchy:
+
+1. **Environment Variables** (highest precedence)
+2. **Project Configuration** (`.chungoid/config.yaml`)
+3. **Global Configuration** (`~/.chungoid/config.yaml`)
+4. **Default Values** (lowest precedence)
+
+### Override Examples
+
+```bash
+# Override model for specific run
+export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o"
+chungoid build --goal-file goal.txt
+
+# Override timeout for testing
+export CHUNGOID_AGENT_TIMEOUT="60"
+chungoid build --goal-file goal.txt
+
+# Override max iterations globally
+export CHUNGOID_MAX_ITERATIONS="3"
+```
+
+## Examples
+
+### Production Configuration
+
+```yaml
+# ~/.chungoid/config.yaml (Global production config)
+llm:
+  provider: "openai"
+  default_model: "gpt-4o"
+  fallback_model: "gpt-4o-mini-2024-07-18"
+  timeout: 120
+  max_retries: 5
+  monthly_budget_limit: 500.0
+  enable_cost_tracking: true
+
+chromadb:
+  host: "production-chromadb.company.com"
+  port: 443
+  use_ssl: true
+  connection_timeout: 60
+  auto_cleanup_enabled: true
+  cleanup_retention_days: 90
+
+agents:
+  default_timeout: 600
+  max_concurrent_agents: 10
+  enable_parallel_execution: true
+  enable_automatic_checkpoints: true
+  checkpoint_frequency: 3
+
+logging:
+  level: "INFO"
+  enable_file_logging: true
+  enable_structured_logging: true
+  mask_secrets: true
+  log_retention_days: 30
+```
+
+### Development Configuration
+
+```yaml
+# .chungoid/config.yaml (Project development config)
+llm:
+  provider: "openai"
+  default_model: "gpt-4o-mini-2024-07-18"
+  timeout: 30
+  max_retries: 2
+  monthly_budget_limit: 20.0
+
+chromadb:
+  host: "localhost"
+  port: 8000
+  connection_timeout: 15
+  auto_cleanup_enabled: true
+  cleanup_retention_days: 3
+
+agents:
+  default_timeout: 120
+  max_concurrent_agents: 3
+  default_max_iterations: 3
+  enable_performance_monitoring: true
+
+logging:
+  level: "DEBUG"
+  enable_debug_logging: true
+  log_api_requests: true
+```
+
+### Testing Configuration
+
+```yaml
+# .chungoid/config.yaml (Fast testing config)
+llm:
+  provider: "mock"
+  mock_llm_responses:
+    "Analyze the following goal": "This is a mock response for testing"
+
+chromadb:
+  host: "localhost"
+  port: 8000
+  default_collection_prefix: "test_chungoid"
+  cleanup_retention_days: 1
+
+agents:
+  default_timeout: 60
+  max_concurrent_agents: 2
+  default_max_iterations: 2
+  stage_max_iterations:
+    product_analysis: 1
+    code_generation: 2
+    code_debugging: 1
+
+logging:
+  level: "WARNING"
+  enable_file_logging: false
+  mask_secrets: false
+```
+
+### Multi-Environment Configuration
+
+```yaml
+# Base configuration with environment-specific overrides
+llm:
+  provider: "openai"
+  default_model: "gpt-4o-mini-2024-07-18"
+  timeout: 60
+
+environments:
+  development:
+    llm:
+      monthly_budget_limit: 20.0
+    agents:
+      default_max_iterations: 3
+    logging:
+      level: "DEBUG"
+  
+  staging:
+    llm:
+      default_model: "gpt-4o"
+      monthly_budget_limit: 100.0
+    agents:
+      default_timeout: 300
+    logging:
+      level: "INFO"
+  
+  production:
+    llm:
+      default_model: "gpt-4o"
+      monthly_budget_limit: 1000.0
+      max_retries: 5
+    agents:
+      default_timeout: 600
+      max_concurrent_agents: 10
+    logging:
+      level: "WARNING"
+      enable_structured_logging: true
+```
+
+## Configuration Validation
+
+Chungoid automatically validates configuration files and provides helpful error messages:
+
+```bash
+# Validate current configuration
+chungoid config validate
+
+# Show effective configuration
+chungoid config show
+
+# Test configuration with sample request
+chungoid config test --model gpt-4o-mini-2024-07-18
+```
+
+For more configuration examples and troubleshooting, see the [User Guide](../user-guide.md) and [Examples](../examples/) directory. 

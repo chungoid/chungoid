@@ -180,7 +180,9 @@ class UnifiedOrchestrator:
             analysis_result=None  # No agent result needed
         )
         
-        # 2. Environment setup - ENHANCED: Use extracted project information
+        # === PHASE 1: ANALYSIS & REQUIREMENTS ===
+        
+        # 1. Environment setup - ENHANCED: Use extracted project information
         await self.execute_stage(
             stage_id="environment_bootstrap",
             agent_id="EnvironmentBootstrapAgent",
@@ -193,7 +195,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("environment_bootstrap", 15)
         )
 
-        # 3. Dependency management - ENHANCED: Use extracted project information
+        # 2. Dependency management - ENHANCED: Use extracted project information
         await self.execute_stage(
             stage_id="dependency_management",
             agent_id="DependencyManagementAgent_v1",
@@ -214,7 +216,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("dependency_management", 12)
         )
 
-        # 4. Product Analysis - ENHANCED: Analyze requirements and scope
+        # 3. Product Analysis - ENHANCED: Analyze requirements and scope
         await self.execute_stage(
             stage_id="product_analysis",
             agent_id="ProductAnalystAgent_v1",
@@ -227,20 +229,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("product_analysis", 20)
         )
 
-        # 5. Architecture Design - ENHANCED: Design system architecture
-        await self.execute_stage(
-            stage_id="architecture_design",
-            agent_id="ArchitectAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", ".")
-            },
-            max_iterations=self._get_max_iterations("architecture_design", 25)
-        )
-
-        # 6. Requirements Tracing - ENHANCED: Trace and validate requirements
+        # 4. Requirements Tracing - ENHANCED: Trace and validate requirements EARLY
         await self.execute_stage(
             stage_id="requirements_tracing",
             agent_id="RequirementsTracerAgent_v1",
@@ -253,7 +242,22 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("requirements_tracing", 18)
         )
 
-        # 7. Risk Assessment - ENHANCED: Assess project risks
+        # === PHASE 2: ARCHITECTURE & DESIGN ===
+
+        # 6. Architecture Design - ENHANCED: Design system architecture
+        await self.execute_stage(
+            stage_id="architecture_design",
+            agent_id="ArchitectAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=self._get_max_iterations("architecture_design", 25)
+        )
+
+        # 7. Risk Assessment - ENHANCED: Assess project risks DURING design phase
         await self.execute_stage(
             stage_id="risk_assessment",
             agent_id="ProactiveRiskAssessorAgent_v1",
@@ -266,7 +270,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("risk_assessment", 22)
         )
 
-        # 8. Blueprint Review - ENHANCED: Review and validate architecture
+        # 8. Blueprint Review - ENHANCED: Review and validate architecture BEFORE implementation
         await self.execute_stage(
             stage_id="blueprint_review",
             agent_id="BlueprintReviewerAgent_v1",
@@ -279,7 +283,9 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("blueprint_review", 15)
         )
 
-        # 9. Code Generation - ENHANCED: Generate actual project code files
+        # === PHASE 3: IMPLEMENTATION ===
+
+        # 9. Code Generation - ENHANCED: Generate actual project code files with FULL CONTEXT
         await self.execute_stage(
             stage_id="code_generation",
             agent_id="SmartCodeGeneratorAgent_v1",
@@ -291,12 +297,30 @@ class UnifiedOrchestrator:
                 "project_id": master_planner_input.project_id or "intelligent_project",
                 "programming_language": project_specs.get("primary_language", "python"),
                 "target_languages": project_specs.get("target_languages", ["python"]),
-                "technologies": project_specs.get("technologies", [])
+                "technologies": project_specs.get("technologies", []),
+                # ENHANCED: Pass outputs from all prior analysis stages for better context
+                "requirements_context": self.shared_context.get("outputs", {}).get("requirements_tracing"),
+                "architecture_context": self.shared_context.get("outputs", {}).get("architecture_design"),
+                "risk_context": self.shared_context.get("outputs", {}).get("risk_assessment"),
+                "blueprint_context": self.shared_context.get("outputs", {}).get("blueprint_review")
             },
             max_iterations=self._get_max_iterations("code_generation", 30)
         )
 
-        # 10. Project Documentation - ENHANCED: Generate comprehensive documentation
+        # 10. Code Debugging - ENHANCED: Analyze and improve code quality IMMEDIATELY after generation
+        await self.execute_stage(
+            stage_id="code_debugging",
+            agent_id="CodeDebuggingAgent_v1",
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_specifications": project_specs,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
+                "project_path": self.shared_context.get("project_root_path", ".")
+            },
+            max_iterations=self._get_max_iterations("code_debugging", 28)
+        )
+
+        # 11. Project Documentation - ENHANCED: Generate comprehensive documentation of FINAL system
         await self.execute_stage(
             stage_id="project_documentation",
             agent_id="ProjectDocumentationAgent_v1",
@@ -309,18 +333,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("project_documentation", 16)
         )
 
-        # 11. Code Debugging - ENHANCED: Analyze and improve code quality
-        await self.execute_stage(
-            stage_id="code_debugging",
-            agent_id="CodeDebuggingAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", ".")
-            },
-            max_iterations=self._get_max_iterations("code_debugging", 28)
-        )
+        # === PHASE 4: QUALITY ASSURANCE ===
 
         # 12. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
         await self.execute_stage(
@@ -336,7 +349,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("automated_refinement", 35)
         )
         
-        self.logger.info("[UAEI] Enhanced autonomous development pipeline completed with 12 stages")
+        self.logger.info("[UAEI] Optimized autonomous development pipeline completed with 12 stages")
 
     # ------------------------------------------------------------------
     async def run(

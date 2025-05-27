@@ -12,12 +12,10 @@ import sys  # Add sys import
 # Make project source code findable by Sphinx - updated for new structure
 sys.path.insert(0, os.path.abspath("../../src"))
 
-project = "Chungoid MCP Server"
-copyright = "2025, AI Assistant"  # Update copyright year if needed
-author = "AI Assistant"
-
-version = "0.1"
-release = "0.1"
+project = "Chungoid"
+copyright = "2025, Chungoid Team"
+author = "Chungoid Team"
+release = "1.0.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -28,7 +26,14 @@ extensions = [
     "sphinx.ext.viewcode",  # Add links to source code
     "sphinx.ext.githubpages",  # Creates .nojekyll file for GitHub Pages
     "sphinx_rtd_theme",  # Add the theme extension itself
+    "myst_parser",  # Support for Markdown files
 ]
+
+# Add support for Markdown files
+source_suffix = {
+    '.rst': None,
+    '.md': None,
+}
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
@@ -40,6 +45,12 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 # html_theme = 'alabaster' # Default theme
 html_theme = "sphinx_rtd_theme"  # Use ReadTheDocs theme
 html_static_path = ["_static"]
+
+# Theme options
+html_theme_options = {
+    'repository_url': 'https://github.com/chungoid/chungoid',
+    'use_repository_button': True,
+}
 
 # -- Autodoc configuration ---------------------------------------------------
 autodoc_member_order = "bysource"  # Order members by source code order
