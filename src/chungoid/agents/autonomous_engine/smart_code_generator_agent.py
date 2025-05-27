@@ -154,7 +154,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             # Phase 1: Analysis - Analyze project requirements and structure
             if task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                analysis_result = self._extract_analysis_from_intelligent_specs(
+                analysis_result = await self._extract_analysis_from_intelligent_specs(
                     task_input.project_specifications, 
                     task_input.user_goal
                 )
@@ -215,8 +215,82 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 protocol_used="smart_code_generation_protocol"
             )
 
-    def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract analysis data from intelligent project specifications."""
+    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract analysis from intelligent project specifications using LLM processing."""
+        
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and plan code generation strategy
+                prompt = f"""
+                You are a smart code generator agent. Analyze the following project specifications and user goal to create an intelligent code generation strategy.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Provide a detailed JSON analysis with the following structure:
+                {{
+                    "project_type": "...",
+                    "primary_language": "...",
+                    "target_languages": [...],
+                    "technologies": [...],
+                    "required_dependencies": [...],
+                    "optional_dependencies": [...],
+                    "code_generation_strategy": {{
+                        "approach": "...",
+                        "file_structure": [...],
+                        "implementation_priorities": [...],
+                        "architectural_patterns": [...]
+                    }},
+                    "complexity_assessment": {{
+                        "level": "low|medium|high",
+                        "factors": [...],
+                        "estimated_files": 0,
+                        "estimated_lines": 0
+                    }},
+                    "quality_requirements": {{
+                        "testing_strategy": "...",
+                        "documentation_level": "...",
+                        "code_standards": [...]
+                    }},
+                    "implementation_considerations": [...],
+                    "potential_challenges": [...],
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "..."
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        # Add metadata about the intelligent analysis
+                        analysis["intelligent_analysis"] = True
+                        analysis["project_specifications"] = project_specs
+                        analysis["analysis_method"] = "llm_intelligent_processing"
+                        analysis["code_generation_needed"] = True
+                        return analysis
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback analysis due to LLM unavailability")
+            return self._generate_fallback_code_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent specs analysis: {e}")
+            return self._generate_fallback_code_analysis(project_specs, user_goal)
+
+    def _generate_fallback_code_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback code analysis when LLM is unavailable."""
         
         analysis = {
             "project_type": project_specs.get("project_type", "cli_tool"),
@@ -225,8 +299,27 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             "technologies": project_specs.get("technologies", []),
             "required_dependencies": project_specs.get("required_dependencies", []),
             "optional_dependencies": project_specs.get("optional_dependencies", []),
+            "code_generation_strategy": {
+                "approach": "template_based",
+                "file_structure": ["main module", "dependencies", "documentation"],
+                "implementation_priorities": ["core functionality", "error handling", "documentation"],
+                "architectural_patterns": ["modular design"]
+            },
+            "complexity_assessment": {
+                "level": "medium",
+                "factors": ["project type", "technology stack"],
+                "estimated_files": 3,
+                "estimated_lines": 200
+            },
+            "quality_requirements": {
+                "testing_strategy": "basic",
+                "documentation_level": "standard",
+                "code_standards": ["PEP8"] if project_specs.get("primary_language") == "python" else ["standard"]
+            },
+            "implementation_considerations": ["dependency management", "error handling"],
+            "potential_challenges": ["integration complexity", "performance optimization"],
             "intelligent_analysis": True,
-            "complexity_level": "medium",
+            "analysis_method": "fallback_extraction",
             "code_generation_needed": True
         }
         

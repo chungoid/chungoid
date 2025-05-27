@@ -136,7 +136,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
             # Phase 1: Analysis - Analyze code and test failures
             if inputs.get("intelligent_context") and inputs.get("project_specifications"):
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                analysis_result = self._extract_analysis_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
+                analysis_result = await self._extract_analysis_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
             else:
                 self.logger.info("Using traditional code analysis")
                 analysis_result = await self._analyze_code_and_failures(inputs, context.shared_context)
@@ -203,24 +203,128 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         )
 
 
-    def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract analysis-like data from intelligent project specifications."""
+    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract analysis from intelligent project specifications using LLM processing."""
         
-        # Create mock analysis for intelligent context (no actual code to debug yet)
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and plan debugging strategy
+                prompt = f"""
+                You are a code debugging agent. Analyze the following project specifications and user goal to create an intelligent debugging and quality assurance strategy.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Provide a detailed JSON analysis with the following structure:
+                {{
+                    "code_location": "intelligent_analysis",
+                    "has_code_snippet": false,
+                    "failure_count": 0,
+                    "failure_patterns": [],
+                    "analysis_confidence": 0.0-1.0,
+                    "project_type": "...",
+                    "technologies": [...],
+                    "debugging_strategy": {{
+                        "approach": "...",
+                        "focus_areas": [...],
+                        "testing_priorities": [...],
+                        "quality_checks": [...]
+                    }},
+                    "potential_issues": {{
+                        "common_bugs": [...],
+                        "integration_risks": [...],
+                        "dependency_conflicts": [...],
+                        "performance_concerns": [...]
+                    }},
+                    "prevention_measures": {{
+                        "code_standards": [...],
+                        "testing_strategies": [...],
+                        "monitoring_points": [...]
+                    }},
+                    "debugging_tools": {{
+                        "recommended_debuggers": [...],
+                        "logging_strategies": [...],
+                        "profiling_tools": [...]
+                    }},
+                    "quality_metrics": {{
+                        "code_coverage_target": 0.0-1.0,
+                        "complexity_thresholds": {{}},
+                        "performance_benchmarks": {{}}
+                    }},
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "..."
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        # Add metadata about the intelligent analysis
+                        analysis["intelligent_analysis"] = True
+                        analysis["project_specifications"] = project_specs
+                        analysis["analysis_method"] = "llm_intelligent_processing"
+                        return analysis
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback analysis due to LLM unavailability")
+            return self._generate_fallback_debugging_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent specs analysis: {e}")
+            return self._generate_fallback_debugging_analysis(project_specs, user_goal)
+
+    def _generate_fallback_debugging_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback debugging analysis when LLM is unavailable."""
+        
         analysis = {
             "code_location": "intelligent_analysis",
             "has_code_snippet": False,
-            "failure_count": 0,  # No failures yet in planning phase
+            "failure_count": 0,
             "failure_patterns": [],
             "analysis_confidence": 0.8,
-            "intelligent_analysis": True,
             "project_type": project_specs.get("project_type", "unknown"),
             "technologies": project_specs.get("technologies", []),
-            "potential_issues": [
-                "Dependency compatibility",
-                "Configuration errors", 
-                "Integration challenges"
-            ]
+            "debugging_strategy": {
+                "approach": "systematic_analysis",
+                "focus_areas": ["error handling", "input validation", "integration points"],
+                "testing_priorities": ["unit tests", "integration tests", "edge cases"],
+                "quality_checks": ["code review", "static analysis", "runtime monitoring"]
+            },
+            "potential_issues": {
+                "common_bugs": ["null pointer exceptions", "type errors", "logic errors"],
+                "integration_risks": ["API compatibility", "data format mismatches", "timing issues"],
+                "dependency_conflicts": ["version incompatibilities", "missing dependencies"],
+                "performance_concerns": ["memory leaks", "inefficient algorithms", "blocking operations"]
+            },
+            "prevention_measures": {
+                "code_standards": ["consistent naming", "proper error handling", "comprehensive documentation"],
+                "testing_strategies": ["test-driven development", "automated testing", "continuous integration"],
+                "monitoring_points": ["error rates", "performance metrics", "resource usage"]
+            },
+            "debugging_tools": {
+                "recommended_debuggers": ["built-in debugger", "IDE debugger", "remote debugger"],
+                "logging_strategies": ["structured logging", "log levels", "contextual information"],
+                "profiling_tools": ["performance profiler", "memory profiler", "network profiler"]
+            },
+            "quality_metrics": {
+                "code_coverage_target": 0.8,
+                "complexity_thresholds": {"cyclomatic_complexity": 10, "nesting_depth": 4},
+                "performance_benchmarks": {"response_time": "< 100ms", "memory_usage": "< 512MB"}
+            },
+            "intelligent_analysis": True,
+            "analysis_method": "fallback_extraction"
         }
         
         return analysis

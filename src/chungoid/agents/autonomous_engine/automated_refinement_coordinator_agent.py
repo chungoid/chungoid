@@ -344,7 +344,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
             # Phase 1: Assessment - Assess artifact and gather context
             if task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                assessment_result = self._extract_assessment_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+                assessment_result = await self._extract_assessment_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
             else:
                 self.logger.info("Using traditional artifact assessment")
                 assessment_result = await self._assess_artifact(task_input, context.shared_context)
@@ -411,23 +411,138 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 protocol_used="refinement_coordination_protocol"
             )
 
-    def _extract_assessment_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract assessment-like data from intelligent project specifications."""
+    async def _extract_assessment_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract assessment from intelligent project specifications using LLM processing."""
         
-        # Create mock assessment for intelligent context
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and plan refinement coordination strategy
+                prompt = f"""
+                You are an automated refinement coordinator agent. Analyze the following project specifications and user goal to create an intelligent refinement coordination and quality assurance strategy.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Provide a detailed JSON analysis with the following structure:
+                {{
+                    "artifact_available": true,
+                    "artifact_quality": 0.0-1.0,
+                    "assessment_confidence": 0.0-1.0,
+                    "project_type": "...",
+                    "technologies": [...],
+                    "coordination_strategy": {{
+                        "approach": "...",
+                        "quality_gates": [...],
+                        "refinement_priorities": [...],
+                        "coordination_phases": [...]
+                    }},
+                    "quality_assessment": {{
+                        "acceptance_criteria": [...],
+                        "quality_metrics": [...],
+                        "validation_checkpoints": [...],
+                        "risk_factors": [...]
+                    }},
+                    "refinement_areas": {{
+                        "architecture": [...],
+                        "implementation": [...],
+                        "testing": [...],
+                        "documentation": [...]
+                    }},
+                    "coordination_decisions": {{
+                        "decision_criteria": [...],
+                        "escalation_triggers": [...],
+                        "automation_opportunities": [...]
+                    }},
+                    "agent_coordination": {{
+                        "specialist_agents": [...],
+                        "handoff_protocols": [...],
+                        "feedback_loops": [...]
+                    }},
+                    "timeline_considerations": {{
+                        "estimated_cycles": 0,
+                        "bottleneck_risks": [...],
+                        "optimization_opportunities": [...]
+                    }},
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "..."
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        # Add metadata about the intelligent analysis
+                        analysis["intelligent_analysis"] = True
+                        analysis["project_specifications"] = project_specs
+                        analysis["analysis_method"] = "llm_intelligent_processing"
+                        analysis["coordination_needed"] = True
+                        return analysis
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback assessment due to LLM unavailability")
+            return self._generate_fallback_coordination_assessment(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent specs assessment: {e}")
+            return self._generate_fallback_coordination_assessment(project_specs, user_goal)
+
+    def _generate_fallback_coordination_assessment(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback coordination assessment when LLM is unavailable."""
+        
         assessment = {
             "artifact_available": True,
-            "artifact_quality": 0.85,  # High quality from intelligent analysis
+            "artifact_quality": 0.85,
             "assessment_confidence": 0.9,
-            "intelligent_analysis": True,
             "project_type": project_specs.get("project_type", "unknown"),
             "technologies": project_specs.get("technologies", []),
-            "coordination_needed": True,  # Always coordinate in autonomous pipeline
-            "refinement_areas": [
-                "Architecture optimization",
-                "Dependency management",
-                "Quality assurance"
-            ]
+            "coordination_strategy": {
+                "approach": "systematic_refinement",
+                "quality_gates": ["initial_review", "specialist_validation", "final_approval"],
+                "refinement_priorities": ["correctness", "completeness", "quality"],
+                "coordination_phases": ["assessment", "analysis", "decision", "execution"]
+            },
+            "quality_assessment": {
+                "acceptance_criteria": ["meets_requirements", "passes_validation", "acceptable_quality"],
+                "quality_metrics": ["completeness", "accuracy", "consistency"],
+                "validation_checkpoints": ["initial_check", "specialist_review", "final_validation"],
+                "risk_factors": ["complexity", "dependencies", "time_constraints"]
+            },
+            "refinement_areas": {
+                "architecture": ["design_patterns", "scalability", "maintainability"],
+                "implementation": ["code_quality", "error_handling", "performance"],
+                "testing": ["test_coverage", "edge_cases", "integration_tests"],
+                "documentation": ["completeness", "clarity", "examples"]
+            },
+            "coordination_decisions": {
+                "decision_criteria": ["quality_threshold", "confidence_level", "risk_assessment"],
+                "escalation_triggers": ["low_confidence", "repeated_failures", "complex_issues"],
+                "automation_opportunities": ["routine_checks", "standard_validations", "common_fixes"]
+            },
+            "agent_coordination": {
+                "specialist_agents": ["ProductAnalyst", "Architect", "CodeGenerator", "Debugger"],
+                "handoff_protocols": ["clear_requirements", "context_preservation", "feedback_loops"],
+                "feedback_loops": ["continuous_improvement", "learning_from_failures", "optimization"]
+            },
+            "timeline_considerations": {
+                "estimated_cycles": 2,
+                "bottleneck_risks": ["complex_requirements", "technical_challenges", "resource_constraints"],
+                "optimization_opportunities": ["parallel_processing", "automated_checks", "reusable_components"]
+            },
+            "intelligent_analysis": True,
+            "analysis_method": "fallback_extraction",
+            "coordination_needed": True
         }
         
         return assessment

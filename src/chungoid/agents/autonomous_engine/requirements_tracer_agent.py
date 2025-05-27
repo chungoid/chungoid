@@ -167,7 +167,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             # Phase 1: Discovery - Discover and retrieve artifacts
             if task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                discovery_result = self._extract_artifacts_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+                discovery_result = await self._extract_artifacts_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
             else:
                 self.logger.info("Using traditional artifact retrieval")
                 discovery_result = await self._discover_artifacts(task_input, context.shared_context)
@@ -231,8 +231,134 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             protocol_used="requirements_traceability_protocol"
         )
 
-    def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract artifact-like data from intelligent project specifications."""
+    async def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract artifacts from intelligent project specifications using LLM processing."""
+        
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and create traceability artifacts
+                prompt = f"""
+                You are a requirements tracer agent. Analyze the following project specifications and user goal to create intelligent artifacts for requirements traceability analysis.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Provide a detailed JSON analysis with the following structure:
+                {{
+                    "source_artifact": {{
+                        "status": "SUCCESS",
+                        "content": {{
+                            "project_overview": {{
+                                "name": "...",
+                                "description": "...",
+                                "type": "...",
+                                "scope": "...",
+                                "objectives": [...]
+                            }},
+                            "functional_requirements": [...],
+                            "non_functional_requirements": [...],
+                            "user_stories": [{{
+                                "id": "...",
+                                "as_a": "...",
+                                "i_want": "...",
+                                "so_that": "...",
+                                "acceptance_criteria": [...]
+                            }}],
+                            "business_rules": [...],
+                            "constraints": [...],
+                            "assumptions": [...]
+                        }}
+                    }},
+                    "target_artifact": {{
+                        "status": "SUCCESS",
+                        "content": {{
+                            "title": "...",
+                            "architecture_overview": "...",
+                            "architecture_pattern": "...",
+                            "technology_stack": {{
+                                "primary_language": "...",
+                                "technologies": [...],
+                                "dependencies": [...],
+                                "frameworks": [...]
+                            }},
+                            "system_components": [{{
+                                "name": "...",
+                                "responsibility": "...",
+                                "interfaces": [...],
+                                "dependencies": [...]
+                            }}],
+                            "data_flow": [...],
+                            "integration_points": [...],
+                            "deployment_strategy": "...",
+                            "quality_attributes": {{
+                                "performance": "...",
+                                "scalability": "...",
+                                "security": "...",
+                                "maintainability": "..."
+                            }}
+                        }}
+                    }},
+                    "traceability_strategy": {{
+                        "mapping_approach": "...",
+                        "coverage_analysis": [...],
+                        "gap_identification": [...],
+                        "validation_criteria": [...]
+                    }},
+                    "analysis_metadata": {{
+                        "source_type": "LOPRD",
+                        "target_type": "Blueprint",
+                        "complexity_level": "...",
+                        "traceability_confidence": 0.0-1.0,
+                        "analysis_depth": "..."
+                    }},
+                    "confidence_score": 0.0-1.0,
+                    "reasoning": "..."
+                }}
+                """
+                
+                response = await self._llm_provider.generate_response(prompt)
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        
+                        # Extract artifacts and add metadata
+                        result = {
+                            "source_artifact": analysis.get("source_artifact", {}),
+                            "target_artifact": analysis.get("target_artifact", {}),
+                            "artifacts_retrieved": True,
+                            "source_type": analysis.get("analysis_metadata", {}).get("source_type", "LOPRD"),
+                            "target_type": analysis.get("analysis_metadata", {}).get("target_type", "Blueprint"),
+                            "intelligent_analysis": True,
+                            "traceability_strategy": analysis.get("traceability_strategy", {}),
+                            "analysis_metadata": analysis.get("analysis_metadata", {}),
+                            "project_specifications": project_specs,
+                            "analysis_method": "llm_intelligent_processing",
+                            "llm_confidence": analysis.get("confidence_score", 0.8)
+                        }
+                        
+                        return result
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback artifact analysis due to LLM unavailability")
+            return self._generate_fallback_artifact_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent artifact specs analysis: {e}")
+            return self._generate_fallback_artifact_analysis(project_specs, user_goal)
+
+    def _generate_fallback_artifact_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback artifact analysis when LLM is unavailable."""
         
         # Create mock LOPRD artifact from project specifications
         loprd_artifact = {
@@ -241,19 +367,30 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 "project_overview": {
                     "name": project_specs.get("project_type", "Unknown Project"),
                     "description": user_goal[:200] + "..." if len(user_goal) > 200 else user_goal,
-                    "type": project_specs.get("project_type", "unknown")
+                    "type": project_specs.get("project_type", "unknown"),
+                    "scope": "Comprehensive project implementation",
+                    "objectives": ["Deliver functional solution", "Meet user requirements", "Ensure quality standards"]
                 },
                 "functional_requirements": [
                     f"Implement {tech} functionality" for tech in project_specs.get("technologies", [])[:5]
+                ] + ["Core application logic", "User interface", "Data management"],
+                "non_functional_requirements": [
+                    {"category": "Performance", "requirement": "System should be responsive"},
+                    {"category": "Security", "requirement": "Secure data handling"},
+                    {"category": "Scalability", "requirement": f"Support {project_specs.get('target_platforms', ['multiple platforms'])}"}
                 ],
                 "user_stories": [
                     {
                         "id": "US001",
                         "as_a": "user",
                         "i_want": f"to use a {project_specs.get('project_type', 'tool')}",
-                        "so_that": "I can accomplish my goals efficiently"
+                        "so_that": "I can accomplish my goals efficiently",
+                        "acceptance_criteria": ["System is functional", "Interface is intuitive", "Performance is acceptable"]
                     }
-                ]
+                ],
+                "business_rules": ["Follow industry standards", "Maintain data integrity", "Ensure user privacy"],
+                "constraints": ["Budget limitations", "Time constraints", "Technology restrictions"],
+                "assumptions": ["Users have basic technical knowledge", "System will be maintained", "Requirements are stable"]
             }
         }
         
@@ -262,19 +399,38 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             "status": "SUCCESS", 
             "content": {
                 "title": f"Technical Blueprint - {project_specs.get('project_type', 'Project')}",
+                "architecture_overview": f"Modular architecture for {project_specs.get('project_type', 'application')} implementation",
                 "architecture_pattern": "modular",
                 "technology_stack": {
                     "primary_language": project_specs.get("primary_language", "python"),
                     "technologies": project_specs.get("technologies", []),
-                    "dependencies": project_specs.get("required_dependencies", [])
+                    "dependencies": project_specs.get("required_dependencies", []),
+                    "frameworks": ["Standard libraries", "Common frameworks"]
                 },
-                "components": [
+                "system_components": [
                     {
                         "name": f"Component_{i+1}",
                         "responsibility": tech,
-                        "interfaces": ["API"]
+                        "interfaces": ["API", "CLI"],
+                        "dependencies": ["Core system", "Data layer"]
                     } for i, tech in enumerate(project_specs.get("technologies", [])[:3])
-                ]
+                ] + [
+                    {
+                        "name": "Core Engine",
+                        "responsibility": "Main application logic",
+                        "interfaces": ["Internal API"],
+                        "dependencies": ["Configuration", "Logging"]
+                    }
+                ],
+                "data_flow": ["Input processing", "Core logic", "Output generation"],
+                "integration_points": ["External APIs", "File system", "User interface"],
+                "deployment_strategy": f"Compatible with {', '.join(project_specs.get('target_platforms', ['Linux']))}",
+                "quality_attributes": {
+                    "performance": "Optimized for responsiveness",
+                    "scalability": "Designed for growth",
+                    "security": "Secure by design",
+                    "maintainability": "Clean, modular code"
+                }
             }
         }
         
@@ -284,7 +440,21 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             "artifacts_retrieved": True,
             "source_type": "LOPRD",
             "target_type": "Blueprint",
-            "intelligent_analysis": True
+            "intelligent_analysis": True,
+            "traceability_strategy": {
+                "mapping_approach": "requirement_to_component",
+                "coverage_analysis": ["functional_coverage", "non_functional_coverage"],
+                "gap_identification": ["missing_requirements", "untraced_components"],
+                "validation_criteria": ["completeness", "consistency", "correctness"]
+            },
+            "analysis_metadata": {
+                "source_type": "LOPRD",
+                "target_type": "Blueprint",
+                "complexity_level": "medium",
+                "traceability_confidence": 0.8,
+                "analysis_depth": "comprehensive"
+            },
+            "analysis_method": "fallback_extraction"
         }
 
     async def _discover_artifacts(self, task_input: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:

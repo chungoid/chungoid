@@ -79,6 +79,7 @@ from ...schemas.unified_execution_schemas import (
     IterationResult,
     StageInfo,
 )
+from ...schemas.orchestration import SharedContext
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -1120,7 +1121,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         """Extract environment analysis from intelligent project specifications using LLM processing."""
         
         try:
-            if self._llm_provider:
+            if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and plan environment strategy
                 prompt = f"""
                 You are an environment bootstrap agent. Analyze the following project specifications and user goal to create an intelligent environment setup strategy.
@@ -1167,7 +1168,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                 }}
                 """
                 
-                response = await self._llm_provider.generate_response(prompt)
+                response = await self.llm_provider.generate_response(prompt)
                 
                 if response:
                     try:
@@ -1236,6 +1237,82 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         }
         
         return environment_analysis
+
+    def _convert_analysis_to_requirements(self, analysis_result: Dict[str, Any]) -> List[EnvironmentRequirement]:
+        """Convert intelligent analysis result to EnvironmentRequirement objects."""
+        
+        requirements = []
+        
+        try:
+            # Extract environment requirements from analysis
+            env_requirements = analysis_result.get("environment_requirements", [])
+            
+            for req_data in env_requirements:
+                # Map environment type string to enum
+                env_type_str = req_data.get("environment_type", "python")
+                try:
+                    env_type = EnvironmentType(env_type_str)
+                except ValueError:
+                    self.logger.warning(f"Unknown environment type: {env_type_str}, defaulting to python")
+                    env_type = EnvironmentType.PYTHON
+                
+                # Create EnvironmentRequirement object
+                requirement = EnvironmentRequirement(
+                    environment_type=env_type,
+                    version_requirement=req_data.get("version_requirement"),
+                    dependencies=[],  # Dependencies will be handled separately
+                    tools_required=req_data.get("tools_required", []),
+                    configuration={
+                        "intelligent_analysis": True,
+                        "analysis_method": analysis_result.get("analysis_method", "llm_processing"),
+                        **req_data.get("configuration_needed", {})
+                    },
+                    priority=req_data.get("priority", 1)
+                )
+                
+                requirements.append(requirement)
+            
+            # If no requirements found, create default based on primary language
+            if not requirements:
+                primary_language = analysis_result.get("primary_language", "python")
+                
+                try:
+                    env_type = EnvironmentType(primary_language.lower())
+                except ValueError:
+                    env_type = EnvironmentType.PYTHON
+                
+                default_requirement = EnvironmentRequirement(
+                    environment_type=env_type,
+                    version_requirement=None,
+                    dependencies=[],
+                    tools_required=[],
+                    configuration={
+                        "intelligent_analysis": True,
+                        "fallback_default": True
+                    },
+                    priority=1
+                )
+                requirements.append(default_requirement)
+            
+            self.logger.info(f"Converted analysis to {len(requirements)} environment requirement(s)")
+            return requirements
+            
+        except Exception as e:
+            self.logger.error(f"Error converting analysis to requirements: {e}")
+            # Return minimal Python requirement as fallback
+            return [
+                EnvironmentRequirement(
+                    environment_type=EnvironmentType.PYTHON,
+                    version_requirement="3.11",
+                    dependencies=[],
+                    tools_required=["pip", "venv"],
+                    configuration={
+                        "intelligent_analysis": True,
+                        "error_fallback": True
+                    },
+                    priority=1
+                )
+            ]
 
     async def _analyze_environment_requirements_with_llm(
         self,
