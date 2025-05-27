@@ -174,7 +174,7 @@ class ProductAnalystAgent_v1(UnifiedAgent):
             # Check if we have intelligent project specifications from orchestrator
             if inputs.project_specifications and inputs.intelligent_context:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                goal_analysis = self._extract_analysis_from_intelligent_specs(inputs.project_specifications, inputs.user_goal)
+                goal_analysis = await self._extract_analysis_from_intelligent_specs(inputs.project_specifications, inputs.user_goal)
                 
                 # Provide default LOPRD schema when using intelligent context
                 if not inputs.loprd_json_schema_str:
@@ -352,8 +352,71 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         final_loprd["generated_at"] = "2025-01-25T00:00:00Z"  # Placeholder
         return final_loprd
 
-    def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract goal analysis from intelligent project specifications."""
+    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Extract goal analysis from intelligent project specifications using LLM processing."""
+        
+        try:
+            if self._llm_provider:
+                # Use LLM to intelligently analyze the project specifications and user goal
+                prompt = f"""
+                You are a product analyst. Analyze the following project specifications and user goal to create a comprehensive product analysis.
+                
+                User Goal: {user_goal}
+                
+                Project Specifications:
+                - Project Type: {project_specs.get('project_type', 'unknown')}
+                - Primary Language: {project_specs.get('primary_language', 'unknown')}
+                - Target Languages: {project_specs.get('target_languages', [])}
+                - Target Platforms: {project_specs.get('target_platforms', [])}
+                - Technologies: {project_specs.get('technologies', [])}
+                - Required Dependencies: {project_specs.get('required_dependencies', [])}
+                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                
+                Based on this information, provide a detailed analysis in JSON format:
+                {{
+                    "core_objectives": ["specific objective 1", "specific objective 2", "specific objective 3"],
+                    "key_stakeholders": ["stakeholder 1", "stakeholder 2", "stakeholder 3"],
+                    "success_criteria": ["measurable criteria 1", "measurable criteria 2", "measurable criteria 3"],
+                    "potential_challenges": ["technical challenge 1", "business challenge 2", "implementation challenge 3"],
+                    "functional_requirements": ["requirement 1", "requirement 2", "requirement 3"],
+                    "non_functional_requirements": ["performance requirement", "security requirement", "usability requirement"],
+                    "user_personas": ["primary user type", "secondary user type"],
+                    "business_value": "clear statement of business value",
+                    "technical_complexity": "low|medium|high",
+                    "estimated_effort": "small|medium|large"
+                }}
+                
+                Make the analysis specific to the project type and technologies mentioned. Be detailed and actionable.
+                """
+                
+                response = await self._llm_provider.generate(
+                    prompt=prompt,
+                    system_prompt="You are an expert product analyst. Provide comprehensive, specific analysis in valid JSON format only.",
+                    max_tokens=1000,
+                    temperature=0.3
+                )
+                
+                if response:
+                    try:
+                        analysis = json.loads(response)
+                        # Add metadata about the intelligent analysis
+                        analysis["intelligent_analysis"] = True
+                        analysis["project_specifications"] = project_specs
+                        analysis["analysis_method"] = "llm_intelligent_processing"
+                        return analysis
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            
+            # Fallback to basic extraction if LLM fails
+            self.logger.info("Using fallback analysis due to LLM unavailability")
+            return self._generate_fallback_intelligent_analysis(project_specs, user_goal)
+            
+        except Exception as e:
+            self.logger.error(f"Error in intelligent specs analysis: {e}")
+            return self._generate_fallback_intelligent_analysis(project_specs, user_goal)
+    
+    def _generate_fallback_intelligent_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+        """Generate fallback analysis when LLM is unavailable."""
         
         # Extract core objectives from project specifications
         core_objectives = []
@@ -398,7 +461,8 @@ class ProductAnalystAgent_v1(UnifiedAgent):
             "success_criteria": success_criteria,
             "potential_challenges": potential_challenges,
             "intelligent_analysis": True,
-            "project_specifications": project_specs
+            "project_specifications": project_specs,
+            "analysis_method": "fallback_extraction"
         }
 
     def _get_default_loprd_schema(self) -> str:

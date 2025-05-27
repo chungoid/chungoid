@@ -182,7 +182,7 @@ class UnifiedOrchestrator:
                 "project_path": self.shared_context.get("project_root_path", "."),
                 "intelligent_context": True  # Signal that this is intelligent input
             },
-            max_iterations=1
+            max_iterations=15
         )
 
         # 3. Dependency management - ENHANCED: Use extracted project information
@@ -203,7 +203,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Signal that this is intelligent input
                 "user_goal": master_planner_input.user_goal
             },
-            max_iterations=1
+            max_iterations=12
         )
 
         # 4. Product Analysis - ENHANCED: Analyze requirements and scope
@@ -213,10 +213,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=20
         )
 
         # 5. Architecture Design - ENHANCED: Design system architecture
@@ -226,10 +226,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=25
         )
 
         # 6. Requirements Tracing - ENHANCED: Trace and validate requirements
@@ -239,10 +239,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=18
         )
 
         # 7. Risk Assessment - ENHANCED: Assess project risks
@@ -252,10 +252,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=22
         )
 
         # 8. Blueprint Review - ENHANCED: Review and validate architecture
@@ -265,10 +265,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=15
         )
 
         # 9. Code Generation - ENHANCED: Generate actual project code files
@@ -278,14 +278,14 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", "."),
                 "project_id": master_planner_input.project_id or "intelligent_project",
                 "programming_language": project_specs.get("primary_language", "python"),
                 "target_languages": project_specs.get("target_languages", ["python"]),
                 "technologies": project_specs.get("technologies", [])
             },
-            max_iterations=1
+            max_iterations=30
         )
 
         # 10. Project Documentation - ENHANCED: Generate comprehensive documentation
@@ -295,10 +295,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=16
         )
 
         # 11. Code Debugging - ENHANCED: Analyze and improve code quality
@@ -308,10 +308,10 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=1
+            max_iterations=28
         )
 
         # 12. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
@@ -321,11 +321,11 @@ class UnifiedOrchestrator:
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,
+                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", "."),
                 "project_id": master_planner_input.project_id or "intelligent_project"
             },
-            max_iterations=1
+            max_iterations=35
         )
         
         self.logger.info("[UAEI] Enhanced autonomous development pipeline completed with 12 stages")
