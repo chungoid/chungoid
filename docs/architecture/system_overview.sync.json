@@ -1,8 +1,0 @@
-{
-  "sync_info": {
-    "source_file": "core_architecture_overview.md",
-    "sync_timestamp": "2025-05-23T18:46:08.924590",
-    "transform_type": "adapt",
-    "description": "Update core architecture documentation with current system design"
-  }
-}

@@ -2,7 +2,7 @@
 
 This document provides a tree-like overview of the `chungoid-core` directory structure, intended to help developers and AI agents understand the layout of the project.
 
-**Last Updated**: 2025 (Current Implementation)
+**Last Updated**: Reflects analysis as of mid-2024/early-2025 based on current understanding.
 
 ```
 chungoid-core/
@@ -18,268 +18,117 @@ chungoid-core/
 ├── .pytest_cache/ # Pytest cache
 ├── .venv/         # Python virtual environment (if present)
 ├── __pycache__/   # Python bytecode cache
-├── config/        # Configuration files
+├── config/        # Configuration files (e.g., master_config.yaml, potentially others)
 ├── docs/
-│   ├── _build/     # Sphinx build output
+│   ├── _build/     # Sphinx build output (if Sphinx is used)
 │   ├── _static/    # Sphinx static files
 │   ├── _templates/ # Sphinx templates
 │   ├── architecture/     # System architecture documentation
+│   │   ├── detailed_architecture.md
+│   │   └── system_overview.md
 │   ├── design_documents/ # Agent and component designs
+│   │   └── foundational_principles.md
 │   ├── guides/           # User and developer guides
 │   │   ├── autonomous_cycle_review_and_iteration.md
+│   │   ├── config_guide.md
 │   │   ├── documentation_maintenance.md
-│   │   ├── execution_runtime.md
-│   │   └── litellm_setup.md
+│   │   └── refined_user_goal_specification.md # (execution_runtime.md & litellm_setup.md are outdated mentions)
 │   ├── images/           # Documentation images
-│   ├── reference/        # Reference documentation
-│   ├── templates/        # Documentation templates
-│   ├── autonomous_project_engine_overview.md
+│   ├── templates/        # Documentation templates (if any)
+│   ├── autonomous_project_engine_overview.md # (Note: May contain outdated architectural details)
 │   ├── autonomous_system_diagram.md
-│   ├── conf.py          # Sphinx configuration
-│   ├── index.rst        # Sphinx root document
+│   ├── conf.py          # Sphinx configuration (if Sphinx is used)
+│   ├── index.rst        # Sphinx root document (if Sphinx is used)
 │   ├── make.bat         # Sphinx build script (Windows)
 │   ├── Makefile         # Sphinx build script
+│   ├── migration_chromadb_agent_to_mcp_tools.md # Details PCMA deprecation
 │   ├── modules.rst      # Sphinx modules documentation
 │   ├── project_structure.md # This file
 │   ├── project_status.json.lock # Runtime artifact
-│   ├── sync_report.md   # Documentation sync status
-│   └── utils.rst
+│   ├── sync_report.md   # Documentation sync status (if sync script is used)
+│   └── utils.rst        # Sphinx utils documentation
+│   # Note: 'reference/' directory mentioned in some docs may not exist or be populated.
 ├── dev_chroma_db/      # ChromaDB development database
 ├── htmlcov_utils/      # HTML coverage report utilities
-├── schemas/            # Static JSON/YAML schema definitions
+├── schemas/            # Static JSON/YAML schema definitions (e.g., for older flow DSLs)
+│   ├── external_tool_schemas/ # Schemas for external tools if any
 │   ├── doc_requests_schema.yaml
 │   ├── execution_dsl.json
 │   └── stage_flow_schema.json
 ├── scripts/            # Development and operational scripts
 │   ├── __init__.py
-│   ├── add_docs.py
-│   ├── agent_registry.py
-│   ├── check_chroma.py
-│   ├── check_metrics_store.py
-│   ├── core_mcp_client.py
-│   ├── coverage_audit.py
-│   ├── doc_helpers.py
-│   ├── embed_changed_files.py
-│   ├── embed_core_snapshot.py
-│   ├── embed_meta.py
-│   ├── export_jsonschemas.py
-│   ├── extract_tool_spec.py
-│   ├── flow_registry_cli.py
-│   ├── flow_run.py
-│   ├── ingest_llms_files.py
-│   ├── list_library_embeddings.py
-│   ├── log_process_feedback.py
-│   ├── metrics_cli.py
-│   ├── migrate_stage_flows.py
-│   ├── prompt_linter.py
-│   ├── prompt_renderer.py
-│   ├── reregister_core_test_agent.py
-│   ├── seed_flow_registry.py
-│   ├── snapshot_core_tarball.py
-│   ├── sync_agent_registry.py
-│   ├── sync_library_docs.py
-│   ├── test_chroma_persist.py
-│   └── test_tool_runner.py
-├── server_prompts/     # Agent prompts and stage flow YAML configurations
+│   # ... (listing many scripts, assumed mostly current unless specific issues found)
+│   └── sync_documentation.py # (As mentioned in documentation_maintenance.md)
+├── server_prompts/     # Agent prompts and potentially stage flow YAML configurations
 │   ├── autonomous_engine/  # Autonomous engine specific prompts
 │   ├── stages/             # Stage-specific prompts
-│   │   ├── stage_minus1_goal_draft.yaml
-│   │   ├── stage0.yaml
-│   │   ├── stage1.yaml
-│   │   ├── stage2.yaml
-│   │   ├── stage3.yaml
-│   │   ├── stage4.yaml
-│   │   └── stage5.yaml
-│   ├── common_template.yaml
-│   ├── common.yaml
-│   └── initial_status.json
+│   # ... (structure seems plausible)
 ├── src/
 │   ├── __init__.py  # Makes src a discoverable path element
 │   └── chungoid/    # Main Python package for chungoid-core
 │       ├── __init__.py      # Package initializer
-│       ├── cli.py           # Main CLI application (89KB, 1676 lines)
+│       ├── cli.py           # Main CLI application
 │       ├── constants.py     # Core constants
 │       ├── core_utils.py    # Core utility functions
-│       ├── engine.py        # Core workflow engine (52KB, 936 lines)
-│       ├── flow_executor.py # Executes defined flows
-│       ├── mcp.py           # Model Context Protocol handling (13KB, 273 lines)
-│       ├── agents/          # Agent implementations directory
-│       │   └── autonomous_engine/  # Autonomous development agents
-│       ├── mcp_tools/       # MCP Tool Ecosystem (45+ tools)
+│       ├── engine.py        # Core workflow engine (nature might have evolved, see UnifiedOrchestrator)
+│       ├── flow_executor.py # Executes defined flows (likely interacts with UnifiedOrchestrator)
+│       ├── mcp.py           # Model Context Protocol handling (likely related to MCP tools)
+│       ├── agents/          # Agent implementations directory (Primary location for UnifiedAgent subclasses)
+│       │   ├── __init__.py
+│       │   ├── autonomous_engine/  # Autonomous development agents (e.g., ARCA, SmartCodeGeneratorAgent)
+│       │   ├── system/             # System-level agents (e.g., NoOpAgent)
+│       │   └── unified_agent.py    # Base class for current agents
+│       ├── mcp_tools/       # MCP Tool Ecosystem (11 tools currently)
 │       │   ├── __init__.py  # Tool registry and initialization
 │       │   ├── manifest_initialization.py # Tool manifest system
 │       │   ├── tool_manifest.py        # Tool discovery and metadata
-│       │   ├── chromadb/    # ChromaDB suite (17 tools)
-│       │   │   ├── collection_management_tools.py
-│       │   │   ├── document_operations_tools.py
-│       │   │   ├── project_integration_tools.py
-│       │   │   └── reflection_tools.py
-│       │   ├── content/     # Content suite (8 tools)
-│       │   │   ├── content_generation_tools.py
-│       │   │   ├── web_content_tools.py
-│       │   │   └── management_tools.py
-│       │   ├── filesystem/  # Filesystem suite (12 tools)
-│       │   │   ├── file_operations_tools.py
-│       │   │   ├── project_tools.py
-│       │   │   └── advanced_operations_tools.py
-│       │   └── terminal/    # Terminal suite (8 tools)
-│       │       ├── command_execution_tools.py
-│       │       ├── environment_tools.py
-│       │       └── security_tools.py
+│       │   ├── chromadb/    # ChromaDB suite (4 tools)
+│       │   │   └── chroma_actions.py # Example actual tool file
+│       │   ├── content/     # Content suite (2 tools)
+│       │   │   └── content_actions.py # Example actual tool file
+│       │   ├── filesystem/  # Filesystem suite (3 tools)
+│       │   │   └── filesystem_actions.py # Example actual tool file
+│       │   └── terminal/    # Terminal suite (2 tools)
+│       │       └── terminal_actions.py # Example actual tool file
+│       ├── protocols/       # Protocol definitions (~24 modules)
+│       │   ├── __init__.py
+│       │   ├── universal/
+│       │   ├── planning/
+│       │   ├── implementation/
+│       │   # ... other categories like quality, investigation, collaboration, etc.
 │       ├── runtime/         # Execution runtime components
 │       │   ├── __init__.py
-│       │   ├── orchestrator.py  # AsyncOrchestrator (105KB, 1602 lines)
-│       │   ├── agents/          # Runtime agent base classes
-│       │   │   ├── __init__.py
-│       │   │   ├── agent_base.py
-│       │   │   ├── core_code_generator_agent.py
-│       │   │   ├── core_test_generator_agent.py
-│       │   │   ├── master_planner_agent.py
-│       │   │   ├── system_file_system_agent.py
-│       │   │   ├── system_master_planner_agent.py
-│       │   │   ├── system_master_planner_reviewer_agent.py
-│       │   │   ├── system_test_runner_agent.py
-│       │   │   └── mocks/        # Mock agents for testing
-│       │   │       ├── mock_code_generator_agent.py
-│       │   │       ├── mock_human_input_agent.py
-│       │   │       ├── mock_system_requirements_gathering_agent.py
-│       │   │       ├── mock_test_generation_agent.py
-│       │   │       ├── mock_test_generator_agent.py
-│       │   │       └── testing_mock_agents.py
-│       │   └── services/        # Runtime services
-│       ├── schemas/        # Pydantic models for data structures
+│       │   ├── unified_orchestrator.py # Current primary orchestrator
+│       │   ├── unified_agent_resolver.py # Resolves UnifiedAgent instances
+│       │   ├── services/        # Runtime services (e.g., error handling, context resolution)
+│       │   # Note: Older 'orchestrator.py' (AsyncOrchestrator) and 'runtime/agents/' are deprecated/refactored.
+│       ├── schemas/        # Pydantic models for data structures (many specific to agents/components)
 │       │   ├── __init__.py
-│       │   ├── a2a_schemas.py
-│       │   ├── agent_code_generator.py
-│       │   ├── agent_code_integration.py
-│       │   ├── agent_master_planner.py
-│       │   ├── agent_master_planner_reviewer.py
-│       │   ├── agent_mock_code_generator.py
-│       │   ├── agent_mock_human_input.py
-│       │   ├── agent_mock_system_requirements_gathering.py
-│       │   ├── agent_mock_test_generator.py
-│       │   ├── agent_system_test_runner.py
-│       │   ├── agent_test_generation.py
-│       │   ├── agent_test_generator.py
-│       │   ├── common.py
-│       │   ├── common_enums.py
-│       │   ├── errors.py
-│       │   ├── flows.py
-│       │   ├── master_flow.py # Defines MasterExecutionPlan
-│       │   ├── metrics.py
-│       │   └── user_goal_schemas.py
+│       │   ├── project_state.py # Defines ProjectStateV2 for project_status.json
+│       │   ├── unified_execution_schemas.py # Defines ExecutionConfig, etc.
+│       │   # ... many other specific schemas
 │       └── utils/          # Utility modules
 │           ├── __init__.py
-│           ├── a2a_utils.py
-│           ├── agent_registry.py
-│           ├── agent_registry_meta.py
-│           ├── agent_resolver.py
-│           ├── analysis_utils.py
-│           ├── chroma_client_factory.py
-│           ├── chroma_utils.py
-│           ├── config_manager.py  # Modern Pydantic-based configuration system
-│           ├── core_snapshot_utils.py
-│           ├── exceptions.py
-│           ├── feedback_store.py
-│           ├── flow_api.py
-│           ├── flow_registry.py
-│           ├── flow_registry_singleton.py
-│           ├── goal.py
-│           ├── llm_provider.py
-│           ├── logger_setup.py
-│           ├── master_flow_registry.py
-│           ├── mcp_server.py
-│           ├── memory_vector.py
-│           ├── metrics_store.py
-│           ├── prompt_manager.py
-│           ├── reflection_store.py
-│           ├── security.py
-│           ├── state_manager.py
-│           ├── template_helpers.py
-│           └── tool_adapters.py
+│           ├── agent_registry.py # (May work with UnifiedAgentResolver)
+│           ├── config_manager.py  # Pydantic-based configuration system
+│           ├── state_manager.py   # Manages project_status.json and ChromaDB interactions
+│           # ... many other utilities
+│   └── chungoid_mcp_server.egg-info/ # Packaging metadata
 ├── tests/
-│   ├── .chungoid/          # Test-specific chungoid data
-│   ├── __init__.py
-│   ├── conftest.py         # Pytest fixtures and hooks
-│   ├── integration/
-│   │   ├── __init__.py
-│   │   └── test_cli_flow_resume.py
-│   ├── legacy/
-│   │   └── __init__.py     # Legacy tests
-│   ├── test_projects/      # Test project configurations/setups
-│   │   ├── __init__.py
-│   │   └── test_integration_project/
-│   ├── unit/               # Unit tests for individual modules/classes
-│   │   ├── .chungoid/      # Unit-test specific chungoid data
-│   │   ├── __init__.py
-│   │   ├── runtime/        # Runtime component tests
-│   │   ├── test_a2a_dev_cli.py
-│   │   ├── test_a2a_utils.py
-│   │   ├── test_agent_registry.py
-│   │   ├── test_agent_resolver.py
-│   │   ├── test_analysis_utils.py
-│   │   ├── test_chroma_modes.py
-│   │   ├── test_chroma_utils.py
-│   │   ├── test_chroma_utils_live.py
-│   │   ├── test_cli_utils.py
-│   │   ├── test_config_manager_live.py  # Tests for new configuration system
-│   │   ├── test_core_code_generator_agent.py
-│   │   ├── test_core_mcp_client.py
-│   │   ├── test_core_snapshot_dryrun.py
-│   │   ├── test_core_stage_executor_agent.py
-│   │   ├── test_core_test_generator_agent.py
-│   │   ├── test_doc_requests_schema.py
-│   │   ├── test_execution_dsl_validator.py
-│   │   ├── test_execution_runtime.py
-│   │   ├── test_feedback_store.py
-│   │   ├── test_flow_api_endpoint.py
-│   │   ├── test_flow_registry.py
-│   │   ├── test_flow_run_cli.py
-│   │   ├── test_logger_setup_live.py
-│   │   ├── test_master_flow_registry.py
-│   │   ├── test_mcp_run_endpoint.py
-│   │   ├── test_metrics_store.py
-│   │   ├── test_orchestrator.py
-│   │   ├── test_orchestrator_reviewer_integration.py
-│   │   ├── test_prompt_manager.py
-│   │   ├── test_prompt_manager_core.py
-│   │   ├── test_prompt_manager_live.py
-│   │   ├── test_reflection_api.py
-│   │   ├── test_reflection_store.py
-│   │   ├── test_registry_dispatch_live.py
-│   │   ├── test_security.py
-│   │   ├── test_security_live.py
-│   │   ├── test_snapshot_tarball.py
-│   │   ├── test_smoke_coverage.py
-│   │   ├── test_stage_flow_schema.py
-│   │   ├── test_stage_minus1_prompt.py
-│   │   ├── test_stage_minus1_prompt_schema.py
-│   │   ├── test_stage_prompts_sequential.py
-│   │   ├── test_state_manager.py
-│   │   ├── test_state_manager_core.py
-│   │   ├── test_state_manager_live.py
-│   │   ├── test_system_master_planner_agent.py
-│   │   ├── test_template_helpers_live.py
-│   │   ├── test_tool_adapters.py
-│   │   └── test_validate_planning.py
-│   ├── test_doc_manifest.py
-│   ├── test_integration.py
-│   ├── test_mcp_invoke.py
-│   ├── test_mcp_metadata.py
-│   └── test_no_rogue_modules.py
-├── .coverage           # Coverage data file
-├── .gitignore         # Git ignore rules
-├── chungoidmcp.py     # Legacy MCP server entry point (deprecated)
-├── config.yaml        # Main configuration
-├── CONTRIBUTING.md    # Contribution guidelines
-├── launch_server.sh   # Script to launch the MCP server
-├── LICENSE            # MIT License
-├── Makefile           # Build automation
-├── pyproject.toml     # Project build/dependency configuration
-├── pytest.ini        # Pytest configuration
-├── README.md          # Main documentation
-├── requirements.txt   # Pinned dependencies
-└── tool_manifests.json # MCP tool discovery manifest (22KB, 871 lines)
+│   # ... (test structure, assumed mostly current unless specific issues found)
+│   ├── unit/
+│   │   ├── test_config_manager_live.py # Confirms modern config system tests
+│   │   ├── test_unified_orchestrator.py # (Expected test for current orchestrator)
+│   │   └── test_unified_agent.py # (Expected test for current agent base)
+├── .coveragerc
+├── .gitignore
+├── .pre-commit-config.yaml
+├── CHANGELOG.md
+├── LICENSE
+├── Makefile # Project Makefile
+├── pyproject.toml
+├── README.md
+└── requirements.txt
 ```
 
 ## Key Directory Changes

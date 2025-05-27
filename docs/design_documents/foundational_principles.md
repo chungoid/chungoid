@@ -30,11 +30,11 @@ Chungoid represents the **world's first truly autonomous AI development system**
 ```
 
 ### 1.3 Autonomous Vision
-- **True Autonomy**: 95%+ task completion without human intervention
+- **True Autonomy**: Goal of 95%+ task completion without human intervention
 - **Self-Validating**: Built-in success criteria evaluation with feedback loops
-- **Tool-Driven**: 70+ specialized MCP tools for autonomous task completion
-- **Protocol-Guided**: 17 specialized protocols for structured autonomous execution
-- **Continuous Learning**: Self-improving through execution pattern recognition
+- **Tool-Driven**: **11 specialized MCP tools** for autonomous task completion (previously cited as 70+ which was inaccurate)
+- **Protocol-Guided**: **Approximately 24 distinct protocol modules** for structured autonomous execution (previously cited as 17 which was inaccurate)
+- **Continuous Learning**: Aiming for self-improvement through execution pattern recognition
 
 ---
 
@@ -57,10 +57,10 @@ Chungoid represents the **world's first truly autonomous AI development system**
 ### 2.2 Protocol-Driven Execution Principle
 **Core Tenet**: All agent behavior must be guided by structured, reusable protocols that enable consistent autonomous execution.
 
-**Protocol Categories**:
-- **Universal Protocols (5)**: Core autonomous capabilities
-- **Workflow Protocols (4)**: Autonomous development workflows  
-- **Domain Protocols (8)**: Specialized autonomous operations
+**Actual Protocol Structure** (refer to `chungoid-core/src/chungoid/protocols/`):
+- **Universal Protocols (`protocols/universal/`)**: ~7 modules for core functionalities (agent communication, context sharing, error recovery, etc.)
+- **Categorized Protocols**: ~12 modules across specialized directories (`planning/`, `implementation/`, `quality/`, `investigation/`, `collaboration/`, `observability/`, `evaluation/`)
+- **Top-Level Functional Protocols (`protocols/`)**: ~5 modules for specific, self-contained functionalities (code generation, file management, etc.).
 
 **Protocol Requirements**:
 - Iterative execution with built-in validation loops
@@ -71,7 +71,7 @@ Chungoid represents the **world's first truly autonomous AI development system**
 **Core Tenet**: Agents must use specialized tools to accomplish tasks, not just generate text.
 
 **Tool Integration Requirements**:
-- **70+ MCP tools** across 4 categories for autonomous execution
+- **11 MCP tools** across 4 categories (ChromaDB, Filesystem, Terminal, Content) for autonomous execution (previously cited as 70+ which was inaccurate)
 - **Intelligent tool selection** based on task requirements
 - **Tool validation and error handling** with automatic retry logic
 - **Multi-tool workflows** for complex autonomous operations
@@ -90,28 +90,29 @@ Chungoid represents the **world's first truly autonomous AI development system**
 ## 3. Protocol-Driven Architecture Philosophy
 
 ### 3.1 Protocol Ecosystem Structure
+(Note: The following list is a conceptual representation of the old structure and is outdated. The actual structure comprises approximately 24 protocol modules, organized into `protocols/universal/`, several specialized subdirectories like `protocols/planning/`, `protocols/implementation/`, and top-level functional protocols. See `system_overview.md` for an accurate current breakdown.)
 ```
-Protocol-Driven Autonomous Execution
-├── Universal Protocols (5)
-│   ├── agent_communication.py     ✅ Multi-agent coordination
-│   ├── context_sharing.py         ✅ ChromaDB knowledge management
-│   ├── tool_validation.py         ✅ MCP tool integration
-│   ├── error_recovery.py          ✅ Fault tolerance loops
-│   └── goal_tracking.py           ✅ Success criteria validation
-├── Workflow Protocols (4)
-│   ├── deep_planning.py           ✅ Architecture planning iterations
-│   ├── systematic_implementation.py ✅ Code generation loops
-│   ├── system_integration.py     ✅ Component assembly validation
-│   └── deployment_orchestration.py ✅ Production deployment checks
-└── Domain Protocols (8)
-    ├── requirements_discovery.py  ✅ Stakeholder feedback loops
-    ├── risk_assessment.py        ✅ Risk mitigation iterations
-    ├── code_remediation.py       ✅ Debug/fix/validate cycles
-    ├── test_analysis.py          ✅ Test/fix/retest loops
-    ├── quality_validation.py     ✅ Quality gate iterations
-    ├── dependency_resolution.py  ✅ Dependency analysis loops
-    ├── multi_agent_coordination.py ✅ Team coordination protocols
-    └── simple_operations.py      ✅ Basic autonomous operations
+Outdated Protocol Representation:
+├── Universal Protocols (Incorrect Count/Structure)
+│   ├── agent_communication.py
+│   ├── context_sharing.py
+│   ├── tool_validation.py
+│   ├── error_recovery.py
+│   └── goal_tracking.py
+├── Workflow Protocols (Incorrect Categorization)
+│   ├── deep_planning.py
+│   ├── systematic_implementation.py
+│   ├── system_integration.py
+│   └── deployment_orchestration.py
+└── Domain Protocols (Incorrect Categorization)
+    ├── requirements_discovery.py
+    ├── risk_assessment.py
+    ├── code_remediation.py
+    ├── test_analysis.py
+    ├── quality_validation.py
+    ├── dependency_resolution.py
+    ├── multi_agent_coordination.py
+    └── simple_operations.py
 ```
 
 ### 3.2 Protocol Design Principles
@@ -131,21 +132,22 @@ Protocol-Driven Autonomous Execution
 ## 4. MCP Tools Integration Standards
 
 ### 4.1 MCP Tools Ecosystem Architecture
+(Note: The following list is outdated. The actual ecosystem comprises 11 tools. See `system_overview.md` for an accurate current breakdown.)
 ```
-70+ Specialized MCP Tools for Autonomous Execution
-├── Filesystem Suite (15+ tools)
+Outdated Tool Representation (Previously 70+ tools, now 11):
+├── Filesystem Suite (Actual: 3 tools)
 │   ├── Smart file operations and project scanning
 │   ├── Template processing and code generation
 │   └── Project structure analysis and optimization
-├── Terminal Suite (10+ tools)
+├── Terminal Suite (Actual: 2 tools)
 │   ├── Safe command execution with validation
 │   ├── Dependency management and installation
 │   └── Build system integration and testing
-├── ChromaDB Suite (20+ tools)
+├── ChromaDB Suite (Actual: 4 tools)
 │   ├── Vector search and document storage
 │   ├── Knowledge management and retrieval
 │   └── Learning and reflection capabilities
-└── Content Suite (25+ tools)
+└── Content Suite (Actual: 2 tools)
     ├── Web content fetching and processing
     ├── Documentation generation and validation
     └── API integration and data processing
@@ -171,8 +173,8 @@ Protocol-Driven Autonomous Execution
 
 ### 5.1 Agent Autonomy Enhancement
 - **Deep Autonomous Reasoning**: Agents use sophisticated reasoning for independent problem-solving
-- **Protocol Compliance**: All agents implement ProtocolAwareAgent interface
-- **Tool Mastery**: Intelligent selection and usage of 70+ specialized tools
+- **Protocol Compliance**: All agents primarily inherit from `UnifiedAgent` (see `chungoid.agents.unified_agent.UnifiedAgent`), which provides the foundation for protocol-driven execution.
+- **Tool Mastery**: Intelligent selection and usage of **11 specialized MCP tools** (previously cited as 70+ which was inaccurate)
 - **Self-Validation**: Built-in quality checks and success criteria evaluation
 
 ### 5.2 Enhanced Tool Composability  
@@ -204,16 +206,16 @@ Protocol-Driven Autonomous Execution
 │  (Protocol Selection, Tool Usage, Validation, Iteration)   │
 ├─────────────────────────────────────────────────────────────┤
 │                 Protocol Layer                              │
-│    (17 Protocols, Iterative Execution, Validation Loops)   │
+│    (~24 Protocol Modules, Iterative Execution, Validation Loops) │
 ├─────────────────────────────────────────────────────────────┤
 │                   Agent Layer                               │
-│  (Autonomous Reasoning, Domain Expertise, Self-Correction) │
+│  (Autonomous Reasoning via UnifiedAgent, Self-Correction)  │
 ├─────────────────────────────────────────────────────────────┤
 │                  Service Layer                              │
-│    (Smart Services, Context Management, State Persistence) │
+│    (UnifiedOrchestrator, StateManager, AgentResolver)      │
 ├─────────────────────────────────────────────────────────────┤
 │                 MCP Tools Layer                             │
-│      (70+ Tools, Autonomous Usage, Validation, Safety)     │
+│      (11 Tools, Autonomous Usage, Validation, Safety)      │
 ├─────────────────────────────────────────────────────────────┤
 │                 Infrastructure Layer                        │
 │    (ChromaDB, File System, Network, Security Sandbox)      │
@@ -243,7 +245,7 @@ Protocol-Driven Autonomous Execution
 - **Autonomous Documentation**: Self-documenting autonomous execution code
 
 ### 7.2 Autonomous Agent Implementation Standards
-- **ProtocolAwareAgent Interface**: All agents support autonomous protocol execution
+- **`UnifiedAgent` Base Class**: All agents primarily inherit from `UnifiedAgent` for autonomous protocol execution.
 - **Autonomous Reflection Integration**: Built-in logging of autonomous reasoning processes
 - **Autonomous Error Recovery**: Structured autonomous error details with recovery actions
 - **Autonomous Performance Metrics**: Track autonomous execution time, success rates, resource usage

@@ -32,93 +32,125 @@ Chungoid: Goal → Protocol Selection → Tool Usage → Validation → Iteratio
 
 ## Protocol-Driven Architecture
 
-The foundation of Chungoid's autonomous execution is its **17 specialized protocols** that guide agent behavior:
+The foundation of Chungoid's autonomous execution is its **suite of specialized protocols** that guide agent behavior. These are organized into logical categories and top-level functional modules:
 
-### **Universal Protocols (5)**
+### **Universal Protocols (`protocols/universal/`)**
+These provide core, cross-cutting functionalities for all agents:
 ```
-├── agent_communication.py     Multi-agent coordination and team formation
-├── context_sharing.py         ChromaDB-based knowledge management
-├── tool_validation.py         MCP tool integration and validation
-├── error_recovery.py          Fault tolerance and automatic retry logic
-└── goal_tracking.py           Success criteria validation and progress monitoring
-```
-
-### **Workflow Protocols (4)**
-```
-├── deep_planning.py           Architecture planning with iterative refinement
-├── systematic_implementation.py Code generation with validation loops
-├── system_integration.py     Component assembly and integration testing
-└── deployment_orchestration.py Production deployment with health checks
+├── agent_communication.py     # Multi-agent coordination and team formation
+├── context_sharing.py         # ChromaDB-based knowledge management
+├── error_recovery.py          # Fault tolerance and automatic retry logic
+├── goal_tracking.py           # Success criteria validation and progress monitoring
+├── reflection.py              # Enables agents to learn from past actions
+├── tool_validation.py         # MCP tool integration and validation
+└── tool_use.py                # Framework for agents to use MCP tools
 ```
 
-### **Domain Protocols (8)**
+### **Planning Protocols (`protocols/planning/`)**
+Focus on architecture, strategy, and task breakdown:
 ```
-├── requirements_discovery.py  Stakeholder feedback and requirement analysis
-├── risk_assessment.py        Risk identification and mitigation strategies
-├── code_remediation.py       Debug/fix/validate cycles for code quality
-├── test_analysis.py          Comprehensive testing with failure analysis
-├── quality_validation.py     Quality gates and standards enforcement
-├── dependency_resolution.py  Intelligent dependency management
-├── multi_agent_coordination.py Advanced team coordination patterns
-└── simple_operations.py      Basic autonomous operations and utilities
+├── architecture_planning.py
+├── deep_planning_verification.py
+├── enhanced_deep_planning.py
+└── planning_agent_protocol.py
 ```
+
+### **Implementation Protocols (`protocols/implementation/`)**
+Concerned with the execution of development tasks:
+```
+└── deep_implementation.py
+```
+
+### **Quality Assurance Protocols (`protocols/quality/`)**
+Ensure standards and correctness:
+```
+└── quality_gates.py
+```
+
+### **Investigation Protocols (`protocols/investigation/`)**
+For analysis and problem decomposition:
+```
+└── deep_investigation.py
+```
+
+### **Collaboration Protocols (`protocols/collaboration/`)**
+Define how agents work together and share context:
+```
+├── autonomous_team_formation.py
+└── shared_execution_context.py
+```
+
+### **Observability Protocols (`protocols/observability/`)**
+Provide insights into system state and behavior:
+```
+├── architecture_drift_detector.py
+└── autonomous_architecture_visualizer.py
+```
+
+### **Evaluation Protocols (`protocols/evaluation/`)**
+Assess the outcome and performance of autonomous tasks:
+```
+└── autonomous_execution_evaluator.py
+```
+
+### **Top-Level Functional Protocols (`protocols/`)**
+Provide specific, self-contained functionalities:
+```
+├── code_generation.py
+├── file_management.py
+├── plan_review.py
+├── requirements_analysis.py
+└── stakeholder_analysis.py
+```
+In total, the system comprises approximately **24 distinct protocol modules**, a significant evolution from earlier designs.
 
 ## MCP Tools Ecosystem
 
-Chungoid agents have access to **65+ specialized MCP tools** across 4 categories for autonomous execution:
+Chungoid agents have access to a curated set of **11 specialized MCP (Master Control Program) tools** for autonomous execution. These tools are managed by a dynamic discovery system and are categorized as follows:
 
-### **Filesystem Suite (15+ tools)**
-- Smart file operations and project scanning
-- Template processing and code generation
-- Project structure analysis and optimization
-- Autonomous file management and organization
+### **ChromaDB Suite (4 tools)**
+- `chroma_list_collections`: Lists collections.
+- `chroma_create_collection`: Creates new collections.
+- `chromadb_query_collection`: Semantic search and queries.
+- `chromadb_reflection_query`: Specialized queries for agent reflections.
 
-### **Terminal Suite (10+ tools)**
-- Safe command execution with validation
-- Dependency management and installation
-- Build system integration and testing
-- Autonomous environment setup and configuration
+### **Filesystem Suite (3 tools)**
+- `filesystem_read_file`: Reads files.
+- `filesystem_project_scan`: Scans project structures.
+- `filesystem_batch_operations`: Bulk file operations.
 
-### **ChromaDB Suite (20+ tools)**
-- Vector search and document storage
-- Knowledge management and retrieval
-- Learning and reflection capabilities
-- Autonomous knowledge persistence and pattern recognition
+### **Terminal Suite (2 tools)**
+- `tool_run_terminal_command`: Secure terminal command execution.
+- `terminal_classify_command`: Risk assessment for commands.
 
-### **Content Suite (25+ tools)**
-- Web content fetching and processing
-- Documentation generation and validation
-- API integration and data processing
-- Autonomous content creation and optimization
+### **Content Suite (2 tools)**
+- `tool_fetch_web_content`: Fetches web content.
+- `mcptool_get_named_content`: Dynamic content generation.
+
+(Note: The previous count of 65+ tools was inaccurate and has been revised based on current registered tool manifests.)
 
 ## Autonomous Agent Architecture
 
-### **Agent Conversion Status**
-- **10/10 agents converted** to ProtocolAwareAgent
-- **Iterative execution support** via `execute_with_protocol()`
-- **Tool integration framework** via `phase.tools_required`
-- **Validation loops** via `_validate_phase_completion()`
+Chungoid's capabilities are realized through a team of specialized autonomous agents, primarily inheriting from the `UnifiedAgent` base class (defined in `chungoid.agents.unified_agent`), which provides the foundation for protocol-driven execution. The current roster of key agents includes:
 
-### **Specialized Autonomous Agents**
+### **Core Autonomous Engine Agents (`agents/autonomous_engine/`)**
 
-#### **Planning & Coordination**
-- **MasterPlannerAgent**: Autonomous execution plan generation and optimization
-- **MasterPlannerReviewerAgent**: Self-reviewing and plan refinement
-- **ArchitectAgent**: Autonomous system architecture decisions and design
+*   **`AutomatedRefinementCoordinatorAgent_v1` (ARCA)**: The central orchestrator for iterative refinement of project artifacts. (Described in `automated_refinement_coordinator_agent.py`)
+*   **`ArchitectAgent`**: Handles autonomous system architecture decisions and design. (Described in `architect_agent.py`)
+*   **`ProductAnalystAgent`**: Analyzes requirements and product specifications. (Described in `product_analyst_agent.py`)
+*   **`SmartCodeGeneratorAgent`**: Performs autonomous code generation with quality validation. (Described in `smart_code_generator_agent.py`)
+*   **`EnvironmentBootstrapAgent`**: Manages autonomous project setup and environment configuration. (Described in `environment_bootstrap_agent.py`)
+*   **`DependencyManagementAgent`**: Handles intelligent dependency resolution and management. (Described in `dependency_management_agent.py`)
+*   **`CodeDebuggingAgent`**: Focuses on autonomous debugging and fixing of code based on test failures. (Described in `code_debugging_agent.py`)
+*   **`BlueprintReviewerAgent`**: Reviews and provides feedback on project blueprints or plans. (Described in `blueprint_reviewer_agent.py`)
+*   **`RequirementsTracerAgent`**: Traces requirements through different stages of development. (Described in `requirements_tracer_agent.py`)
+*   **`ProjectDocumentationAgent`**: Generates and updates project documentation. (Described in `project_documentation_agent.py`)
+*   **`ProactiveRiskAssessorAgent`**: Identifies and assesses potential risks in the project. (Described in `proactive_risk_assessor_agent.py`)
 
-#### **Development & Implementation**
-- **EnvironmentBootstrapAgent**: Autonomous project setup and environment configuration
-- **DependencyManagementAgent**: Intelligent dependency resolution and management
-- **CodeGeneratorAgent**: Autonomous code generation with quality validation
-- **SystemFileSystemAgent**: Autonomous file operations and project structure management
+### **System Agents (`agents/system/`)**
+*   **`NoOpAgent`**: A simple agent that performs no operation, often used for testing or as a placeholder. (Described in `noop_agent.py`)
 
-#### **Quality Assurance & Testing**
-- **TestGeneratorAgent**: Autonomous test suite generation and validation
-- **SystemTestRunnerAgent**: Autonomous test execution and failure analysis
-- **TestFailureAnalysisAgent**: Sophisticated autonomous debugging and fixing
-
-#### **Knowledge & Learning**
-- **ProjectChromaManagerAgent**: Autonomous knowledge management and continuous learning
+(Note: The previous list of agents and the "10/10 converted" claim have been updated to reflect the current agent roster and their likely base class. Some previously listed agents like `MasterPlannerAgent` or `ProjectChromaManagerAgent` may have been refactored, renamed, or their responsibilities absorbed into the agents above.)
 
 ## Autonomous Execution Flow
 
@@ -222,8 +254,9 @@ class AutonomousExecutionEngine:
     
     def __init__(self, orchestrator: AsyncOrchestrator):
         self.orchestrator = orchestrator
-        self.mcp_tools = self._initialize_mcp_tools()  # 65+ tools
-        self.protocols = self._initialize_protocols()  # 17 protocols
+        # Corrected tool and protocol initialization based on findings
+        self.mcp_tools = self._initialize_mcp_tools()  # Actual: ~11 tools
+        self.protocols = self._initialize_protocols()  # Actual: ~24 protocols
         self.validation_framework = ValidationFramework()
         
     async def execute_agent_autonomously(
@@ -245,8 +278,8 @@ class AutonomousExecutionEngine:
 
 ### **Protocol-Aware Agent Base**
 ```python
-class ProtocolAwareAgent(BaseAgent):
-    """Enhanced base agent for autonomous execution"""
+class ProtocolAwareAgent(BaseAgent): # System overview uses ProtocolAwareAgent. UnifiedAgent is the actual base.
+    """Enhanced base agent for autonomous execution, likely represented by chungoid.agents.unified_agent.UnifiedAgent"""
     
     PRIMARY_PROTOCOLS: List[str] = []  # Defined by subclasses
     

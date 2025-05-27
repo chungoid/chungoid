@@ -113,9 +113,9 @@ python scripts/sync_documentation.py --dry-run --check-only
 
 Focus on what users can **do** rather than descriptive details:
 
-❌ **Descriptive**: "The AsyncOrchestrator class has a run() method that takes an ExecutionPlan parameter"
+❌ **Descriptive**: "The `UnifiedOrchestrator` class has a run() method that takes an ExecutionPlan parameter"
 
-✅ **Action-Based**: "To execute a workflow, pass your ExecutionPlan to orchestrator.run()"
+✅ **Action-Based**: "To execute a workflow, pass your ExecutionPlan to `orchestrator.run()`"
 
 ### Audience Adaptation
 
