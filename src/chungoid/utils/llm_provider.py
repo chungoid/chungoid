@@ -195,7 +195,8 @@ class LiteLLMProvider(LLMProvider):
                  base_url: Optional[str] = None,
                  timeout: Optional[int] = None,
                  max_retries: Optional[int] = None,
-                 provider_env_vars: Optional[Dict[str, str]] = None):
+                 provider_env_vars: Optional[Dict[str, str]] = None,
+                 enable_full_logging: Optional[bool] = None):
         if not litellm:
             raise ImportError("LiteLLM library is not installed or failed to import. Cannot use LiteLLMProvider.")
 
@@ -205,6 +206,9 @@ class LiteLLMProvider(LLMProvider):
         self.timeout = timeout
         self.max_retries = max_retries
         
+        # Enable full logging for refinement debugging
+        self.enable_full_logging = enable_full_logging if enable_full_logging is not None else os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true"
+        
         # Store original environment state for potential restoration if needed, or manage carefully.
         # For now, assume direct modification is acceptable for the process lifetime.
         if provider_env_vars:
@@ -213,6 +217,8 @@ class LiteLLMProvider(LLMProvider):
                 os.environ[k] = v
         
         logger.info(f"LiteLLMProvider initialized with default model: {self.default_model}")
+        if self.enable_full_logging:
+            logger.info("LiteLLMProvider: Full logging enabled for refinement debugging")
         if self.base_url:
             logger.info(f"LiteLLMProvider: Using custom base_url: {self.base_url}")
         if self.api_key:
@@ -282,64 +288,62 @@ class LiteLLMProvider(LLMProvider):
 
         try:
             logger.info(f"LiteLLMProvider calling model: {chosen_model} via LiteLLM (prompt first 100 chars): {prompt[:100]}...")
-            logger.debug(f"LiteLLMProvider acompletion kwargs: { {k:v for k,v in litellm_kwargs.items() if k != 'messages'} }") # Avoid logging full messages unless debugging heavily
-
-            # Use acompletion for async
-            response = await acompletion(**litellm_kwargs)
             
-            # LiteLLM's response structure is similar to OpenAI's
-            generated_content = response.choices[0].message.content
+            # Add comprehensive debug logging for refinement debugging
+            logger.debug(f"LiteLLMProvider FULL PROMPT for model {chosen_model}:")
+            logger.debug("=" * 80)
+            logger.debug(prompt)
+            logger.debug("=" * 80)
             
-            # Log usage if available
-            usage = response.get('usage')
-            if usage:
-                logger.info(f"LiteLLMProvider token usage for model {chosen_model}: {usage}")
-
-            logger.debug(f"LiteLLMProvider RAW response object from {chosen_model}: {response.model_dump_json(indent=2)}")
-
-
-            if generated_content is None:
-                logger.warning(f"LiteLLMProvider: Model {chosen_model} returned None content.")
+            # Enhanced logging for refinement debugging
+            if self.enable_full_logging:
+                logger.info(f"[REFINEMENT DEBUG] LiteLLMProvider FULL PROMPT for model {chosen_model}:")
+                logger.info("=" * 80)
+                logger.info(prompt)
+                logger.info("=" * 80)
+            
+            logger.debug(f"LiteLLMProvider acompletion kwargs: { {k:v for k,v in litellm_kwargs.items() if k != 'messages'} }")
+            
+            # Make the LLM call
+            response = await litellm.acompletion(**litellm_kwargs)
+            
+            # Extract content from response
+            current_content = response.choices[0].message.content
+            
+            # Enhanced response validation and logging
+            if current_content is None:
+                logger.warning(f"[JSON DEBUG] LLM returned None content for model {chosen_model}")
+                logger.warning(f"[JSON DEBUG] Full response object: {response}")
                 return ""
-
-            # Ensure we are working with a string
-            current_content = str(generated_content).strip()
-
-            if response_format and response_format.get("type") == "json_object":
-                logger.debug(f"LiteLLMProvider: Attempting JSON cleaning. Initial content (first 100 chars): '{current_content[:100]}'")
-                # Try to extract content within ```json ... ``` or ``` ... ```
-                # This regex looks for ``` optionally followed by 'json', then captures everything (non-greedy) until the closing ```
-                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", current_content, re.DOTALL)
-                if match:
-                    logger.debug("LiteLLMProvider: Found markdown code block, extracting content from group 1.")
-                    current_content = match.group(1).strip()
-                else:
-                    # Fallback: If no markdown block, try to find the first '{' and last '}'
-                    # This is for cases where the LLM might return raw JSON without fences.
-                    # It's a bit riskier but useful if response_format hints at JSON.
-                    logger.debug("LiteLLMProvider: No markdown code block found. Checking for raw JSON structure.")
-                    first_brace = current_content.find('{')
-                    last_brace = current_content.rfind('}')
-                    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-                        # Check if the content between braces looks like a plausible JSON object
-                        # by trying to parse it. This is to avoid grabbing parts of natural language.
-                        potential_json_substring = current_content[first_brace : last_brace+1]
-                        try:
-                            json.loads(potential_json_substring) # Try to parse
-                            logger.debug("LiteLLMProvider: Extracted content between first and last curly braces, and it appears to be valid JSON.")
-                            current_content = potential_json_substring.strip()
-                        except json.JSONDecodeError:
-                            logger.debug("LiteLLMProvider: Content between first/last braces is not valid JSON. Using content as is (after initial strip).")
-                            # If it's not valid JSON, don't assume it's the intended output.
-                            # The original current_content (already stripped) will be used.
-                    else:
-                        logger.debug("LiteLLMProvider: No clear JSON structure (no matching braces or no braces at all). Using content as is (after initial strip).")
+            
+            if not current_content or not current_content.strip():
+                logger.warning(f"[JSON DEBUG] LLM returned empty content for model {chosen_model}")
+                logger.warning(f"[JSON DEBUG] Content: '{current_content}'")
+                logger.warning(f"[JSON DEBUG] Response metadata: usage={getattr(response, 'usage', 'N/A')}, model={getattr(response, 'model', 'N/A')}")
+                return ""
+            
+            # Add comprehensive debug logging for refinement debugging
+            logger.debug(f"LiteLLMProvider FULL RESPONSE from model {chosen_model}:")
+            logger.debug("=" * 80)
+            logger.debug(current_content)
+            logger.debug("=" * 80)
+            
+            # Enhanced logging for refinement debugging
+            if self.enable_full_logging:
+                logger.info(f"[REFINEMENT DEBUG] LiteLLMProvider FULL RESPONSE from model {chosen_model}:")
+                logger.info("=" * 80)
+                logger.info(current_content)
+                logger.info("=" * 80)
+            else:
+                # Always show response preview for JSON debugging
+                logger.info(f"LiteLLMProvider returning content (first 200 chars after all processing):\n{current_content[:200]}...")
                 
-                # Final strip, just in case the extracted content itself has leading/trailing whitespace.
-                current_content = current_content.strip()
-                logger.debug(f"LiteLLMProvider: Content after all JSON cleaning attempts (first 100 chars): '{current_content[:100]}'")
-
-            logger.info(f"LiteLLMProvider returning content (first 200 chars after all processing):\n{current_content[:200]}...")
+                # Add JSON validation preview
+                if current_content.strip().startswith('{') or '```json' in current_content:
+                    logger.info(f"[JSON DEBUG] Response appears to contain JSON content")
+                else:
+                    logger.warning(f"[JSON DEBUG] Response does not appear to contain JSON (starts with: '{current_content[:50]}...')")
+            
             return current_content
 
         except Exception as e:
@@ -425,6 +429,7 @@ class LLMManager:
                 timeout=final_config.get("timeout"),
                 max_retries=final_config.get("max_retries"),
                 provider_env_vars=final_config.get("provider_env_vars", {}),
+                enable_full_logging=final_config.get("enable_full_logging"),
             )
             logger.info(f"LLMManager: Using LiteLLMProvider for provider '{provider}'")
         elif provider == "mock":
@@ -441,6 +446,7 @@ class LLMManager:
                 timeout=final_config.get("timeout"),
                 max_retries=final_config.get("max_retries"),
                 provider_env_vars=final_config.get("provider_env_vars", {}),
+                enable_full_logging=final_config.get("enable_full_logging"),
             )
         
         self.prompt_manager = prompt_manager

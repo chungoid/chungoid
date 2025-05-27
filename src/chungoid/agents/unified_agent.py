@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+import os
 from abc import ABC
 from typing import Any, ClassVar, List, Optional, Dict
 
@@ -280,6 +281,24 @@ class UnifiedAgent(BaseModel, ABC):
                     })
             
             self.logger.info(f"[Refinement] Retrieved {len(previous_outputs)} previous outputs from ChromaDB")
+            
+            # Add detailed logging of retrieved content for refinement debugging
+            if previous_outputs:
+                self.logger.info(f"[REFINEMENT DEBUG] ChromaDB Retrieved Content Summary:")
+                for i, output in enumerate(previous_outputs):
+                    metadata = output.get('metadata', {})
+                    content_preview = str(output.get('content', ''))[:200]
+                    self.logger.info(f"  Output {i+1}: iteration={metadata.get('iteration', 'unknown')}, "
+                                   f"quality={metadata.get('quality_score', 'unknown')}, "
+                                   f"content_preview='{content_preview}...'")
+                    
+                    # If full logging is enabled via environment variable, show full content
+                    if os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true":
+                        self.logger.info(f"[REFINEMENT DEBUG] Full Content for Output {i+1}:")
+                        self.logger.info("=" * 60)
+                        self.logger.info(str(output.get('content', '')))
+                        self.logger.info("=" * 60)
+            
             return previous_outputs
             
         except Exception as e:
@@ -420,6 +439,22 @@ class UnifiedAgent(BaseModel, ABC):
             iteration = refinement_context.get("iteration", 0)
             previous_quality = refinement_context.get("previous_quality_score", 0.0)
             
+            # Add comprehensive debug logging for refinement debugging
+            self.logger.debug(f"[Refinement] Building refinement prompt for iteration {iteration + 1}")
+            self.logger.info(f"[Refinement Debug] Building refinement prompt for iteration {iteration + 1}")
+            self.logger.debug(f"[Refinement] Previous outputs count: {len(previous_outputs)}")
+            self.logger.info(f"[Refinement Debug] Previous outputs count: {len(previous_outputs)}")
+            self.logger.debug(f"[Refinement] Previous quality score: {previous_quality}")
+            self.logger.info(f"[Refinement Debug] Previous quality score: {previous_quality}")
+            self.logger.debug(f"[Refinement] Current state analysis types: {list(current_state.keys())}")
+            
+            for i, output in enumerate(previous_outputs):
+                self.logger.debug(f"[Refinement] Previous output {i+1} metadata: {output.get('metadata', {})}")
+                self.logger.info(f"[Refinement Debug] Previous output {i+1} quality: {output.get('quality_score', 'unknown')}")
+                self.logger.debug(f"[Refinement] Previous output {i+1} quality: {output.get('quality_score', 'unknown')}")
+                content_preview = str(output.get('content', ''))[:200]
+                self.logger.debug(f"[Refinement] Previous output {i+1} content preview: {content_preview}...")
+            
             # Build refinement prompt
             prompt_parts = [
                 f"=== REFINEMENT ITERATION {iteration + 1} ===",
@@ -466,7 +501,19 @@ class UnifiedAgent(BaseModel, ABC):
                 "Generate your refined output now:"
             ])
             
-            return "\n".join(prompt_parts)
+            final_prompt = "\n".join(prompt_parts)
+            
+            # Add logging to show the full refinement prompt for debugging
+            if os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true":
+                self.logger.info(f"[REFINEMENT DEBUG] Full Refinement Prompt for iteration {iteration + 1}:")
+                self.logger.info("=" * 80)
+                self.logger.info(final_prompt)
+                self.logger.info("=" * 80)
+            else:
+                # Show a preview of the refinement prompt
+                self.logger.info(f"[REFINEMENT DEBUG] Refinement prompt preview (first 300 chars): {final_prompt[:300]}...")
+            
+            return final_prompt
             
         except Exception as e:
             self.logger.warning(f"[Refinement] Failed to build refinement prompt: {e}")
@@ -539,44 +586,42 @@ class UnifiedAgent(BaseModel, ABC):
         completion_criteria: Any,
         context: ExecutionContext
     ) -> CompletionAssessment:
-        """Assess if execution is complete - Phase 3 implementation"""
+        """Assess whether execution should complete or continue iterating"""
         
-        # Basic completion assessment
-        is_complete = False
-        reason = CompletionReason.QUALITY_THRESHOLD_NOT_MET
-        gaps_identified = []
-        recommendations = []
+        # Add comprehensive debug logging for completion assessment
+        self.logger.debug(f"[Completion Assessment] Assessing iteration result:")
+        self.logger.info(f"[Completion Assessment Debug] Quality score: {iteration_result.quality_score}")
+        self.logger.debug(f"[Completion Assessment] Quality score: {iteration_result.quality_score}")
+        self.logger.debug(f"[Completion Assessment] Protocol used: {iteration_result.protocol_used}")
+        self.logger.debug(f"[Completion Assessment] Tools used: {iteration_result.tools_used}")
+        self.logger.debug(f"[Completion Assessment] Output preview: {str(iteration_result.output)[:200]}...")
         
-        # Check quality threshold
-        if iteration_result.quality_score >= 0.9:
-            is_complete = True
-            reason = CompletionReason.QUALITY_THRESHOLD_MET
-        elif iteration_result.quality_score >= 0.8:
-            # Good quality but could be better
-            gaps_identified.append("Quality score could be improved")
-            recommendations.append("Consider additional refinement")
-        else:
-            # Low quality - identify specific gaps
-            gaps_identified.extend([
-                "Low quality score indicates significant issues",
-                "Output may not meet requirements"
-            ])
-            recommendations.extend([
-                "Review and improve output quality",
-                "Address identified issues in next iteration"
-            ])
+        # Check quality threshold (default: 0.95 for better refinement)
+        quality_threshold = getattr(completion_criteria, 'quality_threshold', 0.95)
+        self.logger.debug(f"[Completion Assessment] Quality threshold: {quality_threshold}")
+        self.logger.info(f"[Completion Assessment Debug] Quality threshold: {quality_threshold}")
         
-        # Check for specific completion criteria
-        if completion_criteria:
-            # Custom completion logic would go here
-            pass
+        if iteration_result.quality_score >= quality_threshold:
+            self.logger.debug(f"[Completion Assessment] Quality threshold met ({iteration_result.quality_score} >= {quality_threshold})")
+            self.logger.info(f"[Completion Assessment Debug] Quality threshold MET ({iteration_result.quality_score} >= {quality_threshold})")
+            return CompletionAssessment(
+                is_complete=True,
+                quality_score=iteration_result.quality_score,
+                reason=CompletionReason.QUALITY_THRESHOLD_MET,
+                gaps_identified=[],
+                recommendations=[]
+            )
         
+        self.logger.debug(f"[Completion Assessment] Quality threshold not met ({iteration_result.quality_score} < {quality_threshold})")
+        self.logger.info(f"[Completion Assessment Debug] Quality threshold NOT MET ({iteration_result.quality_score} < {quality_threshold})")
+        
+        # Add more sophisticated completion criteria here as needed
         return CompletionAssessment(
-            is_complete=is_complete,
-            reason=reason,
+            is_complete=False,
             quality_score=iteration_result.quality_score,
-            gaps_identified=gaps_identified,
-            recommendations=recommendations
+            reason=CompletionReason.QUALITY_THRESHOLD_NOT_MET,
+            gaps_identified=["Quality score below threshold"],
+            recommendations=["Improve output quality", "Add more detail", "Enhance analysis"]
         )
 
     async def _enhance_context_for_next_iteration(

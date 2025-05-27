@@ -90,7 +90,7 @@ class UnifiedOrchestrator:
             stage_info=StageInfo(stage_id=stage_id, attempt_number=attempt),
             execution_config=ExecutionConfig(
                 max_iterations=max_iterations,
-                quality_threshold=0.85,  # Phase 3: Enable quality thresholds
+                quality_threshold=0.95,  # Phase 3: Enable quality thresholds (raised for better refinement)
                 completion_criteria=None  # Phase 3: Will be enhanced
             ),
         )

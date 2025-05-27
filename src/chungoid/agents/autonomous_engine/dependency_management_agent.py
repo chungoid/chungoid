@@ -28,6 +28,7 @@ import logging
 import subprocess
 import tempfile
 import time
+import os
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -954,18 +955,58 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 }}
                 """
                 
+                # Enhanced logging for debugging JSON parsing issues
+                if os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true":
+                    self.logger.info(f"[JSON DEBUG] DependencyManagementAgent sending prompt to LLM:")
+                    self.logger.info("=" * 80)
+                    self.logger.info(prompt)
+                    self.logger.info("=" * 80)
+                
                 response = await self.llm_provider.generate(prompt)
+                
+                # Enhanced response logging and validation
+                if response is None:
+                    self.logger.warning(f"[JSON DEBUG] LLM returned None response for dependency analysis")
+                    return self._generate_fallback_dependency_analysis(project_specs, user_goal)
+                
+                if not response or not response.strip():
+                    self.logger.warning(f"[JSON DEBUG] LLM returned empty response for dependency analysis. Response: '{response}'")
+                    return self._generate_fallback_dependency_analysis(project_specs, user_goal)
+                
+                # Log the raw response for debugging
+                if os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true":
+                    self.logger.info(f"[JSON DEBUG] DependencyManagementAgent received LLM response:")
+                    self.logger.info("=" * 80)
+                    self.logger.info(response)
+                    self.logger.info("=" * 80)
+                else:
+                    # Show preview even without full logging
+                    self.logger.info(f"[JSON DEBUG] LLM response preview (first 200 chars): {response[:200]}...")
                 
                 if response:
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
+                        
+                        # Log the extracted JSON content for debugging
+                        if os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true":
+                            self.logger.info(f"[JSON DEBUG] Extracted JSON content:")
+                            self.logger.info("=" * 80)
+                            self.logger.info(json_content)
+                            self.logger.info("=" * 80)
+                        
+                        if not json_content or not json_content.strip():
+                            self.logger.warning(f"[JSON DEBUG] Extracted JSON content is empty. Original response length: {len(response)}")
+                            return self._generate_fallback_dependency_analysis(project_specs, user_goal)
+                        
                         parsed_result = json.loads(json_content)
                         
                         # Validate that we got a dictionary as expected
                         if not isinstance(parsed_result, dict):
-                            self.logger.warning(f"Expected dict from dependency analysis, got {type(parsed_result)}. Using fallback.")
+                            self.logger.warning(f"[JSON DEBUG] Expected dict from dependency analysis, got {type(parsed_result)}. Using fallback.")
                             return self._generate_fallback_dependency_analysis(project_specs, user_goal)
+                        
+                        self.logger.info(f"[JSON DEBUG] Successfully parsed LLM response as JSON with {len(parsed_result)} top-level keys")
                         
                         # Create intelligent dependency discovery based on LLM analysis
                         discovery_result = {
@@ -988,10 +1029,18 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                         
                         return discovery_result
                     except json.JSONDecodeError as e:
-                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+                        self.logger.warning(f"[JSON DEBUG] Failed to parse LLM response as JSON: {e}")
+                        self.logger.warning(f"[JSON DEBUG] JSON content that failed to parse (first 500 chars): {json_content[:500]}...")
+                        self.logger.warning(f"[JSON DEBUG] Full response length: {len(response)}, extracted content length: {len(json_content)}")
+                        # Fall through to fallback
+                    except Exception as e:
+                        self.logger.error(f"[JSON DEBUG] Unexpected error during JSON parsing: {e}")
+                        # Fall through to fallback
+            else:
+                self.logger.warning(f"[JSON DEBUG] No LLM provider available for dependency analysis")
             
             # Fallback to basic extraction if LLM fails
-            self.logger.info("Using fallback dependency analysis due to LLM unavailability")
+            self.logger.info("Using fallback dependency analysis due to LLM unavailability or parsing failure")
             return self._generate_fallback_dependency_analysis(project_specs, user_goal)
             
         except Exception as e:
@@ -1331,8 +1380,15 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         }
 
     def _extract_json_from_response(self, response: str) -> str:
-        """Extract JSON content from LLM response, handling markdown code blocks."""
+        """Extract JSON content from LLM response, handling markdown code blocks and edge cases."""
+        if not response:
+            return ""
+            
         response = response.strip()
+        
+        # Handle empty response
+        if not response:
+            return ""
         
         # Check if response is wrapped in markdown code blocks
         if response.startswith('```json'):
@@ -1350,7 +1406,13 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 elif in_json_block:
                     json_lines.append(line)
             
-            return '\n'.join(json_lines)
+            extracted = '\n'.join(json_lines).strip()
+            if extracted:
+                return extracted
+            else:
+                # If extraction failed, try to find JSON in the response
+                return self._find_json_in_text(response)
+                
         elif response.startswith('```'):
             # Handle generic code blocks
             lines = response.split('\n')
@@ -1366,10 +1428,52 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 elif in_code_block:
                     json_lines.append(line)
             
-            return '\n'.join(json_lines)
+            extracted = '\n'.join(json_lines).strip()
+            if extracted:
+                return extracted
+            else:
+                # If extraction failed, try to find JSON in the response
+                return self._find_json_in_text(response)
         else:
-            # Response is already clean JSON
-            return response
+            # Response might be clean JSON or contain JSON within text
+            # First try the response as-is
+            try:
+                json.loads(response)
+                return response
+            except json.JSONDecodeError:
+                # Try to find JSON within the text
+                return self._find_json_in_text(response)
+    
+    def _find_json_in_text(self, text: str) -> str:
+        """Find JSON object within text using bracket matching."""
+        if not text:
+            return ""
+            
+        # Look for opening brace
+        start_idx = text.find('{')
+        if start_idx == -1:
+            return ""
+        
+        # Count braces to find matching closing brace
+        brace_count = 0
+        for i, char in enumerate(text[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found matching closing brace
+                    potential_json = text[start_idx:i+1]
+                    try:
+                        # Validate it's actually JSON
+                        json.loads(potential_json)
+                        return potential_json
+                    except json.JSONDecodeError:
+                        # Continue looking for another JSON object
+                        continue
+        
+        # No valid JSON found
+        return ""
 
     def _calculate_quality_score(self, validation_result: Dict[str, Any], operations_result: Dict[str, Any]) -> float:
         """Calculate overall quality score based on validation and operations results."""

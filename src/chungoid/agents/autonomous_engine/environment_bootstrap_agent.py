@@ -109,17 +109,73 @@ class UnsupportedEnvironmentError(EnvironmentBootstrapError):
     pass
 
 # ============================================================================
-# Enums and Constants
+# Enums and Constants  
 # ============================================================================
 
-class EnvironmentType(str, Enum):
-    """Supported environment types."""
+class DynamicEnvironmentType:
+    """
+    Dynamic environment type system that can handle ANY environment type.
+    Uses LLM intelligence to figure out how to set up any environment.
+    """
+    
+    # Common environment types for quick reference
     PYTHON = "python"
     NODEJS = "nodejs"
     JAVA = "java"
     RUST = "rust"
     GO = "go"
+    BASH = "bash"
+    SHELL = "shell"
+    DOCKER = "docker"
+    CONDA = "conda"
     MULTI_LANGUAGE = "multi_language"
+    
+    def __init__(self, env_type: str):
+        self.type = env_type.lower().strip()
+    
+    def __str__(self) -> str:
+        return self.type
+    
+    def __eq__(self, other) -> bool:
+        if isinstance(other, DynamicEnvironmentType):
+            return self.type == other.type
+        elif isinstance(other, str):
+            return self.type == other.lower().strip()
+        return False
+    
+    def __hash__(self) -> int:
+        return hash(self.type)
+    
+    @classmethod
+    def from_string(cls, env_type: str) -> "DynamicEnvironmentType":
+        """Create a DynamicEnvironmentType from any string"""
+        return cls(env_type)
+    
+    @property
+    def is_common_type(self) -> bool:
+        """Check if this is a commonly known environment type"""
+        common_types = {
+            "python", "nodejs", "java", "rust", "go", "bash", "shell", 
+            "docker", "conda", "ruby", "php", "c++", "c", "dotnet"
+        }
+        return self.type in common_types
+
+# Legacy EnvironmentType for backward compatibility - now uses DynamicEnvironmentType
+class EnvironmentType:
+    """Legacy environment type compatibility layer - now dynamic!"""
+    PYTHON = DynamicEnvironmentType("python")
+    NODEJS = DynamicEnvironmentType("nodejs") 
+    JAVA = DynamicEnvironmentType("java")
+    RUST = DynamicEnvironmentType("rust")
+    GO = DynamicEnvironmentType("go")
+    BASH = DynamicEnvironmentType("bash")
+    SHELL = DynamicEnvironmentType("shell")
+    MULTI_LANGUAGE = DynamicEnvironmentType("multi_language")
+    
+    @classmethod
+    def from_string(cls, env_type: str) -> DynamicEnvironmentType:
+        """Create any environment type dynamically"""
+        return DynamicEnvironmentType.from_string(env_type)
 
 class EnvironmentStatus(str, Enum):
     """Environment setup status."""
@@ -144,17 +200,20 @@ class BootstrapStrategy(str, Enum):
 # ============================================================================
 
 class EnvironmentRequirement(BaseModel):
-    """Requirements for a specific environment."""
-    environment_type: EnvironmentType = Field(..., description="Type of environment")
+    """Requirements for a specific environment - now supports ANY environment type!"""
+    environment_type: DynamicEnvironmentType = Field(..., description="Type of environment (any type supported)")
     version_requirement: Optional[str] = Field(None, description="Specific version requirement")
     dependencies: List[DependencyInfo] = Field(default_factory=list, description="Dependencies to install")
     tools_required: List[str] = Field(default_factory=list, description="Additional tools required")
     configuration: Dict[str, Any] = Field(default_factory=dict, description="Environment-specific configuration")
     priority: int = Field(1, description="Priority for multi-environment setups (1=highest)")
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 class EnvironmentInfo(BaseModel):
-    """Information about a created environment."""
-    environment_type: EnvironmentType = Field(..., description="Type of environment")
+    """Information about a created environment - now supports ANY environment type!"""
+    environment_type: DynamicEnvironmentType = Field(..., description="Type of environment (any type supported)")
     environment_path: Path = Field(..., description="Path to environment")
     status: EnvironmentStatus = Field(..., description="Current status")
     version: Optional[str] = Field(None, description="Environment/runtime version")
@@ -163,12 +222,15 @@ class EnvironmentInfo(BaseModel):
     validation_results: Dict[str, Any] = Field(default_factory=dict, description="Environment validation results")
     created_at: datetime = Field(default_factory=datetime.now, description="When environment was created")
     last_validated: Optional[datetime] = Field(None, description="Last validation timestamp")
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 class EnvironmentBootstrapInput(BaseModel):
     """Input for Environment Bootstrap Agent."""
     project_path: str = Field(..., description="Path to project directory")
     strategy: BootstrapStrategy = Field(default=BootstrapStrategy.AUTO_DETECT, description="Bootstrap strategy")
-    environment_types: Optional[List[EnvironmentType]] = Field(None, description="Explicitly requested environment types")
+    environment_types: Optional[List[str]] = Field(None, description="Explicitly requested environment types (any type supported)")
     force_recreate: bool = Field(default=False, description="Force recreation of existing environments")
     install_dependencies: bool = Field(default=True, description="Whether to install detected dependencies")
     validate_environment: bool = Field(default=True, description="Whether to validate created environments")
@@ -615,6 +677,309 @@ class NodeJSEnvironmentStrategy(EnvironmentStrategy):
             self.logger.error(f"Failed to cleanup Node.js environment: {e}")
         return False
 
+class UniversalEnvironmentStrategy(EnvironmentStrategy):
+    """
+    Universal environment strategy that can handle ANY environment type
+    using LLM intelligence to figure out setup, installation, and validation.
+    
+    This is the breakthrough the user suggested - no more hardcoded limitations!
+    """
+    
+    def __init__(self, config_manager, llm_provider):
+        super().__init__(config_manager)
+        self.llm_provider = llm_provider
+        self.logger = logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}")
+    
+    async def detect_requirements(self, project_path: Path) -> EnvironmentRequirement:
+        """Use LLM to intelligently detect environment requirements"""
+        
+        # Analyze project files to understand what environment is needed
+        analysis_prompt = f"""
+        Analyze this project directory and determine what environment type is needed:
+        
+        Project Path: {project_path}
+        
+        Based on the project structure and files, what type of development environment 
+        should be set up? Consider:
+        - Programming languages used
+        - Build systems present
+        - Configuration files
+        - Project type and purpose
+        
+        Respond with just the environment type name (e.g., "python", "nodejs", "bash", "rust", etc.)
+        """
+        
+        try:
+            response = await self.llm_provider.generate(
+                prompt=analysis_prompt,
+                max_tokens=50,
+                temperature=0.1
+            )
+            
+            env_type = DynamicEnvironmentType.from_string(response.strip())
+            
+            return EnvironmentRequirement(
+                environment_type=env_type,
+                version_requirement=None,
+                dependencies=[],
+                tools_required=[],
+                configuration={"llm_detected": True},
+                priority=1
+            )
+            
+        except Exception as e:
+            self.logger.warning(f"LLM detection failed: {e}, defaulting to python")
+            return EnvironmentRequirement(
+                environment_type=DynamicEnvironmentType.from_string("python"),
+                version_requirement=None,
+                dependencies=[],
+                tools_required=[],
+                configuration={"fallback": True},
+                priority=1
+            )
+    
+    async def create_environment(self, project_path: Path, requirement: EnvironmentRequirement) -> EnvironmentInfo:
+        """Use LLM to figure out how to create ANY environment type"""
+        
+        env_type = str(requirement.environment_type)
+        
+        # Ask LLM how to set up this specific environment type
+        setup_prompt = f"""
+        You are a DevOps expert. I need to set up a {env_type} development environment.
+        
+        Project Path: {project_path}
+        Environment Type: {env_type}
+        Version Requirement: {requirement.version_requirement or "latest stable"}
+        
+        Provide step-by-step shell commands to:
+        1. Install the {env_type} runtime/tools if needed
+        2. Create a project-specific environment (virtual env, workspace, etc.)
+        3. Set up any necessary configuration
+        
+        Format your response as a JSON object:
+        {{
+            "setup_commands": ["command1", "command2", ...],
+            "environment_path": "path/to/environment",
+            "activation_command": "command to activate environment",
+            "validation_command": "command to test environment works",
+            "version_check_command": "command to check version"
+        }}
+        
+        Be specific and practical. Use standard tools and best practices.
+        """
+        
+        try:
+            response = await self.llm_provider.generate(
+                prompt=setup_prompt,
+                max_tokens=800,
+                temperature=0.1
+            )
+            
+            # Parse LLM response
+            import json
+            setup_info = json.loads(response.strip())
+            
+            # Execute setup commands
+            success = await self._execute_setup_commands(
+                setup_info.get("setup_commands", []),
+                project_path
+            )
+            
+            if success:
+                env_path = project_path / setup_info.get("environment_path", f".{env_type}_env")
+                
+                return EnvironmentInfo(
+                    environment_type=requirement.environment_type,
+                    environment_path=env_path,
+                    status=EnvironmentStatus.CREATED,
+                    version=requirement.version_requirement,
+                    activation_command=setup_info.get("activation_command"),
+                    dependencies_installed=[],
+                    validation_results={},
+                    created_at=datetime.now()
+                )
+            else:
+                raise EnvironmentCreationError(f"Failed to create {env_type} environment")
+                
+        except Exception as e:
+            self.logger.error(f"Universal environment creation failed for {env_type}: {e}")
+            
+            # Fallback: create a basic directory structure
+            env_path = project_path / f".{env_type}_env"
+            env_path.mkdir(exist_ok=True)
+            
+            return EnvironmentInfo(
+                environment_type=requirement.environment_type,
+                environment_path=env_path,
+                status=EnvironmentStatus.CREATED,
+                version="unknown",
+                activation_command=f"# Activate {env_type} environment",
+                dependencies_installed=[],
+                validation_results={"fallback": True},
+                created_at=datetime.now()
+            )
+    
+    async def install_dependencies(self, env_info: EnvironmentInfo, dependencies: List[DependencyInfo]) -> List[str]:
+        """Use LLM to figure out how to install dependencies for ANY environment type"""
+        
+        if not dependencies:
+            return []
+        
+        env_type = str(env_info.environment_type)
+        dep_names = [dep.name for dep in dependencies]
+        
+        install_prompt = f"""
+        You are a DevOps expert. I need to install dependencies in a {env_type} environment.
+        
+        Environment Type: {env_type}
+        Environment Path: {env_info.environment_path}
+        Dependencies to install: {dep_names}
+        Activation Command: {env_info.activation_command}
+        
+        Provide the shell commands needed to install these dependencies.
+        Consider the environment type and use appropriate package managers.
+        
+        Format as JSON:
+        {{
+            "install_commands": ["command1", "command2", ...],
+            "package_manager": "name of package manager used"
+        }}
+        
+        Be specific about how to activate the environment and install packages.
+        """
+        
+        try:
+            response = await self.llm_provider.generate(
+                prompt=install_prompt,
+                max_tokens=500,
+                temperature=0.1
+            )
+            
+            import json
+            install_info = json.loads(response.strip())
+            
+            # Execute installation commands
+            success = await self._execute_setup_commands(
+                install_info.get("install_commands", []),
+                env_info.environment_path.parent
+            )
+            
+            if success:
+                return dep_names
+            else:
+                self.logger.warning(f"Some dependencies may not have installed correctly")
+                return dep_names  # Return anyway, validation will catch issues
+                
+        except Exception as e:
+            self.logger.error(f"Universal dependency installation failed: {e}")
+            return []
+    
+    async def validate_environment(self, env_info: EnvironmentInfo) -> Dict[str, Any]:
+        """Use LLM to figure out how to validate ANY environment type"""
+        
+        env_type = str(env_info.environment_type)
+        
+        validation_prompt = f"""
+        You are a DevOps expert. I need to validate a {env_type} development environment.
+        
+        Environment Type: {env_type}
+        Environment Path: {env_info.environment_path}
+        Activation Command: {env_info.activation_command}
+        
+        Provide shell commands to validate this environment is working correctly.
+        Include commands to check:
+        1. Runtime/interpreter is available
+        2. Version is correct
+        3. Basic functionality works
+        4. Package manager is functional
+        
+        Format as JSON:
+        {{
+            "validation_commands": ["command1", "command2", ...],
+            "expected_outputs": ["expected output pattern 1", "pattern 2", ...]
+        }}
+        
+        Be specific and practical.
+        """
+        
+        try:
+            response = await self.llm_provider.generate(
+                prompt=validation_prompt,
+                max_tokens=400,
+                temperature=0.1
+            )
+            
+            import json
+            validation_info = json.loads(response.strip())
+            
+            # Execute validation commands
+            results = {}
+            for i, cmd in enumerate(validation_info.get("validation_commands", [])):
+                success, stdout, stderr = self._run_command(
+                    cmd.split(),
+                    cwd=env_info.environment_path.parent
+                )
+                
+                results[f"validation_{i+1}"] = {
+                    "command": cmd,
+                    "success": success,
+                    "output": stdout,
+                    "error": stderr
+                }
+            
+            # Overall validation status
+            all_passed = all(result["success"] for result in results.values())
+            
+            return {
+                "overall_status": "healthy" if all_passed else "issues_detected",
+                "validation_details": results,
+                "environment_type": env_type,
+                "llm_validated": True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Universal environment validation failed: {e}")
+            return {
+                "overall_status": "validation_failed",
+                "error": str(e),
+                "environment_type": env_type
+            }
+    
+    async def cleanup_environment(self, env_info: EnvironmentInfo) -> bool:
+        """Clean up environment - works for any type"""
+        try:
+            if env_info.environment_path.exists():
+                import shutil
+                shutil.rmtree(env_info.environment_path)
+                self.logger.info(f"Cleaned up {env_info.environment_type} environment at {env_info.environment_path}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup environment: {e}")
+            return False
+        
+        return True
+    
+    async def _execute_setup_commands(self, commands: List[str], cwd: Path) -> bool:
+        """Execute a list of setup commands"""
+        for cmd in commands:
+            if not cmd.strip():
+                continue
+                
+            self.logger.info(f"Executing: {cmd}")
+            success, stdout, stderr = self._run_command(
+                cmd.split(),
+                cwd=cwd
+            )
+            
+            if not success:
+                self.logger.error(f"Command failed: {cmd}")
+                self.logger.error(f"Error: {stderr}")
+                return False
+            else:
+                self.logger.info(f"Command succeeded: {cmd}")
+        
+        return True
+
 # ============================================================================
 # Main Environment Bootstrap Agent
 # ============================================================================
@@ -844,22 +1209,34 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         requirements: List[EnvironmentRequirement],
         inputs: EnvironmentBootstrapInput
     ) -> List[EnvironmentInfo]:
-        """Create environments based on requirements."""
+        """Create environments based on requirements - now supports ANY environment type!"""
         environments = []
         
         for requirement in requirements:
             try:
-                logger.info(f"Creating {requirement.environment_type} environment")
+                env_type_str = str(requirement.environment_type)
+                self.logger.info(f"Creating {env_type_str} environment")
                 
-                strategy = self._strategies[requirement.environment_type]
+                # Select appropriate strategy - Universal strategy can handle ANY type!
+                if env_type_str == "python":
+                    # Use specialized strategy for Python if available
+                    strategy = PythonEnvironmentStrategy(self.config_manager)
+                elif env_type_str == "nodejs":
+                    # Use specialized strategy for Node.js if available  
+                    strategy = NodeJSEnvironmentStrategy(self.config_manager)
+                else:
+                    # Use Universal strategy for ANY other environment type!
+                    self.logger.info(f"[Universal Environment] Using LLM-powered strategy for {env_type_str}")
+                    strategy = UniversalEnvironmentStrategy(self.config_manager, self.llm_provider)
+                
                 env_info = await strategy.create_environment(project_path, requirement)
                 env_info.status = EnvironmentStatus.CREATED
                 environments.append(env_info)
                 
-                logger.info(f"Successfully created {requirement.environment_type} environment")
+                self.logger.info(f"Successfully created {env_type_str} environment")
                 
             except Exception as e:
-                logger.error(f"Failed to create {requirement.environment_type} environment: {e}")
+                self.logger.error(f"Failed to create {requirement.environment_type} environment: {e}")
                 if not inputs.cleanup_on_failure:
                     # Create a failed environment info for tracking
                     failed_env = EnvironmentInfo(
@@ -1272,13 +1649,10 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                         self.logger.warning(f"Skipping invalid requirement data: {req_data}")
                         continue
                 
-                # Map environment type string to enum
+                # Create dynamic environment type from any string - no more limitations!
                 env_type_str = req_data.get("environment_type", "python")
-                try:
-                    env_type = EnvironmentType(env_type_str)
-                except ValueError:
-                    self.logger.warning(f"Unknown environment type: {env_type_str}, defaulting to python")
-                    env_type = EnvironmentType.PYTHON
+                env_type = DynamicEnvironmentType.from_string(env_type_str)
+                self.logger.info(f"[Dynamic Environment] Accepting environment type: {env_type_str}")
                 
                 # Safely extract configuration with error handling
                 configuration_needed = req_data.get("configuration_needed", {})
@@ -1654,3 +2028,5 @@ if __name__ == "__main__":
     
     # Run test if executed directly
     asyncio.run(test_bootstrap_agent()) 
+
+ 

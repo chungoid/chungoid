@@ -55,7 +55,7 @@ class StageInfo:
 @dataclass
 class CompletionCriteria:
     """Defines when to stop iterating"""
-    min_quality_score: float = 0.85
+    min_quality_score: float = 0.95
     required_outputs: List[str] = field(default_factory=list)
     tool_utilization_threshold: float = 0.8
     comprehensive_validation: bool = True
@@ -69,7 +69,7 @@ class ExecutionConfig:
     completion_criteria: Optional[CompletionCriteria] = None
     protocol_preference: Optional[str] = None  # Protocol to use
     tool_utilization_mode: ToolMode = ToolMode.COMPREHENSIVE
-    quality_threshold: float = 0.85      # Minimum quality score
+    quality_threshold: float = 0.95      # Minimum quality score (raised for better refinement)
     execution_mode: ExecutionMode = ExecutionMode.OPTIMAL
     
     def __post_init__(self):
