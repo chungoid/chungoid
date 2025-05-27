@@ -777,7 +777,8 @@ class UniversalEnvironmentStrategy(EnvironmentStrategy):
             
             # Parse LLM response
             import json
-            setup_info = json.loads(response.strip())
+            json_content = self._extract_json_from_response(response)
+            setup_info = json.loads(json_content)
             
             # Execute setup commands
             success = await self._execute_setup_commands(
@@ -856,7 +857,8 @@ class UniversalEnvironmentStrategy(EnvironmentStrategy):
             )
             
             import json
-            install_info = json.loads(response.strip())
+            json_content = self._extract_json_from_response(response)
+            install_info = json.loads(json_content)
             
             # Execute installation commands
             success = await self._execute_setup_commands(
@@ -910,7 +912,8 @@ class UniversalEnvironmentStrategy(EnvironmentStrategy):
             )
             
             import json
-            validation_info = json.loads(response.strip())
+            json_content = self._extract_json_from_response(response)
+            validation_info = json.loads(json_content)
             
             # Execute validation commands
             results = {}
@@ -959,6 +962,47 @@ class UniversalEnvironmentStrategy(EnvironmentStrategy):
         
         return True
     
+    def _extract_json_from_response(self, response: str) -> str:
+        """Extract JSON content from LLM response, handling markdown code blocks."""
+        response = response.strip()
+        
+        # Check if response is wrapped in markdown code blocks
+        if response.startswith('```json'):
+            # Find the end of the code block
+            lines = response.split('\n')
+            json_lines = []
+            in_json_block = False
+            
+            for line in lines:
+                if line.strip() == '```json':
+                    in_json_block = True
+                    continue
+                elif line.strip() == '```' and in_json_block:
+                    break
+                elif in_json_block:
+                    json_lines.append(line)
+            
+            return '\n'.join(json_lines)
+        elif response.startswith('```'):
+            # Handle generic code blocks
+            lines = response.split('\n')
+            json_lines = []
+            in_code_block = False
+            
+            for line in lines:
+                if line.strip().startswith('```') and not in_code_block:
+                    in_code_block = True
+                    continue
+                elif line.strip() == '```' and in_code_block:
+                    break
+                elif in_code_block:
+                    json_lines.append(line)
+            
+            return '\n'.join(json_lines)
+        else:
+            # Response is already clean JSON
+            return response
+
     async def _execute_setup_commands(self, commands: List[str], cwd: Path) -> bool:
         """Execute a list of setup commands"""
         for cmd in commands:
@@ -1278,7 +1322,16 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             
             try:
                 env_info.status = EnvironmentStatus.INSTALLING_DEPS
-                strategy = self._strategies[env_info.environment_type]
+                
+                # Get strategy based on environment type string
+                env_type_str = str(env_info.environment_type)
+                if env_type_str == "python":
+                    strategy = self._strategies[EnvironmentType.PYTHON]
+                elif env_type_str == "nodejs":
+                    strategy = self._strategies[EnvironmentType.NODEJS]
+                else:
+                    # Use Universal strategy for other environment types
+                    strategy = UniversalEnvironmentStrategy(self._config_manager, self.llm_provider)
                 
                 # Filter dependencies relevant to this environment
                 relevant_deps = [
@@ -1287,14 +1340,14 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                 ]
                 
                 installed = await strategy.install_dependencies(env_info, relevant_deps)
-                dependencies_installed[env_info.environment_type.value] = installed
+                dependencies_installed[str(env_info.environment_type)] = installed
                 
                 env_info.dependencies_installed = installed
                 logger.info(f"Installed {len(installed)} dependencies in {env_info.environment_type} environment")
                 
             except Exception as e:
                 logger.error(f"Failed to install dependencies in {env_info.environment_type}: {e}")
-                dependencies_installed[env_info.environment_type.value] = []
+                dependencies_installed[str(env_info.environment_type)] = []
         
         return dependencies_installed
     
@@ -1317,10 +1370,19 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             
             try:
                 env_info.status = EnvironmentStatus.VALIDATING
-                strategy = self._strategies[env_info.environment_type]
+                
+                # Get strategy based on environment type string
+                env_type_str = str(env_info.environment_type)
+                if env_type_str == "python":
+                    strategy = self._strategies[EnvironmentType.PYTHON]
+                elif env_type_str == "nodejs":
+                    strategy = self._strategies[EnvironmentType.NODEJS]
+                else:
+                    # Use Universal strategy for other environment types
+                    strategy = UniversalEnvironmentStrategy(self._config_manager, self.llm_provider)
                 
                 results = await strategy.validate_environment(env_info)
-                validation_results[env_info.environment_type.value] = results
+                validation_results[str(env_info.environment_type)] = results
                 
                 env_info.validation_results = results
                 env_info.last_validated = datetime.now()
@@ -1334,7 +1396,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                 
             except Exception as e:
                 logger.error(f"Failed to validate {env_info.environment_type} environment: {e}")
-                validation_results[env_info.environment_type.value] = {"overall_status": "failed", "error": str(e)}
+                validation_results[str(env_info.environment_type)] = {"overall_status": "failed", "error": str(e)}
                 env_info.status = EnvironmentStatus.FAILED
         
         return validation_results
@@ -1343,7 +1405,16 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         """Clean up environments on failure."""
         for env_info in environments:
             try:
-                strategy = self._strategies[env_info.environment_type]
+                # Get strategy based on environment type string
+                env_type_str = str(env_info.environment_type)
+                if env_type_str == "python":
+                    strategy = self._strategies[EnvironmentType.PYTHON]
+                elif env_type_str == "nodejs":
+                    strategy = self._strategies[EnvironmentType.NODEJS]
+                else:
+                    # Use Universal strategy for other environment types
+                    strategy = UniversalEnvironmentStrategy(self._config_manager, self.llm_provider)
+                
                 await strategy.cleanup_environment(env_info)
             except Exception as e:
                 logger.error(f"Failed to cleanup {env_info.environment_type} environment: {e}")
@@ -1367,10 +1438,10 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         summary += f"Installed {total_deps} dependencies total.\n"
         
         for env in successful_envs:
-            summary += f"✓ {env.environment_type.value} ({env.version}) - Ready\n"
+            summary += f"✓ {str(env.environment_type)} ({env.version}) - Ready\n"
         
         for env in failed_envs:
-            summary += f"✗ {env.environment_type.value} - Failed\n"
+            summary += f"✗ {str(env.environment_type)} - Failed\n"
         
         return summary
     
@@ -1463,11 +1534,29 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         try:
             output = await self._execute_bootstrap_logic(inputs)
             
-            # Calculate quality score based on success
-            quality_score = 1.0 if output.success else 0.5
+            # Calculate quality score based on environment creation success
+            total_envs = len(output.environments_created)
+            successful_envs = [env for env in output.environments_created if env.status == EnvironmentStatus.READY]
             failed_envs = [env for env in output.environments_created if env.status == EnvironmentStatus.FAILED]
-            if failed_envs:
-                quality_score -= 0.1 * len(failed_envs)
+            
+            if total_envs == 0:
+                quality_score = 0.1  # No environments created
+            else:
+                # Base score on success ratio
+                success_ratio = len(successful_envs) / total_envs
+                quality_score = 0.3 + (0.7 * success_ratio)  # Scale from 0.3 to 1.0
+                
+                # Bonus for having dependencies installed
+                if output.dependencies_installed:
+                    quality_score += 0.1
+                
+                # Bonus for successful validation
+                if output.validation_results:
+                    healthy_validations = sum(1 for result in output.validation_results.values() 
+                                            if result.get('status') == 'healthy')
+                    if healthy_validations > 0:
+                        quality_score += 0.1
+            
             quality_score = max(0.1, min(quality_score, 1.0))
             
             tools_used = ["environment_detection", "dependency_analysis", "environment_creation", "validation"]
