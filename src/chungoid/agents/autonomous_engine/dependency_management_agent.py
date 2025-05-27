@@ -1228,16 +1228,25 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                     self.logger.info("[MCP] Using filesystem_project_scan for dependency analysis")
                     project_analysis = await self._call_mcp_tool(
                         "filesystem_project_scan", 
-                        {"path": str(task_input.project_path)}
+                        {
+                            "scan_path": str(task_input.project_path),
+                            "project_path": str(task_input.project_path),
+                            "detect_project_type": True,
+                            "analyze_structure": True,
+                            "include_stats": True
+                        }
                     )
                 
                 # Use content tools for dependency file analysis
                 content_analysis = {}
-                if "content_analyze_structure" in all_tools and project_analysis.get("success"):
-                    self.logger.info("[MCP] Using content analysis for dependency file analysis")
+                if "web_content_extract" in all_tools and project_analysis.get("success"):
+                    self.logger.info("[MCP] Using content extraction for dependency file analysis")
                     content_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": project_analysis["result"]}
+                        "web_content_extract",
+                        {
+                            "content": str(project_analysis.get("result", {})),
+                            "extraction_type": "text"
+                        }
                     )
                 
                 # Use intelligence tools for dependency strategy
@@ -1274,6 +1283,19 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                         {}
                     )
                 
+                # Use content tools for deeper analysis
+                structure_analysis = {}
+                if "web_content_extract" in all_tools and project_analysis.get("success"):
+                    self.logger.info("[MCP] Using content extraction for project structure analysis")
+                    structure_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(project_analysis.get("structure", {})),
+                            "extraction_type": "text"
+                        }
+                    )
+                
+                # Convert MCP tool analysis to dependency discovery
                 # Convert MCP tool analysis to dependency discovery
                 if any([project_analysis.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
                     self.logger.info("[MCP] Converting MCP tool analysis to dependency discovery")
@@ -1493,12 +1515,18 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         # 2. Intelligent tool selection based on context
         selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
         
-        # 3. Use filesystem tools for dependency file analysis
+        # 3. Use filesystem tools for project analysis
         project_analysis = {}
         if "filesystem_project_scan" in selected_tools:
             project_analysis = await self._call_mcp_tool(
                 "filesystem_project_scan", 
-                {"path": str(inputs.project_path)}
+                {
+                    "scan_path": str(inputs.project_path),
+                    "project_path": str(inputs.project_path),
+                    "detect_project_type": True,
+                    "analyze_structure": True,
+                    "include_stats": True
+                }
             )
         
         # 4. Use intelligence tools for dependency strategy
@@ -1511,10 +1539,13 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         # 5. Use content tools for dependency file parsing
         content_analysis = {}
-        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+        if "web_content_extract" in selected_tools and project_analysis.get("success"):
             content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": project_analysis["result"]}
+                "web_content_extract",
+                {
+                    "content": str(project_analysis.get("result", {})),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use ChromaDB tools for historical dependency patterns
@@ -1569,7 +1600,7 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         # Add dependency-specific tools
         dependency_tools = [
-            "content_analyze_structure",
+            "web_content_extract",
             "filesystem_read_file",
             "terminal_execute_command"
         ]

@@ -526,20 +526,23 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 # Use content tools for artifact analysis
                 source_analysis = {}
                 target_analysis = {}
-                if "content_analyze_structure" in all_tools:
-                    if source_artifact.get("success"):
-                        self.logger.info("[MCP] Using content analysis for source artifact analysis")
-                        source_analysis = await self._call_mcp_tool(
-                            "content_analyze_structure",
-                            {"content": source_artifact["result"]}
-                        )
+                if "web_content_extract" in all_tools:
+                    self.logger.info("[MCP] Using content extraction for artifact analysis")
+                    source_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(source_artifact.get("structure", {})),
+                            "extraction_type": "text"
+                        }
+                    )
                     
-                    if target_artifact.get("success"):
-                        self.logger.info("[MCP] Using content analysis for target artifact analysis")
-                        target_analysis = await self._call_mcp_tool(
-                            "content_analyze_structure",
-                            {"content": target_artifact["result"]}
-                        )
+                    target_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(target_artifact.get("structure", {})),
+                            "extraction_type": "text"
+                        }
+                    )
                 
                 # Use intelligence tools for traceability strategy
                 intelligence_analysis = {}
@@ -565,7 +568,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                     self.logger.info("[MCP] Using filesystem_project_scan for project context")
                     project_context = await self._call_mcp_tool(
                         "filesystem_project_scan",
-                        {"path": f"./projects/{task_input.project_id}"}
+                        {"scan_path": f"./projects/{task_input.project_id}"}
                     )
                 
                 # Combine MCP tool results for enhanced artifact discovery
@@ -659,10 +662,13 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         
         # 5. Use content tools for artifact structure analysis
         content_analysis = {}
-        if "content_analyze_structure" in selected_tools and artifact_analysis.get("success"):
+        if "web_content_extract" in selected_tools and artifact_analysis.get("success"):
             content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": artifact_analysis["result"]}
+                "web_content_extract",
+                {
+                    "content": str(artifact_analysis["result"]),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use filesystem tools for project structure analysis
@@ -670,7 +676,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         if "filesystem_project_scan" in selected_tools:
             project_structure = await self._call_mcp_tool(
                 "filesystem_project_scan",
-                {"path": shared_context.get("project_root_path", ".")}
+                {"scan_path": shared_context.get("project_root_path", ".")}
             )
         
         # 7. Use terminal tools for environment validation
@@ -717,7 +723,7 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         
         # Add traceability-specific tools
         traceability_tools = [
-            "content_analyze_structure",
+            "web_content_extract",
             "chromadb_query_collection",
             "get_tool_composition_recommendations"
         ]

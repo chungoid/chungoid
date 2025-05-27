@@ -1261,22 +1261,27 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
             if tool_discovery["discovery_successful"]:
                 all_tools = tool_discovery["tools"]
                 
-                # Use filesystem tools for comprehensive project analysis
-                project_analysis = {}
-                if "filesystem_project_scan" in all_tools:
-                    self.logger.info("[MCP] Using filesystem_project_scan for comprehensive project analysis")
-                    project_analysis = await self._call_mcp_tool(
-                        "filesystem_project_scan", 
-                        {"path": str(project_path)}
-                    )
+                # Use filesystem_project_scan for comprehensive project analysis
+                self.logger.info("[MCP] Using filesystem_project_scan for comprehensive project analysis")
+                scan_result = await self._call_mcp_tool("filesystem_project_scan", {
+                    "scan_path": str(project_path),
+                    "project_path": str(project_path),
+                    "detect_project_type": True,
+                    "analyze_structure": True,
+                    "include_stats": True
+                })
                 
                 # Use content tools for deeper analysis
                 structure_analysis = {}
-                if "content_analyze_structure" in all_tools and project_analysis.get("success"):
-                    self.logger.info("[MCP] Using content analysis for project structure analysis")
+                if "web_content_extract" in all_tools and scan_result.get("success"):
+                    self.logger.info("[MCP] Using content extraction for project structure analysis")
+                    # Extract text content from the scan result for analysis
                     structure_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": project_analysis["result"]}
+                        "web_content_extract",
+                        {
+                            "content": str(scan_result.get("structure", {})),
+                            "extraction_type": "text"
+                        }
                     )
                 
                 # Use intelligence tools for environment strategy
@@ -1287,7 +1292,7 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                         "adaptive_learning_analyze",
                         {
                             "context": {
-                                "project_analysis": project_analysis,
+                                "project_analysis": scan_result,
                                 "structure_analysis": structure_analysis,
                                 "user_goal": inputs.user_goal
                             }, 
@@ -1305,10 +1310,10 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                     )
                 
                 # Convert MCP tool analysis to environment requirements
-                if any([project_analysis.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
+                if any([scan_result.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
                     self.logger.info("[MCP] Converting MCP tool analysis to environment requirements")
                     return await self._convert_mcp_analysis_to_requirements(
-                        project_analysis, structure_analysis, intelligence_analysis, historical_context, inputs
+                        scan_result, structure_analysis, intelligence_analysis, historical_context, inputs
                     )
         
         # Check if we have intelligent project specifications from orchestrator

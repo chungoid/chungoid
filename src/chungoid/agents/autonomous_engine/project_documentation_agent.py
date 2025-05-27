@@ -329,16 +329,19 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                     project_path = inputs.get("generated_code_root_path", shared_context.get("project_root_path", "."))
                     project_analysis = await self._call_mcp_tool(
                         "filesystem_project_scan", 
-                        {"path": str(project_path)}
+                        {"scan_path": str(project_path)}
                     )
                 
-                # Use content tools for project structure analysis
-                content_analysis = {}
-                if "content_analyze_structure" in all_tools and project_analysis.get("success"):
-                    self.logger.info("[MCP] Using content analysis for project structure analysis")
-                    content_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": project_analysis["result"]}
+                # Use content tools for deeper analysis
+                structure_analysis = {}
+                if "web_content_extract" in all_tools and project_analysis.get("success"):
+                    self.logger.info("[MCP] Using content extraction for project structure analysis")
+                    structure_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(project_analysis.get("structure", {})),
+                            "extraction_type": "text"
+                        }
                     )
                 
                 # Use intelligence tools for documentation strategy
@@ -350,7 +353,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                         {
                             "context": {
                                 "project_analysis": project_analysis,
-                                "content_analysis": content_analysis,
+                                "structure_analysis": structure_analysis,
                                 "project_id": inputs.get("project_id")
                             }, 
                             "domain": "documentation_generation"
@@ -377,10 +380,10 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                     )
                 
                 # Convert MCP tool analysis to artifact discovery
-                if any([project_analysis.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                if any([project_analysis.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
                     self.logger.info("[MCP] Converting MCP tool analysis to artifact discovery")
                     return await self._convert_mcp_analysis_to_artifact_discovery(
-                        project_analysis, content_analysis, intelligence_analysis, artifact_retrieval, environment_info, inputs
+                        project_analysis, structure_analysis, intelligence_analysis, artifact_retrieval, environment_info, inputs
                     )
         
         # Extract document IDs from inputs
@@ -413,7 +416,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
     async def _convert_mcp_analysis_to_artifact_discovery(
         self, 
         project_analysis: Dict[str, Any], 
-        content_analysis: Dict[str, Any], 
+        structure_analysis: Dict[str, Any], 
         intelligence_analysis: Dict[str, Any],
         artifact_retrieval: Dict[str, Any],
         environment_info: Dict[str, Any],
@@ -441,14 +444,14 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                     if scan_result.get("dependency_files"):
                         artifacts_found.append("dependency_info")
             
-            # Analyze content analysis results
-            if content_analysis.get("success") and content_analysis.get("result"):
-                content_result = content_analysis["result"]
-                if isinstance(content_result, dict):
-                    # Extract documentation requirements from content structure
-                    if content_result.get("api_endpoints"):
+            # Analyze structure analysis results
+            if structure_analysis.get("success") and structure_analysis.get("result"):
+                structure_result = structure_analysis["result"]
+                if isinstance(structure_result, dict):
+                    # Extract documentation requirements from structure analysis
+                    if structure_result.get("api_endpoints"):
                         artifacts_found.append("api_documentation_needed")
-                    if content_result.get("modules"):
+                    if structure_result.get("modules"):
                         artifacts_found.append("module_documentation_needed")
             
             # Analyze artifact retrieval results
@@ -525,7 +528,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             project_path = inputs.get("generated_code_root_path", shared_context.get("project_root_path", "."))
             project_analysis = await self._call_mcp_tool(
                 "filesystem_project_scan", 
-                {"path": str(project_path)}
+                {"scan_path": str(project_path)}
             )
         
         # 4. Use intelligence tools for documentation strategy
@@ -537,11 +540,14 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             )
         
         # 5. Use content tools for project structure analysis
-        content_analysis = {}
-        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
-            content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": project_analysis["result"]}
+        structure_analysis = {}
+        if "web_content_extract" in selected_tools and project_analysis.get("success"):
+            structure_analysis = await self._call_mcp_tool(
+                "web_content_extract",
+                {
+                    "content": str(project_analysis.get("structure", {})),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use ChromaDB tools for artifact retrieval
@@ -577,7 +583,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             "tool_categories": tool_discovery["categories"],
             "project_analysis": project_analysis,
             "intelligence_analysis": intelligence_analysis,
-            "content_analysis": content_analysis,
+            "structure_analysis": structure_analysis,
             "artifact_retrieval": artifact_retrieval,
             "environment_info": environment_info,
             "tool_recommendations": tool_recommendations,
@@ -597,7 +603,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
         
         # Add documentation-specific tools
         documentation_tools = [
-            "content_analyze_structure",
+            "web_content_extract",
             "content_generate_dynamic",
             "filesystem_read_file",
             "filesystem_write_file"
@@ -701,7 +707,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             validation["issues_found"].append("Document generation failed")
         if documents_created == 0:
             validation["issues_found"].append("No documents were created")
-            
+        
         return validation
 
     def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:

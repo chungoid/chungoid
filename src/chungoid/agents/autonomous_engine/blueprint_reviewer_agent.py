@@ -375,13 +375,16 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                         }
                     )
                 
-                # Use content tools for blueprint analysis
-                content_analysis = {}
-                if "content_analyze_structure" in all_tools and blueprint_result.get("success"):
-                    self.logger.info("[MCP] Using content analysis for blueprint structure analysis")
-                    content_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": blueprint_result["result"]}
+                # Use content tools for deeper analysis
+                structure_analysis = {}
+                if "web_content_extract" in all_tools and blueprint_result.get("success"):
+                    self.logger.info("[MCP] Using content extraction for blueprint structure analysis")
+                    structure_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(blueprint_result.get("structure", {})),
+                            "extraction_type": "text"
+                        }
                     )
                 
                 # Use intelligence tools for review strategy
@@ -393,7 +396,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                         {
                             "context": {
                                 "blueprint_data": blueprint_result,
-                                "content_analysis": content_analysis,
+                                "structure_analysis": structure_analysis,
                                 "project_id": task_input.project_id
                             }, 
                             "domain": "blueprint_review"
@@ -406,7 +409,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                     self.logger.info("[MCP] Using filesystem_project_scan for project context")
                     project_context = await self._call_mcp_tool(
                         "filesystem_project_scan",
-                        {"path": f"./projects/{task_input.project_id}"}
+                        {"scan_path": f"./projects/{task_input.project_id}"}
                     )
                 
                 # Retrieve previous reviews with enhanced context
@@ -426,7 +429,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                             previous_reviews.append(review_result)
                 
                 # Combine MCP tool results for enhanced blueprint discovery
-                if any([blueprint_result.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                if any([blueprint_result.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
                     self.logger.info("[MCP] Successfully enhanced blueprint discovery with MCP tools")
                     return {
                         "blueprint_retrieved": True,
@@ -435,7 +438,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                         "blueprint_content": blueprint_result.get("result", ""),
                         "discovery_success": True,
                         "enhanced_analysis": {
-                            "content_analysis": content_analysis,
+                            "structure_analysis": structure_analysis,
                             "intelligence_analysis": intelligence_analysis,
                             "project_context": project_context
                         },
@@ -519,10 +522,13 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         
         # 5. Use content tools for blueprint structure analysis
         content_analysis = {}
-        if "content_analyze_structure" in selected_tools and blueprint_analysis.get("success"):
+        if "web_content_extract" in selected_tools and blueprint_analysis.get("success"):
             content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": blueprint_analysis["result"]}
+                "web_content_extract",
+                {
+                    "content": str(blueprint_analysis["result"]),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use filesystem tools for project structure analysis
@@ -530,7 +536,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         if "filesystem_project_scan" in selected_tools:
             project_structure = await self._call_mcp_tool(
                 "filesystem_project_scan",
-                {"path": shared_context.get("project_root_path", ".")}
+                {"scan_path": shared_context.get("project_root_path", ".")}
             )
         
         # 7. Use terminal tools for environment validation
@@ -577,7 +583,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         
         # Add blueprint review-specific tools
         review_tools = [
-            "content_analyze_structure",
+            "web_content_extract",
             "chromadb_query_collection",
             "get_tool_composition_recommendations"
         ]

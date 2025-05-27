@@ -558,7 +558,13 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             project_path = shared_context.get("project_path", inputs.get("project_path", "."))
             project_analysis = await self._call_mcp_tool(
                 "filesystem_project_scan", 
-                {"path": project_path}
+                {
+                    "scan_path": project_path,
+                    "project_path": project_path,
+                    "detect_project_type": True,
+                    "analyze_structure": True,
+                    "include_stats": True
+                }
             )
         
         # 4. Use intelligence tools for analysis
@@ -571,10 +577,13 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         
         # 5. Use content tools for deeper analysis
         content_analysis = {}
-        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+        if "web_content_extract" in selected_tools and project_analysis.get("success"):
             content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": project_analysis["result"]}
+                "web_content_extract",
+                {
+                    "content": str(project_analysis.get("structure", {})),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use ChromaDB tools for historical context
@@ -632,7 +641,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             "filesystem_read_file",
             "filesystem_write_file",
             "filesystem_list_directory",
-            "content_analyze_structure",
+            "web_content_extract",
             "content_generate_dynamic",
             "chromadb_store_document",
             "filesystem_template_expansion"

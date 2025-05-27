@@ -336,13 +336,16 @@ class ArchitectAgent_v1(UnifiedAgent):
                         }
                     )
                 
-                # Use content tools for LOPRD analysis
-                content_analysis = {}
-                if "content_analyze_structure" in all_tools and loprd_result.get("success"):
-                    self.logger.info("[MCP] Using content analysis for LOPRD structure analysis")
-                    content_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": loprd_result["result"]}
+                # Use content tools for deeper analysis
+                structure_analysis = {}
+                if "web_content_extract" in all_tools and loprd_result.get("success"):
+                    self.logger.info("[MCP] Using content extraction for project structure analysis")
+                    structure_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(loprd_result.get("structure", {})),
+                            "extraction_type": "text"
+                        }
                     )
                 
                 # Use intelligence tools for architecture strategy
@@ -354,7 +357,7 @@ class ArchitectAgent_v1(UnifiedAgent):
                         {
                             "context": {
                                 "loprd_data": loprd_result,
-                                "content_analysis": content_analysis,
+                                "structure_analysis": structure_analysis,
                                 "project_id": inputs.project_id
                             }, 
                             "domain": "architecture_design"
@@ -367,17 +370,17 @@ class ArchitectAgent_v1(UnifiedAgent):
                     self.logger.info("[MCP] Using filesystem_project_scan for project context")
                     project_context = await self._call_mcp_tool(
                         "filesystem_project_scan",
-                        {"path": f"./projects/{inputs.project_id}"}
+                        {"scan_path": f"./projects/{inputs.project_id}"}
                     )
                 
                 # Combine MCP tool results for enhanced LOPRD discovery
-                if any([loprd_result.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                if any([loprd_result.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
                     self.logger.info("[MCP] Successfully enhanced LOPRD discovery with MCP tools")
                     return {
                         "status": "SUCCESS",
                         "content": loprd_result.get("result", {}),
                         "enhanced_analysis": {
-                            "content_analysis": content_analysis,
+                            "structure_analysis": structure_analysis,
                             "intelligence_analysis": intelligence_analysis,
                             "project_context": project_context
                         },
@@ -441,10 +444,13 @@ class ArchitectAgent_v1(UnifiedAgent):
         
         # 5. Use content tools for deeper LOPRD analysis
         content_analysis = {}
-        if "content_analyze_structure" in selected_tools and loprd_analysis.get("success"):
+        if "web_content_extract" in selected_tools and loprd_analysis.get("success"):
             content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": loprd_analysis["result"]}
+                "web_content_extract",
+                {
+                    "content": str(loprd_analysis.get("structure", {})),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use filesystem tools for project structure analysis
@@ -452,7 +458,7 @@ class ArchitectAgent_v1(UnifiedAgent):
         if "filesystem_project_scan" in selected_tools:
             project_structure = await self._call_mcp_tool(
                 "filesystem_project_scan",
-                {"path": shared_context.get("project_root_path", ".")}
+                {"scan_path": shared_context.get("project_root_path", ".")}
             )
         
         # 7. Use terminal tools for environment validation
@@ -499,7 +505,7 @@ class ArchitectAgent_v1(UnifiedAgent):
         
         # Add architecture-specific tools
         architecture_tools = [
-            "content_analyze_structure",
+            "web_content_extract",
             "get_tool_composition_recommendations",
             "chromadb_query_collection"
         ]

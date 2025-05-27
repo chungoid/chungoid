@@ -423,13 +423,47 @@ async def filesystem_project_scan(
             try:
                 detection_service = ProjectTypeDetectionService()
                 detection_result = detection_service.detect_project_type(resolved_path)
+                
+                # CRITICAL FIX: Use correct ProjectTypeDetectionResult schema attributes
                 result["project_type"] = {
-                    "detected_types": detection_result.detected_types,
-                    "confidence_scores": detection_result.confidence_scores,
-                    "frameworks": detection_result.frameworks,
-                    "languages": detection_result.languages,
-                    "build_tools": detection_result.build_tools,
-                    "metadata": detection_result.metadata
+                    "primary_language": detection_result.primary_language,
+                    "language_confidence": detection_result.language_confidence,
+                    "frameworks": [
+                        {
+                            "name": fw.name,
+                            "category": fw.category,
+                            "confidence": fw.confidence,
+                            "evidence": fw.evidence
+                        } for fw in detection_result.frameworks
+                    ],
+                    "build_tools": [
+                        {
+                            "name": bt.name,
+                            "category": bt.category,
+                            "confidence": bt.confidence,
+                            "evidence": bt.evidence
+                        } for bt in detection_result.build_tools
+                    ],
+                    "testing_frameworks": [
+                        {
+                            "name": tf.name,
+                            "category": tf.category,
+                            "confidence": tf.confidence,
+                            "evidence": tf.evidence
+                        } for tf in detection_result.testing_frameworks
+                    ],
+                    "deployment_tools": [
+                        {
+                            "name": dt.name,
+                            "category": dt.category,
+                            "confidence": dt.confidence,
+                            "evidence": dt.evidence
+                        } for dt in detection_result.deployment_tools
+                    ],
+                    "project_structure_type": detection_result.project_structure_type,
+                    "config_files": detection_result.config_files,
+                    "overall_confidence": detection_result.overall_confidence,
+                    "detection_metadata": detection_result.detection_metadata
                 }
             except Exception as e:
                 logger.warning(f"Project type detection failed: {e}")

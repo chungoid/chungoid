@@ -628,13 +628,16 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                         }
                     )
                 
-                # Use content tools for artifact analysis
-                content_analysis = {}
-                if "content_analyze_structure" in all_tools and artifact_result.get("success"):
-                    self.logger.info("[MCP] Using content analysis for artifact structure analysis")
-                    content_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": artifact_result["result"]}
+                # Use content tools for deeper analysis
+                structure_analysis = {}
+                if "web_content_extract" in all_tools and artifact_result.get("success"):
+                    self.logger.info("[MCP] Using content extraction for artifact structure analysis")
+                    structure_analysis = await self._call_mcp_tool(
+                        "web_content_extract",
+                        {
+                            "content": str(artifact_result.get("structure", {})),
+                            "extraction_type": "text"
+                        }
                     )
                 
                 # Use intelligence tools for coordination strategy
@@ -646,7 +649,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                         {
                             "context": {
                                 "artifact_data": artifact_result,
-                                "content_analysis": content_analysis,
+                                "content_analysis": structure_analysis,
                                 "artifact_type": task_input.artifact_type,
                                 "project_id": task_input.project_id
                             }, 
@@ -660,7 +663,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                     self.logger.info("[MCP] Using filesystem_project_scan for project context")
                     project_context = await self._call_mcp_tool(
                         "filesystem_project_scan",
-                        {"path": f"./projects/{task_input.project_id}"}
+                        {"scan_path": f"./projects/{task_input.project_id}"}
                     )
                 
                 # Use terminal tools for environment validation
@@ -673,7 +676,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                     )
                 
                 # Combine MCP tool results for enhanced artifact assessment
-                if any([artifact_result.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                if any([artifact_result.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
                     self.logger.info("[MCP] Successfully enhanced artifact assessment with MCP tools")
                     
                     # Calculate enhanced artifact score
@@ -686,7 +689,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                     # Boost score based on MCP analysis
                     if intelligence_analysis.get("success"):
                         artifact_score = min(0.95, artifact_score + 0.1)
-                    if content_analysis.get("success"):
+                    if structure_analysis.get("success"):
                         artifact_score = min(0.95, artifact_score + 0.05)
                     
                     return {
@@ -699,7 +702,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                         "assessment_timestamp": datetime.datetime.now().isoformat(),
                         "enhanced_analysis": {
                             "artifact_result": artifact_result,
-                            "content_analysis": content_analysis,
+                            "content_analysis": structure_analysis,
                             "intelligence_analysis": intelligence_analysis,
                             "project_context": project_context,
                             "environment_info": environment_info
@@ -912,10 +915,13 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         
         # 5. Use content tools for artifact structure analysis
         content_analysis = {}
-        if "content_analyze_structure" in selected_tools and artifact_analysis.get("success"):
+        if "web_content_extract" in selected_tools and artifact_analysis.get("success"):
             content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": artifact_analysis["result"]}
+                "web_content_extract",
+                {
+                    "content": str(artifact_analysis.get("result", {})),
+                    "extraction_type": "text"
+                }
             )
         
         # 6. Use filesystem tools for project structure analysis
@@ -923,7 +929,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         if "filesystem_project_scan" in selected_tools:
             project_structure = await self._call_mcp_tool(
                 "filesystem_project_scan",
-                {"path": shared_context.get("project_root_path", ".")}
+                {"scan_path": shared_context.get("project_root_path", ".")}
             )
         
         # 7. Use terminal tools for environment validation
@@ -970,7 +976,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         
         # Add coordination-specific tools
         coordination_tools = [
-            "content_analyze_structure",
+            "web_content_extract",
             "chromadb_query_collection",
             "get_tool_composition_recommendations"
         ]

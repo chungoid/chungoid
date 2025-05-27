@@ -79,7 +79,7 @@ class UnifiedAgent(BaseModel, ABC):
         try:
             # Initialize MCP tools registry if not provided
             if self.mcp_tools is None:
-                from ..mcp_tools import get_mcp_tools_registry
+                from chungoid.mcp_tools import get_mcp_tools_registry
                 self.mcp_tools = get_mcp_tools_registry()
                 self.logger.info(f"[Refinement] Initialized MCP tools registry for {self.AGENT_ID}")
             
@@ -99,107 +99,322 @@ class UnifiedAgent(BaseModel, ABC):
 
     async def _call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Universal MCP tool calling interface - CRITICAL MISSING METHOD
+        ENHANCED: Universal MCP tool calling with intelligent parameter mapping
         
-        This method is referenced throughout the plan but does not exist in current codebase.
-        Without this method, ALL proposed tool calling will fail.
+        Fixes critical parameter mapping errors that caused 100% filesystem tool failures.
+        Maps generic parameters to tool-specific parameter names.
         """
+        if not self.mcp_tools:
+            return {"success": False, "error": "MCP tools not available"}
+        
         try:
-            # Import the actual tool function dynamically
-            from ..mcp_tools import __all__ as available_tools
+            # CRITICAL FIX: Map generic parameters to tool-specific parameters
+            mapped_arguments = self._map_tool_parameters(tool_name, arguments)
             
-            if tool_name not in available_tools:
-                self.logger.warning(f"[MCP] Tool {tool_name} not in available tools list")
-                return {"error": f"Tool {tool_name} not available", "available_tools": len(available_tools)}
+            # Get tool function
+            tool_func = getattr(self.mcp_tools, tool_name, None)
+            if not tool_func:
+                return {"success": False, "error": f"Tool {tool_name} not found"}
             
-            # Dynamic import of the specific tool
-            try:
-                module = __import__(f"..mcp_tools", fromlist=[tool_name])
-                tool_func = getattr(module, tool_name)
-            except (ImportError, AttributeError) as e:
-                self.logger.error(f"[MCP] Failed to import tool {tool_name}: {e}")
-                return {"error": f"Failed to import tool {tool_name}: {str(e)}"}
-            
-            # Validate tool is callable
-            if not callable(tool_func):
-                self.logger.error(f"[MCP] Tool {tool_name} is not callable")
-                return {"error": f"Tool {tool_name} is not callable"}
-            
-            # Call the tool with arguments
-            if asyncio.iscoroutinefunction(tool_func):
-                result = await tool_func(**arguments)
-            else:
-                result = tool_func(**arguments)
+            # Call tool with mapped parameters
+            result = await tool_func(**mapped_arguments)
             
             self.logger.info(f"[MCP] Successfully called tool {tool_name}")
             return {"success": True, "result": result, "tool_name": tool_name}
             
+        except TypeError as e:
+            if "unexpected keyword argument" in str(e):
+                self.logger.error(f"[MCP] Parameter mapping error for {tool_name}: {e}")
+                return {"success": False, "error": f"Parameter mapping error: {e}", "tool_name": tool_name}
+            else:
+                self.logger.error(f"[MCP] Tool call failed: {tool_name} - {e}", exc_info=True)
+                return {"success": False, "error": str(e), "tool_name": tool_name}
         except Exception as e:
             self.logger.error(f"[MCP] Tool call failed: {tool_name} - {e}", exc_info=True)
-            return {"error": str(e), "tool_name": tool_name, "arguments": arguments}
+            return {"success": False, "error": str(e), "tool_name": tool_name}
+
+    def _map_tool_parameters(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        CRITICAL FIX: Map generic parameters to tool-specific parameter names
+        
+        This fixes the 100% failure rate for filesystem tools caused by incorrect parameter mapping.
+        """
+        # Tool-specific parameter mappings
+        parameter_mappings = {
+            # Filesystem tools
+            "filesystem_project_scan": {
+                "path": "scan_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_list_directory": {
+                "path": "directory_path",
+                "project_path": "project_path", 
+                "project_id": "project_id"
+            },
+            "filesystem_read_file": {
+                "path": "file_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_write_file": {
+                "path": "file_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_copy_file": {
+                "source_path": "source_path",
+                "destination_path": "destination_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_move_file": {
+                "source_path": "source_path", 
+                "destination_path": "destination_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_safe_delete": {
+                "path": "file_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_create_directory": {
+                "path": "directory_path",
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_sync_directories": {
+                "source_path": "source_path",
+                "destination_path": "destination_path", 
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_batch_operations": {
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_backup_restore": {
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            "filesystem_template_expansion": {
+                "project_path": "project_path",
+                "project_id": "project_id"
+            },
+            
+            # Content tools
+            "content_generate_dynamic": {
+                "context": "content_context",
+                "content_type": "content_type"
+            },
+            "content_analyze_structure": {
+                "content": "content_data"
+            },
+            "content_validate_format": {
+                "content": "content_data"
+            },
+            "content_extract_metadata": {
+                "content": "content_data"
+            },
+            
+            # Intelligence tools - fix missing required parameters
+            "get_tool_composition_recommendations": {
+                "context": "analysis_context",
+                "target_tools": "target_tools"  # Required parameter
+            },
+            "adaptive_learning_analyze": {
+                "context": "learning_context",
+                "domain": "domain"
+            },
+            "predict_potential_failures": {
+                "context": "prediction_context"
+            },
+            "get_real_time_performance_analysis": {
+                "agent_id": "agent_id",
+                "context": "analysis_context"
+            },
+            
+            # Terminal tools
+            "terminal_get_environment": {},  # No parameter mapping needed
+            "terminal_run_command": {
+                "command": "command"
+            },
+            "terminal_sandbox_status": {},
+            "terminal_check_permissions": {},
+            
+            # ChromaDB tools
+            "chromadb_query_documents": {
+                "query": "query_text"
+            },
+            "chromadb_store_document": {
+                "document": "document_content"
+            },
+            "chroma_peek_collection": {},
+            "chroma_get_documents": {}
+        }
+        
+        # Get mapping for this tool
+        tool_mapping = parameter_mappings.get(tool_name, {})
+        
+        # Apply parameter mapping
+        mapped_args = {}
+        for key, value in arguments.items():
+            # Use mapped parameter name if available, otherwise use original
+            mapped_key = tool_mapping.get(key, key)
+            mapped_args[mapped_key] = value
+        
+        # Add required parameters for specific tools if missing
+        if tool_name == "get_tool_composition_recommendations" and "target_tools" not in mapped_args:
+            # Provide default target_tools if missing
+            mapped_args["target_tools"] = list(arguments.keys()) if arguments else []
+        
+        return mapped_args
 
     async def _get_all_available_mcp_tools(self) -> Dict[str, Any]:
         """
-        Get ALL available MCP tools with actual callable access
+        ENHANCED: Universal tool discovery with comprehensive categorization
         
-        Replaces the registry metadata approach with actual tool discovery
+        Implements complete tool discovery including the missing get_mcp_tools_registry method.
         """
+        if not self.mcp_tools:
+            self.logger.warning("[MCP] MCP tools not available")
+            return {}
+        
         try:
-            from ..mcp_tools import __all__ as tool_names
+            # CRITICAL FIX: Implement missing get_mcp_tools_registry method
+            registry_tools = await self._get_mcp_tools_registry()
             
-            available_tools = {}
-            tool_categories = {
-                "chromadb": [],
-                "filesystem": [],
-                "terminal": [],
-                "content": [],
-                "intelligence": [],
-                "tool_discovery": []
-            }
+            # Get all available tools by category
+            all_tools = {}
             
-            for tool_name in tool_names:
-                try:
-                    # Verify tool is actually importable and callable
-                    module = __import__(f"..mcp_tools", fromlist=[tool_name])
-                    tool_func = getattr(module, tool_name)
-                    
-                    if callable(tool_func):
-                        tool_info = {
+            # Filesystem tools
+            filesystem_tools = [
+                "filesystem_read_file", "filesystem_write_file", "filesystem_copy_file",
+                "filesystem_move_file", "filesystem_safe_delete", "filesystem_list_directory",
+                "filesystem_create_directory", "filesystem_project_scan", "filesystem_sync_directories",
+                "filesystem_batch_operations", "filesystem_backup_restore", "filesystem_template_expansion"
+            ]
+            
+            # ChromaDB tools
+            chromadb_tools = [
+                "chromadb_store_document", "chromadb_query_documents", "chromadb_update_document",
+                "chromadb_delete_document", "chromadb_batch_operations", "chromadb_collection_management",
+                "chroma_create_collection", "chroma_delete_collection", "chroma_list_collections",
+                "chroma_get_collection", "chroma_peek_collection", "chroma_count_documents",
+                "chroma_add_documents", "chroma_update_documents", "chroma_upsert_documents",
+                "chroma_get_documents", "chroma_delete_documents", "chroma_query_collection",
+                "chroma_get_nearest_neighbors", "chroma_modify_collection", "chroma_reset_collection"
+            ]
+            
+            # Terminal tools
+            terminal_tools = [
+                "terminal_run_command", "terminal_get_environment", "terminal_sandbox_status",
+                "terminal_check_permissions", "terminal_run_secure_command", "terminal_batch_commands",
+                "terminal_monitor_process", "terminal_kill_process"
+            ]
+            
+            # Content tools
+            content_tools = [
+                "content_generate_dynamic", "content_analyze_structure", "content_validate_format",
+                "content_extract_metadata", "content_transform_format", "content_merge_documents",
+                "content_diff_analysis", "content_quality_assessment"
+            ]
+            
+            # Intelligence tools
+            intelligence_tools = [
+                "adaptive_learning_analyze", "create_strategy_experiment", "performance_optimization",
+                "predict_potential_failures", "get_real_time_performance_analysis", "analyze_historical_patterns",
+                "get_tool_composition_recommendations", "optimize_agent_workflow", "generate_improvement_suggestions"
+            ]
+            
+            # Tool discovery tools
+            tool_discovery_tools = [
+                "get_mcp_tools_registry", "discover_available_tools", "analyze_tool_capabilities",
+                "recommend_tool_combinations"
+            ]
+            
+            # Check availability and categorize
+            for category, tools in [
+                ("filesystem", filesystem_tools),
+                ("chromadb", chromadb_tools), 
+                ("terminal", terminal_tools),
+                ("content", content_tools),
+                ("intelligence", intelligence_tools),
+                ("tool_discovery", tool_discovery_tools)
+            ]:
+                available_tools = {}
+                for tool_name in tools:
+                    if hasattr(self.mcp_tools, tool_name):
+                        tool_func = getattr(self.mcp_tools, tool_name)
+                        available_tools[tool_name] = {
                             "name": tool_name,
-                            "callable": True,
-                            "is_async": asyncio.iscoroutinefunction(tool_func),
-                            "category": self._categorize_tool(tool_name)
+                            "category": category,
+                            "callable": callable(tool_func),
+                            "async": asyncio.iscoroutinefunction(tool_func) if callable(tool_func) else False
                         }
-                        
-                        available_tools[tool_name] = tool_info
-                        tool_categories[tool_info["category"]].append(tool_name)
-                        
-                except Exception as e:
-                    self.logger.warning(f"[MCP] Tool {tool_name} not available: {e}")
+                
+                if available_tools:
+                    all_tools[category] = available_tools
             
-            self.logger.info(f"[MCP] Discovered {len(available_tools)} callable tools across {len(tool_categories)} categories")
+            # Add registry tools if available
+            if registry_tools:
+                all_tools["registry"] = registry_tools
             
-            # Log tool distribution by category
-            for category, tools in tool_categories.items():
-                if tools:
-                    self.logger.info(f"[MCP] {category.title()}: {len(tools)} tools")
+            # Log discovery results
+            total_tools = sum(len(tools) for tools in all_tools.values())
+            self.logger.info(f"[MCP] Discovered {total_tools} callable tools across {len(all_tools)} categories")
             
-            return {
-                "tools": available_tools,
-                "categories": tool_categories,
-                "total_count": len(available_tools),
-                "discovery_successful": True
-            }
+            for category, tools in all_tools.items():
+                self.logger.info(f"[MCP] {category.title()}: {len(tools)} tools")
+            
+            return all_tools
             
         except Exception as e:
-            self.logger.error(f"[MCP] Failed to discover tools: {e}", exc_info=True)
-            return {
-                "tools": {},
-                "categories": {},
-                "total_count": 0,
-                "discovery_successful": False,
-                "error": str(e)
-            }
+            self.logger.error(f"[MCP] Tool discovery failed: {e}", exc_info=True)
+            return {}
+
+    async def _get_mcp_tools_registry(self) -> Dict[str, Any]:
+        """
+        CRITICAL FIX: Implement missing get_mcp_tools_registry method
+        
+        This method was referenced throughout the codebase but didn't exist,
+        causing tool discovery failures.
+        """
+        try:
+            # Check if registry method exists on mcp_tools
+            if hasattr(self.mcp_tools, 'get_mcp_tools_registry'):
+                return await self.mcp_tools.get_mcp_tools_registry()
+            
+            # Fallback: Create registry from available tools
+            registry = {}
+            
+            # Get all available tool categories
+            categories = ["filesystem", "chromadb", "terminal", "content", "intelligence", "tool_discovery"]
+            
+            for category in categories:
+                category_tools = {}
+                
+                # Get tools for this category using naming convention
+                for attr_name in dir(self.mcp_tools):
+                    if attr_name.startswith(category) and callable(getattr(self.mcp_tools, attr_name)):
+                        tool_func = getattr(self.mcp_tools, attr_name)
+                        category_tools[attr_name] = {
+                            "name": attr_name,
+                            "category": category,
+                            "callable": True,
+                            "async": asyncio.iscoroutinefunction(tool_func)
+                        }
+                
+                if category_tools:
+                    registry[category] = category_tools
+            
+            self.logger.info(f"[MCP] Built registry with {len(registry)} categories")
+            return registry
+            
+        except Exception as e:
+            self.logger.warning(f"[MCP] Tool get_mcp_tools_registry not available: {e}")
+            return {}
 
     def _categorize_tool(self, tool_name: str) -> str:
         """Categorize tools based on name patterns"""
@@ -224,10 +439,10 @@ class UnifiedAgent(BaseModel, ABC):
         
         for tool_name in tool_names:
             try:
-                from ..mcp_tools import __all__ as available_tools
+                from chungoid.mcp_tools import __all__ as available_tools
                 if tool_name in available_tools:
-                    module = __import__(f"..mcp_tools", fromlist=[tool_name])
-                    tool_func = getattr(module, tool_name)
+                    import chungoid.mcp_tools as mcp_tools_module
+                    tool_func = getattr(mcp_tools_module, tool_name)
                     validation_results[tool_name] = callable(tool_func)
                 else:
                     validation_results[tool_name] = False
@@ -255,57 +470,170 @@ class UnifiedAgent(BaseModel, ABC):
         return result  # Return original error if all fallbacks fail
 
     def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Intelligent tool selection - agents choose which tools to use"""
+        """
+        ENHANCED: Universal intelligent tool selection - agents choose which tools to use
         
-        # Start with core tools every agent should consider
+        Implements the complete enhanced_mcp.md pattern:
+        1. Universal tool access (no artificial filtering)
+        2. Context-aware intelligent selection
+        3. Dynamic tool composition based on task requirements
+        4. Fallback tool recommendations
+        """
+        
+        # 1. UNIVERSAL ACCESS: Start with ALL available tools
+        selected_tools = {}
+        
+        # 2. CORE TOOLS: Essential tools every agent should consider
         core_tools = [
-            "filesystem_project_scan",
-            "chromadb_query_documents", 
-            "terminal_get_environment"
+            "filesystem_project_scan",      # Project structure analysis
+            "chromadb_query_documents",     # Historical context
+            "terminal_get_environment",     # Environment validation
+            "content_analyze_structure",    # Content analysis
+            "adaptive_learning_analyze"     # Intelligence insights
         ]
         
-        # Add capability-specific tools based on agent type
-        if "code_generation" in getattr(self, 'CAPABILITIES', []):
-            core_tools.extend([
-                "filesystem_read_file",
-                "filesystem_write_file", 
-                "content_analyze_structure"
-            ])
-        
-        if "architecture_design" in getattr(self, 'CAPABILITIES', []):
-            core_tools.extend([
-                "content_analyze_structure",
-                "get_tool_composition_recommendations"
-            ])
-        
-        if "documentation" in getattr(self, 'CAPABILITIES', []):
-            core_tools.extend([
-                "content_extract_text",
-                "content_generate_dynamic"
-            ])
-        
-        if "risk_assessment" in getattr(self, 'CAPABILITIES', []):
-            core_tools.extend([
-                "predict_potential_failures",
-                "analyze_historical_patterns"
-            ])
-        
-        # Add intelligence tools for all agents
-        intelligence_tools = [
-            "adaptive_learning_analyze",
-            "get_real_time_performance_analysis",
-            "generate_performance_recommendations"
-        ]
-        core_tools.extend(intelligence_tools)
-        
-        # Select available tools
-        selected = {}
+        # Add core tools if available
         for tool_name in core_tools:
             if tool_name in all_tools:
-                selected[tool_name] = all_tools[tool_name]
+                selected_tools[tool_name] = all_tools[tool_name]
         
-        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
-        return selected
+        # 3. CAPABILITY-SPECIFIC TOOLS: Based on agent capabilities
+        agent_capabilities = getattr(self, 'CAPABILITIES', [])
+        
+        if "code_generation" in agent_capabilities:
+            code_tools = [
+                "filesystem_read_file", "filesystem_write_file",
+                "filesystem_template_expansion", "terminal_execute_command",
+                "predict_potential_failures", "get_tool_composition_recommendations"
+            ]
+            for tool in code_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "architecture_design" in agent_capabilities:
+            arch_tools = [
+                "content_generate_dynamic", "analyze_historical_patterns",
+                "create_intelligent_recovery_plan", "chromadb_store_document"
+            ]
+            for tool in arch_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "documentation" in agent_capabilities:
+            doc_tools = [
+                "web_content_extract", "content_cache_management",
+                "filesystem_batch_operations", "generate_tool_manifest"
+            ]
+            for tool in doc_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "risk_assessment" in agent_capabilities:
+            risk_tools = [
+                "predict_potential_failures", "analyze_historical_patterns",
+                "get_real_time_performance_analysis", "chromadb_reflection_query"
+            ]
+            for tool in risk_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "requirements_analysis" in agent_capabilities:
+            req_tools = [
+                "web_content_summarize", "content_version_control",
+                "apply_learning_recommendations", "chromadb_batch_operations"
+            ]
+            for tool in req_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "quality_assurance" in agent_capabilities:
+            qa_tools = [
+                "terminal_execute_batch", "filesystem_backup_restore",
+                "optimize_agent_resolution_mcp", "get_tool_performance_analytics"
+            ]
+            for tool in qa_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "dependency_management" in agent_capabilities:
+            dep_tools = [
+                "terminal_classify_command", "filesystem_sync_directories",
+                "create_strategy_experiment", "terminal_check_permissions"
+            ]
+            for tool in dep_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "environment_setup" in agent_capabilities:
+            env_tools = [
+                "terminal_sandbox_status", "filesystem_create_directory",
+                "generate_performance_recommendations", "tool_discovery"
+            ]
+            for tool in env_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        # 4. CONTEXT-AWARE SELECTION: Based on shared context
+        project_path = shared_context.get("project_root_path", ".")
+        
+        # If project has specific characteristics, add relevant tools
+        if "python" in str(project_path).lower() or shared_context.get("language") == "python":
+            python_tools = ["terminal_execute_command", "filesystem_template_expansion"]
+            for tool in python_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        if "web" in str(project_path).lower() or shared_context.get("project_type") == "web":
+            web_tools = ["tool_fetch_web_content", "web_content_validate"]
+            for tool in web_tools:
+                if tool in all_tools:
+                    selected_tools[tool] = all_tools[tool]
+        
+        # 5. INTELLIGENT COMPOSITION: Add complementary tools
+        if "filesystem_read_file" in selected_tools and "content_analyze_structure" not in selected_tools:
+            if "content_analyze_structure" in all_tools:
+                selected_tools["content_analyze_structure"] = all_tools["content_analyze_structure"]
+        
+        if "chromadb_query_documents" in selected_tools and "chromadb_store_document" not in selected_tools:
+            if "chromadb_store_document" in all_tools:
+                selected_tools["chromadb_store_document"] = all_tools["chromadb_store_document"]
+        
+        # 6. FALLBACK RECOMMENDATIONS: Suggest alternative tools
+        fallback_mapping = {
+            "filesystem_project_scan": ["filesystem_list_directory", "filesystem_read_file"],
+            "chromadb_query_documents": ["chromadb_get_documents", "chroma_peek_collection"],
+            "adaptive_learning_analyze": ["analyze_historical_patterns", "get_real_time_performance_analysis"],
+            "content_analyze_structure": ["web_content_extract", "content_generate_dynamic"],
+            "terminal_get_environment": ["terminal_execute_command", "terminal_sandbox_status"]
+        }
+        
+        # Add fallback tools for missing core tools
+        for primary_tool, fallbacks in fallback_mapping.items():
+            if primary_tool not in selected_tools:
+                for fallback in fallbacks:
+                    if fallback in all_tools:
+                        selected_tools[fallback] = all_tools[fallback]
+                        break
+        
+        # 7. PERFORMANCE OPTIMIZATION: Limit selection to prevent overload
+        max_tools = 15  # Reasonable limit for performance
+        if len(selected_tools) > max_tools:
+            # Prioritize by category importance
+            priority_order = ["intelligence", "filesystem", "chromadb", "content", "terminal", "tool_discovery"]
+            prioritized_tools = {}
+            
+            for category in priority_order:
+                category_tools = {k: v for k, v in selected_tools.items() 
+                                if v.get("category") == category}
+                prioritized_tools.update(category_tools)
+                if len(prioritized_tools) >= max_tools:
+                    break
+            
+            selected_tools = dict(list(prioritized_tools.items())[:max_tools])
+        
+        self.logger.info(f"[MCP] Intelligently selected {len(selected_tools)} tools from {len(all_tools)} available")
+        
+        return selected_tools
 
     async def execute(
         self, 
@@ -522,82 +850,190 @@ class UnifiedAgent(BaseModel, ABC):
     
     async def _analyze_current_state_with_mcp_tools(self, context: ExecutionContext) -> Dict[str, Any]:
         """
-        Enhanced with universal tool access and intelligent selection
+        ENHANCED: Universal tool access with intelligent orchestration
         
-        FIXES: Replaces phantom tool dependencies with actual MCP tool calls
+        Implements the complete enhanced_mcp.md pattern:
+        1. Universal tool discovery (no filtering)
+        2. Intelligent tool selection based on context
+        3. Comprehensive multi-tool analysis
+        4. Fallback strategies for failed tools
         """
         if not self.enable_refinement:
             return {}
         
         try:
-            # Get ALL available tools (no filtering)
+            # 1. UNIVERSAL TOOL DISCOVERY: Get ALL available tools (no filtering)
             tool_discovery = await self._get_all_available_mcp_tools()
             
-            if not tool_discovery["discovery_successful"]:
-                self.logger.warning("[MCP] Tool discovery failed, using limited analysis")
-                return {"error": "Tool discovery failed", "limited_analysis": True}
+            # CRITICAL FIX: Handle NoneType returns that caused subscript errors
+            if not tool_discovery or not isinstance(tool_discovery, dict):
+                self.logger.warning("[MCP] Tool discovery returned None or invalid data")
+                return {"error": "tool_discovery_failed", "fallback_analysis": True}
             
-            all_tools = tool_discovery["tools"]
+            # 2. INTELLIGENT TOOL SELECTION: Choose tools based on context
+            selected_tools = self._intelligently_select_tools(
+                tool_discovery, 
+                context.inputs, 
+                context.shared_context
+            )
+            
+            # CRITICAL FIX: Validate selected_tools is not None
+            if not selected_tools or not isinstance(selected_tools, dict):
+                self.logger.warning("[MCP] Tool selection returned None or invalid data")
+                return {"error": "tool_selection_failed", "fallback_analysis": True}
+            
+            # 3. COMPREHENSIVE ANALYSIS: Execute selected tools with fallback strategies
             current_state = {
-                "tool_discovery": tool_discovery,
-                "analysis_timestamp": time.time(),
-                "agent_id": self.AGENT_ID
+                "tool_discovery_summary": {
+                    "total_categories": len(tool_discovery),
+                    "total_tools": sum(len(tools) for tools in tool_discovery.values() if isinstance(tools, dict)),
+                    "selected_tools": len(selected_tools)
+                }
             }
             
-            # Intelligent tool selection based on context
+            # Get project context safely
             project_root = context.shared_context.get("project_root_path", ".")
             
-            # Use filesystem tools for comprehensive project analysis
-            if "filesystem_project_scan" in all_tools:
-                self.logger.info("[MCP] Using filesystem_project_scan for project analysis")
-                project_structure = await self._call_mcp_tool(
+            if "filesystem_project_scan" in selected_tools:
+                self.logger.info("[MCP] Executing comprehensive project scan")
+                project_structure = await self._safe_tool_call_with_fallback(
                     "filesystem_project_scan", 
-                    {"path": project_root}
+                    {"path": project_root, "include_stats": True, "detect_project_type": True},
+                    ["filesystem_list_directory", "filesystem_read_file"]
                 )
                 current_state["project_structure"] = project_structure
+                
+                # Enhanced project analysis if scan successful
+                if project_structure and project_structure.get("success"):
+                    # Use content tools for deeper structure analysis
+                    if "content_analyze_structure" in selected_tools:
+                        self.logger.info("[MCP] Analyzing project structure with content tools")
+                        structure_analysis = await self._call_mcp_tool(
+                            "content_analyze_structure",
+                            {"content": project_structure.get("result", {})}
+                        )
+                        current_state["structure_analysis"] = structure_analysis
             
-            # Use intelligence tools for analysis
-            if "adaptive_learning_analyze" in all_tools:
-                self.logger.info("[MCP] Using adaptive_learning_analyze for intelligence analysis")
-                analysis = await self._call_mcp_tool(
+            # 4. INTELLIGENCE ANALYSIS: Use adaptive learning tools
+            if "adaptive_learning_analyze" in selected_tools:
+                self.logger.info("[MCP] Executing adaptive learning analysis")
+                intelligence_context = {
+                    "agent_id": self.AGENT_ID,
+                    "project_structure": current_state.get("project_structure", {}),
+                    "execution_context": {
+                        "iteration": getattr(context, 'current_iteration', 0),
+                        "mode": str(getattr(context, 'execution_mode', 'unknown'))
+                    }
+                }
+                
+                intelligence_analysis = await self._safe_tool_call_with_fallback(
                     "adaptive_learning_analyze",
-                    {"context": current_state, "domain": self.AGENT_ID}
+                    {"context": intelligence_context, "domain": self.AGENT_ID},
+                    ["analyze_historical_patterns", "get_real_time_performance_analysis"]
                 )
-                current_state["intelligence_analysis"] = analysis
+                current_state["intelligence_analysis"] = intelligence_analysis
             
-            # Use content tools for deeper analysis
-            if "content_analyze_structure" in all_tools and current_state.get("project_structure"):
-                self.logger.info("[MCP] Using content analysis for structure analysis")
-                structure_analysis = await self._call_mcp_tool(
-                    "content_analyze_structure",
-                    {"content": current_state["project_structure"]}
-                )
-                current_state["structure_analysis"] = structure_analysis
-            
-            # Use ChromaDB tools for historical context
-            if "chromadb_query_documents" in all_tools:
-                self.logger.info("[MCP] Using ChromaDB for historical context")
-                historical_context = await self._call_mcp_tool(
+            # 5. HISTORICAL CONTEXT: Use ChromaDB tools
+            if "chromadb_query_documents" in selected_tools:
+                self.logger.info("[MCP] Querying historical context from ChromaDB")
+                project_id = context.shared_context.get('project_id', 'unknown')
+                historical_query = f"agent:{self.AGENT_ID} project:{project_id}"
+                
+                historical_context = await self._safe_tool_call_with_fallback(
                     "chromadb_query_documents",
-                    {"query": f"project:{context.shared_context.get('project_id', 'unknown')}", "limit": 5}
+                    {"query": historical_query, "limit": 5, "include_metadata": True},
+                    ["chroma_peek_collection", "chroma_get_documents"]
                 )
                 current_state["historical_context"] = historical_context
             
-            # Use terminal tools for environment validation
-            if "terminal_get_environment" in all_tools:
-                self.logger.info("[MCP] Using terminal tools for environment analysis")
-                environment_info = await self._call_mcp_tool(
+            # 6. ENVIRONMENT VALIDATION: Use terminal tools
+            if "terminal_get_environment" in selected_tools:
+                self.logger.info("[MCP] Validating execution environment")
+                environment_info = await self._safe_tool_call_with_fallback(
                     "terminal_get_environment",
-                    {}
+                    {},
+                    ["terminal_sandbox_status", "terminal_check_permissions"]
                 )
                 current_state["environment_info"] = environment_info
             
-            self.logger.info(f"[MCP] Completed comprehensive analysis with {len(current_state)} analysis types")
+            # 7. PREDICTIVE ANALYSIS: Use intelligence tools for failure prediction
+            if "predict_potential_failures" in selected_tools:
+                self.logger.info("[MCP] Executing predictive failure analysis")
+                prediction_context = {
+                    "current_state": current_state,
+                    "agent_capabilities": getattr(self, 'CAPABILITIES', []),
+                    "execution_mode": str(getattr(context, 'execution_mode', 'unknown'))
+                }
+                
+                failure_predictions = await self._call_mcp_tool(
+                    "predict_potential_failures",
+                    {"context": prediction_context}
+                )
+                current_state["failure_predictions"] = failure_predictions
+            
+            # 8. PERFORMANCE OPTIMIZATION: Use performance tools
+            if "get_real_time_performance_analysis" in selected_tools:
+                self.logger.info("[MCP] Executing real-time performance analysis")
+                performance_analysis = await self._call_mcp_tool(
+                    "get_real_time_performance_analysis",
+                    {"agent_id": self.AGENT_ID, "context": current_state}
+                )
+                current_state["performance_analysis"] = performance_analysis
+            
+            # 9. TOOL COMPOSITION RECOMMENDATIONS: Use tool discovery
+            if "get_tool_composition_recommendations" in selected_tools:
+                self.logger.info("[MCP] Getting tool composition recommendations")
+                composition_context = {
+                    "agent_id": self.AGENT_ID,
+                    "task_type": getattr(self, 'CATEGORY', 'unknown'),
+                    "current_tools": list(selected_tools.keys())
+                }
+                
+                # CRITICAL FIX: Provide required target_tools parameter
+                tool_recommendations = await self._call_mcp_tool(
+                    "get_tool_composition_recommendations",
+                    {
+                        "context": composition_context,
+                        "target_tools": list(selected_tools.keys())  # Required parameter
+                    }
+                )
+                current_state["tool_recommendations"] = tool_recommendations
+            
+            # 10. CONTENT GENERATION: Use content tools for dynamic insights
+            if "content_generate_dynamic" in selected_tools:
+                self.logger.info("[MCP] Generating dynamic content insights")
+                content_context = {
+                    "analysis_results": current_state,
+                    "agent_context": {
+                        "id": self.AGENT_ID,
+                        "capabilities": getattr(self, 'CAPABILITIES', [])
+                    }
+                }
+                
+                # CRITICAL FIX: Use correct parameter name
+                dynamic_insights = await self._call_mcp_tool(
+                    "content_generate_dynamic",
+                    {"content_context": content_context, "content_type": "analysis_insights"}
+                )
+                current_state["dynamic_insights"] = dynamic_insights
+            
+            # 11. ANALYSIS SUMMARY: Compile comprehensive results
+            successful_analyses = sum(1 for key, value in current_state.items() 
+                                    if isinstance(value, dict) and value.get("success"))
+            
+            current_state["analysis_summary"] = {
+                "total_tools_used": len(selected_tools),
+                "successful_analyses": successful_analyses,
+                "analysis_coverage": successful_analyses / len(selected_tools) if selected_tools else 0,
+                "analysis_quality": "comprehensive" if successful_analyses >= 5 else "partial"
+            }
+            
+            self.logger.info(f"[MCP] Completed universal analysis: {successful_analyses}/{len(selected_tools)} tools successful")
             return current_state
             
         except Exception as e:
-            self.logger.error(f"[MCP] Failed to analyze current state: {e}", exc_info=True)
-            return {"error": str(e), "fallback_analysis": True}
+            self.logger.error(f"[MCP] Universal analysis failed: {e}", exc_info=True)
+            return {"error": str(e), "fallback_analysis": True, "analysis_type": "error_fallback"}
     
     async def _analyze_code_with_mcp_tools(self, project_path: str) -> Dict[str, Any]:
         """
@@ -1256,4 +1692,282 @@ class UnifiedAgent(BaseModel, ABC):
             completion_reason=CompletionReason.MAX_ITERATIONS_REACHED,
             quality_score=best_result.quality_score,
             protocol_used=best_result.protocol_used
-        ) 
+        )
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        UNIVERSAL TOOL ACCESS PATTERN: Complete implementation of enhanced_mcp.md
+        
+        This method provides a standardized interface for all agents to access
+        the complete MCP tool ecosystem with intelligent selection and orchestration.
+        
+        Returns comprehensive analysis using:
+        1. Universal tool discovery (no filtering)
+        2. Intelligent tool selection based on agent capabilities
+        3. Multi-tool orchestrated analysis
+        4. Fallback strategies for resilience
+        5. Performance optimization
+        
+        Args:
+            inputs: Agent-specific input data
+            shared_context: Shared execution context
+            
+        Returns:
+            Dict containing comprehensive analysis results from multiple MCP tools
+        """
+        
+        try:
+            # 1. UNIVERSAL TOOL DISCOVERY: Get ALL available tools (no filtering)
+            self.logger.info("[MCP] Starting universal tool discovery")
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if not tool_discovery["discovery_successful"]:
+                self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+                return {"error": "Tool discovery failed", "limited_functionality": True}
+            
+            all_tools = tool_discovery["tools"]
+            self.logger.info(f"[MCP] Discovered {len(all_tools)} tools across {len(tool_discovery['categories'])} categories")
+            
+            # 2. INTELLIGENT TOOL SELECTION: Based on context and capabilities
+            selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+            self.logger.info(f"[MCP] Selected {len(selected_tools)} tools for enhanced discovery")
+            
+            # Initialize comprehensive analysis results
+            analysis_results = {
+                "discovery_metadata": {
+                    "agent_id": self.AGENT_ID,
+                    "timestamp": time.time(),
+                    "total_tools_available": len(all_tools),
+                    "tools_selected": len(selected_tools),
+                    "selected_tool_names": list(selected_tools.keys()),
+                    "analysis_type": "universal_enhanced_discovery"
+                }
+            }
+            
+            # 3. FILESYSTEM ANALYSIS: Comprehensive project structure analysis
+            if "filesystem_project_scan" in selected_tools:
+                self.logger.info("[MCP] Executing filesystem analysis")
+                project_path = shared_context.get("project_root_path", getattr(inputs, 'project_path', '.'))
+                
+                project_analysis = await self._safe_tool_call_with_fallback(
+                    "filesystem_project_scan",
+                    {
+                        "path": str(project_path),
+                        "include_stats": True,
+                        "detect_project_type": True,
+                        "analyze_structure": True
+                    },
+                    ["filesystem_list_directory", "filesystem_read_file"]
+                )
+                analysis_results["project_analysis"] = project_analysis
+            
+            # 4. CONTENT ANALYSIS: Deep content structure analysis
+            if "content_analyze_structure" in selected_tools and analysis_results.get("project_analysis", {}).get("success"):
+                self.logger.info("[MCP] Executing content structure analysis")
+                content_analysis = await self._call_mcp_tool(
+                    "content_analyze_structure",
+                    {"content": analysis_results["project_analysis"]["result"]}
+                )
+                analysis_results["content_analysis"] = content_analysis
+            
+            # 5. INTELLIGENCE ANALYSIS: Adaptive learning and pattern analysis
+            if "adaptive_learning_analyze" in selected_tools:
+                self.logger.info("[MCP] Executing intelligence analysis")
+                intelligence_context = {
+                    "agent_id": self.AGENT_ID,
+                    "agent_capabilities": getattr(self, 'CAPABILITIES', []),
+                    "project_analysis": analysis_results.get("project_analysis", {}),
+                    "content_analysis": analysis_results.get("content_analysis", {}),
+                    "inputs_summary": str(inputs)[:500]  # Truncated for safety
+                }
+                
+                intelligence_analysis = await self._safe_tool_call_with_fallback(
+                    "adaptive_learning_analyze",
+                    {"context": intelligence_context, "domain": self.AGENT_ID},
+                    ["analyze_historical_patterns", "get_real_time_performance_analysis"]
+                )
+                analysis_results["intelligence_analysis"] = intelligence_analysis
+            
+            # 6. HISTORICAL CONTEXT: ChromaDB query for previous work
+            if "chromadb_query_documents" in selected_tools:
+                self.logger.info("[MCP] Querying historical context")
+                project_id = shared_context.get('project_id', getattr(inputs, 'project_id', 'unknown'))
+                historical_query = f"agent:{self.AGENT_ID} project:{project_id}"
+                
+                historical_context = await self._safe_tool_call_with_fallback(
+                    "chromadb_query_documents",
+                    {
+                        "query": historical_query,
+                        "limit": 10,
+                        "include_metadata": True,
+                        "collection_name": f"project_{project_id}_artifacts"
+                    },
+                    ["chroma_peek_collection", "chroma_get_documents"]
+                )
+                analysis_results["historical_context"] = historical_context
+            
+            # 7. ENVIRONMENT VALIDATION: System environment analysis
+            if "terminal_get_environment" in selected_tools:
+                self.logger.info("[MCP] Validating environment")
+                environment_info = await self._safe_tool_call_with_fallback(
+                    "terminal_get_environment",
+                    {},
+                    ["terminal_sandbox_status", "terminal_check_permissions"]
+                )
+                analysis_results["environment_info"] = environment_info
+            
+            # 8. PREDICTIVE ANALYSIS: Failure prediction and risk assessment
+            if "predict_potential_failures" in selected_tools:
+                self.logger.info("[MCP] Executing predictive analysis")
+                prediction_context = {
+                    "agent_context": {
+                        "id": self.AGENT_ID,
+                        "capabilities": getattr(self, 'CAPABILITIES', []),
+                        "category": getattr(self, 'CATEGORY', 'unknown')
+                    },
+                    "analysis_results": analysis_results,
+                    "execution_context": shared_context
+                }
+                
+                failure_predictions = await self._call_mcp_tool(
+                    "predict_potential_failures",
+                    {"context": prediction_context}
+                )
+                analysis_results["failure_predictions"] = failure_predictions
+            
+            # 9. PERFORMANCE OPTIMIZATION: Real-time performance analysis
+            if "get_real_time_performance_analysis" in selected_tools:
+                self.logger.info("[MCP] Executing performance analysis")
+                performance_analysis = await self._call_mcp_tool(
+                    "get_real_time_performance_analysis",
+                    {
+                        "agent_id": self.AGENT_ID,
+                        "context": analysis_results,
+                        "metrics": ["execution_time", "tool_usage", "success_rate"]
+                    }
+                )
+                analysis_results["performance_analysis"] = performance_analysis
+            
+            # 10. TOOL COMPOSITION: Recommendations for optimal tool usage
+            if "get_tool_composition_recommendations" in selected_tools:
+                self.logger.info("[MCP] Getting tool composition recommendations")
+                composition_context = {
+                    "agent_id": self.AGENT_ID,
+                    "task_type": getattr(self, 'CATEGORY', 'unknown'),
+                    "current_tools": list(selected_tools.keys()),
+                    "analysis_results": analysis_results
+                }
+                
+                tool_recommendations = await self._call_mcp_tool(
+                    "get_tool_composition_recommendations",
+                    {"context": composition_context}
+                )
+                analysis_results["tool_recommendations"] = tool_recommendations
+            
+            # 11. DYNAMIC CONTENT GENERATION: Intelligent insights generation
+            if "content_generate_dynamic" in selected_tools:
+                self.logger.info("[MCP] Generating dynamic insights")
+                content_context = {
+                    "analysis_results": analysis_results,
+                    "agent_context": {
+                        "id": self.AGENT_ID,
+                        "capabilities": getattr(self, 'CAPABILITIES', []),
+                        "version": getattr(self, 'AGENT_VERSION', 'unknown')
+                    },
+                    "generation_type": "comprehensive_insights"
+                }
+                
+                dynamic_insights = await self._call_mcp_tool(
+                    "content_generate_dynamic",
+                    {"context": content_context, "content_type": "analysis_insights"}
+                )
+                analysis_results["dynamic_insights"] = dynamic_insights
+            
+            # 12. COMPREHENSIVE ANALYSIS SUMMARY
+            successful_analyses = sum(1 for key, value in analysis_results.items() 
+                                    if isinstance(value, dict) and value.get("success"))
+            
+            analysis_results["comprehensive_summary"] = {
+                "total_analyses_attempted": len([k for k in analysis_results.keys() if k != "discovery_metadata"]),
+                "successful_analyses": successful_analyses,
+                "analysis_coverage": successful_analyses / len(selected_tools) if selected_tools else 0,
+                "analysis_quality": self._assess_analysis_quality(successful_analyses, len(selected_tools)),
+                "recommended_next_steps": self._generate_next_step_recommendations(analysis_results),
+                "tool_performance": self._assess_tool_performance(analysis_results)
+            }
+            
+            self.logger.info(f"[MCP] Universal discovery completed: {successful_analyses} successful analyses")
+            return analysis_results
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Universal discovery failed: {e}", exc_info=True)
+            return {
+                "error": str(e),
+                "analysis_type": "universal_discovery_failed",
+                "fallback_analysis": True,
+                "timestamp": time.time()
+            }
+    
+    def _assess_analysis_quality(self, successful_count: int, total_count: int) -> str:
+        """Assess the quality of the analysis based on success rate"""
+        if total_count == 0:
+            return "no_tools_available"
+        
+        success_rate = successful_count / total_count
+        if success_rate >= 0.8:
+            return "excellent"
+        elif success_rate >= 0.6:
+            return "good"
+        elif success_rate >= 0.4:
+            return "partial"
+        else:
+            return "limited"
+    
+    def _generate_next_step_recommendations(self, analysis_results: Dict[str, Any]) -> List[str]:
+        """Generate intelligent next step recommendations based on analysis"""
+        recommendations = []
+        
+        # Check if project analysis was successful
+        if analysis_results.get("project_analysis", {}).get("success"):
+            recommendations.append("Project structure analysis completed - proceed with detailed planning")
+        else:
+            recommendations.append("Project analysis failed - consider manual project inspection")
+        
+        # Check intelligence analysis
+        if analysis_results.get("intelligence_analysis", {}).get("success"):
+            recommendations.append("Intelligence insights available - incorporate into decision making")
+        
+        # Check historical context
+        if analysis_results.get("historical_context", {}).get("success"):
+            recommendations.append("Historical context retrieved - leverage previous learnings")
+        
+        # Check failure predictions
+        if analysis_results.get("failure_predictions", {}).get("success"):
+            recommendations.append("Risk assessment completed - implement preventive measures")
+        
+        return recommendations if recommendations else ["Continue with standard execution flow"]
+    
+    def _assess_tool_performance(self, analysis_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess the performance of tools used in the analysis"""
+        tool_performance = {
+            "high_performing_tools": [],
+            "failed_tools": [],
+            "performance_score": 0.0
+        }
+        
+        successful_tools = 0
+        total_tools = 0
+        
+        for key, value in analysis_results.items():
+            if key in ["discovery_metadata", "comprehensive_summary"]:
+                continue
+                
+            total_tools += 1
+            if isinstance(value, dict) and value.get("success"):
+                successful_tools += 1
+                tool_performance["high_performing_tools"].append(key)
+            else:
+                tool_performance["failed_tools"].append(key)
+        
+        tool_performance["performance_score"] = successful_tools / total_tools if total_tools > 0 else 0.0
+        return tool_performance 
