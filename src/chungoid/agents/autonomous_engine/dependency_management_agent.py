@@ -1212,6 +1212,75 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         """Phase 1: Discovery - Detect project type and existing dependencies."""
         self.logger.info("Starting dependency discovery")
         
+        # ENHANCED: Use universal MCP tool access for intelligent dependency discovery
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent dependency discovery")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use filesystem tools for comprehensive project analysis
+                project_analysis = {}
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for dependency analysis")
+                    project_analysis = await self._call_mcp_tool(
+                        "filesystem_project_scan", 
+                        {"path": str(task_input.project_path)}
+                    )
+                
+                # Use content tools for dependency file analysis
+                content_analysis = {}
+                if "content_analyze_structure" in all_tools and project_analysis.get("success"):
+                    self.logger.info("[MCP] Using content analysis for dependency file analysis")
+                    content_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": project_analysis["result"]}
+                    )
+                
+                # Use intelligence tools for dependency strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for dependency strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "project_analysis": project_analysis,
+                                "content_analysis": content_analysis,
+                                "operation": task_input.operation
+                            }, 
+                            "domain": "dependency_management"
+                        }
+                    )
+                
+                # Use ChromaDB tools for historical dependency patterns
+                historical_context = {}
+                if "chromadb_query_documents" in all_tools:
+                    self.logger.info("[MCP] Using ChromaDB for historical dependency patterns")
+                    historical_context = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {"query": f"dependency_management project_type:{project_analysis.get('result', {}).get('project_type', 'unknown')}", "limit": 5}
+                    )
+                
+                # Use terminal tools for environment validation
+                environment_info = {}
+                if "terminal_get_environment" in all_tools:
+                    self.logger.info("[MCP] Using terminal tools for environment validation")
+                    environment_info = await self._call_mcp_tool(
+                        "terminal_get_environment",
+                        {}
+                    )
+                
+                # Convert MCP tool analysis to dependency discovery
+                if any([project_analysis.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Converting MCP tool analysis to dependency discovery")
+                    return await self._convert_mcp_analysis_to_dependency_discovery(
+                        project_analysis, content_analysis, intelligence_analysis, historical_context, environment_info, task_input
+                    )
+        
         try:
             # Check if we have intelligent project specifications from orchestrator
             if task_input.project_specifications and task_input.intelligent_context:
@@ -1297,6 +1366,231 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 "existing_files": [],
                 "detected_dependencies": []
             }
+
+    async def _convert_mcp_analysis_to_dependency_discovery(
+        self, 
+        project_analysis: Dict[str, Any], 
+        content_analysis: Dict[str, Any], 
+        intelligence_analysis: Dict[str, Any],
+        historical_context: Dict[str, Any],
+        environment_info: Dict[str, Any],
+        task_input: DependencyManagementInput
+    ) -> Dict[str, Any]:
+        """Convert MCP tool analysis results to dependency discovery."""
+        
+        try:
+            # Extract dependency information from MCP tool results
+            detected_dependencies = []
+            detected_languages = []
+            
+            # Analyze project scan results
+            if project_analysis.get("success") and project_analysis.get("result"):
+                scan_result = project_analysis["result"]
+                if isinstance(scan_result, dict):
+                    detected_languages.extend(scan_result.get("languages", []))
+                    
+                    # Extract dependencies from project files
+                    dependency_files = scan_result.get("dependency_files", [])
+                    for dep_file in dependency_files:
+                        if isinstance(dep_file, dict) and "dependencies" in dep_file:
+                            for dep in dep_file["dependencies"]:
+                                detected_dependencies.append(DependencyInfo(
+                                    package_name=dep.get("name", "unknown"),
+                                    version_constraint=dep.get("version"),
+                                    import_name=dep.get("name", "unknown"),
+                                    description=f"Dependency from {dep_file.get('file', 'project scan')}",
+                                    confidence=0.90,
+                                    is_dev_dependency=dep.get("dev", False)
+                                ))
+            
+            # Analyze content analysis results
+            if content_analysis.get("success") and content_analysis.get("result"):
+                content_result = content_analysis["result"]
+                if isinstance(content_result, dict):
+                    detected_languages.extend(content_result.get("languages", []))
+                    
+                    # Extract dependencies from content structure
+                    dependencies = content_result.get("dependencies", [])
+                    for dep in dependencies:
+                        if isinstance(dep, dict):
+                            detected_dependencies.append(DependencyInfo(
+                                package_name=dep.get("name", "unknown"),
+                                version_constraint=dep.get("version"),
+                                import_name=dep.get("name", "unknown"),
+                                description=f"Dependency from content analysis",
+                                confidence=0.85,
+                                is_dev_dependency=dep.get("dev", False)
+                            ))
+            
+            # Use intelligence analysis for dependency strategy
+            dependency_strategy = {}
+            if intelligence_analysis.get("success") and intelligence_analysis.get("result"):
+                intel_result = intelligence_analysis["result"]
+                if isinstance(intel_result, dict):
+                    dependency_strategy = intel_result.get("dependency_strategy", {})
+            
+            # Remove duplicates
+            unique_dependencies = []
+            seen_packages = set()
+            for dep in detected_dependencies:
+                if dep.package_name not in seen_packages:
+                    unique_dependencies.append(dep)
+                    seen_packages.add(dep.package_name)
+            
+            # Remove duplicates from languages
+            unique_languages = list(set(detected_languages))
+            
+            # If no languages detected, try to infer from environment or default to Python
+            if not unique_languages:
+                if environment_info.get("success") and environment_info.get("result"):
+                    env_result = environment_info["result"]
+                    if isinstance(env_result, dict):
+                        if "python" in str(env_result).lower():
+                            unique_languages.append("python")
+                        elif "node" in str(env_result).lower():
+                            unique_languages.append("javascript")
+                
+                # Default to Python if still no languages detected
+                if not unique_languages:
+                    unique_languages.append("python")
+            
+            self.logger.info(f"[MCP] Discovered {len(unique_dependencies)} dependencies and {len(unique_languages)} languages from MCP analysis")
+            
+            return {
+                "discovery_completed": True,
+                "detected_languages": unique_languages,
+                "detected_dependencies": unique_dependencies,
+                "dependency_strategy": dependency_strategy,
+                "mcp_enhanced": True,
+                "discovery_confidence": 0.95,
+                "existing_files": [],  # Will be populated by file detection
+                "project_result": None  # Will be populated by project type detection
+            }
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Failed to convert MCP analysis to dependency discovery: {e}")
+            # Fall back to basic discovery
+            return {
+                "discovery_completed": False,
+                "error": str(e),
+                "detected_languages": ["python"],  # Default fallback
+                "detected_dependencies": [],
+                "existing_files": []
+            }
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for DependencyManagementAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use filesystem tools for dependency file analysis
+        project_analysis = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_analysis = await self._call_mcp_tool(
+                "filesystem_project_scan", 
+                {"path": str(inputs.project_path)}
+            )
+        
+        # 4. Use intelligence tools for dependency strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": project_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for dependency file parsing
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": project_analysis["result"]}
+            )
+        
+        # 6. Use ChromaDB tools for historical dependency patterns
+        historical_context = {}
+        if "chromadb_query_documents" in selected_tools:
+            historical_context = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"agent:{self.AGENT_ID} operation:{inputs.operation}", "limit": 10}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for dependency management recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "dependency_management"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "project_analysis": project_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "historical_context": historical_context,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add dependency-specific tools
+        dependency_tools = [
+            "content_analyze_structure",
+            "filesystem_read_file",
+            "terminal_execute_command"
+        ]
+        core_tools.extend(dependency_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     async def _analyze_dependencies(self, discovery_result: Dict[str, Any], task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Analysis - Analyze dependencies and conflicts."""

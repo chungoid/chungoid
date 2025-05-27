@@ -486,6 +486,106 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             }
             return mapping.get(artifact_type, LOPRD_ARTIFACTS_COLLECTION)
         
+        # ENHANCED: Use universal MCP tool access for intelligent artifact discovery
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent artifact discovery")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use ChromaDB tools for enhanced artifact retrieval
+                source_artifact = {}
+                target_artifact = {}
+                
+                if "chromadb_query_documents" in all_tools:
+                    self.logger.info("[MCP] Using ChromaDB for enhanced artifact retrieval")
+                    
+                    # Retrieve source artifact with enhanced context
+                    source_artifact = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {
+                            "query": f"document_id:{task_input.source_artifact_doc_id} project_id:{task_input.project_id}",
+                            "collection": get_collection_for_artifact_type(task_input.source_artifact_type),
+                            "limit": 1
+                        }
+                    )
+                    
+                    # Retrieve target artifact with enhanced context
+                    target_artifact = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {
+                            "query": f"document_id:{task_input.target_artifact_doc_id} project_id:{task_input.project_id}",
+                            "collection": get_collection_for_artifact_type(task_input.target_artifact_type),
+                            "limit": 1
+                        }
+                    )
+                
+                # Use content tools for artifact analysis
+                source_analysis = {}
+                target_analysis = {}
+                if "content_analyze_structure" in all_tools:
+                    if source_artifact.get("success"):
+                        self.logger.info("[MCP] Using content analysis for source artifact analysis")
+                        source_analysis = await self._call_mcp_tool(
+                            "content_analyze_structure",
+                            {"content": source_artifact["result"]}
+                        )
+                    
+                    if target_artifact.get("success"):
+                        self.logger.info("[MCP] Using content analysis for target artifact analysis")
+                        target_analysis = await self._call_mcp_tool(
+                            "content_analyze_structure",
+                            {"content": target_artifact["result"]}
+                        )
+                
+                # Use intelligence tools for traceability strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for traceability strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "source_artifact": source_artifact,
+                                "target_artifact": target_artifact,
+                                "source_analysis": source_analysis,
+                                "target_analysis": target_analysis,
+                                "traceability_type": f"{task_input.source_artifact_type}_to_{task_input.target_artifact_type}"
+                            }, 
+                            "domain": "requirements_traceability"
+                        }
+                    )
+                
+                # Use filesystem tools for project context
+                project_context = {}
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for project context")
+                    project_context = await self._call_mcp_tool(
+                        "filesystem_project_scan",
+                        {"path": f"./projects/{task_input.project_id}"}
+                    )
+                
+                # Combine MCP tool results for enhanced artifact discovery
+                if any([source_artifact.get("success"), target_artifact.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Successfully enhanced artifact discovery with MCP tools")
+                    return {
+                        "source_artifact": source_artifact,
+                        "target_artifact": target_artifact,
+                        "artifacts_retrieved": True,
+                        "source_type": task_input.source_artifact_type,
+                        "target_type": task_input.target_artifact_type,
+                        "enhanced_analysis": {
+                            "source_analysis": source_analysis,
+                            "target_analysis": target_analysis,
+                            "intelligence_analysis": intelligence_analysis,
+                            "project_context": project_context
+                        },
+                        "mcp_enhanced": True
+                    }
+        
         try:
             # Retrieve source artifact using MCP tools
             source_collection = get_collection_for_artifact_type(task_input.source_artifact_type)
@@ -525,6 +625,120 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 "source_artifact": None,
                 "target_artifact": None
             }
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for RequirementsTracerAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use ChromaDB tools for artifact retrieval and historical traceability patterns
+        artifact_analysis = {}
+        if "chromadb_query_documents" in selected_tools:
+            artifact_analysis = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"project_id:{inputs.project_id} traceability", "limit": 10}
+            )
+        
+        # 4. Use intelligence tools for traceability strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": artifact_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for artifact structure analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and artifact_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": artifact_analysis["result"]}
+            )
+        
+        # 6. Use filesystem tools for project structure analysis
+        project_structure = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_structure = await self._call_mcp_tool(
+                "filesystem_project_scan",
+                {"path": shared_context.get("project_root_path", ".")}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for traceability recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "requirements_traceability"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "artifact_analysis": artifact_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "project_structure": project_structure,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add traceability-specific tools
+        traceability_tools = [
+            "content_analyze_structure",
+            "chromadb_query_collection",
+            "get_tool_composition_recommendations"
+        ]
+        core_tools.extend(traceability_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     async def _analyze_traceability(self, discovery_result: Dict[str, Any], task_input: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Analysis - Analyze traceability between artifacts."""

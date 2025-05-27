@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 import os
+import asyncio
 from abc import ABC
 from typing import Any, ClassVar, List, Optional, Dict
 
@@ -54,7 +55,7 @@ class UnifiedAgent(BaseModel, ABC):
     prompt_manager: PromptManager = Field(..., description="Prompt manager for templates")
     
     # Refinement capabilities (Phase 4 enhancement)
-    enable_refinement: bool = Field(default=False, description="Enable intelligent refinement using MCP tools and ChromaDB")
+    enable_refinement: bool = Field(default=True, description="Enable intelligent refinement using MCP tools and ChromaDB")
     mcp_tools: Optional[Any] = Field(default=None, description="MCP tools registry for refinement capabilities")
     chroma_client: Optional[Any] = Field(default=None, description="ChromaDB client for storing/querying agent outputs")
     
@@ -91,6 +92,220 @@ class UnifiedAgent(BaseModel, ABC):
         except Exception as e:
             self.logger.warning(f"[Refinement] Failed to initialize refinement capabilities: {e}")
             self.enable_refinement = False
+
+    # ========================================
+    # PHASE 1: CRITICAL MISSING INFRASTRUCTURE
+    # ========================================
+
+    async def _call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Universal MCP tool calling interface - CRITICAL MISSING METHOD
+        
+        This method is referenced throughout the plan but does not exist in current codebase.
+        Without this method, ALL proposed tool calling will fail.
+        """
+        try:
+            # Import the actual tool function dynamically
+            from ..mcp_tools import __all__ as available_tools
+            
+            if tool_name not in available_tools:
+                self.logger.warning(f"[MCP] Tool {tool_name} not in available tools list")
+                return {"error": f"Tool {tool_name} not available", "available_tools": len(available_tools)}
+            
+            # Dynamic import of the specific tool
+            try:
+                module = __import__(f"..mcp_tools", fromlist=[tool_name])
+                tool_func = getattr(module, tool_name)
+            except (ImportError, AttributeError) as e:
+                self.logger.error(f"[MCP] Failed to import tool {tool_name}: {e}")
+                return {"error": f"Failed to import tool {tool_name}: {str(e)}"}
+            
+            # Validate tool is callable
+            if not callable(tool_func):
+                self.logger.error(f"[MCP] Tool {tool_name} is not callable")
+                return {"error": f"Tool {tool_name} is not callable"}
+            
+            # Call the tool with arguments
+            if asyncio.iscoroutinefunction(tool_func):
+                result = await tool_func(**arguments)
+            else:
+                result = tool_func(**arguments)
+            
+            self.logger.info(f"[MCP] Successfully called tool {tool_name}")
+            return {"success": True, "result": result, "tool_name": tool_name}
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Tool call failed: {tool_name} - {e}", exc_info=True)
+            return {"error": str(e), "tool_name": tool_name, "arguments": arguments}
+
+    async def _get_all_available_mcp_tools(self) -> Dict[str, Any]:
+        """
+        Get ALL available MCP tools with actual callable access
+        
+        Replaces the registry metadata approach with actual tool discovery
+        """
+        try:
+            from ..mcp_tools import __all__ as tool_names
+            
+            available_tools = {}
+            tool_categories = {
+                "chromadb": [],
+                "filesystem": [],
+                "terminal": [],
+                "content": [],
+                "intelligence": [],
+                "tool_discovery": []
+            }
+            
+            for tool_name in tool_names:
+                try:
+                    # Verify tool is actually importable and callable
+                    module = __import__(f"..mcp_tools", fromlist=[tool_name])
+                    tool_func = getattr(module, tool_name)
+                    
+                    if callable(tool_func):
+                        tool_info = {
+                            "name": tool_name,
+                            "callable": True,
+                            "is_async": asyncio.iscoroutinefunction(tool_func),
+                            "category": self._categorize_tool(tool_name)
+                        }
+                        
+                        available_tools[tool_name] = tool_info
+                        tool_categories[tool_info["category"]].append(tool_name)
+                        
+                except Exception as e:
+                    self.logger.warning(f"[MCP] Tool {tool_name} not available: {e}")
+            
+            self.logger.info(f"[MCP] Discovered {len(available_tools)} callable tools across {len(tool_categories)} categories")
+            
+            # Log tool distribution by category
+            for category, tools in tool_categories.items():
+                if tools:
+                    self.logger.info(f"[MCP] {category.title()}: {len(tools)} tools")
+            
+            return {
+                "tools": available_tools,
+                "categories": tool_categories,
+                "total_count": len(available_tools),
+                "discovery_successful": True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Failed to discover tools: {e}", exc_info=True)
+            return {
+                "tools": {},
+                "categories": {},
+                "total_count": 0,
+                "discovery_successful": False,
+                "error": str(e)
+            }
+
+    def _categorize_tool(self, tool_name: str) -> str:
+        """Categorize tools based on name patterns"""
+        if tool_name.startswith(("chroma", "chromadb")):
+            return "chromadb"
+        elif tool_name.startswith("filesystem"):
+            return "filesystem"
+        elif tool_name.startswith("terminal") or tool_name == "tool_run_terminal_command":
+            return "terminal"
+        elif tool_name.startswith(("content", "web_content", "mcptool_get_named_content", "tool_fetch_web_content")):
+            return "content"
+        elif tool_name.startswith(("adaptive_learning", "create_strategy", "apply_learning", "create_intelligent", "predict_potential", "analyze_historical", "get_real_time", "optimize_agent", "generate_performance")):
+            return "intelligence"
+        elif tool_name.startswith(("generate_tool", "discover_tools", "get_tool", "tool_discovery")):
+            return "tool_discovery"
+        else:
+            return "uncategorized"
+
+    def _validate_tool_availability(self, tool_names: List[str]) -> Dict[str, bool]:
+        """Validate which tools are actually available and callable"""
+        validation_results = {}
+        
+        for tool_name in tool_names:
+            try:
+                from ..mcp_tools import __all__ as available_tools
+                if tool_name in available_tools:
+                    module = __import__(f"..mcp_tools", fromlist=[tool_name])
+                    tool_func = getattr(module, tool_name)
+                    validation_results[tool_name] = callable(tool_func)
+                else:
+                    validation_results[tool_name] = False
+            except Exception:
+                validation_results[tool_name] = False
+        
+        return validation_results
+
+    async def _safe_tool_call_with_fallback(self, tool_name: str, arguments: Dict[str, Any], fallback_tools: List[str] = None) -> Dict[str, Any]:
+        """Call tool with fallback options if primary tool fails"""
+        
+        # Try primary tool
+        result = await self._call_mcp_tool(tool_name, arguments)
+        if result.get("success"):
+            return result
+        
+        # Try fallback tools if provided
+        if fallback_tools:
+            for fallback_tool in fallback_tools:
+                self.logger.info(f"[MCP] Trying fallback tool: {fallback_tool}")
+                fallback_result = await self._call_mcp_tool(fallback_tool, arguments)
+                if fallback_result.get("success"):
+                    return fallback_result
+        
+        return result  # Return original error if all fallbacks fail
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use"""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add capability-specific tools based on agent type
+        if "code_generation" in getattr(self, 'CAPABILITIES', []):
+            core_tools.extend([
+                "filesystem_read_file",
+                "filesystem_write_file", 
+                "content_analyze_structure"
+            ])
+        
+        if "architecture_design" in getattr(self, 'CAPABILITIES', []):
+            core_tools.extend([
+                "content_analyze_structure",
+                "get_tool_composition_recommendations"
+            ])
+        
+        if "documentation" in getattr(self, 'CAPABILITIES', []):
+            core_tools.extend([
+                "content_extract_text",
+                "content_generate_dynamic"
+            ])
+        
+        if "risk_assessment" in getattr(self, 'CAPABILITIES', []):
+            core_tools.extend([
+                "predict_potential_failures",
+                "analyze_historical_patterns"
+            ])
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     async def execute(
         self, 
@@ -306,77 +521,183 @@ class UnifiedAgent(BaseModel, ABC):
             return []
     
     async def _analyze_current_state_with_mcp_tools(self, context: ExecutionContext) -> Dict[str, Any]:
-        """Use MCP tools to analyze current project state"""
-        if not self.enable_refinement or not self.mcp_tools:
+        """
+        Enhanced with universal tool access and intelligent selection
+        
+        FIXES: Replaces phantom tool dependencies with actual MCP tool calls
+        """
+        if not self.enable_refinement:
             return {}
         
         try:
-            current_state = {}
-            project_path = context.shared_context.get("project_root_path", ".")
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
             
-            # Use MCP tools based on agent capabilities
-            if "code_generation" in self.CAPABILITIES:
-                # Analyze existing code
-                current_state["code_analysis"] = await self._analyze_code_with_mcp_tools(project_path)
+            if not tool_discovery["discovery_successful"]:
+                self.logger.warning("[MCP] Tool discovery failed, using limited analysis")
+                return {"error": "Tool discovery failed", "limited_analysis": True}
             
-            if "architecture_design" in self.CAPABILITIES:
-                # Analyze project structure
-                current_state["project_structure"] = await self._analyze_project_structure_with_mcp_tools(project_path)
+            all_tools = tool_discovery["tools"]
+            current_state = {
+                "tool_discovery": tool_discovery,
+                "analysis_timestamp": time.time(),
+                "agent_id": self.AGENT_ID
+            }
             
-            if "documentation" in self.CAPABILITIES:
-                # Analyze existing documentation
-                current_state["documentation_analysis"] = await self._analyze_documentation_with_mcp_tools(project_path)
+            # Intelligent tool selection based on context
+            project_root = context.shared_context.get("project_root_path", ".")
             
-            # Common analysis for all agents
-            current_state["file_structure"] = await self._analyze_file_structure_with_mcp_tools(project_path)
+            # Use filesystem tools for comprehensive project analysis
+            if "filesystem_project_scan" in all_tools:
+                self.logger.info("[MCP] Using filesystem_project_scan for project analysis")
+                project_structure = await self._call_mcp_tool(
+                    "filesystem_project_scan", 
+                    {"path": project_root}
+                )
+                current_state["project_structure"] = project_structure
             
-            self.logger.info(f"[Refinement] Analyzed current state with {len(current_state)} analysis types")
+            # Use intelligence tools for analysis
+            if "adaptive_learning_analyze" in all_tools:
+                self.logger.info("[MCP] Using adaptive_learning_analyze for intelligence analysis")
+                analysis = await self._call_mcp_tool(
+                    "adaptive_learning_analyze",
+                    {"context": current_state, "domain": self.AGENT_ID}
+                )
+                current_state["intelligence_analysis"] = analysis
+            
+            # Use content tools for deeper analysis
+            if "content_analyze_structure" in all_tools and current_state.get("project_structure"):
+                self.logger.info("[MCP] Using content analysis for structure analysis")
+                structure_analysis = await self._call_mcp_tool(
+                    "content_analyze_structure",
+                    {"content": current_state["project_structure"]}
+                )
+                current_state["structure_analysis"] = structure_analysis
+            
+            # Use ChromaDB tools for historical context
+            if "chromadb_query_documents" in all_tools:
+                self.logger.info("[MCP] Using ChromaDB for historical context")
+                historical_context = await self._call_mcp_tool(
+                    "chromadb_query_documents",
+                    {"query": f"project:{context.shared_context.get('project_id', 'unknown')}", "limit": 5}
+                )
+                current_state["historical_context"] = historical_context
+            
+            # Use terminal tools for environment validation
+            if "terminal_get_environment" in all_tools:
+                self.logger.info("[MCP] Using terminal tools for environment analysis")
+                environment_info = await self._call_mcp_tool(
+                    "terminal_get_environment",
+                    {}
+                )
+                current_state["environment_info"] = environment_info
+            
+            self.logger.info(f"[MCP] Completed comprehensive analysis with {len(current_state)} analysis types")
             return current_state
             
         except Exception as e:
-            self.logger.warning(f"[Refinement] Failed to analyze current state: {e}")
-            return {}
+            self.logger.error(f"[MCP] Failed to analyze current state: {e}", exc_info=True)
+            return {"error": str(e), "fallback_analysis": True}
     
     async def _analyze_code_with_mcp_tools(self, project_path: str) -> Dict[str, Any]:
-        """Analyze code using MCP tools"""
+        """
+        FIXED: Replace phantom tool dependency with actual MCP tools
+        
+        OLD: hasattr(self.mcp_tools, 'analyze_code_ast') - DOESN'T EXIST
+        NEW: Use actual filesystem and content tools
+        """
         try:
-            # Use MCP tools to analyze code
-            if hasattr(self.mcp_tools, 'analyze_code_ast'):
-                return await self.mcp_tools.analyze_code_ast(project_path)
-            return {"status": "mcp_tool_not_available"}
+            # Use actual MCP tools for code analysis
+            code_analysis = {}
+            
+            # Scan for code files
+            if hasattr(self, '_call_mcp_tool'):
+                file_scan = await self._call_mcp_tool(
+                    "filesystem_project_scan",
+                    {"path": project_path, "include_patterns": ["*.py", "*.js", "*.ts", "*.java", "*.cpp"]}
+                )
+                code_analysis["file_scan"] = file_scan
+                
+                # Analyze code structure if files found
+                if file_scan.get("success") and file_scan.get("result"):
+                    structure_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": file_scan["result"]}
+                    )
+                    code_analysis["structure_analysis"] = structure_analysis
+            
+            return code_analysis if code_analysis else {"status": "no_mcp_tools_available"}
+            
         except Exception as e:
             self.logger.warning(f"[Refinement] Code analysis failed: {e}")
             return {"error": str(e)}
     
     async def _analyze_project_structure_with_mcp_tools(self, project_path: str) -> Dict[str, Any]:
-        """Analyze project structure using MCP tools"""
+        """
+        FIXED: Replace phantom tool dependency with actual MCP tools
+        
+        OLD: hasattr(self.mcp_tools, 'analyze_project_structure') - DOESN'T EXIST  
+        NEW: Use actual filesystem_project_scan tool
+        """
         try:
-            # Use MCP tools to analyze project structure
-            if hasattr(self.mcp_tools, 'analyze_project_structure'):
-                return await self.mcp_tools.analyze_project_structure(project_path)
-            return {"status": "mcp_tool_not_available"}
+            # Use actual filesystem_project_scan tool
+            if hasattr(self, '_call_mcp_tool'):
+                return await self._call_mcp_tool(
+                    "filesystem_project_scan",
+                    {"path": project_path}
+                )
+            return {"status": "mcp_tool_method_not_available"}
+            
         except Exception as e:
             self.logger.warning(f"[Refinement] Project structure analysis failed: {e}")
             return {"error": str(e)}
     
     async def _analyze_documentation_with_mcp_tools(self, project_path: str) -> Dict[str, Any]:
-        """Analyze documentation using MCP tools"""
+        """
+        FIXED: Replace phantom tool dependency with actual MCP tools
+        
+        OLD: hasattr(self.mcp_tools, 'analyze_documentation') - DOESN'T EXIST
+        NEW: Use actual content and filesystem tools
+        """
         try:
-            # Use MCP tools to analyze documentation
-            if hasattr(self.mcp_tools, 'analyze_documentation'):
-                return await self.mcp_tools.analyze_documentation(project_path)
-            return {"status": "mcp_tool_not_available"}
+            # Use actual MCP tools for documentation analysis
+            if hasattr(self, '_call_mcp_tool'):
+                # Scan for documentation files
+                doc_scan = await self._call_mcp_tool(
+                    "filesystem_project_scan",
+                    {"path": project_path, "include_patterns": ["*.md", "*.rst", "*.txt", "*.doc*"]}
+                )
+                
+                if doc_scan.get("success"):
+                    # Extract and analyze documentation content
+                    content_analysis = await self._call_mcp_tool(
+                        "content_extract_text",
+                        {"source": doc_scan["result"]}
+                    )
+                    return {"doc_scan": doc_scan, "content_analysis": content_analysis}
+            
+            return {"status": "mcp_tool_method_not_available"}
+            
         except Exception as e:
             self.logger.warning(f"[Refinement] Documentation analysis failed: {e}")
             return {"error": str(e)}
     
     async def _analyze_file_structure_with_mcp_tools(self, project_path: str) -> Dict[str, Any]:
-        """Analyze file structure using MCP tools"""
+        """
+        FIXED: Replace phantom tool dependency with actual MCP tools
+        
+        OLD: hasattr(self.mcp_tools, 'list_project_files') - DOESN'T EXIST
+        NEW: Use actual filesystem_list_directory tool
+        """
         try:
-            # Use MCP tools to analyze file structure
-            if hasattr(self.mcp_tools, 'list_project_files'):
-                return await self.mcp_tools.list_project_files(project_path)
-            return {"status": "mcp_tool_not_available"}
+            # Use actual filesystem tools
+            if hasattr(self, '_call_mcp_tool'):
+                return await self._call_mcp_tool(
+                    "filesystem_list_directory",
+                    {"path": project_path, "recursive": True}
+                )
+            return {"status": "mcp_tool_method_not_available"}
+            
         except Exception as e:
             self.logger.warning(f"[Refinement] File structure analysis failed: {e}")
             return {"error": str(e)}

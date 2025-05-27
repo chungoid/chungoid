@@ -19,6 +19,7 @@ import logging
 import datetime
 import uuid
 import json
+import time
 from typing import Any, Dict, Optional, List, ClassVar, Type
 from pathlib import Path
 
@@ -232,9 +233,34 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             )
 
     async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract analysis from intelligent project specifications using LLM processing."""
+        """
+        Enhanced with universal MCP tool access and intelligent selection.
+        
+        ENHANCED: Uses ALL 53+ MCP tools with intelligent selection for comprehensive code generation analysis.
+        """
         
         try:
+            # First try enhanced discovery with universal MCP tools
+            if hasattr(self, '_enhanced_discovery_with_universal_tools'):
+                self.logger.info("[MCP] Using enhanced discovery with universal MCP tool access")
+                enhanced_analysis = await self._enhanced_discovery_with_universal_tools(
+                    {"project_specifications": project_specs, "user_goal": user_goal}, 
+                    {"project_specs": project_specs, "user_goal": user_goal}
+                )
+                
+                if enhanced_analysis.get("universal_tool_access"):
+                    # Convert MCP analysis to code generation analysis format
+                    return await self._convert_mcp_analysis_to_code_generation_analysis(
+                        enhanced_analysis.get("project_analysis", {}),
+                        enhanced_analysis.get("content_analysis", {}), 
+                        enhanced_analysis.get("intelligence_analysis", {}),
+                        enhanced_analysis.get("historical_context", {}),
+                        enhanced_analysis.get("environment_info", {}),
+                        project_specs,
+                        user_goal
+                    )
+            
+            # Fallback to LLM-based analysis if MCP tools unavailable
             if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and plan code generation strategy
                 prompt = f"""
@@ -312,6 +338,334 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         except Exception as e:
             self.logger.error(f"Error in intelligent specs analysis: {e}")
             return self._generate_fallback_code_analysis(project_specs, user_goal)
+
+    async def _convert_mcp_analysis_to_code_generation_analysis(
+        self, 
+        project_analysis: Dict[str, Any], 
+        content_analysis: Dict[str, Any], 
+        intelligence_analysis: Dict[str, Any],
+        historical_context: Dict[str, Any],
+        environment_info: Dict[str, Any],
+        project_specs: Dict[str, Any],
+        user_goal: str
+    ) -> Dict[str, Any]:
+        """Convert MCP tool analysis results to code generation analysis format."""
+        
+        try:
+            # Extract project information from MCP analysis
+            project_type = project_specs.get("project_type", "cli_tool")
+            primary_language = project_specs.get("primary_language", "python")
+            target_languages = project_specs.get("target_languages", [primary_language])
+            technologies = project_specs.get("technologies", [])
+            required_dependencies = project_specs.get("required_dependencies", [])
+            optional_dependencies = project_specs.get("optional_dependencies", [])
+            
+            # Enhance with project analysis data
+            if project_analysis.get("success") and project_analysis.get("result"):
+                project_data = project_analysis["result"]
+                if isinstance(project_data, dict):
+                    # Extract additional project information
+                    if "files" in project_data:
+                        existing_files = project_data["files"]
+                        # Infer additional languages from existing files
+                        for file_info in existing_files:
+                            if isinstance(file_info, dict) and "extension" in file_info:
+                                ext = file_info["extension"]
+                                if ext == ".py" and "python" not in target_languages:
+                                    target_languages.append("python")
+                                elif ext == ".js" and "javascript" not in target_languages:
+                                    target_languages.append("javascript")
+                                elif ext == ".ts" and "typescript" not in target_languages:
+                                    target_languages.append("typescript")
+            
+            # Generate code generation strategy based on analysis
+            code_generation_strategy = {
+                "approach": "intelligent_mcp_driven",
+                "file_structure": [],
+                "implementation_priorities": ["core functionality", "error handling", "documentation"],
+                "architectural_patterns": ["modular design"]
+            }
+            
+            # Determine file structure from content analysis
+            if content_analysis.get("success"):
+                content_data = content_analysis.get("result", {})
+                if isinstance(content_data, dict):
+                    # Analyze content structure for file planning
+                    content_str = str(content_data).lower()
+                    if "main" in content_str or "entry" in content_str:
+                        code_generation_strategy["file_structure"].append("main entry point")
+                    if "config" in content_str:
+                        code_generation_strategy["file_structure"].append("configuration files")
+                    if "test" in content_str:
+                        code_generation_strategy["file_structure"].append("test files")
+                    if "util" in content_str or "helper" in content_str:
+                        code_generation_strategy["file_structure"].append("utility modules")
+            
+            # Default file structure if none detected
+            if not code_generation_strategy["file_structure"]:
+                if project_type == "cli_tool":
+                    code_generation_strategy["file_structure"] = ["main CLI module", "core logic", "configuration", "documentation"]
+                elif project_type == "web_app":
+                    code_generation_strategy["file_structure"] = ["main application", "routes/handlers", "templates", "static files"]
+                elif project_type == "api":
+                    code_generation_strategy["file_structure"] = ["API endpoints", "data models", "middleware", "documentation"]
+                else:
+                    code_generation_strategy["file_structure"] = ["main module", "core functionality", "utilities", "documentation"]
+            
+            # Assess complexity based on multiple factors
+            complexity_factors = []
+            complexity_level = "low"
+            estimated_files = 3
+            estimated_lines = 200
+            
+            if len(technologies) > 3:
+                complexity_factors.append("multiple technologies")
+                complexity_level = "medium"
+                estimated_files += 2
+                estimated_lines += 150
+            
+            if len(required_dependencies) > 5:
+                complexity_factors.append("many dependencies")
+                complexity_level = "medium"
+                estimated_files += 1
+                estimated_lines += 100
+            
+            if len(target_languages) > 1:
+                complexity_factors.append("multi-language project")
+                complexity_level = "high"
+                estimated_files += 3
+                estimated_lines += 200
+            
+            # Enhance complexity assessment with intelligence analysis
+            if intelligence_analysis.get("success"):
+                intel_data = intelligence_analysis.get("result", {})
+                if isinstance(intel_data, dict):
+                    intel_str = str(intel_data).lower()
+                    if "complex" in intel_str or "advanced" in intel_str:
+                        complexity_factors.append("intelligence-detected complexity")
+                        complexity_level = "high"
+                        estimated_files += 2
+                        estimated_lines += 150
+            
+            complexity_assessment = {
+                "level": complexity_level,
+                "factors": complexity_factors,
+                "estimated_files": estimated_files,
+                "estimated_lines": estimated_lines
+            }
+            
+            # Determine quality requirements
+            quality_requirements = {
+                "testing_strategy": "comprehensive" if complexity_level == "high" else "standard",
+                "documentation_level": "detailed" if complexity_level == "high" else "standard",
+                "code_standards": []
+            }
+            
+            # Add language-specific standards
+            if "python" in target_languages:
+                quality_requirements["code_standards"].append("PEP8")
+            if "javascript" in target_languages or "typescript" in target_languages:
+                quality_requirements["code_standards"].append("ESLint")
+            if "java" in target_languages:
+                quality_requirements["code_standards"].append("Google Java Style")
+            
+            # Extract implementation considerations from environment analysis
+            implementation_considerations = ["dependency management", "error handling"]
+            if environment_info.get("success"):
+                env_data = environment_info.get("result", {})
+                if isinstance(env_data, dict):
+                    env_str = str(env_data).lower()
+                    if "virtual" in env_str or "venv" in env_str:
+                        implementation_considerations.append("virtual environment setup")
+                    if "docker" in env_str:
+                        implementation_considerations.append("containerization")
+                    if "git" in env_str:
+                        implementation_considerations.append("version control integration")
+            
+            # Identify potential challenges from historical context
+            potential_challenges = ["integration complexity", "performance optimization"]
+            if historical_context.get("success"):
+                hist_data = historical_context.get("result", {})
+                if isinstance(hist_data, dict) and "documents" in hist_data:
+                    hist_text = str(hist_data).lower()
+                    if "error" in hist_text or "fail" in hist_text:
+                        potential_challenges.append("error handling based on historical patterns")
+                    if "performance" in hist_text:
+                        potential_challenges.append("performance optimization based on history")
+                    if "dependency" in hist_text:
+                        potential_challenges.append("dependency management complexity")
+            
+            # Calculate confidence score based on available data
+            confidence_score = 0.7  # Base confidence
+            if project_analysis.get("success"):
+                confidence_score += 0.1
+            if content_analysis.get("success"):
+                confidence_score += 0.1
+            if intelligence_analysis.get("success"):
+                confidence_score += 0.1
+            confidence_score = min(confidence_score, 1.0)
+            
+            return {
+                "project_type": project_type,
+                "primary_language": primary_language,
+                "target_languages": target_languages,
+                "technologies": technologies,
+                "required_dependencies": required_dependencies,
+                "optional_dependencies": optional_dependencies,
+                "code_generation_strategy": code_generation_strategy,
+                "complexity_assessment": complexity_assessment,
+                "quality_requirements": quality_requirements,
+                "implementation_considerations": implementation_considerations,
+                "potential_challenges": potential_challenges,
+                "confidence_score": confidence_score,
+                "reasoning": f"Analysis based on MCP tool discovery and intelligent processing of {user_goal}",
+                "intelligent_analysis": True,
+                "project_specifications": project_specs,
+                "analysis_method": "mcp_enhanced_analysis",
+                "code_generation_needed": True,
+                "mcp_tool_analysis": {
+                    "project_analysis": project_analysis,
+                    "content_analysis": content_analysis,
+                    "intelligence_analysis": intelligence_analysis,
+                    "historical_context": historical_context,
+                    "environment_info": environment_info
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error converting MCP analysis to code generation analysis: {e}")
+            # Fallback to basic analysis
+            return self._generate_fallback_code_analysis(project_specs, user_goal)
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for SmartCodeGeneratorAgent_v1"""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use filesystem tools for project analysis
+        project_analysis = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_path = shared_context.get("project_path", inputs.get("project_path", "."))
+            project_analysis = await self._call_mcp_tool(
+                "filesystem_project_scan", 
+                {"path": project_path}
+            )
+        
+        # 4. Use intelligence tools for analysis
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": project_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for deeper analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": project_analysis["result"]}
+            )
+        
+        # 6. Use ChromaDB tools for historical context
+        historical_context = {}
+        if "chromadb_query_documents" in selected_tools:
+            historical_context = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"agent:{self.AGENT_ID} code_generation", "limit": 10}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for dynamic capabilities
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "code_generation"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "project_analysis": project_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "historical_context": historical_context,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection for SmartCodeGeneratorAgent_v1 - code generation focused"""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add code generation specific tools
+        code_generation_tools = [
+            "filesystem_read_file",
+            "filesystem_write_file",
+            "filesystem_list_directory",
+            "content_analyze_structure",
+            "content_generate_dynamic",
+            "chromadb_store_document",
+            "filesystem_template_expansion"
+        ]
+        core_tools.extend(code_generation_tools)
+        
+        # Add systematic implementation tools
+        implementation_tools = [
+            "filesystem_copy_file",
+            "filesystem_create_directory",
+            "filesystem_batch_operations",
+            "terminal_execute_command",
+            "content_version_control"
+        ]
+        core_tools.extend(implementation_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations",
+            "analyze_historical_patterns"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     def _generate_fallback_code_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
         """Generate fallback code analysis when LLM is unavailable."""

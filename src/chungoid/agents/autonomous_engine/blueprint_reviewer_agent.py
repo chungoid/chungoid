@@ -352,6 +352,96 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         """Phase 1: Discovery - Discover and retrieve blueprint using MCP tools."""
         self.logger.info("Starting blueprint discovery for review")
         
+        # ENHANCED: Use universal MCP tool access for intelligent blueprint discovery
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent blueprint discovery")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use ChromaDB tools for enhanced blueprint retrieval
+                blueprint_result = {}
+                if "chromadb_query_documents" in all_tools:
+                    self.logger.info("[MCP] Using ChromaDB for enhanced blueprint retrieval")
+                    blueprint_result = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {
+                            "query": f"document_id:{task_input.blueprint_doc_id} project_id:{task_input.project_id}",
+                            "collection": BLUEPRINT_ARTIFACTS_COLLECTION,
+                            "limit": 1
+                        }
+                    )
+                
+                # Use content tools for blueprint analysis
+                content_analysis = {}
+                if "content_analyze_structure" in all_tools and blueprint_result.get("success"):
+                    self.logger.info("[MCP] Using content analysis for blueprint structure analysis")
+                    content_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": blueprint_result["result"]}
+                    )
+                
+                # Use intelligence tools for review strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for review strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "blueprint_data": blueprint_result,
+                                "content_analysis": content_analysis,
+                                "project_id": task_input.project_id
+                            }, 
+                            "domain": "blueprint_review"
+                        }
+                    )
+                
+                # Use filesystem tools for project context
+                project_context = {}
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for project context")
+                    project_context = await self._call_mcp_tool(
+                        "filesystem_project_scan",
+                        {"path": f"./projects/{task_input.project_id}"}
+                    )
+                
+                # Retrieve previous reviews with enhanced context
+                previous_reviews = []
+                if task_input.previous_review_doc_ids and "chromadb_query_documents" in all_tools:
+                    self.logger.info("[MCP] Using ChromaDB for previous review retrieval")
+                    for review_id in task_input.previous_review_doc_ids:
+                        review_result = await self._call_mcp_tool(
+                            "chromadb_query_documents",
+                            {
+                                "query": f"document_id:{review_id} project_id:{task_input.project_id}",
+                                "collection": REVIEW_REPORTS_COLLECTION,
+                                "limit": 1
+                            }
+                        )
+                        if review_result.get("success"):
+                            previous_reviews.append(review_result)
+                
+                # Combine MCP tool results for enhanced blueprint discovery
+                if any([blueprint_result.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Successfully enhanced blueprint discovery with MCP tools")
+                    return {
+                        "blueprint_retrieved": True,
+                        "blueprint": blueprint_result,
+                        "previous_reviews": previous_reviews,
+                        "blueprint_content": blueprint_result.get("result", ""),
+                        "discovery_success": True,
+                        "enhanced_analysis": {
+                            "content_analysis": content_analysis,
+                            "intelligence_analysis": intelligence_analysis,
+                            "project_context": project_context
+                        },
+                        "mcp_enhanced": True
+                    }
+        
         try:
             # Retrieve blueprint artifact using MCP tools
             blueprint_result = await migrate_retrieve_artifact(
@@ -392,8 +482,123 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 "blueprint_retrieved": False,
                 "error": str(e),
                 "blueprint": None,
+                "previous_reviews": [],
                 "discovery_success": False
             }
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: BlueprintReviewerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for BlueprintReviewerAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use ChromaDB tools for blueprint retrieval and historical review patterns
+        blueprint_analysis = {}
+        if "chromadb_query_documents" in selected_tools:
+            blueprint_analysis = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"project_id:{inputs.project_id} blueprint_review", "limit": 10}
+            )
+        
+        # 4. Use intelligence tools for review strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": blueprint_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for blueprint structure analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and blueprint_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": blueprint_analysis["result"]}
+            )
+        
+        # 6. Use filesystem tools for project structure analysis
+        project_structure = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_structure = await self._call_mcp_tool(
+                "filesystem_project_scan",
+                {"path": shared_context.get("project_root_path", ".")}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for review recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "blueprint_review"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "blueprint_analysis": blueprint_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "project_structure": project_structure,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add blueprint review-specific tools
+        review_tools = [
+            "content_analyze_structure",
+            "chromadb_query_collection",
+            "get_tool_composition_recommendations"
+        ]
+        core_tools.extend(review_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     async def _analyze_blueprint(self, discovery_result: Dict[str, Any], task_input: BlueprintReviewerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Analysis - Analyze blueprint content for review."""

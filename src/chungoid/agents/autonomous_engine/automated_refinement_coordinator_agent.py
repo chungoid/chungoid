@@ -606,6 +606,107 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         """Phase 1: Assessment - Assess artifact and gather context."""
         self.logger.info(f"Starting artifact assessment for {task_input.artifact_type}")
         
+        # ENHANCED: Use universal MCP tool access for intelligent artifact assessment
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent artifact assessment")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use ChromaDB tools for enhanced artifact retrieval
+                artifact_result = {}
+                if "chromadb_query_documents" in all_tools and task_input.artifact_doc_id:
+                    self.logger.info("[MCP] Using ChromaDB for enhanced artifact retrieval")
+                    artifact_result = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {
+                            "query": f"document_id:{task_input.artifact_doc_id} project_id:{task_input.project_id}",
+                            "limit": 1
+                        }
+                    )
+                
+                # Use content tools for artifact analysis
+                content_analysis = {}
+                if "content_analyze_structure" in all_tools and artifact_result.get("success"):
+                    self.logger.info("[MCP] Using content analysis for artifact structure analysis")
+                    content_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": artifact_result["result"]}
+                    )
+                
+                # Use intelligence tools for coordination strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for coordination strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "artifact_data": artifact_result,
+                                "content_analysis": content_analysis,
+                                "artifact_type": task_input.artifact_type,
+                                "project_id": task_input.project_id
+                            }, 
+                            "domain": "refinement_coordination"
+                        }
+                    )
+                
+                # Use filesystem tools for project context
+                project_context = {}
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for project context")
+                    project_context = await self._call_mcp_tool(
+                        "filesystem_project_scan",
+                        {"path": f"./projects/{task_input.project_id}"}
+                    )
+                
+                # Use terminal tools for environment validation
+                environment_info = {}
+                if "terminal_get_environment" in all_tools:
+                    self.logger.info("[MCP] Using terminal tools for environment validation")
+                    environment_info = await self._call_mcp_tool(
+                        "terminal_get_environment",
+                        {}
+                    )
+                
+                # Combine MCP tool results for enhanced artifact assessment
+                if any([artifact_result.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Successfully enhanced artifact assessment with MCP tools")
+                    
+                    # Calculate enhanced artifact score
+                    artifact_score = 0.7  # Default score
+                    if task_input.artifact_type == "CodeModule_TestFailure":
+                        artifact_score = 0.3  # Low score for failed tests
+                    elif task_input.generator_agent_confidence:
+                        artifact_score = task_input.generator_agent_confidence.value
+                    
+                    # Boost score based on MCP analysis
+                    if intelligence_analysis.get("success"):
+                        artifact_score = min(0.95, artifact_score + 0.1)
+                    if content_analysis.get("success"):
+                        artifact_score = min(0.95, artifact_score + 0.05)
+                    
+                    return {
+                        "artifact_type": task_input.artifact_type,
+                        "artifact_id": task_input.artifact_doc_id,
+                        "generator_confidence": artifact_score,
+                        "has_risk_reports": bool(task_input.praa_risk_report_doc_id),
+                        "has_optimization_reports": bool(task_input.praa_optimization_report_doc_id),
+                        "has_traceability_reports": bool(task_input.rta_report_doc_id),
+                        "assessment_timestamp": datetime.datetime.now().isoformat(),
+                        "enhanced_analysis": {
+                            "artifact_result": artifact_result,
+                            "content_analysis": content_analysis,
+                            "intelligence_analysis": intelligence_analysis,
+                            "project_context": project_context,
+                            "environment_info": environment_info
+                        },
+                        "mcp_enhanced": True
+                    }
+        
         # Assess artifact based on type
         artifact_score = 0.7  # Default score
         
@@ -768,4 +869,126 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
         return ARCAReviewInput
 
     def get_output_schema(self) -> Type[ARCAOutput]:
-        return ARCAOutput 
+        return ARCAOutput
+
+    async def _get_all_available_mcp_tools(self) -> Dict[str, Any]:
+        # Implementation of _get_all_available_mcp_tools method
+        pass
+
+    async def _call_mcp_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+        # Implementation of _call_mcp_tool method
+        pass
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for AutomatedRefinementCoordinatorAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use ChromaDB tools for artifact retrieval and historical coordination patterns
+        artifact_analysis = {}
+        if "chromadb_query_documents" in selected_tools:
+            artifact_analysis = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"project_id:{inputs.project_id} refinement_coordination", "limit": 10}
+            )
+        
+        # 4. Use intelligence tools for coordination strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": artifact_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for artifact structure analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and artifact_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": artifact_analysis["result"]}
+            )
+        
+        # 6. Use filesystem tools for project structure analysis
+        project_structure = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_structure = await self._call_mcp_tool(
+                "filesystem_project_scan",
+                {"path": shared_context.get("project_root_path", ".")}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for coordination recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "refinement_coordination"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "artifact_analysis": artifact_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "project_structure": project_structure,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add coordination-specific tools
+        coordination_tools = [
+            "content_analyze_structure",
+            "chromadb_query_collection",
+            "get_tool_composition_recommendations"
+        ]
+        core_tools.extend(coordination_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected 

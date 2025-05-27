@@ -363,9 +363,34 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         return final_loprd
 
     async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract goal analysis from intelligent project specifications using LLM processing."""
+        """
+        Enhanced with universal MCP tool access and intelligent selection.
+        
+        ENHANCED: Uses ALL 53+ MCP tools with intelligent selection for comprehensive product analysis.
+        """
         
         try:
+            # First try enhanced discovery with universal MCP tools
+            if hasattr(self, '_enhanced_discovery_with_universal_tools'):
+                self.logger.info("[MCP] Using enhanced discovery with universal MCP tool access")
+                enhanced_analysis = await self._enhanced_discovery_with_universal_tools(
+                    {"project_specifications": project_specs, "user_goal": user_goal}, 
+                    {"project_specs": project_specs, "user_goal": user_goal}
+                )
+                
+                if enhanced_analysis.get("universal_tool_access"):
+                    # Convert MCP analysis to product analysis format
+                    return await self._convert_mcp_analysis_to_product_analysis(
+                        enhanced_analysis.get("project_analysis", {}),
+                        enhanced_analysis.get("content_analysis", {}), 
+                        enhanced_analysis.get("intelligence_analysis", {}),
+                        enhanced_analysis.get("historical_context", {}),
+                        enhanced_analysis.get("environment_info", {}),
+                        project_specs,
+                        user_goal
+                    )
+            
+            # Fallback to LLM-based analysis if MCP tools unavailable
             if self._llm_provider:
                 # Use LLM to intelligently analyze the project specifications and user goal
                 prompt = f"""
@@ -432,7 +457,300 @@ class ProductAnalystAgent_v1(UnifiedAgent):
         except Exception as e:
             self.logger.error(f"Error in intelligent specs analysis: {e}")
             return self._generate_fallback_intelligent_analysis(project_specs, user_goal)
-    
+
+    async def _convert_mcp_analysis_to_product_analysis(
+        self, 
+        project_analysis: Dict[str, Any], 
+        content_analysis: Dict[str, Any], 
+        intelligence_analysis: Dict[str, Any],
+        historical_context: Dict[str, Any],
+        environment_info: Dict[str, Any],
+        project_specs: Dict[str, Any],
+        user_goal: str
+    ) -> Dict[str, Any]:
+        """Convert MCP tool analysis results to product analysis format."""
+        
+        try:
+            # Extract core objectives from project analysis
+            core_objectives = []
+            if project_analysis.get("success") and project_analysis.get("result"):
+                project_data = project_analysis["result"]
+                if isinstance(project_data, dict):
+                    # Extract from project structure
+                    if "project_type" in project_data:
+                        core_objectives.append(f"Build a {project_data['project_type']} application")
+                    if "technologies" in project_data:
+                        core_objectives.append(f"Implement using {', '.join(project_data['technologies'][:3])}")
+            
+            # Add objectives from user goal
+            if user_goal:
+                core_objectives.append(f"Achieve user goal: {user_goal}")
+            
+            # Extract stakeholders from content analysis
+            key_stakeholders = ["End users", "Development team"]
+            if content_analysis.get("success"):
+                content_data = content_analysis.get("result", {})
+                if isinstance(content_data, dict):
+                    # Infer stakeholders from content structure
+                    if "documentation" in str(content_data).lower():
+                        key_stakeholders.append("Documentation users")
+                    if "api" in str(content_data).lower():
+                        key_stakeholders.append("API consumers")
+                    if "cli" in str(content_data).lower():
+                        key_stakeholders.append("Command-line users")
+            
+            # Extract success criteria from intelligence analysis
+            success_criteria = ["Application meets functional requirements"]
+            if intelligence_analysis.get("success"):
+                intel_data = intelligence_analysis.get("result", {})
+                if isinstance(intel_data, dict):
+                    # Extract performance criteria from intelligence
+                    if "performance" in intel_data:
+                        success_criteria.append("Performance targets are met")
+                    if "quality" in intel_data:
+                        success_criteria.append("Quality standards are achieved")
+            
+            # Add criteria from project specifications
+            if project_specs.get("target_platforms"):
+                platforms = project_specs["target_platforms"]
+                success_criteria.append(f"Application runs on {', '.join(platforms)}")
+            
+            # Extract challenges from historical context
+            potential_challenges = ["Performance optimization", "Error handling and edge cases"]
+            if historical_context.get("success"):
+                hist_data = historical_context.get("result", {})
+                if isinstance(hist_data, dict) and "documents" in hist_data:
+                    # Analyze historical patterns for challenges
+                    hist_text = str(hist_data).lower()
+                    if "error" in hist_text or "fail" in hist_text:
+                        potential_challenges.append("Error handling based on historical patterns")
+                    if "performance" in hist_text:
+                        potential_challenges.append("Performance optimization based on history")
+            
+            # Add challenges from project complexity
+            if len(project_specs.get("technologies", [])) > 5:
+                potential_challenges.append("Complex technology stack integration")
+            if len(project_specs.get("target_platforms", [])) > 2:
+                potential_challenges.append("Multi-platform compatibility")
+            
+            # Extract functional requirements from environment analysis
+            functional_requirements = []
+            if environment_info.get("success"):
+                env_data = environment_info.get("result", {})
+                if isinstance(env_data, dict):
+                    # Extract requirements from environment
+                    if "python" in str(env_data).lower():
+                        functional_requirements.append("Python runtime compatibility")
+                    if "node" in str(env_data).lower():
+                        functional_requirements.append("Node.js runtime compatibility")
+            
+            # Add requirements from project specifications
+            if project_specs.get("required_dependencies"):
+                functional_requirements.append("Integration with required dependencies")
+            if project_specs.get("project_type"):
+                functional_requirements.append(f"{project_specs['project_type']} specific functionality")
+            
+            # Generate non-functional requirements
+            non_functional_requirements = [
+                "Performance: Response time under acceptable limits",
+                "Security: Secure handling of user data",
+                "Usability: Intuitive user interface"
+            ]
+            
+            # Add environment-specific non-functional requirements
+            if environment_info.get("success"):
+                non_functional_requirements.append("Compatibility: Works in detected environment")
+            
+            # Generate user personas based on project type
+            user_personas = ["Primary users"]
+            project_type = project_specs.get("project_type", "")
+            if "cli" in project_type.lower():
+                user_personas.extend(["Command-line users", "System administrators"])
+            elif "web" in project_type.lower():
+                user_personas.extend(["Web users", "Browser users"])
+            elif "api" in project_type.lower():
+                user_personas.extend(["API consumers", "Integration developers"])
+            else:
+                user_personas.append("Application users")
+            
+            # Determine business value
+            business_value = f"Delivers {user_goal} through {project_specs.get('project_type', 'application')} implementation"
+            
+            # Assess technical complexity
+            complexity_factors = 0
+            if len(project_specs.get("technologies", [])) > 3:
+                complexity_factors += 1
+            if len(project_specs.get("target_platforms", [])) > 1:
+                complexity_factors += 1
+            if len(project_specs.get("required_dependencies", [])) > 5:
+                complexity_factors += 1
+            
+            technical_complexity = "low" if complexity_factors == 0 else "medium" if complexity_factors <= 2 else "high"
+            
+            # Estimate effort based on complexity and scope
+            effort_factors = complexity_factors
+            if len(functional_requirements) > 5:
+                effort_factors += 1
+            if len(potential_challenges) > 3:
+                effort_factors += 1
+            
+            estimated_effort = "small" if effort_factors <= 1 else "medium" if effort_factors <= 3 else "large"
+            
+            return {
+                "core_objectives": core_objectives,
+                "key_stakeholders": key_stakeholders,
+                "success_criteria": success_criteria,
+                "potential_challenges": potential_challenges,
+                "functional_requirements": functional_requirements,
+                "non_functional_requirements": non_functional_requirements,
+                "user_personas": user_personas,
+                "business_value": business_value,
+                "technical_complexity": technical_complexity,
+                "estimated_effort": estimated_effort,
+                "intelligent_analysis": True,
+                "project_specifications": project_specs,
+                "analysis_method": "mcp_enhanced_analysis",
+                "mcp_tool_analysis": {
+                    "project_analysis": project_analysis,
+                    "content_analysis": content_analysis,
+                    "intelligence_analysis": intelligence_analysis,
+                    "historical_context": historical_context,
+                    "environment_info": environment_info
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error converting MCP analysis to product analysis: {e}")
+            # Fallback to basic analysis
+            return self._generate_fallback_intelligent_analysis(project_specs, user_goal)
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for ProductAnalystAgent_v1"""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use filesystem tools for project analysis
+        project_analysis = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_path = shared_context.get("project_path", inputs.get("project_path", "."))
+            project_analysis = await self._call_mcp_tool(
+                "filesystem_project_scan", 
+                {"path": project_path}
+            )
+        
+        # 4. Use intelligence tools for analysis
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": project_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for deeper analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": project_analysis["result"]}
+            )
+        
+        # 6. Use ChromaDB tools for historical context
+        historical_context = {}
+        if "chromadb_query_documents" in selected_tools:
+            historical_context = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"agent:{self.AGENT_ID} product_analysis", "limit": 10}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for dynamic capabilities
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "product_analysis"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "project_analysis": project_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "historical_context": historical_context,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection for ProductAnalystAgent_v1 - product analysis focused"""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add product analysis specific tools
+        product_analysis_tools = [
+            "content_analyze_structure",
+            "content_extract_text",
+            "chromadb_reflection_query",
+            "adaptive_learning_analyze",
+            "analyze_historical_patterns",
+            "get_real_time_performance_analysis"
+        ]
+        core_tools.extend(product_analysis_tools)
+        
+        # Add requirements analysis tools
+        requirements_tools = [
+            "filesystem_read_file",
+            "content_generate_dynamic",
+            "chromadb_store_document",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(requirements_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
+
     def _generate_fallback_intelligent_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
         """Generate fallback analysis when LLM is unavailable."""
         

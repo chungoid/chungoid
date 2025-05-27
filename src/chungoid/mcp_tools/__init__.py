@@ -26,19 +26,25 @@ from .tool_manifest import (
 
 # Phase 2: Adaptive Learning & Advanced Re-planning
 try:
-    from chungoid.utils.adaptive_learning_system import (
+    from chungoid.intelligence.adaptive_learning_system import (
         adaptive_learning_analyze,
         create_strategy_experiment,
         apply_learning_recommendations,
     )
-    from chungoid.utils.advanced_replanning_intelligence import (
+    from chungoid.intelligence.advanced_replanning_intelligence import (
         create_intelligent_recovery_plan,
         predict_potential_failures,
         analyze_historical_patterns,
     )
+    from chungoid.runtime.performance_optimizer import (
+        get_real_time_performance_analysis,
+        optimize_agent_resolution_mcp,
+        generate_performance_recommendations,
+    )
+    INTELLIGENCE_FUNCTIONS_AVAILABLE = True
 except ImportError:
     # Graceful degradation if dependencies not available
-    pass
+    INTELLIGENCE_FUNCTIONS_AVAILABLE = False
 
 def get_mcp_tools_registry():
     """
@@ -100,7 +106,69 @@ def get_mcp_tools_registry():
             "initialized": True
         }
         
-        logger.info("Initialized basic MCP tools registry for refinement capabilities")
+        # Add intelligence tools if available
+        if INTELLIGENCE_FUNCTIONS_AVAILABLE:
+            registry["intelligence"] = [
+                {
+                    "name": "adaptive_learning_analyze",
+                    "description": "Analyze execution patterns and generate learning insights",
+                    "category": "intelligence",
+                    "function": adaptive_learning_analyze
+                },
+                {
+                    "name": "create_strategy_experiment",
+                    "description": "Create A/B testing experiments for strategy optimization",
+                    "category": "intelligence", 
+                    "function": create_strategy_experiment
+                },
+                {
+                    "name": "apply_learning_recommendations",
+                    "description": "Apply learning recommendations from pattern analysis",
+                    "category": "intelligence",
+                    "function": apply_learning_recommendations
+                },
+                {
+                    "name": "create_intelligent_recovery_plan",
+                    "description": "Create comprehensive recovery plans for failures",
+                    "category": "intelligence",
+                    "function": create_intelligent_recovery_plan
+                },
+                {
+                    "name": "predict_potential_failures", 
+                    "description": "Predict potential failures based on current context",
+                    "category": "intelligence",
+                    "function": predict_potential_failures
+                },
+                {
+                    "name": "analyze_historical_patterns",
+                    "description": "Analyze historical patterns for planning insights",
+                    "category": "intelligence",
+                    "function": analyze_historical_patterns
+                },
+                {
+                    "name": "get_real_time_performance_analysis",
+                    "description": "Get real-time performance metrics and analysis",
+                    "category": "intelligence",
+                    "function": get_real_time_performance_analysis
+                },
+                {
+                    "name": "optimize_agent_resolution",
+                    "description": "Optimize agent resolution with performance monitoring",
+                    "category": "intelligence",
+                    "function": optimize_agent_resolution_mcp
+                },
+                {
+                    "name": "generate_performance_recommendations",
+                    "description": "Generate performance optimization recommendations",
+                    "category": "intelligence",
+                    "function": generate_performance_recommendations
+                }
+            ]
+            logger.info("Intelligence tools registered in MCP registry")
+        else:
+            logger.warning("Intelligence functions not available - skipping intelligence tools registration")
+        
+        logger.info("Initialized MCP tools registry for refinement capabilities with intelligence integration")
         return registry
         
     except Exception as e:
@@ -112,6 +180,7 @@ def get_mcp_tools_registry():
             "terminal": [],
             "project": [],
             "analysis": [],
+            "intelligence": [],
             "available": False,
             "error": str(e)
         }

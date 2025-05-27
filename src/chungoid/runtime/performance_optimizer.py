@@ -604,4 +604,191 @@ def get_performance_report() -> Dict[str, Any]:
     """Get current performance optimization report."""
     if _global_optimizer:
         return _global_optimizer.get_comprehensive_performance_report()
-    return {"status": "Performance optimizer not initialized"} 
+    return {"status": "Performance optimizer not initialized"}
+
+
+# ============================================================================
+# MCP Tool Functions
+# ============================================================================
+
+async def get_real_time_performance_analysis() -> Dict[str, Any]:
+    """
+    MCP tool function for getting real-time performance analysis.
+    
+    Returns:
+        Dictionary containing current performance metrics and analysis
+    """
+    try:
+        optimizer = await get_performance_optimizer()
+        
+        # Get comprehensive performance report
+        report = optimizer.get_comprehensive_performance_report()
+        
+        # Get current metrics snapshot
+        current_metrics = optimizer.monitor.get_current_metrics()
+        
+        # Add real-time analysis
+        analysis = {
+            'current_metrics': {
+                'resolution_time_avg': current_metrics.resolution_time_avg,
+                'execution_time_avg': current_metrics.execution_time_avg,
+                'memory_usage_mb': current_metrics.memory_usage_mb,
+                'cpu_usage_percent': current_metrics.cpu_usage_percent,
+                'cache_hit_rate': current_metrics.resolution_cache_hit_rate
+            },
+            'performance_report': report,
+            'health_status': 'good' if optimizer.monitor._check_all_thresholds(current_metrics) else 'warning',
+            'active_warnings': optimizer.monitor._get_current_warnings(current_metrics)
+        }
+        
+        return {
+            'success': True,
+            'analysis': analysis,
+            'summary': f"Performance analysis complete - {analysis['health_status']} health status"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting performance analysis: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e),
+            'analysis': None
+        }
+
+
+async def optimize_agent_resolution_mcp(
+    task_type: str,
+    required_capabilities: Optional[List[str]] = None,
+    prefer_autonomous: bool = True
+) -> Dict[str, Any]:
+    """
+    MCP tool function for optimized agent resolution.
+    
+    Args:
+        task_type: Type of task requiring agent resolution
+        required_capabilities: List of required capabilities
+        prefer_autonomous: Whether to prefer autonomous agents
+        
+    Returns:
+        Dictionary containing resolution result and optimization metrics
+    """
+    try:
+        if required_capabilities is None:
+            required_capabilities = []
+            
+        start_time = time.time()
+        optimizer = await get_performance_optimizer()
+        
+        # Perform optimized resolution
+        result = await optimizer.optimize_agent_resolution(
+            task_type, required_capabilities, prefer_autonomous
+        )
+        
+        resolution_time = time.time() - start_time
+        
+        return {
+            'success': True,
+            'resolved_agent': result,
+            'optimization_metrics': {
+                'resolution_time_seconds': resolution_time,
+                'cache_used': result is not None,  # Simplified cache detection
+                'task_type': task_type,
+                'capabilities_matched': len(required_capabilities)
+            },
+            'summary': f"Resolved to agent '{result}' in {resolution_time:.3f}s" if result else "No matching agent found"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in agent resolution optimization: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e),
+            'resolved_agent': None
+        }
+
+
+async def generate_performance_recommendations() -> Dict[str, Any]:
+    """
+    MCP tool function for generating performance optimization recommendations.
+    
+    Returns:
+        Dictionary containing performance recommendations and insights
+    """
+    try:
+        optimizer = await get_performance_optimizer()
+        
+        # Get current metrics and performance report
+        current_metrics = optimizer.monitor.get_current_metrics()
+        performance_report = optimizer.get_comprehensive_performance_report()
+        
+        recommendations = []
+        
+        # Memory recommendations
+        if current_metrics.memory_usage_mb > 500:
+            recommendations.append({
+                'category': 'memory',
+                'priority': 'high' if current_metrics.memory_usage_mb > 1000 else 'medium',
+                'issue': f"High memory usage: {current_metrics.memory_usage_mb:.1f}MB",
+                'recommendation': "Consider garbage collection or reducing cache sizes",
+                'impact': 'system_stability'
+            })
+        
+        # Resolution time recommendations
+        if current_metrics.resolution_time_avg > 0.2:
+            recommendations.append({
+                'category': 'resolution_performance',
+                'priority': 'medium',
+                'issue': f"Slow agent resolution: {current_metrics.resolution_time_avg:.3f}s average",
+                'recommendation': "Optimize capability mappings or increase cache size",
+                'impact': 'agent_efficiency'
+            })
+        
+        # Cache hit rate recommendations
+        if current_metrics.resolution_cache_hit_rate < 0.7:
+            recommendations.append({
+                'category': 'caching',
+                'priority': 'medium',
+                'issue': f"Low cache hit rate: {current_metrics.resolution_cache_hit_rate:.1%}",
+                'recommendation': "Review cache eviction policies or increase cache size",
+                'impact': 'system_performance'
+            })
+        
+        # CPU usage recommendations
+        if current_metrics.cpu_usage_percent > 80:
+            recommendations.append({
+                'category': 'cpu',
+                'priority': 'high',
+                'issue': f"High CPU usage: {current_metrics.cpu_usage_percent:.1f}%",
+                'recommendation': "Consider load balancing or reducing concurrent operations",
+                'impact': 'system_responsiveness'
+            })
+        
+        # Positive recommendations
+        if not recommendations:
+            recommendations.append({
+                'category': 'general',
+                'priority': 'info',
+                'issue': 'All performance metrics within acceptable ranges',
+                'recommendation': "Continue current optimization strategies",
+                'impact': 'maintenance'
+            })
+        
+        return {
+            'success': True,
+            'recommendations': recommendations,
+            'metrics_snapshot': {
+                'memory_mb': current_metrics.memory_usage_mb,
+                'resolution_time': current_metrics.resolution_time_avg,
+                'cache_hit_rate': current_metrics.resolution_cache_hit_rate,
+                'cpu_percent': current_metrics.cpu_usage_percent
+            },
+            'summary': f"Generated {len(recommendations)} performance recommendations"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating performance recommendations: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e),
+            'recommendations': []
+        } 

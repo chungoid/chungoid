@@ -312,6 +312,77 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
         """Phase 1: Discovery - Analyze project artifacts and codebase structure."""
         self.logger.info("Starting project artifact discovery")
         
+        # ENHANCED: Use universal MCP tool access for intelligent project artifact discovery
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent project artifact discovery")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use filesystem tools for comprehensive project analysis
+                project_analysis = {}
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for project analysis")
+                    project_path = inputs.get("generated_code_root_path", shared_context.get("project_root_path", "."))
+                    project_analysis = await self._call_mcp_tool(
+                        "filesystem_project_scan", 
+                        {"path": str(project_path)}
+                    )
+                
+                # Use content tools for project structure analysis
+                content_analysis = {}
+                if "content_analyze_structure" in all_tools and project_analysis.get("success"):
+                    self.logger.info("[MCP] Using content analysis for project structure analysis")
+                    content_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": project_analysis["result"]}
+                    )
+                
+                # Use intelligence tools for documentation strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for documentation strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "project_analysis": project_analysis,
+                                "content_analysis": content_analysis,
+                                "project_id": inputs.get("project_id")
+                            }, 
+                            "domain": "documentation_generation"
+                        }
+                    )
+                
+                # Use ChromaDB tools for artifact retrieval
+                artifact_retrieval = {}
+                if "chromadb_query_documents" in all_tools:
+                    self.logger.info("[MCP] Using ChromaDB for artifact retrieval")
+                    project_id = inputs.get("project_id", "unknown")
+                    artifact_retrieval = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {"query": f"project_id:{project_id}", "limit": 10}
+                    )
+                
+                # Use terminal tools for environment validation
+                environment_info = {}
+                if "terminal_get_environment" in all_tools:
+                    self.logger.info("[MCP] Using terminal tools for environment validation")
+                    environment_info = await self._call_mcp_tool(
+                        "terminal_get_environment",
+                        {}
+                    )
+                
+                # Convert MCP tool analysis to artifact discovery
+                if any([project_analysis.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Converting MCP tool analysis to artifact discovery")
+                    return await self._convert_mcp_analysis_to_artifact_discovery(
+                        project_analysis, content_analysis, intelligence_analysis, artifact_retrieval, environment_info, inputs
+                    )
+        
         # Extract document IDs from inputs
         refined_goal_id = inputs.get("refined_user_goal_doc_id")
         blueprint_id = inputs.get("project_blueprint_doc_id")
@@ -338,6 +409,217 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             artifacts["artifacts_found"].append("generated_codebase")
             
         return artifacts
+
+    async def _convert_mcp_analysis_to_artifact_discovery(
+        self, 
+        project_analysis: Dict[str, Any], 
+        content_analysis: Dict[str, Any], 
+        intelligence_analysis: Dict[str, Any],
+        artifact_retrieval: Dict[str, Any],
+        environment_info: Dict[str, Any],
+        inputs: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Convert MCP tool analysis results to artifact discovery."""
+        
+        try:
+            # Extract artifact information from MCP tool results
+            artifacts_found = []
+            
+            # Analyze project scan results
+            if project_analysis.get("success") and project_analysis.get("result"):
+                scan_result = project_analysis["result"]
+                if isinstance(scan_result, dict):
+                    # Check for different types of project artifacts
+                    if scan_result.get("readme_files"):
+                        artifacts_found.append("existing_readme")
+                    if scan_result.get("documentation_files"):
+                        artifacts_found.append("existing_documentation")
+                    if scan_result.get("code_files"):
+                        artifacts_found.append("generated_codebase")
+                    if scan_result.get("test_files"):
+                        artifacts_found.append("test_summary")
+                    if scan_result.get("dependency_files"):
+                        artifacts_found.append("dependency_info")
+            
+            # Analyze content analysis results
+            if content_analysis.get("success") and content_analysis.get("result"):
+                content_result = content_analysis["result"]
+                if isinstance(content_result, dict):
+                    # Extract documentation requirements from content structure
+                    if content_result.get("api_endpoints"):
+                        artifacts_found.append("api_documentation_needed")
+                    if content_result.get("modules"):
+                        artifacts_found.append("module_documentation_needed")
+            
+            # Analyze artifact retrieval results
+            if artifact_retrieval.get("success") and artifact_retrieval.get("result"):
+                retrieval_result = artifact_retrieval["result"]
+                if isinstance(retrieval_result, list):
+                    for artifact in retrieval_result:
+                        if isinstance(artifact, dict):
+                            artifact_type = artifact.get("metadata", {}).get("artifact_type", "")
+                            if "LOPRD" in artifact_type:
+                                artifacts_found.append("refined_user_goal")
+                            elif "Blueprint" in artifact_type:
+                                artifacts_found.append("project_blueprint")
+                            elif "ExecutionPlan" in artifact_type:
+                                artifacts_found.append("master_execution_plan")
+            
+            # Use intelligence analysis for documentation strategy
+            documentation_strategy = {}
+            if intelligence_analysis.get("success") and intelligence_analysis.get("result"):
+                intel_result = intelligence_analysis["result"]
+                if isinstance(intel_result, dict):
+                    documentation_strategy = intel_result.get("documentation_strategy", {})
+            
+            # Remove duplicates
+            unique_artifacts = list(set(artifacts_found))
+            
+            # Determine availability flags
+            artifacts = {
+                "refined_goal_available": "refined_user_goal" in unique_artifacts,
+                "blueprint_available": "project_blueprint" in unique_artifacts,
+                "execution_plan_available": "master_execution_plan" in unique_artifacts,
+                "codebase_available": "generated_codebase" in unique_artifacts,
+                "test_summary_available": "test_summary" in unique_artifacts,
+                "artifacts_found": unique_artifacts,
+                "documentation_strategy": documentation_strategy,
+                "mcp_enhanced": True,
+                "discovery_confidence": 0.95
+            }
+            
+            self.logger.info(f"[MCP] Discovered {len(unique_artifacts)} artifacts from MCP analysis")
+            return artifacts
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Failed to convert MCP analysis to artifact discovery: {e}")
+            # Fall back to basic discovery
+            return {
+                "refined_goal_available": False,
+                "blueprint_available": False,
+                "execution_plan_available": False,
+                "codebase_available": False,
+                "test_summary_available": False,
+                "artifacts_found": [],
+                "error": str(e)
+            }
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for ProjectDocumentationAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use filesystem tools for project analysis
+        project_analysis = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_path = inputs.get("generated_code_root_path", shared_context.get("project_root_path", "."))
+            project_analysis = await self._call_mcp_tool(
+                "filesystem_project_scan", 
+                {"path": str(project_path)}
+            )
+        
+        # 4. Use intelligence tools for documentation strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": project_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for project structure analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": project_analysis["result"]}
+            )
+        
+        # 6. Use ChromaDB tools for artifact retrieval
+        artifact_retrieval = {}
+        if "chromadb_query_documents" in selected_tools:
+            project_id = inputs.get("project_id", "unknown")
+            artifact_retrieval = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"project_id:{project_id} documentation", "limit": 10}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for documentation recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "documentation_generation"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "project_analysis": project_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "artifact_retrieval": artifact_retrieval,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add documentation-specific tools
+        documentation_tools = [
+            "content_analyze_structure",
+            "content_generate_dynamic",
+            "filesystem_read_file",
+            "filesystem_write_file"
+        ]
+        core_tools.extend(documentation_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     async def _analyze_project_structure(self, discovery_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Analysis - Understand project structure and requirements."""

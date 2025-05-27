@@ -322,6 +322,97 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
 
     async def _discover_artifact(self, inputs: ProactiveRiskAssessorInput) -> Dict[str, Any]:
         """Discover and retrieve artifact to be assessed."""
+        
+        # ENHANCED: Use universal MCP tool access for intelligent artifact discovery
+        if self.enable_refinement:
+            self._logger.info("[MCP] Using universal MCP tool access for intelligent artifact discovery")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use ChromaDB tools for enhanced artifact retrieval
+                artifact_result = {}
+                if "chromadb_query_documents" in all_tools:
+                    self._logger.info("[MCP] Using ChromaDB for enhanced artifact retrieval")
+                    
+                    collection_mapping = {
+                        "LOPRD": self.LOPRD_ARTIFACTS_COLLECTION,
+                        "Blueprint": self.BLUEPRINT_ARTIFACTS_COLLECTION,
+                        "MasterExecutionPlan": self.EXECUTION_PLANS_COLLECTION,
+                    }
+                    collection = collection_mapping.get(inputs.artifact_type, self.LOPRD_ARTIFACTS_COLLECTION)
+                    
+                    artifact_result = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {
+                            "query": f"document_id:{inputs.artifact_id} project_id:{inputs.project_id}",
+                            "collection": collection,
+                            "limit": 1
+                        }
+                    )
+                
+                # Use content tools for artifact analysis
+                content_analysis = {}
+                if "content_analyze_structure" in all_tools and artifact_result.get("success"):
+                    self._logger.info("[MCP] Using content analysis for artifact structure analysis")
+                    content_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": artifact_result["result"]}
+                    )
+                
+                # Use intelligence tools for risk assessment strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self._logger.info("[MCP] Using adaptive_learning_analyze for risk assessment strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "artifact_data": artifact_result,
+                                "content_analysis": content_analysis,
+                                "artifact_type": inputs.artifact_type,
+                                "project_id": inputs.project_id
+                            }, 
+                            "domain": "risk_assessment"
+                        }
+                    )
+                
+                # Use filesystem tools for project context
+                project_context = {}
+                if "filesystem_project_scan" in all_tools:
+                    self._logger.info("[MCP] Using filesystem_project_scan for project context")
+                    project_context = await self._call_mcp_tool(
+                        "filesystem_project_scan",
+                        {"path": f"./projects/{inputs.project_id}"}
+                    )
+                
+                # Use terminal tools for environment validation
+                environment_info = {}
+                if "terminal_get_environment" in all_tools:
+                    self._logger.info("[MCP] Using terminal tools for environment validation")
+                    environment_info = await self._call_mcp_tool(
+                        "terminal_get_environment",
+                        {}
+                    )
+                
+                # Combine MCP tool results for enhanced artifact discovery
+                if any([artifact_result.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self._logger.info("[MCP] Successfully enhanced artifact discovery with MCP tools")
+                    return {
+                        "status": "SUCCESS",
+                        "artifact": artifact_result.get("result", {}),
+                        "enhanced_analysis": {
+                            "content_analysis": content_analysis,
+                            "intelligence_analysis": intelligence_analysis,
+                            "project_context": project_context,
+                            "environment_info": environment_info
+                        },
+                        "mcp_enhanced": True
+                    }
+        
         collection_mapping = {
             "LOPRD": self.LOPRD_ARTIFACTS_COLLECTION,
             "Blueprint": self.BLUEPRINT_ARTIFACTS_COLLECTION,
@@ -345,7 +436,121 @@ class ProactiveRiskAssessorAgent_v1(UnifiedAgent):
         except Exception as e:
             self._logger.error(f"Artifact discovery failed: {e}")
             raise
-    
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: ProactiveRiskAssessorInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for ProactiveRiskAssessorAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self._logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use ChromaDB tools for artifact retrieval and historical risk patterns
+        artifact_analysis = {}
+        if "chromadb_query_documents" in selected_tools:
+            artifact_analysis = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"project_id:{inputs.project_id} risk_assessment", "limit": 10}
+            )
+        
+        # 4. Use intelligence tools for risk assessment strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": artifact_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for artifact structure analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and artifact_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": artifact_analysis["result"]}
+            )
+        
+        # 6. Use filesystem tools for project structure analysis
+        project_structure = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_structure = await self._call_mcp_tool(
+                "filesystem_project_scan",
+                {"path": shared_context.get("project_root_path", ".")}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for risk assessment recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "risk_assessment"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "artifact_analysis": artifact_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "project_structure": project_structure,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add risk assessment-specific tools
+        risk_tools = [
+            "content_analyze_structure",
+            "predict_potential_failures",
+            "analyze_historical_patterns"
+        ]
+        core_tools.extend(risk_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self._logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
+
     async def _analyze_risks(self, artifact: Dict[str, Any], inputs: ProactiveRiskAssessorInput) -> Dict[str, Any]:
         """Analyze risks in the artifact."""
         # This is a simplified implementation - in a real scenario this would use LLM

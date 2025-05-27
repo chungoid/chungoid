@@ -1251,6 +1251,66 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
         """Detect what environments are needed for the project."""
         requirements = []
         
+        # ENHANCED: Use universal MCP tool access for intelligent environment detection
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent environment detection")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use filesystem tools for comprehensive project analysis
+                project_analysis = {}
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for comprehensive project analysis")
+                    project_analysis = await self._call_mcp_tool(
+                        "filesystem_project_scan", 
+                        {"path": str(project_path)}
+                    )
+                
+                # Use content tools for deeper analysis
+                structure_analysis = {}
+                if "content_analyze_structure" in all_tools and project_analysis.get("success"):
+                    self.logger.info("[MCP] Using content analysis for project structure analysis")
+                    structure_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": project_analysis["result"]}
+                    )
+                
+                # Use intelligence tools for environment strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for environment strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "project_analysis": project_analysis,
+                                "structure_analysis": structure_analysis,
+                                "user_goal": inputs.user_goal
+                            }, 
+                            "domain": "environment_bootstrap"
+                        }
+                    )
+                
+                # Use ChromaDB tools for historical context
+                historical_context = {}
+                if "chromadb_query_documents" in all_tools:
+                    self.logger.info("[MCP] Using ChromaDB for historical environment patterns")
+                    historical_context = await self._call_mcp_tool(
+                        "chromadb_query_documents",
+                        {"query": f"environment_bootstrap project_type:{inputs.project_specifications.get('project_type', 'unknown') if inputs.project_specifications else 'unknown'}", "limit": 5}
+                    )
+                
+                # Convert MCP tool analysis to environment requirements
+                if any([project_analysis.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Converting MCP tool analysis to environment requirements")
+                    return await self._convert_mcp_analysis_to_requirements(
+                        project_analysis, structure_analysis, intelligence_analysis, historical_context, inputs
+                    )
+        
         # Check if we have intelligent project specifications from orchestrator
         if inputs.project_specifications and inputs.intelligent_context:
             # Use intelligent LLM analysis instead of file-system detection
@@ -2113,6 +2173,207 @@ Be specific about versions and tools based on the project requirements.
         
         self.logger.info(f"Created {len(requirements)} fallback environment requirement(s)")
         return requirements
+
+    async def _convert_mcp_analysis_to_requirements(
+        self, 
+        project_analysis: Dict[str, Any], 
+        structure_analysis: Dict[str, Any], 
+        intelligence_analysis: Dict[str, Any],
+        historical_context: Dict[str, Any],
+        inputs: EnvironmentBootstrapInput
+    ) -> List[EnvironmentRequirement]:
+        """Convert MCP tool analysis results to environment requirements."""
+        requirements = []
+        
+        try:
+            # Extract environment information from MCP tool results
+            detected_languages = []
+            detected_frameworks = []
+            
+            # Analyze project scan results
+            if project_analysis.get("success") and project_analysis.get("result"):
+                scan_result = project_analysis["result"]
+                if isinstance(scan_result, dict):
+                    detected_languages.extend(scan_result.get("languages", []))
+                    detected_frameworks.extend(scan_result.get("frameworks", []))
+            
+            # Analyze structure analysis results
+            if structure_analysis.get("success") and structure_analysis.get("result"):
+                struct_result = structure_analysis["result"]
+                if isinstance(struct_result, dict):
+                    detected_languages.extend(struct_result.get("languages", []))
+                    detected_frameworks.extend(struct_result.get("technologies", []))
+            
+            # Use intelligence analysis for environment strategy
+            environment_strategy = "auto_detect"
+            if intelligence_analysis.get("success") and intelligence_analysis.get("result"):
+                intel_result = intelligence_analysis["result"]
+                if isinstance(intel_result, dict):
+                    environment_strategy = intel_result.get("recommended_strategy", "auto_detect")
+            
+            # Create environment requirements based on detected languages
+            language_mapping = {
+                "python": EnvironmentType.PYTHON,
+                "javascript": EnvironmentType.NODEJS,
+                "typescript": EnvironmentType.NODEJS,
+                "java": EnvironmentType.JAVA,
+                "rust": EnvironmentType.RUST,
+                "go": EnvironmentType.GO
+            }
+            
+            # Remove duplicates and create requirements
+            unique_languages = list(set(detected_languages))
+            for language in unique_languages:
+                if language.lower() in language_mapping:
+                    env_type = language_mapping[language.lower()]
+                    
+                    # Create environment requirement
+                    requirement = EnvironmentRequirement(
+                        environment_type=env_type,
+                        version_requirement=getattr(inputs, f"{language.lower()}_version", None),
+                        tools_required=detected_frameworks,
+                        priority=1 if language == unique_languages[0] else 2
+                    )
+                    requirements.append(requirement)
+            
+            # If no languages detected, fall back to Python
+            if not requirements:
+                self.logger.warning("[MCP] No languages detected from MCP analysis, defaulting to Python")
+                requirements.append(EnvironmentRequirement(
+                    environment_type=EnvironmentType.PYTHON,
+                    version_requirement=inputs.python_version,
+                    tools_required=[],
+                    priority=1
+                ))
+            
+            self.logger.info(f"[MCP] Created {len(requirements)} environment requirements from MCP analysis")
+            return requirements
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Failed to convert MCP analysis to requirements: {e}")
+            # Fall back to basic Python requirement
+            return [EnvironmentRequirement(
+                environment_type=EnvironmentType.PYTHON,
+                version_requirement=inputs.python_version,
+                tools_required=[],
+                priority=1
+            )]
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: EnvironmentBootstrapInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for EnvironmentBootstrapAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use filesystem tools for environment analysis
+        project_analysis = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_analysis = await self._call_mcp_tool(
+                "filesystem_project_scan", 
+                {"path": shared_context.get("project_root_path", ".")}
+            )
+        
+        # 4. Use intelligence tools for analysis
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": project_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for deeper analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and project_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": project_analysis["result"]}
+            )
+        
+        # 6. Use ChromaDB tools for historical context
+        historical_context = {}
+        if "chromadb_query_documents" in selected_tools:
+            historical_context = await self._call_mcp_tool(
+                "chromadb_query_documents",
+                {"query": f"agent:{self.AGENT_ID}", "limit": 10}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for dynamic capabilities
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": type(inputs).__name__}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "project_analysis": project_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "historical_context": historical_context,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "chromadb_query_documents", 
+            "terminal_get_environment"
+        ]
+        
+        # Add environment-specific tools
+        environment_tools = [
+            "filesystem_read_file",
+            "filesystem_write_file", 
+            "filesystem_create_directory",
+            "content_analyze_structure",
+            "terminal_execute_command"
+        ]
+        core_tools.extend(environment_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
 # ============================================================================
 # MCP Tool Wrappers

@@ -348,6 +348,79 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         """Phase 1: Analysis - Analyze code and test failures."""
         self.logger.info("Starting code and test failure analysis")
         
+        # ENHANCED: Use universal MCP tool access for intelligent code analysis
+        if self.enable_refinement:
+            self.logger.info("[MCP] Using universal MCP tool access for intelligent code analysis")
+            
+            # Get ALL available tools (no filtering)
+            tool_discovery = await self._get_all_available_mcp_tools()
+            
+            if tool_discovery["discovery_successful"]:
+                all_tools = tool_discovery["tools"]
+                
+                # Use filesystem tools for comprehensive code analysis
+                code_analysis = {}
+                faulty_code_path = inputs.get("faulty_code_path", "")
+                project_path = inputs.get("project_path", shared_context.get("project_root_path", "."))
+                
+                if "filesystem_project_scan" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_project_scan for code analysis")
+                    code_analysis = await self._call_mcp_tool(
+                        "filesystem_project_scan", 
+                        {"path": str(project_path), "include_patterns": ["*.py", "*.js", "*.ts", "*.java", "*.cpp"]}
+                    )
+                
+                # Use content tools for code structure analysis
+                content_analysis = {}
+                if "content_analyze_structure" in all_tools and code_analysis.get("success"):
+                    self.logger.info("[MCP] Using content analysis for code structure analysis")
+                    content_analysis = await self._call_mcp_tool(
+                        "content_analyze_structure",
+                        {"content": code_analysis["result"]}
+                    )
+                
+                # Use intelligence tools for debugging strategy
+                intelligence_analysis = {}
+                if "adaptive_learning_analyze" in all_tools:
+                    self.logger.info("[MCP] Using adaptive_learning_analyze for debugging strategy")
+                    intelligence_analysis = await self._call_mcp_tool(
+                        "adaptive_learning_analyze",
+                        {
+                            "context": {
+                                "code_analysis": code_analysis,
+                                "content_analysis": content_analysis,
+                                "failed_tests": inputs.get("failed_test_reports", []),
+                                "project_path": project_path
+                            }, 
+                            "domain": "code_debugging"
+                        }
+                    )
+                
+                # Use filesystem tools to read faulty code if path provided
+                faulty_code_content = {}
+                if faulty_code_path and "filesystem_read_file" in all_tools:
+                    self.logger.info("[MCP] Using filesystem_read_file for faulty code analysis")
+                    faulty_code_content = await self._call_mcp_tool(
+                        "filesystem_read_file",
+                        {"path": faulty_code_path}
+                    )
+                
+                # Use terminal tools for environment validation
+                environment_info = {}
+                if "terminal_get_environment" in all_tools:
+                    self.logger.info("[MCP] Using terminal tools for environment validation")
+                    environment_info = await self._call_mcp_tool(
+                        "terminal_get_environment",
+                        {}
+                    )
+                
+                # Convert MCP tool analysis to failure analysis
+                if any([code_analysis.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
+                    self.logger.info("[MCP] Converting MCP tool analysis to failure analysis")
+                    return await self._convert_mcp_analysis_to_failure_analysis(
+                        code_analysis, content_analysis, intelligence_analysis, faulty_code_content, environment_info, inputs
+                    )
+        
         faulty_code_path = inputs.get("faulty_code_path", "")
         failed_test_reports = inputs.get("failed_test_reports", [])
         code_snippet = inputs.get("faulty_code_snippet")
@@ -373,6 +446,217 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         }
         
         return analysis
+
+    async def _convert_mcp_analysis_to_failure_analysis(
+        self, 
+        code_analysis: Dict[str, Any], 
+        content_analysis: Dict[str, Any], 
+        intelligence_analysis: Dict[str, Any],
+        faulty_code_content: Dict[str, Any],
+        environment_info: Dict[str, Any],
+        inputs: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Convert MCP tool analysis results to failure analysis."""
+        
+        try:
+            # Extract failure patterns from MCP tool results
+            failure_patterns = []
+            failed_test_reports = inputs.get("failed_test_reports", [])
+            
+            # Analyze test failures with enhanced context
+            for test_report in failed_test_reports:
+                if isinstance(test_report, dict):
+                    pattern = {
+                        "test_name": test_report.get("test_name", "unknown"),
+                        "error_type": "runtime_error" if "Error" in test_report.get("error_message", "") else "assertion_failure",
+                        "error_message": test_report.get("error_message", ""),
+                        "stack_trace_available": bool(test_report.get("stack_trace")),
+                        "enhanced_context": True
+                    }
+                    
+                    # Add intelligence analysis insights
+                    if intelligence_analysis.get("success") and intelligence_analysis.get("result"):
+                        intel_result = intelligence_analysis["result"]
+                        if isinstance(intel_result, dict):
+                            pattern["debugging_strategy"] = intel_result.get("debugging_strategy", {})
+                            pattern["potential_causes"] = intel_result.get("potential_issues", {})
+                    
+                    failure_patterns.append(pattern)
+            
+            # Extract code location from filesystem analysis
+            code_location = inputs.get("faulty_code_path", "")
+            if code_analysis.get("success") and code_analysis.get("result"):
+                scan_result = code_analysis["result"]
+                if isinstance(scan_result, dict) and scan_result.get("files"):
+                    # Use the first matching file if faulty_code_path not specified
+                    if not code_location and scan_result["files"]:
+                        code_location = scan_result["files"][0]
+            
+            # Determine if we have code snippet
+            has_code_snippet = bool(inputs.get("faulty_code_snippet"))
+            if not has_code_snippet and faulty_code_content.get("success"):
+                has_code_snippet = True
+            
+            # Calculate enhanced confidence based on MCP tool results
+            base_confidence = min(0.9, 0.3 + (len(failed_test_reports) * 0.2))
+            mcp_confidence_boost = 0.0
+            
+            if code_analysis.get("success"):
+                mcp_confidence_boost += 0.1
+            if content_analysis.get("success"):
+                mcp_confidence_boost += 0.1
+            if intelligence_analysis.get("success"):
+                mcp_confidence_boost += 0.15
+            if faulty_code_content.get("success"):
+                mcp_confidence_boost += 0.1
+            
+            enhanced_confidence = min(0.95, base_confidence + mcp_confidence_boost)
+            
+            analysis = {
+                "code_location": code_location,
+                "has_code_snippet": has_code_snippet,
+                "failure_count": len(failed_test_reports),
+                "failure_patterns": failure_patterns,
+                "analysis_confidence": enhanced_confidence,
+                "enhanced_analysis": {
+                    "code_analysis": code_analysis,
+                    "content_analysis": content_analysis,
+                    "intelligence_analysis": intelligence_analysis,
+                    "faulty_code_content": faulty_code_content,
+                    "environment_info": environment_info
+                },
+                "mcp_enhanced": True
+            }
+            
+            self.logger.info(f"[MCP] Enhanced failure analysis with {len(failure_patterns)} patterns and confidence {enhanced_confidence:.2f}")
+            return analysis
+            
+        except Exception as e:
+            self.logger.error(f"[MCP] Failed to convert MCP analysis to failure analysis: {e}")
+            # Fall back to basic analysis
+            return {
+                "code_location": inputs.get("faulty_code_path", ""),
+                "has_code_snippet": bool(inputs.get("faulty_code_snippet")),
+                "failure_count": len(inputs.get("failed_test_reports", [])),
+                "failure_patterns": [],
+                "analysis_confidence": 0.3,
+                "error": str(e)
+            }
+
+    async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Universal tool access pattern for CodeDebuggingAgent."""
+        
+        # 1. Get ALL available tools (no filtering)
+        tool_discovery = await self._get_all_available_mcp_tools()
+        
+        if not tool_discovery["discovery_successful"]:
+            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
+            return {"error": "Tool discovery failed", "limited_functionality": True}
+        
+        all_tools = tool_discovery["tools"]
+        
+        # 2. Intelligent tool selection based on context
+        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+        
+        # 3. Use filesystem tools for code analysis
+        code_analysis = {}
+        if "filesystem_project_scan" in selected_tools:
+            project_path = inputs.get("project_path", shared_context.get("project_root_path", "."))
+            code_analysis = await self._call_mcp_tool(
+                "filesystem_project_scan", 
+                {"path": str(project_path), "include_patterns": ["*.py", "*.js", "*.ts", "*.java", "*.cpp"]}
+            )
+        
+        # 4. Use intelligence tools for debugging strategy
+        intelligence_analysis = {}
+        if "adaptive_learning_analyze" in selected_tools:
+            intelligence_analysis = await self._call_mcp_tool(
+                "adaptive_learning_analyze",
+                {"context": code_analysis, "domain": self.AGENT_ID}
+            )
+        
+        # 5. Use content tools for code structure analysis
+        content_analysis = {}
+        if "content_analyze_structure" in selected_tools and code_analysis.get("success"):
+            content_analysis = await self._call_mcp_tool(
+                "content_analyze_structure",
+                {"content": code_analysis["result"]}
+            )
+        
+        # 6. Use filesystem tools to read faulty code
+        faulty_code_content = {}
+        if "filesystem_read_file" in selected_tools and inputs.get("faulty_code_path"):
+            faulty_code_content = await self._call_mcp_tool(
+                "filesystem_read_file",
+                {"path": inputs["faulty_code_path"]}
+            )
+        
+        # 7. Use terminal tools for environment validation
+        environment_info = {}
+        if "terminal_get_environment" in selected_tools:
+            environment_info = await self._call_mcp_tool(
+                "terminal_get_environment",
+                {}
+            )
+        
+        # 8. Use tool discovery for debugging recommendations
+        tool_recommendations = {}
+        if "get_tool_composition_recommendations" in selected_tools:
+            tool_recommendations = await self._call_mcp_tool(
+                "get_tool_composition_recommendations",
+                {"context": {"agent_id": self.AGENT_ID, "task_type": "code_debugging"}}
+            )
+        
+        # 9. Combine all analyses
+        return {
+            "universal_tool_access": True,
+            "tools_available": len(all_tools),
+            "tools_selected": len(selected_tools),
+            "tool_categories": tool_discovery["categories"],
+            "code_analysis": code_analysis,
+            "intelligence_analysis": intelligence_analysis,
+            "content_analysis": content_analysis,
+            "faulty_code_content": faulty_code_content,
+            "environment_info": environment_info,
+            "tool_recommendations": tool_recommendations,
+            "agent_domain": self.AGENT_ID,
+            "analysis_timestamp": time.time()
+        }
+
+    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent tool selection - agents choose which tools to use."""
+        
+        # Start with core tools every agent should consider
+        core_tools = [
+            "filesystem_project_scan",
+            "filesystem_read_file",
+            "terminal_get_environment"
+        ]
+        
+        # Add debugging-specific tools
+        debugging_tools = [
+            "content_analyze_structure",
+            "filesystem_write_file",  # For applying fixes
+            "terminal_run_command"    # For running tests
+        ]
+        core_tools.extend(debugging_tools)
+        
+        # Add intelligence tools for all agents
+        intelligence_tools = [
+            "adaptive_learning_analyze",
+            "get_real_time_performance_analysis",
+            "generate_performance_recommendations"
+        ]
+        core_tools.extend(intelligence_tools)
+        
+        # Select available tools
+        selected = {}
+        for tool_name in core_tools:
+            if tool_name in all_tools:
+                selected[tool_name] = all_tools[tool_name]
+        
+        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
+        return selected
 
     async def _diagnose_bug(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Diagnosis - Identify root causes of the bug."""
