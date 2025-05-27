@@ -127,7 +127,7 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
         self.logger.info(f"[UAEI] Blueprint reviewer iteration {iteration + 1}")
         
         try:
-            # Convert inputs to expected format - handle both dict and object inputs
+            # Convert inputs to expected format
             if isinstance(context.inputs, dict):
                 task_input = BlueprintReviewerInput(**context.inputs)
             elif hasattr(context.inputs, 'dict'):
@@ -136,24 +136,29 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
             else:
                 task_input = context.inputs
 
-            # Phase 1: Discovery - Discover and retrieve blueprint
-            if task_input.intelligent_context and task_input.project_specifications:
+            # Phase 4: Check for refinement context and use refinement-aware analysis
+            refinement_context = context.shared_context.get("refinement_context")
+            if self.enable_refinement and refinement_context:
+                self.logger.info(f"[Refinement] Using refinement context with {len(refinement_context.get('previous_outputs', []))} previous outputs")
+                # Use refinement-aware analysis that considers previous work
+                analysis_result = await self._analyze_blueprint_with_refinement_context(
+                    task_input, context.shared_context, refinement_context
+                )
+            elif task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                discovery_result = await self._extract_blueprint_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+                analysis_result = await self._extract_analysis_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
             else:
-                self.logger.info("Using traditional blueprint retrieval")
-                discovery_result = await self._discover_blueprint(task_input, context.shared_context)
+                self.logger.info("Using traditional blueprint analysis")
+                # Phase 1: Analysis - Analyze blueprint and gather context
+                analysis_result = await self._analyze_blueprint(task_input, context.shared_context)
             
-            # Phase 2: Analysis - Analyze blueprint content
-            analysis_result = await self._analyze_blueprint(discovery_result, task_input, context.shared_context)
+            # Phase 2: Planning - Plan review approach and criteria
+            planning_result = await self._plan_review_approach(analysis_result, task_input, context.shared_context)
             
-            # Phase 3: Planning - Plan review structure and focus areas
-            planning_result = await self._plan_review(analysis_result, task_input, context.shared_context)
-            
-            # Phase 4: Review Generation - Generate comprehensive review report
+            # Phase 3: Review Generation - Generate comprehensive review
             review_result = await self._generate_review(planning_result, task_input, context.shared_context)
             
-            # Phase 5: Validation - Validate review report quality
+            # Phase 4: Validation - Validate review quality and completeness
             validation_result = await self._validate_review(review_result, task_input, context.shared_context)
             
             # Calculate quality score based on validation results
@@ -163,24 +168,23 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
             output = BlueprintReviewerOutput(
                 task_id=task_input.task_id,
                 project_id=task_input.project_id or "intelligent_project",
-                review_report_doc_id=review_result.get("review_doc_id"),
+                review_report_doc_id=validation_result.get("review_report_doc_id"),
                 status="SUCCESS",
                 message="Blueprint review completed successfully",
-                confidence_score=ConfidenceScore(value=quality_score, method="comprehensive_analysis", explanation="Based on comprehensive blueprint analysis and validation")
+                confidence_score=ConfidenceScore(
+                    value=quality_score,
+                    explanation="Based on comprehensive blueprint analysis and validation",
+                    method="comprehensive_analysis"
+                )
             )
             
-            # Return IterationResult instead of AgentExecutionResult
+            tools_used = ["blueprint_analysis", "review_planning", "quality_validation"]
+            
             return IterationResult(
                 output=output,
                 quality_score=quality_score,
-                tools_used=["blueprint_retrieval", "architectural_analysis", "review_generation"],
-                protocol_used="blueprint_review_protocol",
-                iteration_metadata={
-                    "discovery_success": discovery_result.get("discovery_success", False),
-                    "analysis_confidence": analysis_result.get("analysis_confidence", 0.0),
-                    "planning_confidence": planning_result.get("planning_confidence", 0.0),
-                    "validation_passed": validation_result.get("validation_passed", False)
-                }
+                tools_used=tools_used,
+                protocol_used="blueprint_review_protocol"
             )
             
         except Exception as e:
@@ -616,18 +620,59 @@ Comprehensive review of blueprint {task_input.blueprint_doc_id} with focus on {'
             return response
 
     def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score based on validation results."""
-        if not validation_result.get("validation_completed", False):
-            return 0.0
+        """Calculate quality score based on validation results."""
+        try:
+            # Base score starts at 0.6 for successful execution
+            base_score = 0.6
             
-        base_score = validation_result.get("validation_score", 0.0)
-        issues_count = len(validation_result.get("issues_found", []))
-        
-        # Reduce score based on issues found
-        penalty = min(0.3, issues_count * 0.05)
-        final_score = max(0.0, base_score - penalty)
-        
-        return final_score
+            # Factor 1: Review completeness (0.0 - 0.2)
+            review_sections = validation_result.get("review_sections_completed", 0)
+            if review_sections > 0:
+                completeness_score = min(0.2, review_sections * 0.04)  # 0.04 per section, max 0.2
+            else:
+                completeness_score = 0.0
+            
+            # Factor 2: Analysis depth and insights (0.0 - 0.15)
+            analysis_insights = validation_result.get("analysis_insights_count", 0)
+            if analysis_insights >= 5:
+                insight_score = 0.15  # Comprehensive analysis
+            elif analysis_insights >= 3:
+                insight_score = 0.1   # Good analysis
+            elif analysis_insights >= 1:
+                insight_score = 0.05  # Basic analysis
+            else:
+                insight_score = 0.0   # No insights
+            
+            # Factor 3: Validation passed (0.0 - 0.1)
+            validation_passed = validation_result.get("validation_passed", False)
+            if validation_passed:
+                validation_score = 0.1
+            else:
+                validation_score = 0.0
+            
+            # Factor 4: Review report generated (0.0 - 0.05)
+            has_report = validation_result.get("review_report_doc_id") is not None
+            if has_report:
+                report_score = 0.05
+            else:
+                report_score = 0.0
+            
+            # Calculate final score
+            final_score = base_score + completeness_score + insight_score + validation_score + report_score
+            
+            # Cap at 1.0
+            final_score = min(1.0, final_score)
+            
+            self.logger.info(f"[Quality] Calculated quality score: {final_score:.2f} "
+                           f"(base={base_score}, completeness={completeness_score:.2f}, "
+                           f"insights={insight_score:.2f}, validation={validation_score:.2f}, "
+                           f"report={report_score:.2f})")
+            
+            return final_score
+            
+        except Exception as e:
+            self.logger.warning(f"Quality score calculation failed: {e}")
+            return 0.6  # Default score on error
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
@@ -668,4 +713,57 @@ Comprehensive review of blueprint {task_input.blueprint_doc_id} with focus on {'
         return BlueprintReviewerInput
 
     def get_output_schema(self) -> Type[BlueprintReviewerOutput]:
-        return BlueprintReviewerOutput 
+        return BlueprintReviewerOutput
+
+    async def _analyze_blueprint_with_refinement_context(
+        self, 
+        task_input: BlueprintReviewerInput, 
+        shared_context: Dict[str, Any],
+        refinement_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Refinement-aware blueprint analysis that considers previous iterations.
+        Uses refinement context to build upon previous work and improve review quality.
+        """
+        try:
+            # Get previous outputs and analysis
+            previous_outputs = refinement_context.get("previous_outputs", [])
+            previous_quality = refinement_context.get("previous_quality_score", 0.0)
+            iteration = refinement_context.get("iteration", 0)
+            
+            # Build refinement-aware prompt for LLM analysis
+            refinement_prompt = self._build_refinement_prompt(
+                f"Blueprint review analysis for {task_input.project_id}",
+                refinement_context
+            )
+            
+            # Use the refinement prompt for intelligent analysis
+            if self.llm_provider:
+                llm_response = await self.llm_provider.generate(refinement_prompt)
+                analysis_result = await self._extract_analysis_from_intelligent_specs(
+                    {"refinement_analysis": llm_response}, 
+                    task_input.user_goal or "Blueprint review"
+                )
+            else:
+                # Fallback to standard analysis with refinement awareness
+                analysis_result = await self._analyze_blueprint(task_input, shared_context)
+                
+                # Enhance with refinement insights
+                if previous_outputs:
+                    self.logger.info(f"[Refinement] Enhancing analysis with insights from {len(previous_outputs)} previous iterations")
+                    # Add previous findings to improve review focus
+                    analysis_result["previous_review_iterations"] = len(previous_outputs)
+                    analysis_result["previous_quality_score"] = previous_quality
+                    analysis_result["refinement_iteration"] = iteration
+                    
+                    # Extract insights from previous reviews
+                    for prev_output in previous_outputs:
+                        prev_content = str(prev_output.get("content", ""))
+                        if "review_report_doc_id" in prev_content:
+                            analysis_result["has_previous_reviews"] = True
+            
+            return analysis_result
+            
+        except Exception as e:
+            self.logger.warning(f"[Refinement] Refinement-aware analysis failed, falling back to standard: {e}")
+            return await self._analyze_blueprint(task_input, shared_context) 

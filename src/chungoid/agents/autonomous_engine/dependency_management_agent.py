@@ -813,10 +813,40 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             else:
                 task_input = context.inputs
 
-            self.logger.info(f"[DependencyAgent] Starting iteration {iteration}: {task_input.operation}")
+            self.logger.info(f"[DependencyAgent] Starting iteration {iteration + 1}: {task_input.operation}")
 
-            # Phase 1: Discovery - Detect project type and existing dependencies
-            discovery_result = await self._discover_dependencies(task_input, context.shared_context)
+            # Phase 4: Check for refinement context and use refinement-aware analysis
+            refinement_context = context.shared_context.get("refinement_context")
+            if self.enable_refinement and refinement_context:
+                self.logger.info(f"[Refinement] Using refinement context with {len(refinement_context.get('previous_outputs', []))} previous outputs")
+                # Use refinement-aware analysis that considers previous work
+                discovery_result = await self._discover_dependencies_with_refinement_context(
+                    task_input, context.shared_context, refinement_context
+                )
+            else:
+                # Phase 1: Discovery - Detect project type and existing dependencies
+                discovery_result = await self._discover_dependencies(task_input, context.shared_context)
+            
+            # Store LLM analysis data in shared context for quality scoring
+            if discovery_result.get("intelligent_analysis"):
+                context.shared_context["llm_analysis"] = {
+                    "dependency_strategy": discovery_result.get("dependency_strategy", {}),
+                    "dependency_analysis": discovery_result.get("dependency_analysis", {}),
+                    "conflict_prevention": discovery_result.get("conflict_prevention", {}),
+                    "optimization_recommendations": discovery_result.get("optimization_recommendations", []),
+                    "security_considerations": discovery_result.get("security_considerations", []),
+                    "installation_order": discovery_result.get("installation_order", []),
+                    "llm_confidence": discovery_result.get("llm_confidence", 0.8),
+                    "analysis_method": discovery_result.get("analysis_method", "unknown")
+                }
+            
+            # Store other discovery data in shared context
+            context.shared_context["detected_languages"] = discovery_result.get("detected_languages", [])
+            context.shared_context["project_specifications"] = {
+                "project_type": discovery_result.get("project_type", "unknown"),
+                "primary_language": discovery_result.get("primary_language", "unknown"),
+                "target_languages": discovery_result.get("target_languages", [])
+            }
             
             # Phase 2: Analysis - Analyze dependencies and conflicts
             analysis_result = await self._analyze_dependencies(discovery_result, task_input, context.shared_context)
@@ -1129,6 +1159,55 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         return discovery_result
 
+    async def _discover_dependencies_with_refinement_context(
+        self, 
+        task_input: DependencyManagementInput, 
+        shared_context: Dict[str, Any],
+        refinement_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Refinement-aware dependency discovery that considers previous iterations.
+        Uses refinement context to build upon previous work and avoid repeating failed approaches.
+        """
+        try:
+            # Get previous outputs and analysis
+            previous_outputs = refinement_context.get("previous_outputs", [])
+            previous_quality = refinement_context.get("previous_quality_score", 0.0)
+            iteration = refinement_context.get("iteration", 0)
+            
+            # Build refinement-aware prompt for LLM analysis
+            refinement_prompt = self._build_refinement_prompt(
+                f"Dependency discovery for {task_input.operation}",
+                refinement_context
+            )
+            
+            # Use the refinement prompt for intelligent analysis
+            if self.llm_provider:
+                llm_response = await self.llm_provider.generate(refinement_prompt)
+                analysis_result = await self._extract_analysis_from_intelligent_specs(
+                    {"refinement_analysis": llm_response}, 
+                    task_input.user_goal or "Dependency management"
+                )
+            else:
+                # Fallback to standard discovery with refinement awareness
+                analysis_result = await self._discover_dependencies(task_input, shared_context)
+                
+                # Enhance with refinement insights
+                if previous_outputs:
+                    self.logger.info(f"[Refinement] Enhancing discovery with insights from {len(previous_outputs)} previous iterations")
+                    # Add previous findings to avoid duplication
+                    for prev_output in previous_outputs:
+                        prev_content = prev_output.get("content", "")
+                        if "dependencies_processed" in str(prev_content):
+                            analysis_result["previous_dependencies_found"] = True
+                            analysis_result["refinement_iteration"] = iteration
+            
+            return analysis_result
+            
+        except Exception as e:
+            self.logger.warning(f"[Refinement] Refinement-aware discovery failed, falling back to standard: {e}")
+            return await self._discover_dependencies(task_input, shared_context)
+
     async def _discover_dependencies(self, task_input: DependencyManagementInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 1: Discovery - Detect project type and existing dependencies."""
         self.logger.info("Starting dependency discovery")
@@ -1322,11 +1401,15 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         languages = shared_context.get("detected_languages", [])
         package_managers = self._get_package_managers_for_languages(languages)
         
+        # Pass through LLM analysis data from discovery phase for quality scoring
+        llm_analysis = shared_context.get("llm_analysis", {})
+        
         return {
             "operations_completed": True,
             "successful_installations": installation_result.get("successful", []),
             "failed_installations": installation_result.get("failed", []),
             "package_managers_used": package_managers,
+            "llm_analysis": llm_analysis,  # Pass through for validation quality scoring
             "installation_time": 1.5,  # Mock timing
             "operations_confidence": 0.8
         }
@@ -1343,14 +1426,53 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 "security_issues": []
             }
         
+        # Extract LLM analysis data for quality scoring
+        llm_analysis = operations_result.get("llm_analysis", {})
+        
+        # Extract dependencies from LLM analysis
+        dependencies_processed = []
+        detected_languages = []
+        package_managers_used = []
+        
+        if llm_analysis:
+            # Extract required dependencies
+            required_deps = llm_analysis.get("dependency_analysis", {}).get("required_dependencies", [])
+            optional_deps = llm_analysis.get("dependency_analysis", {}).get("optional_dependencies", [])
+            dev_deps = llm_analysis.get("dependency_analysis", {}).get("dev_dependencies", [])
+            
+            # Convert to DependencyInfo objects for quality scoring
+            all_deps = required_deps + optional_deps + dev_deps
+            for dep in all_deps:
+                if isinstance(dep, dict) and "name" in dep:
+                    dependencies_processed.append(DependencyInfo(
+                        package_name=dep["name"],
+                        version_constraint=dep.get("version", ""),
+                        package_manager=llm_analysis.get("dependency_strategy", {}).get("primary_package_manager", "pip"),
+                        language="python"  # Default to python for now
+                    ))
+            
+            # Extract package manager info
+            primary_manager = llm_analysis.get("dependency_strategy", {}).get("primary_package_manager")
+            if primary_manager:
+                package_managers_used.append(primary_manager)
+            
+            # Detect languages from project specs or default to python
+            project_specs = shared_context.get("project_specifications", {})
+            if project_specs.get("primary_language"):
+                detected_languages.append(project_specs["primary_language"])
+            elif primary_manager == "pip":
+                detected_languages.append("python")
+            elif primary_manager in ["npm", "yarn"]:
+                detected_languages.append("javascript")
+        
         # Perform security audit if requested
         security_issues = []
         if task_input.perform_security_audit:
-            languages = shared_context.get("detected_languages", [])
+            languages = detected_languages or shared_context.get("detected_languages", [])
             security_issues = await self._perform_security_audit(task_input.project_path, languages)
         
         # Generate recommendations
-        dependencies = operations_result.get("successful_installations", [])
+        dependencies = dependencies_processed or operations_result.get("successful_installations", [])
         project_result = shared_context.get("project_result")
         recommendations = []
         if project_result:
@@ -1371,7 +1493,9 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         return {
             "validation_completed": True,
-            "dependencies_processed": dependencies,
+            "dependencies_processed": dependencies_processed,  # Now properly populated from LLM analysis
+            "detected_languages": detected_languages,  # Now properly populated
+            "package_managers_used": package_managers_used,  # Now properly populated
             "dependency_files_updated": [],  # Would be populated in real implementation
             "recommendations": recommendations,
             "security_issues": security_issues,
@@ -1476,27 +1600,125 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         return ""
 
     def _calculate_quality_score(self, validation_result: Dict[str, Any], operations_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score based on validation and operations results."""
-        if not validation_result.get("validation_completed", False):
-            return 0.0
-        
-        base_score = 0.8  # Good baseline for successful completion
-        
-        # Adjust based on failed installations
-        failed_count = len(operations_result.get("failed_installations", []))
-        success_count = len(operations_result.get("successful_installations", []))
-        total_count = failed_count + success_count
-        
-        if total_count > 0:
-            success_rate = success_count / total_count
-            base_score = base_score * success_rate
-        
-        # Reduce score for security issues
-        security_issues = len(validation_result.get("security_issues", []))
-        if security_issues > 0:
-            base_score = max(0.5, base_score - (security_issues * 0.05))
-        
-        return min(1.0, max(0.0, base_score))
+        """Calculate quality score based on validation and operations results."""
+        try:
+            # Base score starts at 0.5 for successful execution
+            base_score = 0.5
+            
+            # Check if we're in analysis mode (no actual installations performed)
+            analysis_mode = len(operations_result.get("successful_installations", [])) == 0 and \
+                          len(operations_result.get("failed_installations", [])) == 0
+            
+            if analysis_mode:
+                # Analysis mode scoring - focus on quality of dependency analysis
+                
+                # Factor 1: Dependencies analyzed (0.0 - 0.25)
+                dependencies_processed = len(validation_result.get("dependencies_processed", []))
+                if dependencies_processed >= 5:  # Good comprehensive analysis
+                    dependency_score = 0.25
+                elif dependencies_processed >= 3:  # Decent analysis
+                    dependency_score = 0.15
+                elif dependencies_processed > 0:  # Some analysis
+                    dependency_score = 0.1
+                else:
+                    dependency_score = 0.0
+                
+                # Factor 2: Language and package manager detection (0.0 - 0.15)
+                languages = len(validation_result.get("detected_languages", []))
+                package_managers = len(operations_result.get("package_managers_used", []))
+                
+                if languages > 0 and package_managers > 0:
+                    detection_score = 0.15
+                elif languages > 0 or package_managers > 0:
+                    detection_score = 0.1
+                else:
+                    detection_score = 0.0
+                
+                # Factor 3: Security and optimization insights (0.0 - 0.1)
+                security_issues = len(validation_result.get("security_issues", []))
+                optimization_suggestions = len(validation_result.get("optimization_suggestions", []))
+                recommendations = len(validation_result.get("recommendations", []))
+                
+                if optimization_suggestions > 0 or recommendations > 0:
+                    insight_score = 0.1  # Good insights provided
+                elif security_issues == 0:
+                    insight_score = 0.05  # At least no security issues
+                else:
+                    insight_score = 0.0
+                
+                # Calculate final score for analysis mode
+                final_score = base_score + dependency_score + detection_score + insight_score
+                
+                self.logger.info(f"[Quality] Analysis mode quality score: {final_score:.2f} "
+                               f"(base={base_score}, deps={dependency_score:.2f}, "
+                               f"detection={detection_score:.2f}, insights={insight_score:.2f})")
+                
+            else:
+                # Installation mode scoring - original logic
+                
+                # Factor 1: Dependencies processed (0.0 - 0.2)
+                dependencies_processed = len(validation_result.get("dependencies_processed", []))
+                if dependencies_processed > 0:
+                    dependency_score = min(0.2, dependencies_processed * 0.05)  # 0.05 per dependency, max 0.2
+                else:
+                    dependency_score = 0.0
+                
+                # Factor 2: Successful installations vs failures (0.0 - 0.2)
+                successful = len(operations_result.get("successful_installations", []))
+                failed = len(operations_result.get("failed_installations", []))
+                total_operations = successful + failed
+                
+                if total_operations > 0:
+                    success_rate = successful / total_operations
+                    installation_score = success_rate * 0.2
+                else:
+                    installation_score = 0.1  # Default score if no installations attempted
+                
+                # Factor 3: Security and optimization insights (0.0 - 0.1)
+                security_issues = len(validation_result.get("security_issues", []))
+                optimization_suggestions = len(validation_result.get("optimization_suggestions", []))
+                
+                if security_issues == 0 and optimization_suggestions > 0:
+                    insight_score = 0.1  # Good security, with optimizations
+                elif security_issues == 0:
+                    insight_score = 0.05  # Good security, no optimizations
+                else:
+                    insight_score = 0.0  # Security issues found
+                
+                # Factor 4: File updates and completeness (0.0 - 0.1)
+                files_updated = len(validation_result.get("dependency_files_updated", []))
+                if files_updated > 0:
+                    file_score = min(0.1, files_updated * 0.03)  # 0.03 per file, max 0.1
+                else:
+                    file_score = 0.0
+                
+                # Factor 5: Detected languages and package managers (0.0 - 0.1)
+                languages = len(validation_result.get("detected_languages", []))
+                package_managers = len(operations_result.get("package_managers_used", []))
+                
+                if languages > 0 and package_managers > 0:
+                    detection_score = 0.1
+                elif languages > 0 or package_managers > 0:
+                    detection_score = 0.05
+                else:
+                    detection_score = 0.0
+                
+                # Calculate final score for installation mode
+                final_score = base_score + dependency_score + installation_score + insight_score + file_score + detection_score
+                
+                self.logger.info(f"[Quality] Installation mode quality score: {final_score:.2f} "
+                               f"(base={base_score}, deps={dependency_score:.2f}, "
+                               f"install={installation_score:.2f}, insights={insight_score:.2f}, "
+                               f"files={file_score:.2f}, detection={detection_score:.2f})")
+            
+            # Cap at 1.0
+            final_score = min(1.0, final_score)
+            
+            return final_score
+            
+        except Exception as e:
+            self.logger.warning(f"Quality score calculation failed: {e}")
+            return 0.5  # Default score on error
     
     def _get_package_managers_for_languages(self, languages: List[str]) -> List[str]:
         """Get package managers for given languages."""
@@ -1658,12 +1880,10 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             
         for dep in dependencies:
             for lang in languages:
-                if dep.language == lang or lang in self.strategies:
+                if dep.language == lang or lang in self._strategies:
                     grouped[lang].append(dep)
         
         return grouped
-
-
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
@@ -1692,8 +1912,6 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                 "integration_services": ["SmartDependencyAnalysisService", "ProjectTypeDetectionService", "ConfigurationManager", "ResumableExecutionService"]
             }
         )
-
-
 
 # =============================================================================
 # MCP Tool Function

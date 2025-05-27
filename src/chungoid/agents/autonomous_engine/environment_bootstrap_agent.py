@@ -1220,14 +1220,14 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                 # Select appropriate strategy - Universal strategy can handle ANY type!
                 if env_type_str == "python":
                     # Use specialized strategy for Python if available
-                    strategy = PythonEnvironmentStrategy(self.config_manager)
+                    strategy = PythonEnvironmentStrategy(self._config_manager)
                 elif env_type_str == "nodejs":
                     # Use specialized strategy for Node.js if available  
-                    strategy = NodeJSEnvironmentStrategy(self.config_manager)
+                    strategy = NodeJSEnvironmentStrategy(self._config_manager)
                 else:
                     # Use Universal strategy for ANY other environment type!
                     self.logger.info(f"[Universal Environment] Using LLM-powered strategy for {env_type_str}")
-                    strategy = UniversalEnvironmentStrategy(self.config_manager, self.llm_provider)
+                    strategy = UniversalEnvironmentStrategy(self._config_manager, self.llm_provider)
                 
                 env_info = await strategy.create_environment(project_path, requirement)
                 env_info.status = EnvironmentStatus.CREATED
