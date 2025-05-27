@@ -183,6 +183,10 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             # Phase 4: Validation - Validate generated code quality
             validation_result = await self._validate_generated_code(generation_result, task_input, context.shared_context)
             
+            # Inject refinement context for iteration-aware quality scoring
+            if self.enable_refinement and refinement_context:
+                self._current_refinement_context = refinement_context
+            
             # Calculate quality score based on validation results
             quality_score = self._calculate_quality_score(validation_result)
             
@@ -720,8 +724,196 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         return validation
 
     def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score based on validation results."""
-        return validation_result.get("validation_score", 0.0)
+        """Calculate iteration-aware quality score based on validation results, goal alignment, and improvements."""
+        
+        # Get base validation score
+        base_score = validation_result.get("validation_score", 0.0)
+        
+        # Try to get refinement context for iteration awareness
+        refinement_context = getattr(self, '_current_refinement_context', None)
+        
+        if refinement_context:
+            # ITERATION-AWARE SCORING
+            previous_outputs = refinement_context.get("previous_outputs", [])
+            iteration = refinement_context.get("iteration", 0)
+            current_state = refinement_context.get("current_state", {})
+            
+            self.logger.info(f"[Quality] Calculating iteration-aware quality score for iteration {iteration + 1}")
+            
+            # Factor 1: Base validation (0.0 - 0.4)
+            validation_factor = base_score * 0.4
+            
+            # Factor 2: Goal alignment assessment (0.0 - 0.3)
+            goal_alignment_factor = self._calculate_goal_alignment_score(
+                validation_result, current_state
+            ) * 0.3
+            
+            # Factor 3: Improvement over previous iterations (0.0 - 0.2)
+            improvement_factor = 0.0
+            if iteration > 0 and previous_outputs:
+                improvement_factor = self._calculate_improvement_score(
+                    validation_result, previous_outputs
+                ) * 0.2
+            
+            # Factor 4: Content quality and completeness (0.0 - 0.1)
+            content_factor = self._calculate_content_quality_score(validation_result) * 0.1
+            
+            # Calculate final score
+            final_score = validation_factor + goal_alignment_factor + improvement_factor + content_factor
+            
+            self.logger.info(f"[Quality] Iteration-aware scoring breakdown: "
+                           f"validation={validation_factor:.3f}, "
+                           f"goal_alignment={goal_alignment_factor:.3f}, "
+                           f"improvement={improvement_factor:.3f}, "
+                           f"content={content_factor:.3f}, "
+                           f"final={final_score:.3f}")
+            
+        else:
+            # FALLBACK: Standard scoring for non-refinement iterations
+            final_score = base_score
+            self.logger.info(f"[Quality] Standard scoring (no refinement context): {final_score:.3f}")
+        
+        # Ensure score is within bounds
+        final_score = max(0.0, min(final_score, 1.0))
+        
+        return final_score
+
+    def _calculate_goal_alignment_score(self, validation_result: Dict[str, Any], current_state: Dict[str, Any]) -> float:
+        """Calculate how well the generated code aligns with the user goal."""
+        
+        # Try to extract goal content
+        goal_content = ""
+        if current_state and 'user_goal' in current_state:
+            goal_content = str(current_state['user_goal'])
+        elif hasattr(self, 'shared_context') and self.shared_context and 'user_goal' in self.shared_context:
+            goal_content = str(self.shared_context['user_goal'])
+        
+        if not goal_content or len(goal_content) < 20:
+            # No goal content available, use moderate score
+            return 0.7
+        
+        # Analyze goal content for key requirements
+        goal_lower = goal_content.lower()
+        generated_files = validation_result.get("files_generated", 0)
+        
+        alignment_score = 0.5  # Base alignment score
+        
+        # Check for specific goal requirements fulfillment
+        if "scanner" in goal_lower and generated_files > 0:
+            alignment_score += 0.2  # Goal mentions scanner and we generated files
+        
+        if "python" in goal_lower and any(
+            f.get("file_path", "").endswith(".py") 
+            for f in validation_result.get("generated_files", [])
+        ):
+            alignment_score += 0.1  # Goal mentions Python and we generated Python files
+        
+        if "cli" in goal_lower or "command" in goal_lower:
+            # Check if we generated a main module that could be a CLI
+            has_main = validation_result.get("validation_checks", {}).get("main_module_exists", False)
+            if has_main:
+                alignment_score += 0.1
+        
+        if "requirements" in goal_lower or "dependencies" in goal_lower:
+            # Check if we generated dependency files
+            has_deps = any(
+                "requirements" in f.get("file_path", "").lower() or 
+                "setup" in f.get("file_path", "").lower()
+                for f in validation_result.get("generated_files", [])
+            )
+            if has_deps:
+                alignment_score += 0.1
+        
+        return min(1.0, alignment_score)
+
+    def _calculate_improvement_score(self, validation_result: Dict[str, Any], previous_outputs: List[Dict]) -> float:
+        """Calculate improvement over previous iterations."""
+        
+        if not previous_outputs:
+            return 0.5  # No previous outputs to compare against
+        
+        current_files = validation_result.get("files_generated", 0)
+        current_quality = validation_result.get("validation_score", 0.0)
+        
+        # Get the most recent previous output
+        latest_previous = previous_outputs[-1]
+        prev_content = latest_previous.get('content', {})
+        
+        # Extract previous metrics
+        prev_files = 0
+        prev_quality = 0.0
+        
+        if isinstance(prev_content, dict):
+            if 'generated_files' in prev_content:
+                prev_files = len(prev_content['generated_files'])
+            prev_quality = latest_previous.get('quality_score', 0.0)
+        
+        improvement_score = 0.5  # Base improvement score
+        
+        # Check for file count improvement
+        if current_files > prev_files:
+            improvement_score += 0.2
+        elif current_files == prev_files and current_files > 0:
+            improvement_score += 0.1  # Maintained file count
+        
+        # Check for quality improvement
+        quality_improvement = current_quality - prev_quality
+        if quality_improvement > 0.1:
+            improvement_score += 0.2  # Significant quality improvement
+        elif quality_improvement > 0.0:
+            improvement_score += 0.1  # Some quality improvement
+        elif quality_improvement == 0.0:
+            improvement_score += 0.05  # Maintained quality
+        
+        # Check for content length improvement (more comprehensive code)
+        current_total_length = sum(
+            f.get("content_length", 0) 
+            for f in validation_result.get("generated_files", [])
+        )
+        
+        prev_total_length = 0
+        if isinstance(prev_content, dict) and 'generated_files' in prev_content:
+            prev_total_length = sum(
+                f.get("content_length", 0) 
+                for f in prev_content['generated_files']
+            )
+        
+        if current_total_length > prev_total_length * 1.1:  # 10% more content
+            improvement_score += 0.1
+        
+        return min(1.0, improvement_score)
+
+    def _calculate_content_quality_score(self, validation_result: Dict[str, Any]) -> float:
+        """Calculate content quality based on generated code characteristics."""
+        
+        generated_files = validation_result.get("generated_files", [])
+        if not generated_files:
+            return 0.0
+        
+        quality_score = 0.0
+        
+        # Check for diverse file types
+        file_types = set(f.get("file_type", "unknown") for f in generated_files)
+        if len(file_types) > 1:
+            quality_score += 0.3  # Multiple file types generated
+        elif len(file_types) == 1:
+            quality_score += 0.2  # At least one file type
+        
+        # Check for adequate content length
+        total_content_length = sum(f.get("content_length", 0) for f in generated_files)
+        if total_content_length > 1000:
+            quality_score += 0.3  # Substantial content
+        elif total_content_length > 500:
+            quality_score += 0.2  # Moderate content
+        elif total_content_length > 100:
+            quality_score += 0.1  # Minimal content
+        
+        # Check for successful file generation
+        successful_files = [f for f in generated_files if f.get("status") == "success"]
+        success_ratio = len(successful_files) / len(generated_files) if generated_files else 0
+        quality_score += success_ratio * 0.4  # Up to 0.4 for 100% success rate
+        
+        return min(1.0, quality_score)
 
     def _generate_main_module_content(self, task_input: SmartCodeGeneratorInput) -> str:
         """Generate content for the main module file."""

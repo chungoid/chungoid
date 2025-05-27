@@ -1083,14 +1083,14 @@ class DependencyManagementAgent_v1(UnifiedAgent):
         
         # Process required dependencies
         for dep in dependency_analysis.get("required_dependencies", []):
-            dependencies.append(DependencyInfo(
-                package_name=dep.get("name", "unknown"),
-                version_constraint=dep.get("version"),
-                import_name=dep.get("name", "unknown"),
-                description=dep.get("purpose", "Required dependency from intelligent analysis"),
-                confidence=0.95,
-                is_dev_dependency=False
-            ))
+                                dependencies.append(DependencyInfo(
+                        package_name=dep.get("name", "unknown"),
+                        version_constraint=dep.get("version"),
+                        import_name=dep.get("name", "unknown"),
+                        description=dep.get("purpose", "Required dependency from intelligent analysis"),
+                        confidence=0.95,
+                        is_dev_dependency=False
+                    ))
         
         # Process optional dependencies
         for dep in dependency_analysis.get("optional_dependencies", []):
@@ -1447,8 +1447,10 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                     dependencies_processed.append(DependencyInfo(
                         package_name=dep["name"],
                         version_constraint=dep.get("version", ""),
-                        package_manager=llm_analysis.get("dependency_strategy", {}).get("primary_package_manager", "pip"),
-                        language="python"  # Default to python for now
+                        import_name=dep["name"],  # Required field
+                        description=f"Dependency from LLM analysis: {dep['name']}",
+                        confidence=0.90,  # Required field
+                        is_dev_dependency=False
                     ))
             
             # Extract package manager info
@@ -1515,29 +1517,24 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             return ""
         
         # Check if response is wrapped in markdown code blocks
-        if response.startswith('```json'):
-            # Find the end of the code block
-            lines = response.split('\n')
-            json_lines = []
-            in_json_block = False
+        if '```json' in response:
+            # Find the JSON code block
+            start_marker = '```json'
+            end_marker = '```'
             
-            for line in lines:
-                if line.strip() == '```json':
-                    in_json_block = True
-                    continue
-                elif line.strip() == '```' and in_json_block:
-                    break
-                elif in_json_block:
-                    json_lines.append(line)
-            
-            extracted = '\n'.join(json_lines).strip()
-            if extracted:
-                return extracted
-            else:
-                # If extraction failed, try to find JSON in the response
-                return self._find_json_in_text(response)
+            start_idx = response.find(start_marker)
+            if start_idx != -1:
+                # Find the start of JSON content (after the ```json line)
+                json_start = response.find('\n', start_idx) + 1
+                if json_start > 0:
+                    # Find the end marker
+                    end_idx = response.find(end_marker, json_start)
+                    if end_idx != -1:
+                        extracted = response[json_start:end_idx].strip()
+                        if extracted:
+                            return extracted
                 
-        elif response.startswith('```'):
+        elif '```' in response:
             # Handle generic code blocks
             lines = response.split('\n')
             json_lines = []
@@ -1555,18 +1552,9 @@ class DependencyManagementAgent_v1(UnifiedAgent):
             extracted = '\n'.join(json_lines).strip()
             if extracted:
                 return extracted
-            else:
-                # If extraction failed, try to find JSON in the response
-                return self._find_json_in_text(response)
-        else:
-            # Response might be clean JSON or contain JSON within text
-            # First try the response as-is
-            try:
-                json.loads(response)
-                return response
-            except json.JSONDecodeError:
-                # Try to find JSON within the text
-                return self._find_json_in_text(response)
+        
+        # Try to find JSON within the text using bracket matching
+        return self._find_json_in_text(response)
     
     def _find_json_in_text(self, text: str) -> str:
         """Find JSON object within text using bracket matching."""
@@ -1940,7 +1928,10 @@ async def manage_dependencies_tool(
                 dep_objects.append(DependencyInfo(
                     package_name=dep_dict["package_name"],
                     version_constraint=dep_dict.get("version_constraint"),
-                    source=dep_dict.get("source", "manual")
+                    import_name=dep_dict.get("import_name", dep_dict["package_name"]),  # Required field
+                    description=dep_dict.get("description", f"Manual dependency: {dep_dict['package_name']}"),
+                    confidence=dep_dict.get("confidence", 0.95),  # Required field
+                    is_dev_dependency=dep_dict.get("is_dev_dependency", False)
                 ))
         
         # Create input

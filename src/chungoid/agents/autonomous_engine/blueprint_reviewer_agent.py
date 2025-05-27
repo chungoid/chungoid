@@ -146,14 +146,16 @@ class BlueprintReviewerAgent_v1(UnifiedAgent):
                 )
             elif task_input.intelligent_context and task_input.project_specifications:
                 self.logger.info("Using intelligent project specifications from orchestrator")
-                analysis_result = await self._extract_analysis_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
+                analysis_result = await self._extract_blueprint_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
             else:
                 self.logger.info("Using traditional blueprint analysis")
-                # Phase 1: Analysis - Analyze blueprint and gather context
-                analysis_result = await self._analyze_blueprint(task_input, context.shared_context)
+                # Phase 1: Discovery - Discover blueprint
+                discovery_result = await self._discover_blueprint(task_input, context.shared_context)
+                # Phase 2: Analysis - Analyze blueprint and gather context
+                analysis_result = await self._analyze_blueprint(discovery_result, task_input, context.shared_context)
             
             # Phase 2: Planning - Plan review approach and criteria
-            planning_result = await self._plan_review_approach(analysis_result, task_input, context.shared_context)
+            planning_result = await self._plan_review(analysis_result, task_input, context.shared_context)
             
             # Phase 3: Review Generation - Generate comprehensive review
             review_result = await self._generate_review(planning_result, task_input, context.shared_context)
@@ -740,13 +742,14 @@ Comprehensive review of blueprint {task_input.blueprint_doc_id} with focus on {'
             # Use the refinement prompt for intelligent analysis
             if self.llm_provider:
                 llm_response = await self.llm_provider.generate(refinement_prompt)
-                analysis_result = await self._extract_analysis_from_intelligent_specs(
+                analysis_result = await self._extract_blueprint_from_intelligent_specs(
                     {"refinement_analysis": llm_response}, 
                     task_input.user_goal or "Blueprint review"
                 )
             else:
                 # Fallback to standard analysis with refinement awareness
-                analysis_result = await self._analyze_blueprint(task_input, shared_context)
+                discovery_result = await self._discover_blueprint(task_input, shared_context)
+                analysis_result = await self._analyze_blueprint(discovery_result, task_input, shared_context)
                 
                 # Enhance with refinement insights
                 if previous_outputs:

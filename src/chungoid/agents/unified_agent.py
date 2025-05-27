@@ -429,7 +429,7 @@ class UnifiedAgent(BaseModel, ABC):
         original_inputs: Any, 
         refinement_context: Dict[str, Any]
     ) -> str:
-        """Build a refinement-aware prompt that includes context from previous iterations"""
+        """Build a goal-oriented refinement prompt that compares current output to the actual goal"""
         if not self.enable_refinement or not refinement_context:
             return self._build_standard_prompt(original_inputs)
         
@@ -440,44 +440,55 @@ class UnifiedAgent(BaseModel, ABC):
             previous_quality = refinement_context.get("previous_quality_score", 0.0)
             
             # Add comprehensive debug logging for refinement debugging
-            self.logger.debug(f"[Refinement] Building refinement prompt for iteration {iteration + 1}")
-            self.logger.info(f"[Refinement Debug] Building refinement prompt for iteration {iteration + 1}")
+            self.logger.debug(f"[Refinement] Building goal-oriented refinement prompt for iteration {iteration + 1}")
+            self.logger.info(f"[Refinement Debug] Building goal-oriented refinement prompt for iteration {iteration + 1}")
             self.logger.debug(f"[Refinement] Previous outputs count: {len(previous_outputs)}")
             self.logger.info(f"[Refinement Debug] Previous outputs count: {len(previous_outputs)}")
             self.logger.debug(f"[Refinement] Previous quality score: {previous_quality}")
             self.logger.info(f"[Refinement Debug] Previous quality score: {previous_quality}")
-            self.logger.debug(f"[Refinement] Current state analysis types: {list(current_state.keys())}")
+            
+            # Extract goal content from shared context or original inputs
+            goal_content = self._extract_goal_content(original_inputs, current_state)
             
             for i, output in enumerate(previous_outputs):
                 self.logger.debug(f"[Refinement] Previous output {i+1} metadata: {output.get('metadata', {})}")
                 self.logger.info(f"[Refinement Debug] Previous output {i+1} quality: {output.get('quality_score', 'unknown')}")
-                self.logger.debug(f"[Refinement] Previous output {i+1} quality: {output.get('quality_score', 'unknown')}")
                 content_preview = str(output.get('content', ''))[:200]
                 self.logger.debug(f"[Refinement] Previous output {i+1} content preview: {content_preview}...")
             
-            # Build refinement prompt
+            # Build goal-oriented refinement prompt
             prompt_parts = [
-                f"=== REFINEMENT ITERATION {iteration + 1} ===",
+                f"=== GOAL-ORIENTED REFINEMENT ITERATION {iteration + 1} ===",
                 "",
-                "ORIGINAL TASK:",
+                "ORIGINAL PROJECT GOAL:",
+                goal_content,
+                "",
+                "CURRENT TASK:",
                 str(original_inputs),
                 "",
             ]
             
             if previous_outputs:
+                # Get the most recent output for comparison
+                latest_output = previous_outputs[-1]
+                
                 prompt_parts.extend([
-                    "PREVIOUS WORK ANALYSIS:",
-                    f"- {len(previous_outputs)} previous iterations completed",
-                    f"- Previous quality score: {previous_quality:.2f}",
+                    "PREVIOUS ATTEMPT ANALYSIS:",
+                    f"- Iteration {latest_output['iteration']} achieved quality score: {latest_output['quality_score']:.2f}",
+                    f"- Output content: {str(latest_output['content'])[:300]}...",
+                    "",
+                    "GAP ANALYSIS:",
+                    "Compare the previous output against the ORIGINAL PROJECT GOAL above.",
+                    "Identify specific ways the output falls short of the goal requirements:",
                     ""
                 ])
                 
-                # Include summary of previous outputs
+                # Add gap analysis for multiple previous outputs
                 for i, output in enumerate(previous_outputs[-2:]):  # Last 2 outputs
                     prompt_parts.extend([
-                        f"Previous Output {output['iteration']}:",
-                        f"Quality: {output['quality_score']:.2f}",
-                        f"Content: {str(output['content'])[:200]}...",
+                        f"Previous Output {output['iteration']} gaps:",
+                        f"- Quality: {output['quality_score']:.2f} (target: 0.95+)",
+                        f"- Content analysis needed against goal requirements",
                         ""
                     ])
             
@@ -491,34 +502,215 @@ class UnifiedAgent(BaseModel, ABC):
                 ])
             
             prompt_parts.extend([
-                "REFINEMENT INSTRUCTIONS:",
-                "1. Analyze the previous work and identify areas for improvement",
-                "2. Use the current project state to understand context and constraints",
-                "3. Build upon previous outputs rather than starting from scratch",
-                "4. Focus on addressing quality gaps and improving integration",
-                "5. Ensure your output is measurably better than previous iterations",
+                "GOAL-ORIENTED REFINEMENT INSTRUCTIONS:",
+                "1. COMPARE your previous output directly against the ORIGINAL PROJECT GOAL",
+                "2. IDENTIFY specific goal requirements that were missed or inadequately addressed",
+                "3. ANALYZE how the current project state constrains or enables goal achievement",
+                "4. GENERATE output that directly addresses the identified gaps in goal fulfillment",
+                "5. ENSURE your output moves measurably closer to achieving the stated project goal",
                 "",
-                "Generate your refined output now:"
+                "Focus on GOAL ALIGNMENT rather than generic quality improvements.",
+                "Your output should demonstrably better fulfill the original project goal.",
+                "",
+                "Generate your goal-aligned refined output now:"
             ])
             
             final_prompt = "\n".join(prompt_parts)
             
             # Add logging to show the full refinement prompt for debugging
             if os.getenv("CHUNGOID_FULL_LLM_LOGGING", "false").lower() == "true":
-                self.logger.info(f"[REFINEMENT DEBUG] Full Refinement Prompt for iteration {iteration + 1}:")
+                self.logger.info(f"[GOAL-ORIENTED REFINEMENT DEBUG] Full Refinement Prompt for iteration {iteration + 1}:")
                 self.logger.info("=" * 80)
                 self.logger.info(final_prompt)
                 self.logger.info("=" * 80)
             else:
                 # Show a preview of the refinement prompt
-                self.logger.info(f"[REFINEMENT DEBUG] Refinement prompt preview (first 300 chars): {final_prompt[:300]}...")
+                self.logger.info(f"[GOAL-ORIENTED REFINEMENT DEBUG] Refinement prompt preview (first 300 chars): {final_prompt[:300]}...")
             
             return final_prompt
             
         except Exception as e:
-            self.logger.warning(f"[Refinement] Failed to build refinement prompt: {e}")
+            self.logger.warning(f"[Refinement] Failed to build goal-oriented refinement prompt: {e}")
             return self._build_standard_prompt(original_inputs)
-    
+
+    def _extract_goal_content(self, original_inputs: Any, current_state: Dict[str, Any]) -> str:
+        """Extract goal content from various sources in the execution context"""
+        
+        # Try to get goal from shared context first (most reliable)
+        if hasattr(self, 'shared_context') and self.shared_context:
+            if 'user_goal' in self.shared_context:
+                return str(self.shared_context['user_goal'])
+        
+        # Try to get goal from current state
+        if current_state and 'user_goal' in current_state:
+            return str(current_state['user_goal'])
+        
+        # Try to extract from original inputs if it's a dict
+        if isinstance(original_inputs, dict):
+            if 'user_goal' in original_inputs:
+                return str(original_inputs['user_goal'])
+            if 'goal' in original_inputs:
+                return str(original_inputs['goal'])
+            if 'project_goal' in original_inputs:
+                return str(original_inputs['project_goal'])
+        
+        # Fallback: use original inputs as goal content
+        goal_content = str(original_inputs)
+        
+        # If it's very short, it might not be the actual goal
+        if len(goal_content) < 50:
+            return "Goal content not available - using task description as proxy for goal alignment"
+        
+        return goal_content
+
+    def _detect_content_differentiation(self, current_output: Any, previous_outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Detect if current output is meaningfully different from previous iterations"""
+        
+        if not previous_outputs:
+            return {
+                "is_different": True,
+                "differentiation_score": 1.0,
+                "similarity_analysis": "No previous outputs to compare",
+                "content_changes": ["Initial generation"]
+            }
+        
+        # Get the most recent previous output for comparison
+        latest_previous = previous_outputs[-1]
+        prev_content = latest_previous.get('content', {})
+        
+        # Convert current output to comparable format
+        current_content = current_output
+        if hasattr(current_output, 'dict'):
+            current_content = current_output.dict()
+        elif hasattr(current_output, '__dict__'):
+            current_content = current_output.__dict__
+        
+        # Analyze different aspects of content differentiation
+        differentiation_analysis = {
+            "is_different": False,
+            "differentiation_score": 0.0,
+            "similarity_analysis": "",
+            "content_changes": [],
+            "identical_aspects": [],
+            "improved_aspects": []
+        }
+        
+        try:
+            # 1. Structural differences
+            structural_changes = self._analyze_structural_changes(current_content, prev_content)
+            
+            # 2. Content length differences
+            length_changes = self._analyze_content_length_changes(current_content, prev_content)
+            
+            # 3. Semantic differences (basic text comparison)
+            semantic_changes = self._analyze_semantic_changes(current_content, prev_content)
+            
+            # Calculate overall differentiation score
+            total_changes = len(structural_changes) + len(length_changes) + len(semantic_changes)
+            
+            if total_changes == 0:
+                differentiation_analysis.update({
+                    "is_different": False,
+                    "differentiation_score": 0.0,
+                    "similarity_analysis": "Output appears identical to previous iteration",
+                    "identical_aspects": ["structure", "content", "length"]
+                })
+            else:
+                # Score based on types and magnitude of changes
+                score = min(1.0, total_changes * 0.2)  # Each change type adds 0.2
+                
+                differentiation_analysis.update({
+                    "is_different": score > 0.1,
+                    "differentiation_score": score,
+                    "similarity_analysis": f"Found {total_changes} types of changes",
+                    "content_changes": structural_changes + length_changes + semantic_changes
+                })
+                
+                if structural_changes:
+                    differentiation_analysis["improved_aspects"].append("structure")
+                if length_changes:
+                    differentiation_analysis["improved_aspects"].append("content_length")
+                if semantic_changes:
+                    differentiation_analysis["improved_aspects"].append("content_semantics")
+            
+        except Exception as e:
+            self.logger.warning(f"Content differentiation analysis failed: {e}")
+            # Fallback: assume different if we can't analyze
+            differentiation_analysis.update({
+                "is_different": True,
+                "differentiation_score": 0.5,
+                "similarity_analysis": f"Analysis failed: {e}",
+                "content_changes": ["Unable to analyze - assuming different"]
+            })
+        
+        return differentiation_analysis
+
+    def _analyze_structural_changes(self, current: Any, previous: Any) -> List[str]:
+        """Analyze structural differences between outputs"""
+        changes = []
+        
+        # Compare top-level keys if both are dicts
+        if isinstance(current, dict) and isinstance(previous, dict):
+            current_keys = set(current.keys())
+            previous_keys = set(previous.keys())
+            
+            new_keys = current_keys - previous_keys
+            removed_keys = previous_keys - current_keys
+            
+            if new_keys:
+                changes.append(f"Added keys: {list(new_keys)}")
+            if removed_keys:
+                changes.append(f"Removed keys: {list(removed_keys)}")
+            
+            # Check for changes in list lengths
+            for key in current_keys & previous_keys:
+                if isinstance(current.get(key), list) and isinstance(previous.get(key), list):
+                    if len(current[key]) != len(previous[key]):
+                        changes.append(f"List length changed for {key}: {len(previous[key])} -> {len(current[key])}")
+        
+        return changes
+
+    def _analyze_content_length_changes(self, current: Any, previous: Any) -> List[str]:
+        """Analyze content length differences"""
+        changes = []
+        
+        # Convert to strings for length comparison
+        current_str = str(current)
+        previous_str = str(previous)
+        
+        length_diff = len(current_str) - len(previous_str)
+        
+        if abs(length_diff) > 50:  # Significant length change
+            if length_diff > 0:
+                changes.append(f"Content expanded by {length_diff} characters")
+            else:
+                changes.append(f"Content reduced by {abs(length_diff)} characters")
+        
+        return changes
+
+    def _analyze_semantic_changes(self, current: Any, previous: Any) -> List[str]:
+        """Analyze semantic differences in content"""
+        changes = []
+        
+        # Simple text-based comparison
+        current_str = str(current).lower()
+        previous_str = str(previous).lower()
+        
+        # Check for completely different content
+        if current_str != previous_str:
+            # Calculate rough similarity
+            common_chars = sum(1 for c1, c2 in zip(current_str, previous_str) if c1 == c2)
+            max_length = max(len(current_str), len(previous_str))
+            
+            if max_length > 0:
+                similarity = common_chars / max_length
+                if similarity < 0.8:  # Less than 80% similar
+                    changes.append(f"Significant content changes detected (similarity: {similarity:.2f})")
+                elif similarity < 0.95:  # Less than 95% similar
+                    changes.append(f"Minor content changes detected (similarity: {similarity:.2f})")
+        
+        return changes
+
     def _build_standard_prompt(self, inputs: Any) -> str:
         """Build a standard prompt for non-refinement execution"""
         return f"Execute the following task:\n\n{inputs}"
@@ -586,7 +778,7 @@ class UnifiedAgent(BaseModel, ABC):
         completion_criteria: Any,
         context: ExecutionContext
     ) -> CompletionAssessment:
-        """Assess whether execution should complete or continue iterating"""
+        """Assess whether execution should complete or continue iterating with content differentiation detection"""
         
         # Add comprehensive debug logging for completion assessment
         self.logger.debug(f"[Completion Assessment] Assessing iteration result:")
@@ -601,6 +793,50 @@ class UnifiedAgent(BaseModel, ABC):
         self.logger.debug(f"[Completion Assessment] Quality threshold: {quality_threshold}")
         self.logger.info(f"[Completion Assessment Debug] Quality threshold: {quality_threshold}")
         
+        # ENHANCED: Content differentiation detection for refinement iterations
+        gaps_identified = []
+        recommendations = []
+        
+        # Check for refinement context to detect content stagnation
+        refinement_context = context.shared_context.get("refinement_context")
+        if self.enable_refinement and refinement_context:
+            previous_outputs = refinement_context.get("previous_outputs", [])
+            
+            if previous_outputs:
+                # Detect content differentiation
+                differentiation_analysis = self._detect_content_differentiation(
+                    iteration_result.output, previous_outputs
+                )
+                
+                self.logger.info(f"[Content Differentiation] Analysis: {differentiation_analysis['similarity_analysis']}")
+                self.logger.info(f"[Content Differentiation] Score: {differentiation_analysis['differentiation_score']:.3f}")
+                
+                # If content is identical or very similar, flag as problematic
+                if not differentiation_analysis["is_different"]:
+                    gaps_identified.append("Output identical to previous iteration - refinement not producing improvements")
+                    recommendations.extend([
+                        "Modify refinement prompts to enforce specific changes",
+                        "Add explicit differentiation requirements",
+                        "Consider alternative generation strategies"
+                    ])
+                    
+                    # Lower effective quality score for identical content
+                    effective_quality = iteration_result.quality_score * 0.7
+                    self.logger.warning(f"[Content Differentiation] Identical content detected - reducing effective quality from {iteration_result.quality_score:.3f} to {effective_quality:.3f}")
+                    
+                    return CompletionAssessment(
+                        is_complete=False,
+                        quality_score=effective_quality,
+                        reason=CompletionReason.QUALITY_THRESHOLD_NOT_MET,
+                        gaps_identified=gaps_identified,
+                        recommendations=recommendations
+                    )
+                
+                elif differentiation_analysis["differentiation_score"] < 0.3:
+                    gaps_identified.append("Minimal changes from previous iteration - refinement effectiveness low")
+                    recommendations.append("Increase refinement specificity and goal alignment")
+        
+        # Standard quality threshold check
         if iteration_result.quality_score >= quality_threshold:
             self.logger.debug(f"[Completion Assessment] Quality threshold met ({iteration_result.quality_score} >= {quality_threshold})")
             self.logger.info(f"[Completion Assessment Debug] Quality threshold MET ({iteration_result.quality_score} >= {quality_threshold})")
@@ -615,13 +851,18 @@ class UnifiedAgent(BaseModel, ABC):
         self.logger.debug(f"[Completion Assessment] Quality threshold not met ({iteration_result.quality_score} < {quality_threshold})")
         self.logger.info(f"[Completion Assessment Debug] Quality threshold NOT MET ({iteration_result.quality_score} < {quality_threshold})")
         
-        # Add more sophisticated completion criteria here as needed
+        # Add standard gaps if none were identified from content differentiation
+        if not gaps_identified:
+            gaps_identified = ["Quality score below threshold"]
+        if not recommendations:
+            recommendations = ["Improve output quality", "Add more detail", "Enhance analysis"]
+        
         return CompletionAssessment(
             is_complete=False,
             quality_score=iteration_result.quality_score,
             reason=CompletionReason.QUALITY_THRESHOLD_NOT_MET,
-            gaps_identified=["Quality score below threshold"],
-            recommendations=["Improve output quality", "Add more detail", "Enhance analysis"]
+            gaps_identified=gaps_identified,
+            recommendations=recommendations
         )
 
     async def _enhance_context_for_next_iteration(

@@ -294,14 +294,38 @@ class EnvironmentStrategy(ABC):
     def _run_command(self, command: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> Tuple[bool, str, str]:
         """Run a command and return success status, stdout, stderr."""
         try:
-            result = subprocess.run(
-                command,
-                cwd=cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minutes timeout
-            )
+            # Handle shell built-ins and complex commands by using shell=True
+            if isinstance(command, list) and len(command) > 0:
+                # Check if this is a shell built-in or complex command
+                shell_builtins = ['cd', 'source', 'export', 'alias', 'unalias', 'set', 'unset']
+                cmd_str = ' '.join(command) if isinstance(command, list) else command
+                
+                if command[0] in shell_builtins or any(op in cmd_str for op in ['&&', '||', '|', '>', '<', ';']):
+                    # Use shell=True for shell built-ins and complex commands
+                    result = subprocess.run(
+                        cmd_str,
+                        cwd=cwd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        shell=True,
+                        timeout=300  # 5 minutes timeout
+                    )
+                else:
+                    # Use shell=False for regular commands
+                    result = subprocess.run(
+                        command,
+                        cwd=cwd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        shell=False,
+                        timeout=300  # 5 minutes timeout
+                    )
+            else:
+                # Fallback for empty or invalid commands
+                return False, "", "Invalid command"
+                
             return result.returncode == 0, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
             return False, "", "Command timed out"
@@ -964,26 +988,34 @@ class UniversalEnvironmentStrategy(EnvironmentStrategy):
     
     def _extract_json_from_response(self, response: str) -> str:
         """Extract JSON content from LLM response, handling markdown code blocks."""
+        if not response:
+            return ""
+            
         response = response.strip()
         
+        # Handle empty response
+        if not response:
+            return ""
+        
         # Check if response is wrapped in markdown code blocks
-        if response.startswith('```json'):
-            # Find the end of the code block
-            lines = response.split('\n')
-            json_lines = []
-            in_json_block = False
+        if '```json' in response:
+            # Find the JSON code block
+            start_marker = '```json'
+            end_marker = '```'
             
-            for line in lines:
-                if line.strip() == '```json':
-                    in_json_block = True
-                    continue
-                elif line.strip() == '```' and in_json_block:
-                    break
-                elif in_json_block:
-                    json_lines.append(line)
-            
-            return '\n'.join(json_lines)
-        elif response.startswith('```'):
+            start_idx = response.find(start_marker)
+            if start_idx != -1:
+                # Find the start of JSON content (after the ```json line)
+                json_start = response.find('\n', start_idx) + 1
+                if json_start > 0:
+                    # Find the end marker
+                    end_idx = response.find(end_marker, json_start)
+                    if end_idx != -1:
+                        extracted = response[json_start:end_idx].strip()
+                        if extracted:
+                            return extracted
+                
+        elif '```' in response:
             # Handle generic code blocks
             lines = response.split('\n')
             json_lines = []
@@ -998,10 +1030,44 @@ class UniversalEnvironmentStrategy(EnvironmentStrategy):
                 elif in_code_block:
                     json_lines.append(line)
             
-            return '\n'.join(json_lines)
-        else:
-            # Response is already clean JSON
-            return response
+            extracted = '\n'.join(json_lines).strip()
+            if extracted:
+                return extracted
+        
+        # Try to find JSON within the text using bracket matching
+        return self._find_json_in_text(response)
+    
+    def _find_json_in_text(self, text: str) -> str:
+        """Find JSON object within text using bracket matching."""
+        if not text:
+            return ""
+            
+        # Look for opening brace
+        start_idx = text.find('{')
+        if start_idx == -1:
+            return ""
+        
+        # Count braces to find matching closing brace
+        brace_count = 0
+        for i, char in enumerate(text[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found matching closing brace
+                    potential_json = text[start_idx:i+1]
+                    try:
+                        # Validate it's actually JSON
+                        import json
+                        json.loads(potential_json)
+                        return potential_json
+                    except json.JSONDecodeError:
+                        # Continue looking for another JSON object
+                        continue
+        
+        # No valid JSON found
+        return ""
 
     async def _execute_setup_commands(self, commands: List[str], cwd: Path) -> bool:
         """Execute a list of setup commands"""
@@ -1923,26 +1989,34 @@ Be specific about versions and tools based on the project requirements.
     
     def _extract_json_from_response(self, response: str) -> str:
         """Extract JSON content from LLM response, handling markdown code blocks."""
+        if not response:
+            return ""
+            
         response = response.strip()
         
+        # Handle empty response
+        if not response:
+            return ""
+        
         # Check if response is wrapped in markdown code blocks
-        if response.startswith('```json'):
-            # Find the end of the code block
-            lines = response.split('\n')
-            json_lines = []
-            in_json_block = False
+        if '```json' in response:
+            # Find the JSON code block
+            start_marker = '```json'
+            end_marker = '```'
             
-            for line in lines:
-                if line.strip() == '```json':
-                    in_json_block = True
-                    continue
-                elif line.strip() == '```' and in_json_block:
-                    break
-                elif in_json_block:
-                    json_lines.append(line)
-            
-            return '\n'.join(json_lines)
-        elif response.startswith('```'):
+            start_idx = response.find(start_marker)
+            if start_idx != -1:
+                # Find the start of JSON content (after the ```json line)
+                json_start = response.find('\n', start_idx) + 1
+                if json_start > 0:
+                    # Find the end marker
+                    end_idx = response.find(end_marker, json_start)
+                    if end_idx != -1:
+                        extracted = response[json_start:end_idx].strip()
+                        if extracted:
+                            return extracted
+                
+        elif '```' in response:
             # Handle generic code blocks
             lines = response.split('\n')
             json_lines = []
@@ -1957,10 +2031,44 @@ Be specific about versions and tools based on the project requirements.
                 elif in_code_block:
                     json_lines.append(line)
             
-            return '\n'.join(json_lines)
-        else:
-            # Response is already clean JSON
-            return response
+            extracted = '\n'.join(json_lines).strip()
+            if extracted:
+                return extracted
+        
+        # Try to find JSON within the text using bracket matching
+        return self._find_json_in_text(response)
+    
+    def _find_json_in_text(self, text: str) -> str:
+        """Find JSON object within text using bracket matching."""
+        if not text:
+            return ""
+            
+        # Look for opening brace
+        start_idx = text.find('{')
+        if start_idx == -1:
+            return ""
+        
+        # Count braces to find matching closing brace
+        brace_count = 0
+        for i, char in enumerate(text[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found matching closing brace
+                    potential_json = text[start_idx:i+1]
+                    try:
+                        # Validate it's actually JSON
+                        import json
+                        json.loads(potential_json)
+                        return potential_json
+                    except json.JSONDecodeError:
+                        # Continue looking for another JSON object
+                        continue
+        
+        # No valid JSON found
+        return ""
 
     def _extract_version_from_response(self, response: str, language: str) -> Optional[str]:
         """Extract version information from LLM response."""
