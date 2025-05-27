@@ -16,12 +16,14 @@ from .code_generation import CodeGenerationProtocol
 from .file_management import FileManagementProtocol
 from .plan_review import PlanReviewProtocol
 
-# Universal protocols (5 protocols)
+# Universal protocols (7 protocols)
 from .universal.agent_communication import AgentCommunicationProtocol
 from .universal.context_sharing import ContextSharingProtocol
 from .universal.tool_validation import ToolValidationProtocol
 from .universal.error_recovery import ErrorRecoveryProtocol
 from .universal.goal_tracking import GoalTrackingProtocol
+from .universal.reflection import ReflectionProtocol
+from .universal.tool_use import ToolUseProtocol
 
 # Planning protocols (4 protocols)
 from .planning.architecture_planning import ArchitecturePlanningProtocol
@@ -72,7 +74,7 @@ __all__ = [
     
     # Universal protocols (5)
     'AgentCommunicationProtocol', 'ContextSharingProtocol', 'ToolValidationProtocol',
-    'ErrorRecoveryProtocol', 'GoalTrackingProtocol',
+    'ErrorRecoveryProtocol', 'GoalTrackingProtocol', 'ReflectionProtocol', 'ToolUseProtocol',
     
     # Planning protocols (4)
     'ArchitecturePlanningProtocol', 'DeepPlanningVerificationProtocol',
@@ -108,6 +110,8 @@ AVAILABLE_PROTOCOLS = {
     "tool_validation": ToolValidationProtocol,
     "error_recovery": ErrorRecoveryProtocol,
     "goal_tracking": GoalTrackingProtocol,
+    "reflection": ReflectionProtocol,
+    "tool_use": ToolUseProtocol,
     
     # Planning protocols
     "architecture_planning": ArchitecturePlanningProtocol,
