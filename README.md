@@ -262,6 +262,33 @@ Creates `.chungoid/` directory with configuration for autonomous agents and prot
 
 Chungoid uses a **modern hierarchical configuration system** optimized for autonomous execution. Configuration can be set through environment variables, YAML files, or CLI parameters.
 
+### 🎯 **Max Iterations Control** (New Feature!)
+
+Control how many iterations agents perform for **fast testing** or **high-quality builds**:
+
+```bash
+# Fast testing (5 iterations max)
+export CHUNGOID_MAX_ITERATIONS=5
+chungoid build --goal-file goal.txt
+
+# High quality (25 iterations max)  
+export CHUNGOID_MAX_ITERATIONS=25
+chungoid build --goal-file goal.txt
+```
+
+**Configuration File Approach:**
+```yaml
+# .chungoid/config.yaml
+agents:
+  default_max_iterations: 5          # Override ALL agents
+  
+  # Per-stage overrides
+  stage_max_iterations:
+    environment_bootstrap: 3
+    code_generation: 10
+    code_debugging: 8
+```
+
 ### Quick Setup Examples
 
 **Development Setup (Cost-Effective)**
@@ -270,6 +297,7 @@ Chungoid uses a **modern hierarchical configuration system** optimized for auton
 export OPENAI_API_KEY="sk-your-openai-api-key"
 export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
 export CHUNGOID_LLM_MONTHLY_BUDGET_LIMIT="20.0"
+export CHUNGOID_MAX_ITERATIONS=5    # Fast testing
 
 # Start building
 chungoid build --goal-file goal.txt
@@ -283,10 +311,20 @@ export CHUNGOID_LLM_DEFAULT_MODEL="gpt-4o-mini-2024-07-18"
 export CHUNGOID_LLM_MONTHLY_BUDGET_LIMIT="200.0"
 export CHUNGOID_ENVIRONMENT="production"
 export CHUNGOID_LOG_LEVEL="INFO"
+export CHUNGOID_MAX_ITERATIONS=25   # High quality
 
 # Build with specific model override
 chungoid build --goal-file goal.txt --model "gpt-4o"
 ```
+
+### Configuration Hierarchy
+
+The system merges configuration from multiple sources (highest priority first):
+
+1. **Environment Variables** (`CHUNGOID_*`, `OPENAI_API_KEY`, etc.) - **Highest Priority**
+2. **Project Configuration** (`.chungoid/config.yaml` in project directory)
+3. **Global Configuration** (`~/.chungoid/config.yaml` in home directory)
+4. **Built-in Defaults** (optimized for autonomous execution) - **Lowest Priority**
 
 ### Configuration Template
 
@@ -332,6 +370,30 @@ agents:
   default_timeout: 300                  # Agent timeout (seconds)
   max_concurrent_agents: 5              # Parallel agent limit
   enable_parallel_execution: true       # Enable parallel processing
+  
+  # 🎯 NEW: Max iterations control for testing/production
+  default_max_iterations: 15            # Override ALL agent max_iterations
+  
+  # 🎯 NEW: Per-stage max iterations overrides
+  stage_max_iterations:                 # Per-stage overrides
+    environment_bootstrap: 10           # Environment setup iterations
+    dependency_management: 8            # Dependency resolution iterations
+    code_generation: 20                 # Code generation iterations
+    code_debugging: 15                  # Debugging iterations
+    project_documentation: 12           # Documentation iterations
+  
+  # 🎯 NEW: Per-agent timeout and retry overrides
+  agent_timeouts:                       # Per-agent timeout overrides
+    "EnvironmentBootstrapAgent": 180
+    "SmartCodeGeneratorAgent_v1": 300
+    "CodeDebuggingAgent_v1": 240
+    "ProjectDocumentationAgent_v1": 180
+  
+  agent_retry_limits:                   # Per-agent retry limits
+    "EnvironmentBootstrapAgent": 2
+    "SmartCodeGeneratorAgent_v1": 3
+    "CodeDebuggingAgent_v1": 3
+    "ProjectDocumentationAgent_v1": 2
   
   # Retry and resilience
   max_retries: 3                        # Agent retry attempts
@@ -456,6 +518,7 @@ export CHUNGOID_CHROMADB_AUTH_TOKEN="your-token"
 export CHUNGOID_AGENT_TIMEOUT="300"
 export CHUNGOID_AGENT_MAX_CONCURRENT="5"
 export CHUNGOID_AGENT_MAX_RETRIES="3"
+export CHUNGOID_MAX_ITERATIONS="15"              # 🎯 NEW: Override max iterations
 
 # System Configuration
 export CHUNGOID_ENVIRONMENT="production"
@@ -531,13 +594,36 @@ chungoid build --goal-file goal.txt --model "gpt-4o-mini-2024-07-18"
 
 ### Configuration Examples by Use Case
 
-**Local Development:**
+**Fast Testing (Development):**
+```yaml
+llm:
+  provider: "openai"
+  default_model: "gpt-4o-mini-2024-07-18"  # Cost-effective
+  timeout: 30                               # Fast timeout
+  max_retries: 2                           # Minimal retries
+agents:
+  default_max_iterations: 5               # 🎯 Fast testing with 5 iterations
+  default_timeout: 120                    # Fast agent timeout
+  max_concurrent_agents: 3                # Lower concurrency
+  agent_timeouts:                         # Per-agent speed optimization
+    "EnvironmentBootstrapAgent": 60
+    "SmartCodeGeneratorAgent_v1": 120
+logging:
+  level: "INFO"
+  log_retention_days: 3                   # Short retention
+project:
+  max_file_size_mb: 5                     # Smaller file limit
+  analysis_depth: 3                       # Shallow analysis
+```
+
+**Local Development (Ollama):**
 ```yaml
 llm:
   provider: "ollama"
   default_model: "mistral"
   api_base_url: "http://localhost:11434"
 agents:
+  default_max_iterations: 10              # Moderate iterations for local
   max_concurrent_agents: 3
 logging:
   level: "DEBUG"
@@ -566,10 +652,17 @@ llm:
   default_model: "gpt-4o"
   timeout: 120
   max_retries: 5
+  monthly_budget_limit: 500.0            # Higher budget for production
 agents:
-  default_timeout: 600
+  default_max_iterations: 25             # 🎯 High quality with 25 iterations
+  default_timeout: 600                   # Longer timeouts for quality
   max_concurrent_agents: 10
   enable_automatic_checkpoints: true
+  stage_max_iterations:                  # Production-quality per-stage limits
+    environment_bootstrap: 15
+    code_generation: 30
+    code_debugging: 25
+    project_documentation: 20
 logging:
   level: "INFO"
   enable_structured_logging: true

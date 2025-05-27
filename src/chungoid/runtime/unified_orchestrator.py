@@ -182,7 +182,7 @@ class UnifiedOrchestrator:
                 "project_path": self.shared_context.get("project_root_path", "."),
                 "intelligent_context": True  # Signal that this is intelligent input
             },
-            max_iterations=15
+            max_iterations=self._get_max_iterations("environment_bootstrap", 15)
         )
 
         # 3. Dependency management - ENHANCED: Use extracted project information
@@ -203,7 +203,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Signal that this is intelligent input
                 "user_goal": master_planner_input.user_goal
             },
-            max_iterations=12
+            max_iterations=self._get_max_iterations("dependency_management", 12)
         )
 
         # 4. Product Analysis - ENHANCED: Analyze requirements and scope
@@ -216,7 +216,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=20
+            max_iterations=self._get_max_iterations("product_analysis", 20)
         )
 
         # 5. Architecture Design - ENHANCED: Design system architecture
@@ -229,7 +229,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=25
+            max_iterations=self._get_max_iterations("architecture_design", 25)
         )
 
         # 6. Requirements Tracing - ENHANCED: Trace and validate requirements
@@ -242,7 +242,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=18
+            max_iterations=self._get_max_iterations("requirements_tracing", 18)
         )
 
         # 7. Risk Assessment - ENHANCED: Assess project risks
@@ -255,7 +255,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=22
+            max_iterations=self._get_max_iterations("risk_assessment", 22)
         )
 
         # 8. Blueprint Review - ENHANCED: Review and validate architecture
@@ -268,7 +268,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=15
+            max_iterations=self._get_max_iterations("blueprint_review", 15)
         )
 
         # 9. Code Generation - ENHANCED: Generate actual project code files
@@ -285,7 +285,7 @@ class UnifiedOrchestrator:
                 "target_languages": project_specs.get("target_languages", ["python"]),
                 "technologies": project_specs.get("technologies", [])
             },
-            max_iterations=30
+            max_iterations=self._get_max_iterations("code_generation", 30)
         )
 
         # 10. Project Documentation - ENHANCED: Generate comprehensive documentation
@@ -298,7 +298,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=16
+            max_iterations=self._get_max_iterations("project_documentation", 16)
         )
 
         # 11. Code Debugging - ENHANCED: Analyze and improve code quality
@@ -311,7 +311,7 @@ class UnifiedOrchestrator:
                 "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", ".")
             },
-            max_iterations=28
+            max_iterations=self._get_max_iterations("code_debugging", 28)
         )
 
         # 12. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
@@ -325,7 +325,7 @@ class UnifiedOrchestrator:
                 "project_path": self.shared_context.get("project_root_path", "."),
                 "project_id": master_planner_input.project_id or "intelligent_project"
             },
-            max_iterations=35
+            max_iterations=self._get_max_iterations("automated_refinement", 35)
         )
         
         self.logger.info("[UAEI] Enhanced autonomous development pipeline completed with 12 stages")
@@ -404,6 +404,39 @@ class UnifiedOrchestrator:
     def get_shared_outputs(self) -> Dict[str, Any]:
         """Get all stage outputs from shared context."""
         return self.shared_context.get("outputs", {})
+
+    def _get_max_iterations(self, stage_id: str, default: int) -> int:
+        """Get max_iterations for a stage from config or environment, with fallback to default."""
+        import os
+        
+        # Check environment variable first (highest precedence)
+        env_max_iter = os.getenv("CHUNGOID_MAX_ITERATIONS")
+        if env_max_iter:
+            try:
+                return int(env_max_iter)
+            except ValueError:
+                self.logger.warning(f"Invalid CHUNGOID_MAX_ITERATIONS value: {env_max_iter}")
+        
+        # Check config for global max_iterations setting
+        if self.config and "agents" in self.config:
+            agents_config = self.config["agents"]
+            if "default_max_iterations" in agents_config:
+                try:
+                    return int(agents_config["default_max_iterations"])
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid default_max_iterations in config: {agents_config['default_max_iterations']}")
+        
+        # Check config for stage-specific max_iterations
+        if self.config and "agents" in self.config:
+            agents_config = self.config["agents"]
+            if "stage_max_iterations" in agents_config and stage_id in agents_config["stage_max_iterations"]:
+                try:
+                    return int(agents_config["stage_max_iterations"][stage_id])
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid stage_max_iterations for {stage_id}: {agents_config['stage_max_iterations'][stage_id]}")
+        
+        # Return default if nothing found
+        return default
 
     async def _extract_project_specifications(
         self, 

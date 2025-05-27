@@ -173,6 +173,13 @@ class AgentConfiguration(BaseModel):
     default_timeout: int = Field(default=300, ge=30, le=3600, description="Default agent timeout in seconds")
     max_concurrent_agents: int = Field(default=5, ge=1, le=20, description="Maximum concurrent agents")
     enable_parallel_execution: bool = Field(default=True, description="Enable parallel agent execution")
+    default_max_iterations: Optional[int] = Field(default=None, ge=1, le=100, description="Default max iterations for all agents (overrides hardcoded values)")
+    
+    # Stage-specific max iterations overrides
+    stage_max_iterations: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-stage max iteration overrides"
+    )
     
     # Retry and resilience
     max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts for failed agents")
@@ -286,6 +293,7 @@ class EnvironmentVariableMapper:
         "CHUNGOID_AGENT_TIMEOUT": "agents.default_timeout",
         "CHUNGOID_AGENT_MAX_CONCURRENT": "agents.max_concurrent_agents",
         "CHUNGOID_AGENT_MAX_RETRIES": "agents.max_retries",
+        "CHUNGOID_MAX_ITERATIONS": "agents.default_max_iterations",
         
         # System Configuration
         "CHUNGOID_ENVIRONMENT": "environment",

@@ -470,6 +470,47 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         
         return final_score
 
+    def _extract_json_from_response(self, response: str) -> str:
+        """Extract JSON content from LLM response, handling markdown code blocks."""
+        response = response.strip()
+        
+        # Check if response is wrapped in markdown code blocks
+        if response.startswith('```json'):
+            # Find the end of the code block
+            lines = response.split('\n')
+            json_lines = []
+            in_json_block = False
+            
+            for line in lines:
+                if line.strip() == '```json':
+                    in_json_block = True
+                    continue
+                elif line.strip() == '```' and in_json_block:
+                    break
+                elif in_json_block:
+                    json_lines.append(line)
+            
+            return '\n'.join(json_lines)
+        elif response.startswith('```'):
+            # Handle generic code blocks
+            lines = response.split('\n')
+            json_lines = []
+            in_code_block = False
+            
+            for line in lines:
+                if line.strip().startswith('```') and not in_code_block:
+                    in_code_block = True
+                    continue
+                elif line.strip() == '```' and in_code_block:
+                    break
+                elif in_code_block:
+                    json_lines.append(line)
+            
+            return '\n'.join(json_lines)
+        else:
+            # Response is already clean JSON
+            return response
+
     @staticmethod
     def get_agent_card_static() -> AgentCard:
         input_schema = DebuggingTaskInput.model_json_schema()
