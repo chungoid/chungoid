@@ -276,7 +276,14 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from debugging analysis, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_debugging_analysis(project_specs, user_goal)
+                        
+                        analysis = parsed_result
                         # Add metadata about the intelligent analysis
                         analysis["intelligent_analysis"] = True
                         analysis["project_specifications"] = project_specs

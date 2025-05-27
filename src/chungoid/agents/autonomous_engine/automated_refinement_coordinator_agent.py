@@ -488,13 +488,19 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from coordination assessment, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_coordination_assessment(project_specs, user_goal)
+                        
                         # Add metadata about the intelligent analysis
-                        analysis["intelligent_analysis"] = True
-                        analysis["project_specifications"] = project_specs
-                        analysis["analysis_method"] = "llm_intelligent_processing"
-                        analysis["coordination_needed"] = True
-                        return analysis
+                        parsed_result["intelligent_analysis"] = True
+                        parsed_result["project_specifications"] = project_specs
+                        parsed_result["analysis_method"] = "llm_intelligent_processing"
+                        parsed_result["coordination_needed"] = True
+                        return parsed_result
                     except json.JSONDecodeError as e:
                         self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
             

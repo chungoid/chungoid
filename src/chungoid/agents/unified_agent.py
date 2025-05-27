@@ -264,7 +264,7 @@ class UnifiedAgent(BaseModel, ABC):
             # Query previous outputs for this project
             results = collection.query(
                 query_texts=[f"project_id:{project_id}"],
-                where={"project_id": project_id, "agent_id": self.AGENT_ID},
+                where={"$and": [{"project_id": {"$eq": project_id}}, {"agent_id": {"$eq": self.AGENT_ID}}]},
                 n_results=min(current_iteration, 5)  # Get up to 5 previous outputs
             )
             

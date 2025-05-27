@@ -246,7 +246,14 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from documentation analysis, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_documentation_analysis(project_specs, user_goal)
+                        
+                        analysis = parsed_result
                         
                         # Create intelligent artifact discovery based on LLM analysis
                         artifacts = {

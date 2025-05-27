@@ -285,13 +285,19 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from code generation analysis, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_code_analysis(project_specs, user_goal)
+                        
                         # Add metadata about the intelligent analysis
-                        analysis["intelligent_analysis"] = True
-                        analysis["project_specifications"] = project_specs
-                        analysis["analysis_method"] = "llm_intelligent_processing"
-                        analysis["code_generation_needed"] = True
-                        return analysis
+                        parsed_result["intelligent_analysis"] = True
+                        parsed_result["project_specifications"] = project_specs
+                        parsed_result["analysis_method"] = "llm_intelligent_processing"
+                        parsed_result["code_generation_needed"] = True
+                        return parsed_result
                     except json.JSONDecodeError as e:
                         self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
             
@@ -406,20 +412,25 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 if response:
                     try:
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from refinement analysis, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_refinement_analysis(task_input, previous_outputs, current_state)
                         
                         # Add refinement metadata
-                        analysis["refinement_analysis"] = True
-                        analysis["refinement_iteration"] = iteration
-                        analysis["previous_quality_score"] = previous_quality
-                        analysis["refinement_improvements"] = [
+                        parsed_result["refinement_analysis"] = True
+                        parsed_result["refinement_iteration"] = iteration
+                        parsed_result["previous_quality_score"] = previous_quality
+                        parsed_result["refinement_improvements"] = [
                             "Enhanced based on previous iterations",
                             "Improved integration with existing code",
                             "Better error handling and validation"
                         ]
-                        analysis["analysis_method"] = "llm_refinement_processing"
+                        parsed_result["analysis_method"] = "llm_refinement_processing"
                         
-                        return analysis
+                        return parsed_result
                         
                     except json.JSONDecodeError as e:
                         self.logger.warning(f"Failed to parse refinement LLM response as JSON: {e}")

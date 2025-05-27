@@ -960,7 +960,12 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from dependency analysis, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_dependency_analysis(project_specs, user_goal)
                         
                         # Create intelligent dependency discovery based on LLM analysis
                         discovery_result = {
@@ -970,15 +975,15 @@ class DependencyManagementAgent_v1(UnifiedAgent):
                             "primary_language": project_specs.get("primary_language", "python"),
                             "target_languages": project_specs.get("target_languages", []),
                             "technologies": project_specs.get("technologies", []),
-                            "dependency_strategy": analysis.get("dependency_strategy", {}),
-                            "dependency_analysis": analysis.get("dependency_analysis", {}),
-                            "conflict_prevention": analysis.get("conflict_prevention", {}),
-                            "optimization_recommendations": analysis.get("optimization_recommendations", []),
-                            "security_considerations": analysis.get("security_considerations", []),
-                            "installation_order": analysis.get("installation_order", []),
-                            "llm_confidence": analysis.get("confidence_score", 0.8),
+                            "dependency_strategy": parsed_result.get("dependency_strategy", {}),
+                            "dependency_analysis": parsed_result.get("dependency_analysis", {}),
+                            "conflict_prevention": parsed_result.get("conflict_prevention", {}),
+                            "optimization_recommendations": parsed_result.get("optimization_recommendations", []),
+                            "security_considerations": parsed_result.get("security_considerations", []),
+                            "installation_order": parsed_result.get("installation_order", []),
+                            "llm_confidence": parsed_result.get("confidence_score", 0.8),
                             "analysis_method": "llm_intelligent_processing",
-                            "detected_dependencies": self._convert_to_dependency_info(analysis.get("dependency_analysis", {}))
+                            "detected_dependencies": self._convert_to_dependency_info(parsed_result.get("dependency_analysis", {}))
                         }
                         
                         return discovery_result

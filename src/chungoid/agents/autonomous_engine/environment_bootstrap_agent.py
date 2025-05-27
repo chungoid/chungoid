@@ -1180,7 +1180,12 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                     try:
                         # Extract JSON from markdown code blocks if present
                         json_content = self._extract_json_from_response(response)
-                        analysis = json.loads(json_content)
+                        parsed_result = json.loads(json_content)
+                        
+                        # Validate that we got a dictionary as expected
+                        if not isinstance(parsed_result, dict):
+                            self.logger.warning(f"Expected dict from environment analysis, got {type(parsed_result)}. Using fallback.")
+                            return self._generate_fallback_environment_analysis(project_specs, user_goal)
                         
                         # Create intelligent environment analysis based on LLM analysis
                         environment_analysis = {
@@ -1190,14 +1195,14 @@ class EnvironmentBootstrapAgent(UnifiedAgent):
                             "primary_language": project_specs.get("primary_language", "python"),
                             "target_languages": project_specs.get("target_languages", []),
                             "technologies": project_specs.get("technologies", []),
-                            "environment_strategy": analysis.get("environment_strategy", {}),
-                            "environment_requirements": analysis.get("environment_requirements", []),
-                            "dependency_strategy": analysis.get("dependency_strategy", {}),
-                            "setup_recommendations": analysis.get("setup_recommendations", []),
-                            "potential_issues": analysis.get("potential_issues", []),
-                            "validation_criteria": analysis.get("validation_criteria", []),
-                            "estimated_setup_time": analysis.get("estimated_setup_time", "unknown"),
-                            "llm_confidence": analysis.get("confidence_score", 0.8),
+                            "environment_strategy": parsed_result.get("environment_strategy", {}),
+                            "environment_requirements": parsed_result.get("environment_requirements", []),
+                            "dependency_strategy": parsed_result.get("dependency_strategy", {}),
+                            "setup_recommendations": parsed_result.get("setup_recommendations", []),
+                            "potential_issues": parsed_result.get("potential_issues", []),
+                            "validation_criteria": parsed_result.get("validation_criteria", []),
+                            "estimated_setup_time": parsed_result.get("estimated_setup_time", "unknown"),
+                            "llm_confidence": parsed_result.get("confidence_score", 0.8),
                             "analysis_method": "llm_intelligent_processing"
                         }
                         
