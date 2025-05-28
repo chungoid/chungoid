@@ -33,6 +33,7 @@ from typing import Dict, List, Any, Optional, Set, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 from pathlib import Path
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -183,13 +184,54 @@ class DynamicToolDiscovery:
             return False
     
     def find_tools_by_capability(self, capability_name: str) -> List[ToolManifest]:
-        """Find tools that provide a specific capability."""
+        """Find tools that provide a specific capability with enhanced compound query support."""
         matching_tools = []
+        scored_matches = []  # Track tools with match scores for ranking
+        
+        # Split compound queries (handle spaces, underscores, hyphens)
+        query_terms = re.split(r'[_\s\-]+', capability_name.lower())
+        query_terms = [term.strip() for term in query_terms if term.strip()]
+        
         for manifest in self.manifests.values():
+            match_score = 0
+            tool_matched = False
+            
             for cap in manifest.capabilities:
-                if capability_name.lower() in cap.name.lower() or capability_name.lower() in cap.description.lower():
-                    matching_tools.append(manifest)
-                    break
+                cap_name_lower = cap.name.lower()
+                cap_desc_lower = cap.description.lower()
+                
+                # Check for exact substring match (high score)
+                if capability_name.lower() in cap_name_lower or capability_name.lower() in cap_desc_lower:
+                    match_score += 100
+                    tool_matched = True
+                    
+                # Check for component term matches (medium score)
+                for term in query_terms:
+                    if term in cap_name_lower:
+                        match_score += 50
+                        tool_matched = True
+                    elif term in cap_desc_lower:
+                        match_score += 25
+                        tool_matched = True
+                        
+                # Also check tool name for matches (low score)
+                tool_name_lower = manifest.tool_name.lower()
+                if capability_name.lower() in tool_name_lower:
+                    match_score += 20
+                    tool_matched = True
+                    
+                for term in query_terms:
+                    if term in tool_name_lower:
+                        match_score += 10
+                        tool_matched = True
+            
+            if tool_matched:
+                scored_matches.append((manifest, match_score))
+        
+        # Sort by match score (descending) and return tools
+        scored_matches.sort(key=lambda x: x[1], reverse=True)
+        matching_tools = [match[0] for match in scored_matches]
+        
         return matching_tools
     
     def find_tools_by_category(self, category: ToolCategory) -> List[ToolManifest]:
@@ -236,8 +278,15 @@ class DynamicToolDiscovery:
                 if any(tool in pattern.tool_sequence for tool in target_tools):
                     suggestions.append(pattern)
         
-        # Sort by success rate and complexity
-        suggestions.sort(key=lambda x: (x.success_rate, -x.complexity.value), reverse=True)
+        # Sort by success rate and complexity (map complexity to numeric values for sorting)
+        complexity_order = {
+            UsageComplexity.SIMPLE: 1,
+            UsageComplexity.MODERATE: 2,
+            UsageComplexity.COMPLEX: 3,
+            UsageComplexity.EXPERT: 4
+        }
+        
+        suggestions.sort(key=lambda x: (x.success_rate, -complexity_order.get(x.complexity, 2)), reverse=True)
         return suggestions
     
     def update_tool_metrics(
