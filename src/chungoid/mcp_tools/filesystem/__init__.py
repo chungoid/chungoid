@@ -25,11 +25,15 @@ from .file_operations import (
     filesystem_copy_file,
     filesystem_move_file,
     filesystem_safe_delete,
+    filesystem_delete_file,
+    filesystem_get_file_info,
+    filesystem_search_files,
 )
 
 from .directory_operations import (
     filesystem_list_directory,
     filesystem_create_directory,
+    filesystem_delete_directory,
     filesystem_project_scan,
     filesystem_sync_directories,
 )
@@ -47,10 +51,14 @@ __all__ = [
     "filesystem_copy_file",
     "filesystem_move_file",
     "filesystem_safe_delete",
+    "filesystem_delete_file",
+    "filesystem_get_file_info",
+    "filesystem_search_files",
     
     # Directory Operations Tools
     "filesystem_list_directory",
     "filesystem_create_directory",
+    "filesystem_delete_directory",
     "filesystem_project_scan",
     "filesystem_sync_directories",
     

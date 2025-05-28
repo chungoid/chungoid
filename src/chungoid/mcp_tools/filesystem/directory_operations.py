@@ -279,12 +279,12 @@ async def filesystem_create_directory(
     project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Create directory with proper permissions.
+    Create directory with parent creation and permission setting.
     
     Args:
         directory_path: Path to the directory to create
         create_parents: Whether to create parent directories
-        permissions: Directory permissions (e.g., '755')
+        permissions: Octal permissions string (e.g., "755")
         project_path: Optional project directory path
         project_id: Optional project identifier
         
@@ -307,10 +307,10 @@ async def filesystem_create_directory(
             if resolved_path.is_dir():
                 return {
                     "success": True,
-                    "already_exists": True,
                     "directory_path": str(resolved_path),
                     "relative_path": str(resolved_path.relative_to(project_root)),
-                    "message": "Directory already exists"
+                    "already_exists": True,
+                    "project_path": str(project_root)
                 }
             else:
                 return {
@@ -320,29 +320,37 @@ async def filesystem_create_directory(
                 }
         
         # Create directory
-        resolved_path.mkdir(parents=create_parents, exist_ok=True)
+        resolved_path.mkdir(parents=create_parents, exist_ok=False)
         
         # Set permissions if specified
         if permissions:
             try:
-                mode = int(permissions, 8)  # Convert octal string to int
+                mode = int(permissions, 8)
                 resolved_path.chmod(mode)
-            except ValueError as e:
-                logger.warning(f"Invalid permissions format '{permissions}': {e}")
+            except ValueError:
+                logger.warning(f"Invalid permissions format: {permissions}")
         
         result = {
             "success": True,
-            "already_exists": False,
             "directory_path": str(resolved_path),
             "relative_path": str(resolved_path.relative_to(project_root)),
+            "already_exists": False,
             "created_parents": create_parents,
             "permissions": permissions,
             "project_path": str(project_root)
         }
         
-        logger.info(f"Created directory: {resolved_path}")
+        logger.info(f"Successfully created directory: {resolved_path}")
         return result
         
+    except FileExistsError:
+        return {
+            "success": True,
+            "directory_path": str(resolved_path),
+            "relative_path": str(resolved_path.relative_to(project_root)),
+            "already_exists": True,
+            "project_path": str(project_root)
+        }
     except PermissionError as e:
         return {
             "success": False,
@@ -351,6 +359,152 @@ async def filesystem_create_directory(
         }
     except Exception as e:
         logger.error(f"Failed to create directory {directory_path}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "directory_path": directory_path
+        }
+
+
+async def filesystem_delete_directory(
+    directory_path: str,
+    recursive: bool = False,
+    confirm: bool = False,
+    create_backup: bool = True,
+    project_path: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Delete directory with safety checks and backup options.
+    
+    Args:
+        directory_path: Path to the directory to delete
+        recursive: Whether to delete recursively (required for non-empty directories)
+        confirm: Confirmation flag to prevent accidental deletion
+        create_backup: Whether to create backup before deletion
+        project_path: Optional project directory path
+        project_id: Optional project identifier
+        
+    Returns:
+        Dict containing deletion operation results
+    """
+    try:
+        if not confirm:
+            return {
+                "success": False,
+                "error": "Deletion requires explicit confirmation (confirm=True)",
+                "directory_path": directory_path
+            }
+            
+        project_root = _ensure_project_context(project_path, project_id)
+        
+        # Resolve directory path
+        if not os.path.isabs(directory_path):
+            resolved_path = project_root / directory_path
+        else:
+            resolved_path = Path(directory_path)
+            
+        resolved_path = resolved_path.resolve()
+        
+        # Validate directory exists
+        if not resolved_path.exists():
+            return {
+                "success": False,
+                "error": f"Directory does not exist: {resolved_path}",
+                "directory_path": str(resolved_path)
+            }
+            
+        if not resolved_path.is_dir():
+            return {
+                "success": False,
+                "error": f"Path is not a directory: {resolved_path}",
+                "directory_path": str(resolved_path)
+            }
+        
+        # Check if directory is empty
+        try:
+            items = list(resolved_path.iterdir())
+            is_empty = len(items) == 0
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"Permission denied accessing directory: {resolved_path}",
+                "directory_path": str(resolved_path)
+            }
+        
+        if not is_empty and not recursive:
+            return {
+                "success": False,
+                "error": f"Directory is not empty and recursive=False: {resolved_path}",
+                "directory_path": str(resolved_path),
+                "item_count": len(items)
+            }
+        
+        # Create backup if requested
+        backup_path = None
+        if create_backup and not is_empty:
+            try:
+                import shutil
+                import tempfile
+                from datetime import datetime
+                
+                # Create backup in .chungoid_backups directory
+                backup_dir = project_root / ".chungoid_backups"
+                backup_dir.mkdir(exist_ok=True)
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_name = f"{resolved_path.name}_backup_{timestamp}"
+                backup_path = backup_dir / backup_name
+                
+                shutil.copytree(resolved_path, backup_path)
+                logger.info(f"Created backup: {backup_path}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to create backup: {e}")
+        
+        # Get stats before deletion
+        total_files = 0
+        total_size = 0
+        if not is_empty:
+            for item in resolved_path.rglob("*"):
+                if item.is_file():
+                    try:
+                        total_files += 1
+                        total_size += item.stat().st_size
+                    except (PermissionError, OSError):
+                        pass
+        
+        # Delete directory
+        if is_empty:
+            resolved_path.rmdir()
+        else:
+            import shutil
+            shutil.rmtree(resolved_path)
+        
+        result = {
+            "success": True,
+            "deleted_path": str(resolved_path),
+            "relative_path": str(resolved_path.relative_to(project_root)),
+            "was_empty": is_empty,
+            "recursive": recursive,
+            "total_files_deleted": total_files,
+            "total_size_deleted": total_size,
+            "backup_path": str(backup_path) if backup_path else None,
+            "backup_created": backup_path is not None,
+            "project_path": str(project_root)
+        }
+        
+        logger.info(f"Successfully deleted directory: {resolved_path}")
+        return result
+        
+    except PermissionError as e:
+        return {
+            "success": False,
+            "error": f"Permission denied deleting directory: {str(e)}",
+            "directory_path": directory_path
+        }
+    except Exception as e:
+        logger.error(f"Failed to delete directory {directory_path}: {e}")
         return {
             "success": False,
             "error": str(e),

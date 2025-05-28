@@ -197,10 +197,17 @@ async def chroma_create_collection(
         full_collection_name = _get_project_collection_name(collection_name, project_id)
         
         # Create collection using existing chroma_utils
-        collection = get_or_create_collection(
-            collection_name=full_collection_name,
-            metadata=metadata
-        )
+        if metadata:
+            # ChromaDB's get_or_create_collection doesn't accept metadata parameter
+            # Create without metadata first, then modify
+            collection = get_or_create_collection(collection_name=full_collection_name)
+            if collection and metadata:
+                try:
+                    collection.modify(metadata=metadata)
+                except Exception as e:
+                    logger.warning(f"Could not set metadata for collection {full_collection_name}: {e}")
+        else:
+            collection = get_or_create_collection(collection_name=full_collection_name)
         
         if collection is None:
             raise Exception(f"Failed to create collection {full_collection_name}")

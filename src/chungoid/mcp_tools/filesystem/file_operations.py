@@ -623,6 +623,329 @@ async def filesystem_safe_delete(
         }
 
 
+# BIG-BANG FIX: Add missing filesystem_delete_file function
+async def filesystem_delete_file(
+    file_path: str,
+    confirm: bool = True,
+    create_backup: bool = True,
+    project_path: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Delete a file permanently (alias for filesystem_safe_delete with confirm=True by default).
+    
+    Args:
+        file_path: Path to the file to delete
+        confirm: Confirmation flag to prevent accidental deletion (defaults to True)
+        create_backup: Whether to create backup before deletion
+        project_path: Optional project directory path
+        project_id: Optional project identifier
+        
+    Returns:
+        Dict containing deletion operation results
+    """
+    return await filesystem_safe_delete(
+        file_path=file_path,
+        create_backup=create_backup,
+        confirm=confirm,
+        project_path=project_path,
+        project_id=project_id
+    )
+
+
+# BIG-BANG FIX: Add missing filesystem_get_file_info function
+async def filesystem_get_file_info(
+    file_path: str,
+    include_content_stats: bool = True,
+    project_path: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Get detailed file information and metadata.
+    
+    Args:
+        file_path: Path to the file to analyze
+        include_content_stats: Whether to include content analysis (line count, etc.)
+        project_path: Optional project directory path
+        project_id: Optional project identifier
+        
+    Returns:
+        Dict containing detailed file information
+    """
+    try:
+        project_root = _ensure_project_context(project_path, project_id)
+        
+        # Resolve path
+        if not os.path.isabs(file_path):
+            resolved_path = project_root / file_path
+        else:
+            resolved_path = Path(file_path)
+            
+        resolved_path = resolved_path.resolve()
+        
+        # Validate file exists
+        if not resolved_path.exists():
+            return {
+                "success": False,
+                "error": f"File does not exist: {resolved_path}",
+                "file_path": str(resolved_path)
+            }
+            
+        if not resolved_path.is_file():
+            return {
+                "success": False,
+                "error": f"Path is not a file: {resolved_path}",
+                "file_path": str(resolved_path)
+            }
+        
+        # Get file stats
+        stat = resolved_path.stat()
+        
+        file_info = {
+            "success": True,
+            "file_path": str(resolved_path),
+            "relative_path": str(resolved_path.relative_to(project_root)),
+            "name": resolved_path.name,
+            "extension": resolved_path.suffix,
+            "size_bytes": stat.st_size,
+            "created_time": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "accessed_time": datetime.fromtimestamp(stat.st_atime).isoformat(),
+            "permissions": oct(stat.st_mode)[-3:],
+            "is_executable": os.access(resolved_path, os.X_OK),
+            "is_readable": os.access(resolved_path, os.R_OK),
+            "is_writable": os.access(resolved_path, os.W_OK),
+            "mime_type": _guess_mime_type(resolved_path),
+            "project_path": str(project_root)
+        }
+        
+        # Add content stats if requested
+        if include_content_stats and stat.st_size > 0:
+            try:
+                # Detect encoding first
+                encoding = _detect_encoding(resolved_path)
+                
+                # Read content for analysis
+                with open(resolved_path, 'r', encoding=encoding, errors='replace') as f:
+                    content = f.read()
+                    
+                file_info.update({
+                    "encoding": encoding,
+                    "line_count": len(content.splitlines()),
+                    "character_count": len(content),
+                    "word_count": len(content.split()),
+                    "is_binary": False
+                })
+                
+            except (UnicodeDecodeError, PermissionError):
+                file_info.update({
+                    "encoding": "binary",
+                    "is_binary": True,
+                    "line_count": 0,
+                    "character_count": 0,
+                    "word_count": 0
+                })
+        
+        logger.info(f"Retrieved file info: {resolved_path}")
+        return file_info
+        
+    except Exception as e:
+        logger.error(f"Failed to get file info {file_path}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "file_path": file_path
+        }
+
+
+# BIG-BANG FIX: Add missing filesystem_search_files function
+async def filesystem_search_files(
+    directory_path: str,
+    pattern: str = "*",
+    search_type: str = "name",  # "name", "content", "both"
+    case_sensitive: bool = False,
+    max_results: int = 100,
+    file_extensions: Optional[List[str]] = None,
+    recursive: bool = True,
+    max_depth: int = 10,
+    project_path: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Search for files based on name patterns or content.
+    
+    Args:
+        directory_path: Directory to search in
+        pattern: Search pattern (glob for name, regex for content)
+        search_type: Type of search - "name", "content", or "both"
+        case_sensitive: Whether search should be case sensitive
+        max_results: Maximum number of results to return
+        file_extensions: Filter by file extensions
+        recursive: Whether to search recursively
+        max_depth: Maximum recursion depth
+        project_path: Optional project directory path
+        project_id: Optional project identifier
+        
+    Returns:
+        Dict containing search results
+    """
+    import fnmatch
+    import re
+    
+    try:
+        project_root = _ensure_project_context(project_path, project_id)
+        
+        # Resolve directory path
+        if not os.path.isabs(directory_path):
+            resolved_path = project_root / directory_path
+        else:
+            resolved_path = Path(directory_path)
+            
+        resolved_path = resolved_path.resolve()
+        
+        # Validate directory exists
+        if not resolved_path.exists():
+            return {
+                "success": False,
+                "error": f"Directory does not exist: {resolved_path}",
+                "directory_path": str(resolved_path)
+            }
+            
+        if not resolved_path.is_dir():
+            return {
+                "success": False,
+                "error": f"Path is not a directory: {resolved_path}",
+                "directory_path": str(resolved_path)
+            }
+        
+        matches = []
+        total_searched = 0
+        
+        # Prepare search pattern for content search
+        if search_type in ["content", "both"]:
+            try:
+                content_regex = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
+            except re.error as e:
+                return {
+                    "success": False,
+                    "error": f"Invalid regex pattern: {pattern} - {e}",
+                    "pattern": pattern
+                }
+        
+        def _search_directory(current_path: Path, current_depth: int = 0):
+            nonlocal total_searched, matches
+            
+            if current_depth > max_depth or len(matches) >= max_results:
+                return
+                
+            try:
+                for item in current_path.iterdir():
+                    if len(matches) >= max_results:
+                        break
+                        
+                    # Skip common ignore patterns
+                    if item.name.startswith('.') and item.name not in ['.', '..']:
+                        continue
+                        
+                    if item.is_file():
+                        total_searched += 1
+                        
+                        # Filter by file extension
+                        if file_extensions and item.suffix.lower() not in [ext.lower() for ext in file_extensions]:
+                            continue
+                        
+                        match_found = False
+                        match_info = {
+                            "file_path": str(item),
+                            "relative_path": str(item.relative_to(project_root)),
+                            "name": item.name,
+                            "size_bytes": item.stat().st_size,
+                            "modified_time": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                            "match_type": [],
+                            "content_matches": []
+                        }
+                        
+                        # Name-based search
+                        if search_type in ["name", "both"]:
+                            if case_sensitive:
+                                name_match = fnmatch.fnmatch(item.name, pattern)
+                            else:
+                                name_match = fnmatch.fnmatch(item.name.lower(), pattern.lower())
+                                
+                            if name_match:
+                                match_found = True
+                                match_info["match_type"].append("name")
+                        
+                        # Content-based search
+                        if search_type in ["content", "both"] and item.stat().st_size > 0:
+                            try:
+                                # Only search text files
+                                if _guess_mime_type(item).startswith('text/'):
+                                    encoding = _detect_encoding(item)
+                                    with open(item, 'r', encoding=encoding, errors='replace') as f:
+                                        content = f.read()
+                                        
+                                    content_matches = list(content_regex.finditer(content))
+                                    if content_matches:
+                                        match_found = True
+                                        match_info["match_type"].append("content")
+                                        
+                                        # Add match details
+                                        for match in content_matches[:5]:  # Limit to first 5 matches
+                                            lines = content[:match.start()].count('\n') + 1
+                                            match_info["content_matches"].append({
+                                                "line": lines,
+                                                "text": match.group(),
+                                                "start": match.start(),
+                                                "end": match.end()
+                                            })
+                                            
+                            except (UnicodeDecodeError, PermissionError, OSError):
+                                # Skip binary or inaccessible files
+                                pass
+                        
+                        if match_found:
+                            matches.append(match_info)
+                            
+                    elif item.is_dir() and recursive and current_depth < max_depth:
+                        _search_directory(item, current_depth + 1)
+                        
+            except PermissionError:
+                # Skip directories we can't access
+                pass
+        
+        # Start search
+        _search_directory(resolved_path)
+        
+        result = {
+            "success": True,
+            "matches": matches,
+            "total_matches": len(matches),
+            "total_searched": total_searched,
+            "pattern": pattern,
+            "search_type": search_type,
+            "directory_path": str(resolved_path),
+            "relative_path": str(resolved_path.relative_to(project_root)),
+            "case_sensitive": case_sensitive,
+            "recursive": recursive,
+            "max_results": max_results,
+            "truncated": len(matches) >= max_results,
+            "project_path": str(project_root)
+        }
+        
+        logger.info(f"Search completed: {len(matches)} matches in {total_searched} files")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to search files in {directory_path}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "directory_path": directory_path,
+            "pattern": pattern
+        }
+
+
 def _guess_mime_type(file_path: Path) -> str:
     """
     Guess MIME type based on file extension.

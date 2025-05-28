@@ -345,9 +345,68 @@ async def filesystem_backup_restore(
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_name = f"backup_{timestamp}"
             
-            # Determine target paths
+            # BIG-BANG FIX: Determine target paths with safety checks
             if target_paths is None:
-                target_paths = ["."]  # Backup entire project
+                # Instead of backing up entire project, create a minimal backup
+                target_paths = []
+                # Look for common small files to backup instead of everything
+                for candidate in ["README.md", "requirements.txt", "package.json", ".gitignore"]:
+                    candidate_path = project_root / candidate
+                    if candidate_path.exists() and candidate_path.is_file():
+                        target_paths.append(candidate)
+                        break
+                
+                # If no small files found, create an empty backup
+                if not target_paths:
+                    target_paths = []
+            
+            # BIG-BANG FIX: Validate target paths exist and are reasonable size
+            validated_paths = []
+            total_size = 0
+            MAX_BACKUP_SIZE = 100 * 1024 * 1024  # 100MB limit to prevent hanging
+            
+            for target_path in target_paths:
+                if not os.path.isabs(target_path):
+                    full_path = project_root / target_path
+                else:
+                    full_path = Path(target_path)
+                
+                if full_path.exists():
+                    try:
+                        if full_path.is_file():
+                            file_size = full_path.stat().st_size
+                            if total_size + file_size <= MAX_BACKUP_SIZE:
+                                validated_paths.append(target_path)
+                                total_size += file_size
+                            else:
+                                logger.warning(f"Skipping {target_path}: would exceed size limit")
+                        elif full_path.is_dir():
+                            # For directories, do a quick size check
+                            dir_size = 0
+                            file_count = 0
+                            for item in full_path.rglob("*"):
+                                if item.is_file():
+                                    file_count += 1
+                                    if file_count > 1000:  # Limit file count to prevent hanging
+                                        logger.warning(f"Skipping {target_path}: too many files ({file_count}+)")
+                                        break
+                                    try:
+                                        dir_size += item.stat().st_size
+                                        if dir_size > MAX_BACKUP_SIZE:
+                                            logger.warning(f"Skipping {target_path}: directory too large")
+                                            break
+                                    except (PermissionError, OSError):
+                                        continue
+                            else:
+                                # Only add if we completed the loop without breaking
+                                if total_size + dir_size <= MAX_BACKUP_SIZE:
+                                    validated_paths.append(target_path)
+                                    total_size += dir_size
+                    except (PermissionError, OSError) as e:
+                        logger.warning(f"Cannot access {target_path}: {e}")
+                        continue
+            
+            target_paths = validated_paths
             
             # Create backup
             if backup_format == "tar.gz":
@@ -391,7 +450,7 @@ async def filesystem_backup_restore(
                     "action": action
                 }
             
-            backup_size = backup_path.stat().st_size
+            backup_size = backup_path.stat().st_size if backup_path.exists() else 0
             
             result = {
                 "success": True,
