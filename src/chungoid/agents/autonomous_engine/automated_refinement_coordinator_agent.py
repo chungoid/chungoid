@@ -20,7 +20,7 @@ from chungoid.schemas.arca_request_and_response import ARCAReviewArtifactType # 
 # Mocked Agent Inputs for agents ARCA might call
 # from .product_analyst_agent import ProductAnalystInput # For LOPRD refinement - OLD
 from . import product_analyst_agent as pa_module # For LOPRD refinement - NEW
-from .architect_agent import ArchitectAgentInput # For blueprint refinement
+from .architect_agent import EnhancedArchitectAgentInput # For blueprint refinement
 from chungoid.schemas.agent_master_planner import MasterPlannerInput # For instructing plan refinement
 # Import the new documentation agent's input schema
 from .project_documentation_agent import ProjectDocumentationAgentInput, ProjectDocumentationAgent_v1 
@@ -260,8 +260,8 @@ class ARCAOutput(BaseModel):
     confidence_in_decision: Optional[ConfidenceScore] = Field(None, description="ARCA's confidence in its own decision.")
     
     # If decision is REFINEMENT_REQUIRED, these fields provide details for the orchestrator
-    next_agent_id_for_refinement: Optional[str] = Field(None, description="The agent_id to call for refinement (e.g., ProductAnalystAgent_v1, ArchitectAgent_v1, SystemMasterPlannerAgent_v1).")
-    next_agent_input: Optional[Union[pa_module.ProductAnalystAgentInput, ArchitectAgentInput, MasterPlannerInput, ProjectDocumentationAgentInput, Dict[str, Any]]] = Field(None, description="The full input payload for the next agent if refinement is needed.")
+    next_agent_id_for_refinement: Optional[str] = Field(None, description="The agent_id to call for refinement (e.g., ProductAnalystAgent_v1, EnhancedArchitectAgent_v1, SystemMasterPlannerAgent_v1).")
+    next_agent_input: Optional[Union[pa_module.ProductAnalystAgentInput, EnhancedArchitectAgentInput, MasterPlannerInput, ProjectDocumentationAgentInput, Dict[str, Any]]] = Field(None, description="The full input payload for the next agent if refinement is needed.")
     
     # If decision is TEST_FAILURE_HANDOFF
     debugging_task_input: Optional[DebuggingTaskInput] = Field(None, description="Input for the CodeDebuggingAgent if a test failure is being handed off.")
@@ -863,7 +863,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 coordination["next_agent_id"] = "ProductAnalystAgent_v1"
                 coordination["next_agent_input"] = {"project_id": task_input.project_id, "refinement_required": True}
             elif task_input.artifact_type in ["Blueprint", "ProjectBlueprint"]:
-                coordination["next_agent_id"] = "ArchitectAgent_v1"
+                coordination["next_agent_id"] = "EnhancedArchitectAgent_v1"
                 coordination["next_agent_input"] = {"project_id": task_input.project_id, "refinement_required": True}
             elif task_input.artifact_type == "MasterExecutionPlan":
                 coordination["next_agent_id"] = "SystemMasterPlannerAgent_v1"

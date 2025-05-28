@@ -105,29 +105,28 @@ agents:
   agent_timeouts:
     "EnvironmentBootstrapAgent": 300               # 5 minutes for environment setup
     "DependencyManagementAgent_v1": 450           # 7.5 minutes for dependency resolution
-    "ProductAnalystAgent_v1": 600                 # 10 minutes for thorough analysis
-    "ArchitectAgent_v1": 900                      # 15 minutes for system architecture
+    "ProductAnalystAgent_v1": 300                 # 5 minutes for product analysis
+    "EnhancedArchitectAgent_v1": 900              # 15 minutes for system architecture
     "RequirementsTracerAgent_v1": 450             # 7.5 minutes for traceability
     "ProactiveRiskAssessorAgent_v1": 600          # 10 minutes for risk assessment
-    "BlueprintReviewerAgent_v1": 600              # 10 minutes for blueprint review
-    "SmartCodeGeneratorAgent_v1": 1200            # 20 minutes for code generation
+    "SmartCodeGeneratorAgent_v1": 1800            # 30 minutes for code generation
     "ProjectDocumentationAgent_v1": 600           # 10 minutes for documentation
     "CodeDebuggingAgent_v1": 900                  # 15 minutes for debugging
-    "AutomatedRefinementCoordinatorAgent_v1": 900 # 15 minutes for coordination
-  
+    "AutomatedRefinementCoordinatorAgent_v1": 900 # 15 minutes for coordination  
+    
   # Per-agent retry limits for robust execution
   agent_retry_limits:
     "EnvironmentBootstrapAgent": 3
     "DependencyManagementAgent_v1": 4
     "ProductAnalystAgent_v1": 5
-    "ArchitectAgent_v1": 5
     "RequirementsTracerAgent_v1": 3
-    "ProactiveRiskAssessorAgent_v1": 4
+    "ProactiveRiskAssessorAgent_v1": 2
     "BlueprintReviewerAgent_v1": 4
     "SmartCodeGeneratorAgent_v1": 5
     "ProjectDocumentationAgent_v1": 3
     "CodeDebuggingAgent_v1": 5
     "AutomatedRefinementCoordinatorAgent_v1": 4
+    "EnhancedArchitectAgent_v1": 5
   
 
 

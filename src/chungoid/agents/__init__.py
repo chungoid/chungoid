@@ -51,13 +51,21 @@ def initialize_all_agents() -> Dict[str, bool]:
         from chungoid.agents.autonomous_engine.dependency_management_agent import DependencyManagementAgent_v1
         from chungoid.agents.autonomous_engine.proactive_risk_assessor_agent import ProactiveRiskAssessorAgent_v1
         from chungoid.agents.autonomous_engine.product_analyst_agent import ProductAnalystAgent_v1
-        from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
-        from chungoid.agents.autonomous_engine.blueprint_to_flow_agent import BlueprintToFlowAgent_v1
+        from chungoid.agents.autonomous_engine.architect_agent import EnhancedArchitectAgent_v1
+        # NOTE: BlueprintToFlowAgent_v1 was consolidated into EnhancedArchitectAgent_v1
         from chungoid.agents.autonomous_engine.requirements_tracer_agent import RequirementsTracerAgent_v1
-        from chungoid.agents.autonomous_engine.project_documentation_agent import ProjectDocumentationAgent_v1
-        from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
         from chungoid.agents.autonomous_engine.smart_code_generator_agent import SmartCodeGeneratorAgent_v1
+        from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
         from chungoid.agents.autonomous_engine.automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1
+        from chungoid.agents.autonomous_engine.project_documentation_agent import ProjectDocumentationAgent_v1
+        
+        # NOTE: SystemRequirementsGatheringAgent_v1 and ARCAOptimizationEvaluatorAgent_v1 are 
+        # orphaned prompts (prompt files exist but no agent class implementations)
+        # The functionality exists in other agents:
+        # - ProductAnalystAgent_v1 handles requirements gathering
+        # - AutomatedRefinementCoordinatorAgent_v1 handles optimization evaluation
+        # - Protocol classes provide additional optimization capabilities
+        
         logger.info("Autonomous engine agents imported successfully")
     except Exception as e:
         logger.error(f"Failed to import autonomous engine agents: {e}")

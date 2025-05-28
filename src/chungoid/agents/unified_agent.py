@@ -977,7 +977,7 @@ class UnifiedAgent(BaseModel, ABC):
         pass
 
     # ========================================
-    # PHASE 6: MCP TOOL CALLING INFRASTRUCTURE (BIG-BANG FIX)
+    # PHASE 6: MCP TOOL CALLING INFRASTRUCTURE
     # ========================================
 
     async def _call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:

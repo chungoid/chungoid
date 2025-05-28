@@ -63,6 +63,11 @@ class SmartCodeGeneratorInput(BaseModel):
     target_languages: Optional[List[str]] = Field(None, description="Target programming languages")
     technologies: Optional[List[str]] = Field(None, description="Project technologies")
     
+    # Stage context fields - passed from orchestrator for cross-stage coordination
+    requirements_context: Optional[Dict[str, Any]] = Field(None, description="Requirements analysis from previous stage")
+    architecture_context: Optional[Dict[str, Any]] = Field(None, description="Architecture design from previous stage")  
+    risk_context: Optional[Dict[str, Any]] = Field(None, description="Risk assessment from previous stage")
+    
     @model_validator(mode='after')
     def check_intelligent_context_requirements(self) -> 'SmartCodeGeneratorInput':
         """Validate requirements based on execution mode (intelligent context vs traditional)."""
@@ -148,12 +153,27 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         With refinement: previous work analysis → current state analysis → intelligent refinement
         """
         try:
-            # Convert inputs to expected format
+            # Convert inputs to expected format with proper Pydantic object handling
             if isinstance(context.inputs, dict):
-                task_input = SmartCodeGeneratorInput(**context.inputs)
+                # Convert any Pydantic objects in the context to dictionaries
+                inputs_dict = {}
+                for key, value in context.inputs.items():
+                    if hasattr(value, 'dict') and callable(getattr(value, 'dict')):
+                        # This is a Pydantic model, convert to dict
+                        inputs_dict[key] = value.dict()
+                    else:
+                        inputs_dict[key] = value
+                task_input = SmartCodeGeneratorInput(**inputs_dict)
             elif hasattr(context.inputs, 'dict'):
                 inputs = context.inputs.dict()
-                task_input = SmartCodeGeneratorInput(**inputs)
+                # Convert any nested Pydantic objects
+                inputs_dict = {}
+                for key, value in inputs.items():
+                    if hasattr(value, 'dict') and callable(getattr(value, 'dict')):
+                        inputs_dict[key] = value.dict()
+                    else:
+                        inputs_dict[key] = value
+                task_input = SmartCodeGeneratorInput(**inputs_dict)
             else:
                 task_input = context.inputs
 
@@ -169,7 +189,8 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 self.logger.info("Using intelligent project specifications from orchestrator")
                 analysis_result = await self._extract_analysis_from_intelligent_specs(
                     task_input.project_specifications, 
-                    task_input.user_goal
+                    task_input.user_goal,
+                    task_input
                 )
             else:
                 self.logger.info("Using traditional project analysis")
@@ -216,10 +237,24 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         except Exception as e:
             self.logger.error(f"Code generation iteration failed: {e}")
             
-            # Create error output
+            # Create error output with safe access to task_input
+            task_id = str(uuid.uuid4())
+            project_id = 'intelligent_project'
+            
+            # Try to extract IDs from context if available
+            try:
+                if isinstance(context.inputs, dict):
+                    task_id = context.inputs.get('task_id', task_id)
+                    project_id = context.inputs.get('project_id', project_id)
+                elif hasattr(context.inputs, 'task_id'):
+                    task_id = context.inputs.task_id
+                    project_id = getattr(context.inputs, 'project_id', project_id)
+            except:
+                pass  # Use defaults if extraction fails
+            
             error_output = SmartCodeGeneratorOutput(
-                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())),
-                project_id=getattr(task_input, 'project_id', None) or 'intelligent_project',
+                task_id=task_id,
+                project_id=project_id,
                 status="ERROR",
                 generated_files=[],
                 error_message=str(e)
@@ -232,20 +267,36 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 protocol_used="smart_code_generation_protocol"
             )
 
-    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str, task_input: SmartCodeGeneratorInput = None) -> Dict[str, Any]:
         """
         Enhanced with universal MCP tool access and intelligent selection.
+        Now also incorporates context from previous stages (requirements, architecture, risk).
         
         ENHANCED: Uses ALL 53+ MCP tools with intelligent selection for comprehensive code generation analysis.
         """
         
         try:
+            # Collect context from previous stages for enhanced analysis
+            stage_context = {}
+            if task_input:
+                if task_input.requirements_context:
+                    stage_context["requirements"] = task_input.requirements_context
+                    self.logger.info("[Context] Using requirements context from previous stage")
+                
+                if task_input.architecture_context:
+                    stage_context["architecture"] = task_input.architecture_context
+                    self.logger.info("[Context] Using architecture context from previous stage")
+                
+                if task_input.risk_context:
+                    stage_context["risk"] = task_input.risk_context
+                    self.logger.info("[Context] Using risk context from previous stage")
+            
             # First try enhanced discovery with universal MCP tools
             if hasattr(self, '_enhanced_discovery_with_universal_tools'):
                 self.logger.info("[MCP] Using enhanced discovery with universal MCP tool access")
                 enhanced_analysis = await self._enhanced_discovery_with_universal_tools(
-                    {"project_specifications": project_specs, "user_goal": user_goal}, 
-                    {"project_specs": project_specs, "user_goal": user_goal}
+                    {"project_specifications": project_specs, "user_goal": user_goal, "stage_context": stage_context}, 
+                    {"project_specs": project_specs, "user_goal": user_goal, "stage_context": stage_context}
                 )
                 
                 if enhanced_analysis.get("universal_tool_access"):
@@ -257,12 +308,21 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                         enhanced_analysis.get("historical_context", {}),
                         enhanced_analysis.get("environment_info", {}),
                         project_specs,
-                        user_goal
+                        user_goal,
+                        stage_context
                     )
             
             # Fallback to LLM-based analysis if MCP tools unavailable
             if self.llm_provider:
                 # Use LLM to intelligently analyze the project specifications and plan code generation strategy
+                context_info = ""
+                if stage_context:
+                    context_info = f"""
+                
+                Previous Stage Context:
+                {self._format_stage_context_for_llm(stage_context)}
+                """
+                
                 prompt = f"""
                 You are a smart code generator agent. Analyze the following project specifications and user goal to create an intelligent code generation strategy.
                 
@@ -276,6 +336,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 - Technologies: {project_specs.get('technologies', [])}
                 - Required Dependencies: {project_specs.get('required_dependencies', [])}
                 - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
+                {context_info}
                 
                 Provide a detailed JSON analysis with the following structure:
                 {{
@@ -289,7 +350,12 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                         "approach": "...",
                         "file_structure": [...],
                         "implementation_priorities": [...],
-                        "architectural_patterns": [...]
+                        "architectural_patterns": [...],
+                        "context_driven_decisions": {{
+                            "requirements_influence": "...",
+                            "architecture_influence": "...",
+                            "risk_mitigation": "..."
+                        }}
                     }},
                     "complexity_assessment": {{
                         "level": "low|medium|high",
@@ -305,7 +371,12 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                     "implementation_considerations": [...],
                     "potential_challenges": [...],
                     "confidence_score": 0.0-1.0,
-                    "reasoning": "..."
+                    "reasoning": "...",
+                    "stage_context_integration": {{
+                        "requirements_addressed": [...],
+                        "architecture_patterns_used": [...],
+                        "risks_mitigated": [...]
+                    }}
                 }}
                 """
                 
@@ -320,24 +391,52 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                         # Validate that we got a dictionary as expected
                         if not isinstance(parsed_result, dict):
                             self.logger.warning(f"Expected dict from code generation analysis, got {type(parsed_result)}. Using fallback.")
-                            return self._generate_fallback_code_analysis(project_specs, user_goal)
+                            return self._generate_fallback_code_analysis(project_specs, user_goal, stage_context)
                         
                         # Add metadata about the intelligent analysis
                         parsed_result["intelligent_analysis"] = True
                         parsed_result["project_specifications"] = project_specs
-                        parsed_result["analysis_method"] = "llm_intelligent_processing"
+                        parsed_result["analysis_method"] = "llm_intelligent_processing_with_stage_context"
                         parsed_result["code_generation_needed"] = True
+                        parsed_result["stage_context_used"] = stage_context
                         return parsed_result
                     except json.JSONDecodeError as e:
                         self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
             
             # Fallback to basic extraction if LLM fails
             self.logger.info("Using fallback analysis due to LLM unavailability")
-            return self._generate_fallback_code_analysis(project_specs, user_goal)
+            return self._generate_fallback_code_analysis(project_specs, user_goal, stage_context)
             
         except Exception as e:
             self.logger.error(f"Error in intelligent specs analysis: {e}")
-            return self._generate_fallback_code_analysis(project_specs, user_goal)
+            return self._generate_fallback_code_analysis(project_specs, user_goal, stage_context)
+
+    def _format_stage_context_for_llm(self, stage_context: Dict[str, Any]) -> str:
+        """Format stage context information for LLM consumption."""
+        formatted_parts = []
+        
+        if "requirements" in stage_context:
+            req_ctx = stage_context["requirements"]
+            formatted_parts.append(f"Requirements Analysis:")
+            formatted_parts.append(f"  - Functional Requirements: {req_ctx.get('functional_requirements', 'N/A')}")
+            formatted_parts.append(f"  - Non-functional Requirements: {req_ctx.get('non_functional_requirements', 'N/A')}")
+            formatted_parts.append(f"  - Dependencies: {req_ctx.get('dependencies', 'N/A')}")
+        
+        if "architecture" in stage_context:
+            arch_ctx = stage_context["architecture"]
+            formatted_parts.append(f"Architecture Design:")
+            formatted_parts.append(f"  - System Architecture: {arch_ctx.get('system_architecture', 'N/A')}")
+            formatted_parts.append(f"  - Component Structure: {arch_ctx.get('component_structure', 'N/A')}")
+            formatted_parts.append(f"  - Design Patterns: {arch_ctx.get('design_patterns', 'N/A')}")
+        
+        if "risk" in stage_context:
+            risk_ctx = stage_context["risk"]
+            formatted_parts.append(f"Risk Assessment:")
+            formatted_parts.append(f"  - Identified Risks: {risk_ctx.get('identified_risks', 'N/A')}")
+            formatted_parts.append(f"  - Mitigation Strategies: {risk_ctx.get('mitigation_strategies', 'N/A')}")
+            formatted_parts.append(f"  - Priority Risks: {risk_ctx.get('priority_risks', 'N/A')}")
+        
+        return "\n".join(formatted_parts)
 
     async def _convert_mcp_analysis_to_code_generation_analysis(
         self, 
@@ -347,7 +446,8 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         historical_context: Dict[str, Any],
         environment_info: Dict[str, Any],
         project_specs: Dict[str, Any],
-        user_goal: str
+        user_goal: str,
+        stage_context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Convert MCP tool analysis results to code generation analysis format."""
         
@@ -529,13 +629,18 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                     "intelligence_analysis": intelligence_analysis,
                     "historical_context": historical_context,
                     "environment_info": environment_info
+                },
+                "stage_context_integration": {
+                    "requirements_addressed": stage_context.get("requirements", {}).get("functional_requirements", []),
+                    "architecture_patterns_used": stage_context.get("architecture", {}).get("design_patterns", []),
+                    "risks_mitigated": stage_context.get("risk", {}).get("mitigation_strategies", [])
                 }
             }
             
         except Exception as e:
             self.logger.error(f"Error converting MCP analysis to code generation analysis: {e}")
             # Fallback to basic analysis
-            return self._generate_fallback_code_analysis(project_specs, user_goal)
+            return self._generate_fallback_code_analysis(project_specs, user_goal, stage_context)
 
     async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Universal tool access pattern for SmartCodeGeneratorAgent_v1"""
@@ -676,7 +781,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
         return selected
 
-    def _generate_fallback_code_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
+    def _generate_fallback_code_analysis(self, project_specs: Dict[str, Any], user_goal: str, stage_context: Dict[str, Any]) -> Dict[str, Any]:
         """Generate fallback code analysis when LLM is unavailable."""
         
         analysis = {
@@ -707,7 +812,8 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             "potential_challenges": ["integration complexity", "performance optimization"],
             "intelligent_analysis": True,
             "analysis_method": "fallback_extraction",
-            "code_generation_needed": True
+            "code_generation_needed": True,
+            "stage_context_used": stage_context
         }
         
         return analysis
@@ -811,7 +917,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             # Fall back to standard analysis
             if task_input.intelligent_context and task_input.project_specifications:
                 return await self._extract_analysis_from_intelligent_specs(
-                    task_input.project_specifications, task_input.user_goal
+                    task_input.project_specifications, task_input.user_goal, task_input
                 )
             else:
                 return await self._analyze_project_requirements(task_input, shared_context)
@@ -1434,7 +1540,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         shared_context: Dict[str, Any],
         refinement_context: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Generate code content for a specific file using LLM."""
+        """Generate code content for a specific file using LLM with stage context awareness."""
         
         file_path = file_plan["file_path"]
         file_type = file_plan["file_type"]
@@ -1460,6 +1566,16 @@ Project Specifications:
 - Technologies: {specs.get('technologies', [])}
 - Required Dependencies: {specs.get('required_dependencies', [])}""")
 
+        # Add stage context information for context-aware code generation
+        stage_context_info = self._format_stage_context_for_code_generation(task_input)
+        if stage_context_info:
+            prompt_parts.append(f"""
+STAGE CONTEXT - Use this information to inform your code generation:
+{stage_context_info}
+
+Please ensure the generated code addresses the requirements, follows the architectural patterns,
+and implements risk mitigation strategies outlined above.""")
+
         # Add refinement context if this is a refinement iteration
         if refinement_context:
             previous_outputs = refinement_context.get("previous_outputs", [])
@@ -1483,7 +1599,8 @@ Requirements for main module:
 - Implement complete functionality as described in the user goal
 - Include proper error handling and logging
 - Follow best practices for the target language
-- Include comprehensive docstrings/comments""")
+- Include comprehensive docstrings/comments
+- Implement any architectural patterns identified in the architecture context""")
         elif file_type in ["code_module", "api_module", "cli_module", "utility_module"]:
             prompt_parts.append(f"""
 Requirements for {file_type}:
@@ -1491,7 +1608,8 @@ Requirements for {file_type}:
 - Include proper class/function definitions
 - Add comprehensive error handling
 - Include type hints if using Python
-- Follow modular design principles""")
+- Follow modular design principles
+- Adhere to architectural patterns and risk mitigation strategies""")
 
         # Final instructions
         prompt_parts.append("""
@@ -1502,6 +1620,8 @@ CRITICAL REQUIREMENTS:
 4. Follow language-specific best practices
 5. Add comprehensive documentation
 6. Ensure code aligns with the user goal
+7. Incorporate insights from requirements, architecture, and risk analysis
+8. Implement proper error handling and defensive programming practices
 
 Return ONLY the complete source code for this file, no explanations or markdown formatting.""")
 
@@ -1529,6 +1649,75 @@ Return ONLY the complete source code for this file, no explanations or markdown 
         except Exception as e:
             self.logger.error(f"LLM code generation failed for {file_path}: {e}")
             return self._generate_minimal_fallback_content(file_plan, task_input)
+
+    def _format_stage_context_for_code_generation(self, task_input: SmartCodeGeneratorInput) -> str:
+        """Format stage context specifically for code generation prompts."""
+        context_parts = []
+        
+        if task_input.requirements_context:
+            req_ctx = task_input.requirements_context
+            context_parts.append("Requirements to Address in Code:")
+            
+            # Extract functional requirements
+            func_reqs = req_ctx.get('functional_requirements', [])
+            if func_reqs:
+                context_parts.append("  Functional Requirements:")
+                for req in func_reqs[:5]:  # Limit to top 5 for prompt clarity
+                    context_parts.append(f"    - {req}")
+            
+            # Extract non-functional requirements
+            non_func_reqs = req_ctx.get('non_functional_requirements', [])
+            if non_func_reqs:
+                context_parts.append("  Non-functional Requirements:")
+                for req in non_func_reqs[:5]:
+                    context_parts.append(f"    - {req}")
+            
+            # Extract dependencies
+            deps = req_ctx.get('dependencies', [])
+            if deps:
+                context_parts.append("  Required Dependencies:")
+                for dep in deps[:5]:
+                    context_parts.append(f"    - {dep}")
+        
+        if task_input.architecture_context:
+            arch_ctx = task_input.architecture_context
+            context_parts.append("")
+            context_parts.append("Architectural Patterns to Follow:")
+            
+            # Extract system architecture
+            sys_arch = arch_ctx.get('system_architecture', {})
+            if sys_arch:
+                patterns = sys_arch.get('patterns', [])
+                if patterns:
+                    context_parts.append("  Design Patterns:")
+                    for pattern in patterns[:3]:
+                        context_parts.append(f"    - {pattern}")
+            
+            # Extract component structure
+            comp_struct = arch_ctx.get('component_structure', {})
+            if comp_struct:
+                modules = comp_struct.get('modules', [])
+                if modules:
+                    context_parts.append("  Module Organization:")
+                    for module in modules[:3]:
+                        context_parts.append(f"    - {module}")
+        
+        if task_input.risk_context:
+            risk_ctx = task_input.risk_context
+            context_parts.append("")
+            context_parts.append("Risk Mitigation to Implement:")
+            
+            # Extract identified risks and mitigations
+            risks = risk_ctx.get('identified_risks', [])
+            mitigations = risk_ctx.get('mitigation_strategies', [])
+            
+            if risks and mitigations:
+                context_parts.append("  Key Risks and Mitigations:")
+                for i, (risk, mitigation) in enumerate(zip(risks[:3], mitigations[:3])):
+                    context_parts.append(f"    Risk {i+1}: {risk}")
+                    context_parts.append(f"    Mitigation: {mitigation}")
+        
+        return "\n".join(context_parts) if context_parts else ""
 
     def _clean_code_response(self, response: str) -> str:
         """Clean LLM response to extract pure code content."""

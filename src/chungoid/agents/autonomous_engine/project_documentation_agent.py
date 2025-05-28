@@ -5,12 +5,12 @@ import datetime
 import json
 import uuid
 import time
+from pathlib import Path
+from typing import Any, Dict, Optional, List, ClassVar
 
 class ProtocolExecutionError(Exception):
     """Raised when protocol execution fails."""
     pass
-
-from typing import Any, Dict, Optional, List, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -139,7 +139,7 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             # Phase 2: Analysis - Understand project structure and requirements
             analysis_result = await self._analyze_project_structure(discovery_result, inputs, context.shared_context)
             
-            # Phase 3: Documentation Generation - Create comprehensive documentation
+            # Phase 3: Documentation Generation - Create comprehensive documentation files
             documentation_result = await self._generate_documentation(analysis_result, inputs, context.shared_context)
             
             # Phase 4: Validation - Verify documentation quality and completeness
@@ -649,66 +649,433 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
         return structure_analysis
 
     async def _generate_documentation(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 3: Documentation Generation - Create comprehensive documentation."""
-        self.logger.info("Starting documentation generation")
+        """Phase 3: Documentation Generation - Create comprehensive documentation files."""
+        self.logger.info("Starting actual documentation file generation")
         
         requirements = analysis_result.get("documentation_requirements", {})
+        project_path = inputs.get("project_path", ".")
         project_id = inputs.get("project_id", "unknown")
         
-        # Simulate document generation with mock document IDs
-        generated_docs = {}
+        # Create project path if it doesn't exist
+        project_root = Path(project_path)
+        project_root.mkdir(parents=True, exist_ok=True)
         
-        if requirements.get("readme_required"):
-            generated_docs["readme_doc_id"] = f"readme_{project_id}_{uuid.uuid4().hex[:8]}"
-            
-        if requirements.get("api_docs_required"):
-            generated_docs["docs_directory_doc_id"] = f"docs_dir_{project_id}_{uuid.uuid4().hex[:8]}"
-            
-        if requirements.get("dependency_audit_required"):
-            generated_docs["codebase_dependency_audit_doc_id"] = f"deps_audit_{project_id}_{uuid.uuid4().hex[:8]}"
-            
-        if requirements.get("release_notes_required"):
-            generated_docs["release_notes_doc_id"] = f"release_notes_{project_id}_{uuid.uuid4().hex[:8]}"
+        generated_files = {}
+        created_files = []
         
-        generated_docs["generation_success"] = True
-        generated_docs["documents_created"] = len([k for k in generated_docs if k.endswith("_doc_id")])
-        
-        return generated_docs
+        try:
+            # 1. Generate README.md if required
+            if requirements.get("readme_required", True):
+                readme_path = await self._generate_and_write_readme(project_root, analysis_result, inputs, shared_context)
+                if readme_path:
+                    generated_files["readme_doc_id"] = str(readme_path)
+                    created_files.append(str(readme_path))
+                    self.logger.info(f"✅ Created README.md at {readme_path}")
+            
+            # 2. Generate API documentation if required
+            if requirements.get("api_docs_required", False):
+                docs_dir = await self._generate_and_write_api_docs(project_root, analysis_result, inputs, shared_context)
+                if docs_dir:
+                    generated_files["docs_directory_doc_id"] = str(docs_dir)
+                    created_files.append(str(docs_dir))
+                    self.logger.info(f"✅ Created API docs at {docs_dir}")
+            
+            # 3. Generate dependency audit if required
+            if requirements.get("dependency_audit_required", False):
+                audit_path = await self._generate_and_write_dependency_audit(project_root, analysis_result, inputs, shared_context)
+                if audit_path:
+                    generated_files["codebase_dependency_audit_doc_id"] = str(audit_path)
+                    created_files.append(str(audit_path))
+                    self.logger.info(f"✅ Created dependency audit at {audit_path}")
+            
+            # 4. Generate release notes if required
+            if requirements.get("release_notes_required", False):
+                release_path = await self._generate_and_write_release_notes(project_root, analysis_result, inputs, shared_context)
+                if release_path:
+                    generated_files["release_notes_doc_id"] = str(release_path)
+                    created_files.append(str(release_path))
+                    self.logger.info(f"✅ Created release notes at {release_path}")
+            
+            generated_files.update({
+                "generation_success": True,
+                "documents_created": len(created_files),
+                "created_files": created_files,
+                "files_written": True
+            })
+            
+            self.logger.info(f"📝 Successfully generated {len(created_files)} documentation files")
+            return generated_files
+            
+        except Exception as e:
+            self.logger.error(f"❌ Documentation generation failed: {e}")
+            return {
+                "generation_success": False,
+                "documents_created": 0,
+                "created_files": [],
+                "files_written": False,
+                "error": str(e)
+            }
 
-    async def _validate_documentation(self, documentation_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 4: Validation - Verify documentation quality and completeness."""
-        self.logger.info("Starting documentation validation")
-        
-        documents_created = documentation_result.get("documents_created", 0)
-        generation_success = documentation_result.get("generation_success", False)
-        
-        validation = {
-            "quality_checks": {
-                "completeness": documents_created >= 2,  # At least README and one other doc
-                "generation_success": generation_success,
-                "required_documents_present": documents_created > 0
-            },
-            "validation_score": 0.0,
-            "issues_found": []
-        }
-        
-        # Calculate validation score
-        score = 0.0
-        if validation["quality_checks"]["generation_success"]:
-            score += 0.4
-        if validation["quality_checks"]["completeness"]:
-            score += 0.3
-        if validation["quality_checks"]["required_documents_present"]:
-            score += 0.3
+    async def _generate_and_write_readme(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
+        """Generate and write README.md file."""
+        try:
+            readme_content = await self._generate_readme_content(analysis_result, inputs, shared_context)
+            if readme_content:
+                readme_path = project_root / "README.md"
+                await self._write_file_safely(readme_path, readme_content)
+                return readme_path
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to generate README.md: {e}")
+            return None
+
+    async def _generate_and_write_api_docs(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
+        """Generate and write API documentation directory."""
+        try:
+            # Create docs directory structure
+            docs_dir = project_root / "docs"
+            docs_dir.mkdir(exist_ok=True)
             
-        validation["validation_score"] = score
+            # Generate API documentation content
+            api_content = await self._generate_api_docs_content(analysis_result, inputs, shared_context)
+            if api_content:
+                api_path = docs_dir / "API.md"
+                await self._write_file_safely(api_path, api_content)
+                
+                # Generate additional docs if needed
+                user_guide_content = await self._generate_user_guide_content(analysis_result, inputs, shared_context)
+                if user_guide_content:
+                    user_guide_path = docs_dir / "USER_GUIDE.md"
+                    await self._write_file_safely(user_guide_path, user_guide_content)
+                
+                return docs_dir
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to generate API docs: {e}")
+            return None
+
+    async def _generate_and_write_dependency_audit(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
+        """Generate and write dependency audit file."""
+        try:
+            audit_content = await self._generate_dependency_audit_content(analysis_result, inputs, shared_context)
+            if audit_content:
+                audit_path = project_root / "DEPENDENCY_AUDIT.md"
+                await self._write_file_safely(audit_path, audit_content)
+                return audit_path
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to generate dependency audit: {e}")
+            return None
+
+    async def _generate_and_write_release_notes(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
+        """Generate and write release notes file."""
+        try:
+            release_content = await self._generate_release_notes_content(analysis_result, inputs, shared_context)
+            if release_content:
+                release_path = project_root / "RELEASE_NOTES.md"
+                await self._write_file_safely(release_path, release_content)
+                return release_path
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to generate release notes: {e}")
+            return None
+
+    async def _generate_readme_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
+        """Generate comprehensive README.md content using LLM."""
+        if not self.llm_provider:
+            return self._generate_fallback_readme(analysis_result, inputs)
         
-        if not generation_success:
-            validation["issues_found"].append("Document generation failed")
-        if documents_created == 0:
-            validation["issues_found"].append("No documents were created")
+        try:
+            # Extract project information
+            project_specs = shared_context.get("project_specifications", {})
+            user_goal = inputs.get("user_goal", "Unknown project goal")
+            project_type = project_specs.get("project_type", "Unknown")
+            primary_language = project_specs.get("primary_language", "Unknown")
+            technologies = project_specs.get("technologies", [])
+            
+            prompt = f"""
+            Generate a comprehensive, professional README.md file for this project.
+            
+            Project Information:
+            - User Goal: {user_goal}
+            - Project Type: {project_type}
+            - Primary Language: {primary_language}
+            - Technologies: {', '.join(technologies) if technologies else 'None specified'}
+            
+            Create a README.md with the following sections:
+            1. Project title and description
+            2. Features and capabilities
+            3. Installation instructions
+            4. Usage examples
+            5. Configuration (if applicable)
+            6. Development setup
+            7. Contributing guidelines
+            8. License information
+            
+            Make it professional, comprehensive, and user-friendly. Use proper Markdown formatting.
+            The README should be suitable for both end users and developers.
+            """
+            
+            response = await self.llm_provider.generate(prompt)
+            return response.strip() if response else self._generate_fallback_readme(analysis_result, inputs)
+            
+        except Exception as e:
+            self.logger.error(f"LLM README generation failed: {e}")
+            return self._generate_fallback_readme(analysis_result, inputs)
+
+    async def _generate_api_docs_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
+        """Generate API documentation content using LLM."""
+        if not self.llm_provider:
+            return self._generate_fallback_api_docs(analysis_result, inputs)
         
-        return validation
+        try:
+            project_specs = shared_context.get("project_specifications", {})
+            user_goal = inputs.get("user_goal", "Unknown project goal")
+            project_type = project_specs.get("project_type", "Unknown")
+            primary_language = project_specs.get("primary_language", "Unknown")
+            
+            prompt = f"""
+            Generate comprehensive API documentation for this project.
+            
+            Project Information:
+            - User Goal: {user_goal}
+            - Project Type: {project_type}
+            - Primary Language: {primary_language}
+            
+            Create API documentation with:
+            1. API Overview
+            2. Authentication (if applicable)
+            3. Endpoints/Functions documentation
+            4. Request/Response examples
+            5. Error codes and handling
+            6. Rate limiting (if applicable)
+            7. SDK/Client libraries (if applicable)
+            
+            Use proper Markdown formatting and provide clear, practical examples.
+            """
+            
+            response = await self.llm_provider.generate(prompt)
+            return response.strip() if response else self._generate_fallback_api_docs(analysis_result, inputs)
+            
+        except Exception as e:
+            self.logger.error(f"LLM API docs generation failed: {e}")
+            return self._generate_fallback_api_docs(analysis_result, inputs)
+
+    async def _generate_user_guide_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
+        """Generate user guide content using LLM."""
+        if not self.llm_provider:
+            return self._generate_fallback_user_guide(analysis_result, inputs)
+        
+        try:
+            project_specs = shared_context.get("project_specifications", {})
+            user_goal = inputs.get("user_goal", "Unknown project goal")
+            
+            prompt = f"""
+            Generate a comprehensive user guide for this project.
+            
+            Project Goal: {user_goal}
+            Project Type: {project_specs.get("project_type", "Unknown")}
+            
+            Create a user guide with:
+            1. Getting Started
+            2. Basic Usage
+            3. Advanced Features
+            4. Troubleshooting
+            5. FAQ
+            6. Tips and Best Practices
+            
+            Write it for end users, not developers. Use clear, simple language.
+            """
+            
+            response = await self.llm_provider.generate(prompt)
+            return response.strip() if response else self._generate_fallback_user_guide(analysis_result, inputs)
+            
+        except Exception as e:
+            self.logger.error(f"LLM user guide generation failed: {e}")
+            return self._generate_fallback_user_guide(analysis_result, inputs)
+
+    async def _generate_dependency_audit_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
+        """Generate dependency audit content using LLM."""
+        if not self.llm_provider:
+            return self._generate_fallback_dependency_audit(analysis_result, inputs)
+        
+        try:
+            project_specs = shared_context.get("project_specifications", {})
+            dependencies = project_specs.get("required_dependencies", [])
+            optional_deps = project_specs.get("optional_dependencies", [])
+            
+            prompt = f"""
+            Generate a comprehensive dependency audit report for this project.
+            
+            Required Dependencies: {', '.join(dependencies) if dependencies else 'None specified'}
+            Optional Dependencies: {', '.join(optional_deps) if optional_deps else 'None specified'}
+            
+            Create a dependency audit with:
+            1. Dependencies Overview
+            2. Security Analysis
+            3. License Compliance
+            4. Version Compatibility
+            5. Recommendations
+            6. Potential Issues
+            7. Upgrade Path
+            
+            Focus on security, compliance, and maintainability.
+            """
+            
+            response = await self.llm_provider.generate(prompt)
+            return response.strip() if response else self._generate_fallback_dependency_audit(analysis_result, inputs)
+            
+        except Exception as e:
+            self.logger.error(f"LLM dependency audit generation failed: {e}")
+            return self._generate_fallback_dependency_audit(analysis_result, inputs)
+
+    async def _generate_release_notes_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
+        """Generate release notes content using LLM."""
+        if not self.llm_provider:
+            return self._generate_fallback_release_notes(analysis_result, inputs)
+        
+        try:
+            user_goal = inputs.get("user_goal", "Unknown project goal")
+            project_specs = shared_context.get("project_specifications", {})
+            
+            prompt = f"""
+            Generate initial release notes for this project.
+            
+            Project Goal: {user_goal}
+            Project Type: {project_specs.get("project_type", "Unknown")}
+            
+            Create release notes for version 1.0.0 with:
+            1. Release overview
+            2. New features
+            3. Known issues
+            4. Installation notes
+            5. Breaking changes (if any)
+            6. Next steps
+            
+            Write professional release notes suitable for users and stakeholders.
+            """
+            
+            response = await self.llm_provider.generate(prompt)
+            return response.strip() if response else self._generate_fallback_release_notes(analysis_result, inputs)
+            
+        except Exception as e:
+            self.logger.error(f"LLM release notes generation failed: {e}")
+            return self._generate_fallback_release_notes(analysis_result, inputs)
+
+    async def _write_file_safely(self, file_path: Path, content: str) -> bool:
+        """Write content to file safely with error handling."""
+        try:
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write content to file
+            file_path.write_text(content, encoding='utf-8')
+            
+            self.logger.info(f"✅ Successfully wrote {len(content)} characters to {file_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to write file {file_path}: {e}")
+            return False
+
+    def _generate_fallback_readme(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
+        """Generate a basic README when LLM is unavailable."""
+        user_goal = inputs.get("user_goal", "Unknown project goal")
+        project_id = inputs.get("project_id", "unknown")
+        
+        return f"""# {project_id.title()} Project
+
+## Description
+{user_goal}
+
+## Installation
+```bash
+# Add installation instructions here
+```
+
+## Usage
+```bash
+# Add usage examples here
+```
+
+## Development
+```bash
+# Add development setup instructions here
+```
+
+## Contributing
+Please read the contributing guidelines before submitting pull requests.
+
+## License
+This project is licensed under the MIT License.
+"""
+
+    def _generate_fallback_api_docs(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
+        """Generate basic API docs when LLM is unavailable."""
+        return """# API Documentation
+
+## Overview
+This document describes the API endpoints and usage.
+
+## Endpoints
+TBD - Add API endpoints here
+
+## Authentication
+TBD - Add authentication details here
+
+## Examples
+TBD - Add usage examples here
+"""
+
+    def _generate_fallback_user_guide(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
+        """Generate basic user guide when LLM is unavailable."""
+        return """# User Guide
+
+## Getting Started
+TBD - Add getting started instructions here
+
+## Basic Usage
+TBD - Add basic usage instructions here
+
+## Advanced Features
+TBD - Add advanced features here
+
+## Troubleshooting
+TBD - Add troubleshooting guide here
+"""
+
+    def _generate_fallback_dependency_audit(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
+        """Generate basic dependency audit when LLM is unavailable."""
+        return """# Dependency Audit Report
+
+## Overview
+This document provides an audit of project dependencies.
+
+## Dependencies
+TBD - Add dependency analysis here
+
+## Security
+TBD - Add security analysis here
+
+## Recommendations
+TBD - Add recommendations here
+"""
+
+    def _generate_fallback_release_notes(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
+        """Generate basic release notes when LLM is unavailable."""
+        return """# Release Notes
+
+## Version 1.0.0
+
+### New Features
+- Initial release
+
+### Known Issues
+- None
+
+### Installation
+Follow the README instructions for installation.
+"""
 
     def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
         """Calculate overall quality score based on validation results."""
@@ -812,6 +1179,69 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
         # No valid JSON found
         self.logger.warning("[JSON DEBUG] No valid JSON found in response")
         return ""
+
+    async def _validate_documentation(self, documentation_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Phase 4: Validation - Verify documentation quality and completeness."""
+        self.logger.info("Starting documentation validation")
+        
+        documents_created = documentation_result.get("documents_created", 0)
+        generation_success = documentation_result.get("generation_success", False)
+        files_written = documentation_result.get("files_written", False)
+        created_files = documentation_result.get("created_files", [])
+        
+        validation = {
+            "quality_checks": {
+                "completeness": documents_created >= 1,  # At least README required
+                "generation_success": generation_success,
+                "files_written": files_written,
+                "required_documents_present": documents_created > 0,
+                "files_accessible": self._verify_files_exist(created_files)
+            },
+            "validation_score": 0.0,
+            "issues_found": [],
+            "created_files": created_files,
+            "files_count": documents_created
+        }
+        
+        # Calculate validation score
+        score = 0.0
+        if validation["quality_checks"]["generation_success"]:
+            score += 0.3
+        if validation["quality_checks"]["files_written"]:
+            score += 0.3
+        if validation["quality_checks"]["completeness"]:
+            score += 0.2
+        if validation["quality_checks"]["files_accessible"]:
+            score += 0.2
+            
+        validation["validation_score"] = score
+        
+        if not generation_success:
+            validation["issues_found"].append("Document generation failed")
+        if not files_written:
+            validation["issues_found"].append("Files were not written to filesystem")
+        if documents_created == 0:
+            validation["issues_found"].append("No documents were created")
+        if not validation["quality_checks"]["files_accessible"]:
+            validation["issues_found"].append("Some created files are not accessible")
+        
+        return validation
+
+    def _verify_files_exist(self, file_paths: List[str]) -> bool:
+        """Verify that all created files actually exist on the filesystem."""
+        if not file_paths:
+            return False
+        
+        try:
+            for file_path in file_paths:
+                path = Path(file_path)
+                if not path.exists():
+                    self.logger.warning(f"Created file not found: {file_path}")
+                    return False
+            return True
+        except Exception as e:
+            self.logger.error(f"Error verifying files: {e}")
+            return False
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:

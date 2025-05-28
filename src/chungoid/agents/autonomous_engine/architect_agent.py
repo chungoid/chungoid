@@ -190,12 +190,15 @@ class EnhancedArchitectAgent_v1(UnifiedAgent):
         elif isinstance(context.inputs, EnhancedArchitectAgentInput):
             inputs = context.inputs
         else:
-            # Fallback for other types
+            # Fallback for other types - use dict conversion to preserve all defaults
             input_dict = context.inputs.dict() if hasattr(context.inputs, 'dict') else {}
-            inputs = EnhancedArchitectAgentInput(
-                project_id=str(input_dict.get("project_id", "default")),
-                loprd_doc_id=str(input_dict.get("loprd_doc_id", ""))
-            )
+            # Ensure minimum required fields
+            if "project_id" not in input_dict:
+                input_dict["project_id"] = "default"
+            if "loprd_doc_id" not in input_dict and not input_dict.get("intelligent_context", False):
+                input_dict["loprd_doc_id"] = ""
+            
+            inputs = EnhancedArchitectAgentInput(**input_dict)
         
         try:
             # Phase 1: Discovery - Retrieve LOPRD
