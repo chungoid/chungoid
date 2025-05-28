@@ -232,7 +232,11 @@ class EnhancedArchitectAgent_v1(UnifiedAgent):
             self.logger.info("Phase 6: Blueprint file output")
             blueprint_files = {}
             if inputs.output_blueprint_files:
-                blueprint_files = await self._save_blueprint_files(blueprint, inputs)
+                blueprint_files = await self._create_project_structure(blueprint, inputs)
+                
+                # Also create the actual blueprint documentation files
+                blueprint_doc_files = await self._create_blueprint_files(blueprint, inputs)
+                blueprint_files.update(blueprint_doc_files)
             
             # Phase 7: Flow Generation - Convert to execution plan (NEW)
             self.logger.info("Phase 7: Execution plan generation")
@@ -612,118 +616,105 @@ class EnhancedArchitectAgent_v1(UnifiedAgent):
         }
     
     async def _plan_architecture(self, requirements: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
-        """Plan architecture approach based on requirements."""
-        complexity = requirements.get("complexity_score", 1)
+        """Use LLM brain to intelligently plan architecture based on requirements."""
         
-        # Select architecture pattern based on complexity
-        if complexity < 5:
-            pattern = "monolithic"
-        elif complexity < 15:
-            pattern = "layered"
-        else:
-            pattern = "microservices"
-        
-        # Plan technology stack
-        technology_stack = {
-            "backend": "Python/FastAPI" if pattern != "monolithic" else "Python/Flask",
-            "database": "PostgreSQL",
-            "cache": "Redis" if complexity > 10 else None,
-            "message_queue": "RabbitMQ" if pattern == "microservices" else None
-        }
-        
-        return {
-            "architecture_pattern": pattern,
-            "technology_stack": technology_stack,
-            "scalability_considerations": requirements.get("non_functional_requirements", []),
-            "component_breakdown": self._break_down_components(requirements),
-            "design_decisions": [
-                f"Chose {pattern} architecture for complexity level {complexity}",
-                "Selected modern Python stack for rapid development"
-            ]
-        }
+        architecture_prompt = f"""Analyze these requirements and intelligently design architecture.
+
+Requirements Analysis:
+{json.dumps(requirements, indent=2)}
+
+Context:
+- User Goal: {inputs.user_goal or 'Not specified'}
+- Project Type: {inputs.project_specifications.get('project_type') if inputs.project_specifications else 'Unknown'}
+
+Task: Design intelligent architecture that matches the actual requirements. Consider:
+1. What architecture pattern truly fits these requirements?
+2. What technology stack makes sense for this specific project?
+3. What components logically emerge from the functional requirements?
+4. What deployment approach suits the project scope?
+
+Return JSON matching this schema:
+{{
+  "architecture_pattern": "intelligent pattern choice with reasoning",
+  "technology_stack": {{
+    "backend": "appropriate choice",
+    "database": "fits requirements", 
+    "cache": "if needed",
+    "frontend": "if applicable",
+    "deployment": "makes sense"
+  }},
+  "component_breakdown": [
+    {{
+      "name": "meaningful component name",
+      "responsibility": "clear responsibility from requirements",
+      "interfaces": ["appropriate interfaces"],
+      "dependencies": ["logical dependencies"]
+    }}
+  ],
+  "design_decisions": ["technical decisions with reasoning"]
+}}
+
+Be intelligent and context-aware, not formulaic."""
+
+        try:
+            response = await self.llm_provider.generate(architecture_prompt)
+            json_content = self._extract_json_from_response(response)
+            return json.loads(json_content) if json_content else {}
+        except Exception as e:
+            self.logger.error(f"LLM architecture planning failed: {e}")
+            raise ProtocolExecutionError(f"Architecture planning failed: {e}")
     
     def _break_down_components(self, requirements: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Break down functional requirements into components."""
-        components = []
-        
-        for i, req in enumerate(requirements.get("functional_requirements", [])[:5]):  # Limit to 5 for simplicity
-            components.append({
-                "name": f"Component_{i+1}",
-                "responsibility": req if isinstance(req, str) else str(req),
-                "interfaces": ["REST API"],
-                "dependencies": []
-            })
-        
-        return components
+        """This method is obsolete - LLM handles component breakdown in _plan_architecture."""
+        return []
     
     async def _design_blueprint(self, architecture_plan: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
-        """Create detailed blueprint structure."""
-        pattern = architecture_plan.get("architecture_pattern", "layered")
-        components = architecture_plan.get("component_breakdown", [])
-        tech_stack = architecture_plan.get("technology_stack", {})
+        """Use LLM brain to create detailed blueprint structure."""
         
-        # Create directory structure based on pattern
-        if pattern == "microservices":
-            directory_structure = {
-                "services/": {comp["name"].lower(): {"main.py": "NEW", "requirements.txt": "NEW"} for comp in components},
-                "shared/": {"utils.py": "NEW", "models.py": "NEW"},
-                "docker-compose.yml": "NEW",
-                "README.md": "NEW"
-            }
-        else:
-            directory_structure = {
-                "src/": {
-                    "main.py": "NEW",
-                    "config/": {"settings.py": "NEW"},
-                    "models/": {"__init__.py": "NEW"},
-                    "api/": {"__init__.py": "NEW", "routes.py": "NEW"},
-                    "services/": {"__init__.py": "NEW"}
-                },
-                "tests/": {"test_main.py": "NEW"},
-                "requirements.txt": "NEW",
-                "README.md": "NEW"
-            }
-        
-        return {
-            "title": f"Technical Blueprint - {inputs.project_id}",
-            "architecture_pattern": pattern,
-            "technology_stack": tech_stack,
-            "components": components,
-            "directory_structure": directory_structure,
-            "deployment_strategy": self._plan_deployment_strategy(pattern),
-            "testing_strategy": self._plan_testing_strategy(pattern),
-            "documentation": {
-                "api_docs": "OpenAPI/Swagger",
-                "architecture_docs": "Markdown",
-                "deployment_docs": "Docker + README"
-            }
-        }
+        blueprint_prompt = f"""Create detailed technical blueprint from this architecture plan.
+
+Architecture Plan:
+{json.dumps(architecture_plan, indent=2)}
+
+Context:
+- User Goal: {inputs.user_goal or 'Not specified'}
+- Project Path: {inputs.project_path or 'Not specified'}
+
+Task: Design a comprehensive blueprint with a detailed directory structure. Consider:
+1. What directory structure fits the chosen architecture?
+2. What deployment strategy suits the technology choices?
+3. What testing approach matches the architecture complexity?
+4. What documentation is needed?
+
+Return JSON with this structure:
+{{
+  "title": "descriptive project title",
+  "architecture_pattern": "{architecture_plan.get('architecture_pattern')}",
+  "technology_stack": {architecture_plan.get('technology_stack')},
+  "components": {architecture_plan.get('component_breakdown')},
+  "directory_structure": {{"intelligent": "directory layout"}},
+  "deployment_strategy": {{"appropriate": "deployment approach"}},
+  "testing_strategy": {{"suitable": "testing framework choices"}},
+  "documentation": {{"needed": "documentation types"}}
+}}
+
+Design intelligently based on actual project needs."""
+
+        try:
+            response = await self.llm_provider.generate(blueprint_prompt)
+            json_content = self._extract_json_from_response(response)
+            return json.loads(json_content) if json_content else {}
+        except Exception as e:
+            self.logger.error(f"LLM blueprint design failed: {e}")
+            raise ProtocolExecutionError(f"Blueprint design failed: {e}")
     
     def _plan_deployment_strategy(self, pattern: str) -> Dict[str, Any]:
-        """Plan deployment strategy based on architecture pattern."""
-        if pattern == "microservices":
-            return {
-                "type": "containerized",
-                "orchestration": "Docker Compose",
-                "scaling": "horizontal",
-                "monitoring": "prometheus + grafana"
-            }
-        else:
-            return {
-                "type": "traditional",
-                "deployment": "gunicorn + nginx",
-                "scaling": "vertical",
-                "monitoring": "basic logging"
-            }
+        """This method is obsolete - LLM handles deployment planning in _design_blueprint."""
+        return {}
     
     def _plan_testing_strategy(self, pattern: str) -> Dict[str, Any]:
-        """Plan testing strategy based on architecture pattern."""
-        return {
-            "unit_tests": "pytest",
-            "integration_tests": "pytest + httpx" if pattern != "monolithic" else "pytest",
-            "e2e_tests": "playwright" if pattern == "microservices" else "requests",
-            "coverage_target": "85%"
-        }
+        """This method is obsolete - LLM handles testing strategy in _design_blueprint."""
+        return {}
     
     async def _validate_design(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """Validate the architecture design quality."""
@@ -855,66 +846,334 @@ class EnhancedArchitectAgent_v1(UnifiedAgent):
         
         return review_results
 
-    async def _save_blueprint_files(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, str]:
-        """NEW: Save blueprint files to filesystem like code generator."""
-        self.logger.info("Saving blueprint files to filesystem")
+    async def _create_project_structure(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, str]:
+        """Create actual project structure using MCP tools based on architecture design."""
+        self.logger.info("Creating actual project structure using MCP filesystem tools")
         
-        blueprint_files = {}
-        output_dir = Path(inputs.output_directory or "./blueprints")
-        project_dir = output_dir / (inputs.project_id or "default_project")
+        created_files = {}
+        project_path = inputs.project_path or "."
         
         try:
-            # Ensure output directory exists
-            project_dir.mkdir(parents=True, exist_ok=True)
+            # 1. Create main project directories
+            directories = [
+                f"{project_path}/src",
+                f"{project_path}/tests", 
+                f"{project_path}/docs",
+                f"{project_path}/config"
+            ]
             
-            # 1. Main blueprint markdown file
-            blueprint_md = self._generate_blueprint_markdown(blueprint, inputs)
-            blueprint_file_path = project_dir / "architecture_blueprint.md"
-            blueprint_file_path.write_text(blueprint_md, encoding='utf-8')
-            blueprint_files["architecture_blueprint.md"] = blueprint_md
+            for directory in directories:
+                self.logger.info(f"[MCP] Creating directory: {directory}")
+                result = await self._call_mcp_tool("filesystem_create_directory", {
+                    "directory_path": directory,
+                    "create_parents": True
+                })
+                if result.get("success"):
+                    self.logger.info(f"[MCP] Created directory: {directory}")
             
-            # 2. Technology stack file
-            tech_stack_content = self._generate_tech_stack_file(blueprint.get("technology_stack", {}))
-            tech_file_path = project_dir / "technology_stack.md"
-            tech_file_path.write_text(tech_stack_content, encoding='utf-8')
-            blueprint_files["technology_stack.md"] = tech_stack_content
+            # 2. Create requirements.txt based on technology stack
+            tech_stack = blueprint.get("technology_stack", {})
             
-            # 3. Component specification files
+            # Use LLM to generate requirements.txt content intelligently
+            requirements_prompt = f"""Generate a requirements.txt file for a {blueprint.get('architecture_pattern', 'modern')} Python project.
+
+Technology Stack:
+{json.dumps(tech_stack, indent=2)}
+
+Project Context:
+- Architecture: {blueprint.get('architecture_pattern', 'layered')}
+- Components: {len(blueprint.get('components', []))}
+- Deployment: {blueprint.get('deployment_strategy', {}).get('type', 'standard')}
+
+Generate ONLY the requirements.txt content with appropriate versions. Include:
+- Core dependencies for the specified technology stack
+- Development dependencies for testing and linting
+- Production-ready versions (not 'latest')
+- Common Python project dependencies
+
+Return just the file content, no markdown formatting."""
+
+            try:
+                requirements_response = await self.llm_provider.generate(requirements_prompt)
+                requirements_content = requirements_response.strip()
+            except Exception as e:
+                self.logger.error(f"LLM generation failed for requirements.txt: {e}")
+                raise ProtocolExecutionError(f"Requirements.txt generation failed: {e}")
+            
+            req_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/requirements.txt",
+                "content": requirements_content
+            })
+            if req_result.get("success"):
+                created_files["requirements.txt"] = requirements_content
+                self.logger.info("[MCP] Created requirements.txt")
+            
+            # 3. Create README.md
+            # Use LLM to generate README.md content intelligently
+            readme_prompt = f"""Generate a comprehensive README.md for this project.
+
+Project Details:
+- Title: {blueprint.get('title', 'Project')}
+- Architecture: {blueprint.get('architecture_pattern', 'layered')}
+- Technology Stack: {json.dumps(tech_stack, indent=2)}
+- Components: {[comp.get('name', 'Component') for comp in blueprint.get('components', [])]}
+
+Include these sections:
+1. Project title and description
+2. Features/capabilities
+3. Installation instructions
+4. Usage examples
+5. Architecture overview
+6. Contributing guidelines
+7. License information
+
+Make it professional and comprehensive. Return just the markdown content."""
+
+            try:
+                readme_response = await self.llm_provider.generate(readme_prompt)
+                readme_content = readme_response.strip()
+            except Exception as e:
+                self.logger.error(f"LLM generation failed for README.md: {e}")
+                raise ProtocolExecutionError(f"README.md generation failed: {e}")
+            
+            readme_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/README.md", 
+                "content": readme_content
+            })
+            if readme_result.get("success"):
+                created_files["README.md"] = readme_content
+                self.logger.info("[MCP] Created README.md")
+            
+            # 4. Create main entry point skeleton
+            # Use LLM to generate main.py entry point intelligently
+            main_prompt = f"""Generate a main.py entry point for this project.
+
+Project Context:
+- Architecture: {blueprint.get('architecture_pattern', 'layered')}
+- Technology Stack: {json.dumps(tech_stack, indent=2)}
+- Components: {[comp.get('name', 'Component') for comp in blueprint.get('components', [])]}
+
+Requirements:
+- Professional Python code structure
+- Proper imports and error handling
+- Configuration management
+- Entry point that can be run with `python src/main.py`
+- Include docstrings and type hints
+- Follow Python best practices
+
+Return just the Python code, no markdown formatting."""
+
+            try:
+                main_response = await self.llm_provider.generate(main_prompt)
+                main_content = main_response.strip()
+            except Exception as e:
+                self.logger.error(f"LLM generation failed for main.py: {e}")
+                raise ProtocolExecutionError(f"Main.py generation failed: {e}")
+            
+            main_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/src/main.py",
+                "content": main_content
+            })
+            if main_result.get("success"):
+                created_files["src/main.py"] = main_content
+                self.logger.info("[MCP] Created src/main.py")
+            
+            # 5. Create __init__.py files
+            init_content = "# Package initialization\n"
+            
+            init_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/src/__init__.py",
+                "content": init_content
+            })
+            if init_result.get("success"):
+                created_files["src/__init__.py"] = init_content
+            
+            # 6. Create component skeleton files based on architecture
+            components = blueprint.get("components", [])
+            for component in components:
+                comp_name = component.get("name", "component").lower().replace(" ", "_")
+                
+                # Use LLM to generate component skeleton intelligently
+                component_prompt = f"""Generate a Python module for this component.
+
+Component Details:
+- Name: {component.get('name', 'Component')}
+- Responsibility: {component.get('responsibility', 'Component functionality')}
+- Interfaces: {component.get('interfaces', [])}
+- Dependencies: {component.get('dependencies', [])}
+
+Project Context:
+- Architecture: {blueprint.get('architecture_pattern', 'layered')}
+- Technology Stack: {json.dumps(tech_stack, indent=2)}
+
+Requirements:
+- Professional Python class structure
+- Proper docstrings and type hints
+- Error handling and logging
+- Follow the specified responsibility
+- Include necessary imports
+- Implement the specified interfaces
+- Follow Python best practices
+
+Return just the Python code, no markdown formatting."""
+
+                try:
+                    component_response = await self.llm_provider.generate(component_prompt)
+                    comp_content = component_response.strip()
+                except Exception as e:
+                    self.logger.error(f"LLM generation failed for {comp_name}.py: {e}")
+                    raise ProtocolExecutionError(f"Component {comp_name}.py generation failed: {e}")
+                
+                comp_result = await self._call_mcp_tool("filesystem_write_file", {
+                    "file_path": f"{project_path}/src/{comp_name}.py",
+                    "content": comp_content
+                })
+                if comp_result.get("success"):
+                    created_files[f"src/{comp_name}.py"] = comp_content
+                    self.logger.info(f"[MCP] Created src/{comp_name}.py")
+            
+            # 7. Create .gitignore
+            # Use LLM to generate .gitignore content intelligently
+            gitignore_prompt = f"""Generate a comprehensive .gitignore file for this project.
+
+Technology Stack:
+{json.dumps(tech_stack, indent=2)}
+
+Project Context:
+- Architecture: {blueprint.get('architecture_pattern', 'layered')}
+- Deployment: {blueprint.get('deployment_strategy', {}).get('type', 'standard')}
+
+Include ignore patterns for:
+- Python specific files (__pycache__, *.pyc, etc.)
+- Virtual environments
+- IDE/editor files
+- OS-specific files
+- Log files and temporary files
+- Configuration files with secrets
+- Build artifacts
+- Testing artifacts
+- Any technology-specific patterns
+
+Return just the gitignore content, no markdown formatting."""
+
+            try:
+                gitignore_response = await self.llm_provider.generate(gitignore_prompt)
+                gitignore_content = gitignore_response.strip()
+            except Exception as e:
+                self.logger.error(f"LLM generation failed for .gitignore: {e}")
+                raise ProtocolExecutionError(f"Gitignore generation failed: {e}")
+            
+            git_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/.gitignore",
+                "content": gitignore_content
+            })
+            if git_result.get("success"):
+                created_files[".gitignore"] = gitignore_content
+                self.logger.info("[MCP] Created .gitignore")
+            
+            self.logger.info(f"Successfully created {len(created_files)} project files using MCP tools")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create project structure via MCP: {e}")
+            created_files["error"] = f"Project structure creation failed: {str(e)}"
+        
+        return created_files
+
+    async def _create_blueprint_files(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, str]:
+        """Create blueprint documentation files using MCP tools."""
+        self.logger.info("Creating blueprint documentation files using MCP filesystem tools")
+        
+        created_files = {}
+        project_path = inputs.project_path or "."  # Same as code generator - use project root directly
+        project_name = inputs.project_id or "project"
+        
+        try:
+            # No special blueprints directory - write directly to project root like code generator does
+            self.logger.info(f"[MCP] Writing blueprint files to project root: {project_path}")
+            
+            # 1. Create main blueprint markdown file
+            blueprint_content = self._generate_blueprint_markdown(blueprint, inputs)
+            blueprint_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/{project_name}_blueprint.md",
+                "content": blueprint_content
+            })
+            if blueprint_result.get("success"):
+                created_files[f"{project_name}_blueprint.md"] = blueprint_content
+                self.logger.info(f"[MCP] Created {project_name}_blueprint.md")
+            
+            # 2. Create technology stack file
+            tech_stack = blueprint.get("technology_stack", {})
+            if tech_stack:
+                tech_content = self._generate_tech_stack_file(tech_stack)
+                tech_result = await self._call_mcp_tool("filesystem_write_file", {
+                    "file_path": f"{project_path}/{project_name}_tech_stack.md",
+                    "content": tech_content
+                })
+                if tech_result.get("success"):
+                    created_files[f"{project_name}_tech_stack.md"] = tech_content
+                    self.logger.info(f"[MCP] Created {project_name}_tech_stack.md")
+            
+            # 3. Create component specifications (in docs subdirectory)
             components = blueprint.get("components", [])
             if components:
-                components_dir = project_dir / "components"
-                components_dir.mkdir(exist_ok=True)
+                # Create docs directory for component specs
+                docs_dir_result = await self._call_mcp_tool("filesystem_create_directory", {
+                    "directory_path": f"{project_path}/docs",
+                    "create_parents": True
+                })
                 
                 for i, component in enumerate(components):
-                    comp_content = self._generate_component_spec(component, i)
                     comp_name = component.get("name", f"component_{i+1}").lower().replace(" ", "_")
-                    comp_file_path = components_dir / f"{comp_name}_spec.md"
-                    comp_file_path.write_text(comp_content, encoding='utf-8')
-                    blueprint_files[f"components/{comp_name}_spec.md"] = comp_content
+                    comp_content = self._generate_component_spec(component, i)
+                    comp_result = await self._call_mcp_tool("filesystem_write_file", {
+                        "file_path": f"{project_path}/docs/{comp_name}_spec.md",
+                        "content": comp_content
+                    })
+                    if comp_result.get("success"):
+                        created_files[f"docs/{comp_name}_spec.md"] = comp_content
+                        self.logger.info(f"[MCP] Created docs/{comp_name}_spec.md")
             
-            # 4. Directory structure file
+            # 4. Create directory structure documentation
             dir_structure = blueprint.get("directory_structure", {})
             if dir_structure:
-                dir_content = self._generate_directory_structure_file(dir_structure)
-                dir_file_path = project_dir / "directory_structure.md"
-                dir_file_path.write_text(dir_content, encoding='utf-8')
-                blueprint_files["directory_structure.md"] = dir_content
+                structure_content = self._generate_directory_structure_file(dir_structure)
+                structure_result = await self._call_mcp_tool("filesystem_write_file", {
+                    "file_path": f"{project_path}/{project_name}_directory_structure.md",
+                    "content": structure_content
+                })
+                if structure_result.get("success"):
+                    created_files[f"{project_name}_directory_structure.md"] = structure_content
+                    self.logger.info(f"[MCP] Created {project_name}_directory_structure.md")
             
-            # 5. Deployment guide
+            # 5. Create deployment guide
             deployment = blueprint.get("deployment_strategy", {})
             if deployment:
                 deploy_content = self._generate_deployment_guide(deployment)
-                deploy_file_path = project_dir / "deployment_guide.md"
-                deploy_file_path.write_text(deploy_content, encoding='utf-8')
-                blueprint_files["deployment_guide.md"] = deploy_content
+                deploy_result = await self._call_mcp_tool("filesystem_write_file", {
+                    "file_path": f"{project_path}/{project_name}_deployment_guide.md",
+                    "content": deploy_content
+                })
+                if deploy_result.get("success"):
+                    created_files[f"{project_name}_deployment_guide.md"] = deploy_content
+                    self.logger.info(f"[MCP] Created {project_name}_deployment_guide.md")
             
-            self.logger.info(f"Successfully saved {len(blueprint_files)} blueprint files to {project_dir}")
+            # 6. Create blueprint JSON file for programmatic access
+            blueprint_json = json.dumps(blueprint, indent=2)
+            json_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": f"{project_path}/{project_name}_blueprint.json",
+                "content": blueprint_json
+            })
+            if json_result.get("success"):
+                created_files[f"{project_name}_blueprint.json"] = blueprint_json
+                self.logger.info(f"[MCP] Created {project_name}_blueprint.json")
+            
+            self.logger.info(f"Successfully created {len(created_files)} blueprint documentation files in project root")
             
         except Exception as e:
-            self.logger.error(f"Failed to save blueprint files: {e}")
-            blueprint_files["error"] = f"File generation failed: {str(e)}"
+            self.logger.error(f"Failed to create blueprint files via MCP: {e}")
+            created_files["error"] = f"Blueprint file creation failed: {str(e)}"
         
-        return blueprint_files
+        return created_files
 
     async def _generate_execution_plan(self, blueprint: Dict[str, Any], review_results: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """NEW: Generate execution plan from blueprint."""

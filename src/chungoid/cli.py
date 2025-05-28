@@ -1760,12 +1760,7 @@ def show_config(ctx: click.Context, project_dir_opt: Path, raw: bool):
     except Exception as e:
         click.secho(f"An unexpected error occurred while retrieving configuration: {e}", fg="red")
         logger.error(f"Error in show_config: {e}", exc_info=True)
-
-# Add helper functions for backward compatibility
-    except Exception as e:
-        raise ConfigurationError(f"Failed to load config from {config_path}: {e}")
-
-
+        
 # Ensure the main CLI entry point is correct
 if __name__ == "__main__":
     cli()

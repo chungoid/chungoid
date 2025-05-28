@@ -286,6 +286,12 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 if task_input.architecture_context:
                     stage_context["architecture"] = task_input.architecture_context
                     self.logger.info("[Context] Using architecture context from previous stage")
+                    
+                    # Try to read blueprint files from the project directory
+                    blueprint_content = await self._read_blueprint_files(task_input)
+                    if blueprint_content:
+                        stage_context["blueprint_files"] = blueprint_content
+                        self.logger.info("[Context] Successfully loaded blueprint files from project directory")
                 
                 if task_input.risk_context:
                     stage_context["risk"] = task_input.risk_context
