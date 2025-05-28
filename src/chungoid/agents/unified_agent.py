@@ -1455,9 +1455,9 @@ class UnifiedAgent(BaseModel, ABC):
             return "terminal"
         elif any(keyword in tool_name_lower for keyword in ['content', 'web', 'extract', 'generate']):
             return "content"
-        elif any(keyword in tool_name_lower for keyword in ['intelligence', 'learning', 'analyze', 'predict', 'performance']):
+        elif any(keyword in tool_name_lower for keyword in ['intelligence', 'learning', 'analyze', 'predict', 'performance', 'adaptive', 'strategy', 'experiment', 'recovery', 'optimize', 'assess', 'health', 'capabilities', 'recommend', 'validate', 'tools']):
             return "intelligence"
-        elif any(keyword in tool_name_lower for keyword in ['discover', 'manifest', 'composition']):
+        elif any(keyword in tool_name_lower for keyword in ['discover', 'manifest', 'composition', 'available_tools', 'get_available', 'get_mcp_tools_registry', 'tool_discovery']):
             return "tool_discovery"
         elif any(keyword in tool_name_lower for keyword in ['registry']):
             return "registry"

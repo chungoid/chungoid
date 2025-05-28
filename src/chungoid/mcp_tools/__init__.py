@@ -36,8 +36,10 @@ from .filesystem.directory_operations import (
 
 # CRITICAL FIX: Intelligence tools should ALWAYS be available to all agents
 # These are core functionality, not optional features
-from chungoid.intelligence.adaptive_learning_system import (
+from chungoid.mcp_tools.intelligence.tool_composition import (
     adaptive_learning_analyze,
+)
+from chungoid.intelligence.adaptive_learning_system import (
     create_strategy_experiment,
     apply_learning_recommendations,
 )
@@ -284,7 +286,7 @@ __all__ = [
 # Create essential aliases for backward compatibility (not exported in __all__)
 # ChromaDB aliases - only the most commonly used ones
 chromadb_query_documents = chroma_query_documents
-chromadb_list_collections = chroma_list_collections
+chromadb_list_collections = chroma_create_collection
 chromadb_create_collection = chroma_create_collection
 chromadb_delete_collection = chroma_delete_collection
 
@@ -476,7 +478,12 @@ async def analyze_tool_usage_patterns(**kwargs):
 async def recommend_tools_for_task(task_description: str, **kwargs):
     """Tool recommendation alias with error handling."""
     try:
-        return await get_tool_composition_recommendations(task=task_description, **kwargs)
+        # Fix: Map task_description to the correct parameter
+        return await get_tool_composition_recommendations(
+            target_tools=[],  # Empty list as default
+            context={"task_description": task_description},  # Pass task in context
+            **kwargs
+        )
     except Exception as e:
         # Fallback to basic recommendation based on task keywords
         recommendations = []
@@ -600,6 +607,27 @@ def get_available_tools():
     from .tool_manifest import DynamicToolDiscovery
     import sys
     
+    def _categorize_tool_fallback(tool_name: str) -> str:
+        """Categorize tools that don't have manifests."""
+        tool_name_lower = tool_name.lower()
+        
+        if any(keyword in tool_name_lower for keyword in ['chroma', 'database', 'collection', 'document', 'query']):
+            return "chromadb"
+        elif any(keyword in tool_name_lower for keyword in ['filesystem', 'file', 'directory', 'read', 'write']):
+            return "filesystem"
+        elif any(keyword in tool_name_lower for keyword in ['terminal', 'command', 'execute', 'environment']):
+            return "terminal"
+        elif any(keyword in tool_name_lower for keyword in ['content', 'web', 'extract', 'generate']):
+            return "content"
+        elif any(keyword in tool_name_lower for keyword in ['intelligence', 'learning', 'analyze', 'predict', 'performance', 'adaptive', 'strategy', 'experiment', 'recovery', 'optimize', 'assess', 'health', 'capabilities', 'recommend', 'validate', 'tools']):
+            return "intelligence"
+        elif any(keyword in tool_name_lower for keyword in ['discover', 'manifest', 'composition', 'available_tools', 'get_available', 'get_mcp_tools_registry', 'tool_discovery']):
+            return "tool_discovery"
+        elif any(keyword in tool_name_lower for keyword in ['registry']):
+            return "registry"
+        else:
+            return "unknown"
+    
     # Get the current module to access __all__
     current_module = sys.modules[__name__]
     exported_tools = getattr(current_module, '__all__', [])
@@ -624,12 +652,13 @@ def get_available_tools():
                 'success_rate': manifest.metrics.success_rate if manifest.metrics else 0.0
             }
         else:
-            # Create basic metadata for tools not in manifest
+            # Create basic metadata for tools not in manifest with proper categorization
+            category = _categorize_tool_fallback(tool_name)
             tools[tool_name] = {
                 'name': tool_name,
                 'display_name': tool_name.replace('_', ' ').title(),
                 'description': f"MCP tool: {tool_name}",
-                'category': 'unknown',
+                'category': category,
                 'capabilities': [],
                 'tags': ['mcp', 'exported'],
                 'complexity': 'moderate',

@@ -662,9 +662,16 @@ class UnifiedOrchestrator:
                 temperature=0.1
             )
             
+            # Use robust JSON extraction that handles markdown and other formatting
+            json_content = self._extract_json_from_response(response)
+            
+            if not json_content:
+                self.logger.warning("[UAEI] No JSON content found in LLM response")
+                return {}
+            
             # Parse JSON response
             import json
-            specs = json.loads(response.strip())
+            specs = json.loads(json_content)
             
             # Validate and clean the response
             validated_specs = {}
@@ -687,3 +694,39 @@ class UnifiedOrchestrator:
         except Exception as e:
             self.logger.warning(f"[UAEI] LLM analysis failed: {e}")
             return {}  # Return empty dict to use defaults 
+    
+    def _extract_json_from_response(self, response: str) -> str:
+        """Extract JSON content from LLM response, handling markdown and other formatting"""
+        import re
+        
+        if not response or not response.strip():
+            return ""
+        
+        response = response.strip()
+        
+        # Strategy 1: Try to extract from markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+        if json_match:
+            return json_match.group(1).strip()
+        
+        # Strategy 2: Look for JSON object boundaries
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            return json_match.group(0).strip()
+        
+        # Strategy 3: If response starts and ends with curly braces, assume it's JSON
+        if response.startswith('{') and response.endswith('}'):
+            return response
+        
+        # Strategy 4: Try to find JSON between common delimiters
+        for start_delimiter, end_delimiter in [('```', '```'), ('`', '`'), ('"""', '"""')]:
+            if start_delimiter in response and end_delimiter in response:
+                start_idx = response.find(start_delimiter) + len(start_delimiter)
+                end_idx = response.rfind(end_delimiter)
+                if start_idx < end_idx:
+                    potential_json = response[start_idx:end_idx].strip()
+                    # Check if it looks like JSON
+                    if potential_json.startswith('{') and potential_json.endswith('}'):
+                        return potential_json
+        
+        return "" 
