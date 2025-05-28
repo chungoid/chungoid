@@ -1,0 +1,18 @@
+{
+  "ultimate_performance": {
+    "connection_pool_size": 50,
+    "query_cache_size": 10000,
+    "batch_size": 1000,
+    "async_operations": true,
+    "index_optimization": "ultimate",
+    "memory_mapping": true,
+    "compression": "lz4",
+    "parallel_queries": 8
+  },
+  "chromadb_overrides": {
+    "max_query_time": 0.1,
+    "timeout": 0.2,
+    "retry_attempts": 3,
+    "cache_ttl": 300
+  }
+}
