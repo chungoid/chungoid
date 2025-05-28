@@ -74,6 +74,10 @@ class UnifiedAgent(BaseModel, ABC):
         if self.enable_refinement:
             self._initialize_refinement_capabilities()
 
+    def get_id(self) -> str:
+        """Get the agent's unique identifier"""
+        return self.AGENT_ID
+
     def _initialize_refinement_capabilities(self):
         """Initialize MCP tools and ChromaDB for refinement capabilities"""
         try:
@@ -101,23 +105,33 @@ class UnifiedAgent(BaseModel, ABC):
         """
         ENHANCED: Universal MCP tool calling with intelligent parameter mapping
         
-        Fixes critical parameter mapping errors that caused 100% filesystem tool failures.
-        Maps generic parameters to tool-specific parameter names.
+        CRITICAL FIX: Import and call tools directly from the mcp_tools module instead of 
+        trying to get them from the registry dict.
         """
         if not self.mcp_tools:
             return {"success": False, "error": "MCP tools not available"}
         
         try:
+            # CRITICAL FIX: Import the tool function directly from the module
+            import chungoid.mcp_tools as mcp_tools_module
+            
+            # Get tool function from the module (not the registry dict)
+            tool_func = getattr(mcp_tools_module, tool_name, None)
+            if not tool_func:
+                return {"success": False, "error": f"Tool {tool_name} not found in mcp_tools module"}
+            
             # CRITICAL FIX: Map generic parameters to tool-specific parameters
             mapped_arguments = self._map_tool_parameters(tool_name, arguments)
             
-            # Get tool function
-            tool_func = getattr(self.mcp_tools, tool_name, None)
-            if not tool_func:
-                return {"success": False, "error": f"Tool {tool_name} not found"}
-            
             # Call tool with mapped parameters
-            result = await tool_func(**mapped_arguments)
+            if callable(tool_func):
+                # Special handling for non-async functions
+                if tool_name == "get_mcp_tools_registry":
+                    result = tool_func(**mapped_arguments)  # Don't await this one
+                else:
+                    result = await tool_func(**mapped_arguments)
+            else:
+                return {"success": False, "error": f"Tool {tool_name} is not callable"}
             
             self.logger.info(f"[MCP] Successfully called tool {tool_name}")
             return {"success": True, "result": result, "tool_name": tool_name}
@@ -144,15 +158,18 @@ class UnifiedAgent(BaseModel, ABC):
             # Filesystem tools
             "filesystem_project_scan": {
                 "path": "scan_path",
-                "project_path": "project_path",
+                "project_path": "scan_path",
+                "max_depth": "max_depth",
                 "project_id": "project_id"
             },
             "filesystem_list_directory": {
+                "relative_workspace_path": "directory_path",
                 "path": "directory_path",
                 "project_path": "project_path", 
                 "project_id": "project_id"
             },
             "filesystem_read_file": {
+                "target_file": "file_path",
                 "path": "file_path",
                 "project_path": "project_path",
                 "project_id": "project_id"
@@ -205,8 +222,8 @@ class UnifiedAgent(BaseModel, ABC):
             
             # Content tools
             "content_generate_dynamic": {
-                "context": "content_context",
-                "content_type": "content_type"
+                "content_context": "template",
+                "content_type": "variables"
             },
             "content_analyze_structure": {
                 "content": "content_data"
@@ -220,7 +237,7 @@ class UnifiedAgent(BaseModel, ABC):
             
             # Intelligence tools - fix missing required parameters
             "get_tool_composition_recommendations": {
-                "context": "analysis_context",
+                "analysis_context": "target_tools",
                 "target_tools": "target_tools"  # Required parameter
             },
             "adaptive_learning_analyze": {
@@ -237,7 +254,7 @@ class UnifiedAgent(BaseModel, ABC):
             
             # Terminal tools
             "terminal_get_environment": {},  # No parameter mapping needed
-            "terminal_run_command": {
+            "terminal_execute_command": {
                 "command": "command"
             },
             "terminal_sandbox_status": {},
@@ -247,8 +264,15 @@ class UnifiedAgent(BaseModel, ABC):
             "chromadb_query_documents": {
                 "query": "query_text"
             },
+            "chroma_add_documents": {
+                "document_content": "documents",
+                "collection_name": "collection_name",
+                "document_id": "ids"
+            },
             "chromadb_store_document": {
-                "document": "document_content"
+                "document_content": "documents",
+                "collection_name": "collection_name",
+                "document_id": "ids"
             },
             "chroma_peek_collection": {},
             "chroma_get_documents": {}
@@ -269,6 +293,23 @@ class UnifiedAgent(BaseModel, ABC):
             # Provide default target_tools if missing
             mapped_args["target_tools"] = list(arguments.keys()) if arguments else []
         
+        # Special handling for ChromaDB tools - convert single document to list
+        if tool_name in ["chromadb_store_document", "chroma_add_documents"]:
+            if "documents" in mapped_args and isinstance(mapped_args["documents"], str):
+                mapped_args["documents"] = [mapped_args["documents"]]
+            if "ids" in mapped_args and isinstance(mapped_args["ids"], str):
+                mapped_args["ids"] = [mapped_args["ids"]]
+        
+        # Special handling for content_generate_dynamic - ensure template is provided and variables is dict
+        if tool_name == "content_generate_dynamic":
+            if "template" not in mapped_args and "content_context" in arguments:
+                mapped_args["template"] = arguments["content_context"]
+            # Ensure variables is a dict, not a string
+            if "variables" in mapped_args and isinstance(mapped_args["variables"], str):
+                mapped_args["variables"] = {"content_type": mapped_args["variables"]}
+            elif "variables" not in mapped_args:
+                mapped_args["variables"] = {}
+        
         return mapped_args
 
     async def _get_all_available_mcp_tools(self) -> Dict[str, Any]:
@@ -279,11 +320,21 @@ class UnifiedAgent(BaseModel, ABC):
         """
         if not self.mcp_tools:
             self.logger.warning("[MCP] MCP tools not available")
-            return {}
+            return {
+                "discovery_successful": False,
+                "tools": {},
+                "categories": [],
+                "total_tools": 0,
+                "error": "MCP tools not initialized"
+            }
         
         try:
+            # Import the actual tools from the mcp_tools module to get the real 54 tools
+            from chungoid.mcp_tools import __all__ as available_tool_names
+            import chungoid.mcp_tools as mcp_tools_module
+            
             # CRITICAL FIX: Implement missing get_mcp_tools_registry method
-            registry_tools = await self._get_mcp_tools_registry()
+            registry_tools = self._get_mcp_tools_registry()
             
             # Get all available tools by category
             all_tools = {}
@@ -334,28 +385,90 @@ class UnifiedAgent(BaseModel, ABC):
                 "recommend_tool_combinations"
             ]
             
-            # Check availability and categorize
-            for category, tools in [
-                ("filesystem", filesystem_tools),
-                ("chromadb", chromadb_tools), 
-                ("terminal", terminal_tools),
-                ("content", content_tools),
-                ("intelligence", intelligence_tools),
-                ("tool_discovery", tool_discovery_tools)
-            ]:
-                available_tools = {}
-                for tool_name in tools:
-                    if hasattr(self.mcp_tools, tool_name):
-                        tool_func = getattr(self.mcp_tools, tool_name)
-                        available_tools[tool_name] = {
-                            "name": tool_name,
-                            "category": category,
-                            "callable": callable(tool_func),
-                            "async": asyncio.iscoroutinefunction(tool_func) if callable(tool_func) else False
-                        }
+            # Import the actual tools from the mcp_tools module to get the real 54 tools
+            try:
+                from chungoid.mcp_tools import __all__ as available_tool_names
+                import chungoid.mcp_tools as mcp_tools_module
                 
-                if available_tools:
-                    all_tools[category] = available_tools
+                # Check availability and categorize using the actual __all__ list
+                for category, tools in [
+                    ("filesystem", filesystem_tools),
+                    ("chromadb", chromadb_tools), 
+                    ("terminal", terminal_tools),
+                    ("content", content_tools),
+                    ("intelligence", intelligence_tools),
+                    ("tool_discovery", tool_discovery_tools)
+                ]:
+                    available_tools = {}
+                    for tool_name in tools:
+                        # Check if tool is in the actual __all__ list
+                        if tool_name in available_tool_names:
+                            try:
+                                tool_func = getattr(mcp_tools_module, tool_name)
+                                available_tools[tool_name] = {
+                                    "name": tool_name,
+                                    "category": category,
+                                    "callable": callable(tool_func),
+                                    "async": asyncio.iscoroutinefunction(tool_func) if callable(tool_func) else False,
+                                    "available": True
+                                }
+                            except AttributeError:
+                                self.logger.debug(f"[MCP] Tool {tool_name} not found in module")
+                    
+                    if available_tools:
+                        all_tools[category] = available_tools
+                
+                # Add any remaining tools from __all__ that weren't categorized
+                for tool_name in available_tool_names:
+                    # Check if tool is already categorized
+                    already_categorized = False
+                    for category_tools in all_tools.values():
+                        if tool_name in category_tools:
+                            already_categorized = True
+                            break
+                    
+                    if not already_categorized:
+                        try:
+                            tool_func = getattr(mcp_tools_module, tool_name)
+                            category = self._categorize_tool(tool_name)
+                            
+                            if category not in all_tools:
+                                all_tools[category] = {}
+                            
+                            all_tools[category][tool_name] = {
+                                "name": tool_name,
+                                "category": category,
+                                "callable": callable(tool_func),
+                                "async": asyncio.iscoroutinefunction(tool_func) if callable(tool_func) else False,
+                                "available": True
+                            }
+                        except AttributeError:
+                            self.logger.debug(f"[MCP] Tool {tool_name} not accessible")
+                            
+            except ImportError as e:
+                self.logger.warning(f"[MCP] Could not import mcp_tools module: {e}")
+                # Fallback to checking self.mcp_tools attributes
+                for category, tools in [
+                    ("filesystem", filesystem_tools),
+                    ("chromadb", chromadb_tools), 
+                    ("terminal", terminal_tools),
+                    ("content", content_tools),
+                    ("intelligence", intelligence_tools),
+                    ("tool_discovery", tool_discovery_tools)
+                ]:
+                    available_tools = {}
+                    for tool_name in tools:
+                        if hasattr(self.mcp_tools, tool_name):
+                            tool_func = getattr(self.mcp_tools, tool_name)
+                            available_tools[tool_name] = {
+                                "name": tool_name,
+                                "category": category,
+                                "callable": callable(tool_func),
+                                "async": asyncio.iscoroutinefunction(tool_func) if callable(tool_func) else False
+                            }
+                    
+                    if available_tools:
+                        all_tools[category] = available_tools
             
             # Add registry tools if available
             if registry_tools:
@@ -363,18 +476,31 @@ class UnifiedAgent(BaseModel, ABC):
             
             # Log discovery results
             total_tools = sum(len(tools) for tools in all_tools.values())
-            self.logger.info(f"[MCP] Discovered {total_tools} callable tools across {len(all_tools)} categories")
+            categories = list(all_tools.keys())
+            self.logger.info(f"[MCP] Discovered {total_tools} callable tools across {len(categories)} categories")
             
             for category, tools in all_tools.items():
                 self.logger.info(f"[MCP] {category.title()}: {len(tools)} tools")
             
-            return all_tools
+            # Return the expected structure with discovery_successful key
+            return {
+                "discovery_successful": True,
+                "tools": all_tools,
+                "categories": categories,
+                "total_tools": total_tools
+            }
             
         except Exception as e:
             self.logger.error(f"[MCP] Tool discovery failed: {e}", exc_info=True)
-            return {}
+            return {
+                "discovery_successful": False,
+                "tools": {},
+                "categories": [],
+                "total_tools": 0,
+                "error": str(e)
+            }
 
-    async def _get_mcp_tools_registry(self) -> Dict[str, Any]:
+    def _get_mcp_tools_registry(self) -> Dict[str, Any]:
         """
         CRITICAL FIX: Implement missing get_mcp_tools_registry method
         
@@ -382,9 +508,9 @@ class UnifiedAgent(BaseModel, ABC):
         causing tool discovery failures.
         """
         try:
-            # Check if registry method exists on mcp_tools
-            if hasattr(self.mcp_tools, 'get_mcp_tools_registry'):
-                return await self.mcp_tools.get_mcp_tools_registry()
+            # Import and call the registry function directly
+            from chungoid.mcp_tools import get_mcp_tools_registry
+            return get_mcp_tools_registry()
             
             # Fallback: Create registry from available tools
             registry = {}
@@ -859,7 +985,13 @@ class UnifiedAgent(BaseModel, ABC):
         4. Fallback strategies for failed tools
         """
         if not self.enable_refinement:
-            return {}
+            return {
+                "discovery_successful": False,
+                "tools": {},
+                "categories": [],
+                "total_tools": 0,
+                "error": "MCP tools not initialized"
+            }
         
         try:
             # 1. UNIVERSAL TOOL DISCOVERY: Get ALL available tools (no filtering)
@@ -871,8 +1003,20 @@ class UnifiedAgent(BaseModel, ABC):
                 return {"error": "tool_discovery_failed", "fallback_analysis": True}
             
             # 2. INTELLIGENT TOOL SELECTION: Choose tools based on context
+            # CRITICAL FIX: Flatten the tools structure for _intelligently_select_tools
+            # Convert from {"category": {"tool": {...}}} to {"tool": {...}}
+            all_tools_flat = {}
+            tools_by_category = tool_discovery.get("tools", {})
+            
+            for category, category_tools in tools_by_category.items():
+                for tool_name, tool_info in category_tools.items():
+                    # Ensure each tool has the category metadata that _intelligently_select_tools expects
+                    tool_info_with_category = tool_info.copy()
+                    tool_info_with_category["category"] = category
+                    all_tools_flat[tool_name] = tool_info_with_category
+            
             selected_tools = self._intelligently_select_tools(
-                tool_discovery, 
+                all_tools_flat, 
                 context.inputs, 
                 context.shared_context
             )
@@ -1725,11 +1869,37 @@ class UnifiedAgent(BaseModel, ABC):
                 self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
                 return {"error": "Tool discovery failed", "limited_functionality": True}
             
-            all_tools = tool_discovery["tools"]
-            self.logger.info(f"[MCP] Discovered {len(all_tools)} tools across {len(tool_discovery['categories'])} categories")
+            # CRITICAL FIX: Flatten the tools structure for _intelligently_select_tools
+            # Convert from {"category": {"tool": {...}}} to {"tool": {...}}
+            all_tools_flat = {}
+            tools_by_category = tool_discovery["tools"]
+            
+            for category, category_tools in tools_by_category.items():
+                for tool_name, tool_info in category_tools.items():
+                    # Ensure each tool has the category metadata that _intelligently_select_tools expects
+                    tool_info_with_category = tool_info.copy()
+                    tool_info_with_category["category"] = category
+                    all_tools_flat[tool_name] = tool_info_with_category
+            
+            self.logger.info(f"[MCP] Discovered {len(all_tools_flat)} tools across {len(tool_discovery['categories'])} categories")
             
             # 2. INTELLIGENT TOOL SELECTION: Based on context and capabilities
-            selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
+            selected_tools = self._intelligently_select_tools(all_tools_flat, inputs, shared_context)
+            
+            # CRITICAL FIX: Validate selected_tools is not None or empty
+            if not selected_tools or not isinstance(selected_tools, dict):
+                self.logger.warning("[MCP] Tool selection returned None or invalid data - using fallback tools")
+                # Provide fallback tools for basic functionality
+                selected_tools = {}
+                fallback_tools = ["filesystem_project_scan", "content_analyze_structure", "terminal_get_environment"]
+                for tool_name in fallback_tools:
+                    if tool_name in all_tools_flat:
+                        selected_tools[tool_name] = all_tools_flat[tool_name]
+                
+                if not selected_tools:
+                    self.logger.error("[MCP] No fallback tools available - returning error")
+                    return {"error": "tool_selection_failed", "fallback_analysis": True}
+            
             self.logger.info(f"[MCP] Selected {len(selected_tools)} tools for enhanced discovery")
             
             # Initialize comprehensive analysis results
@@ -1737,7 +1907,7 @@ class UnifiedAgent(BaseModel, ABC):
                 "discovery_metadata": {
                     "agent_id": self.AGENT_ID,
                     "timestamp": time.time(),
-                    "total_tools_available": len(all_tools),
+                    "total_tools_available": len(all_tools_flat),
                     "tools_selected": len(selected_tools),
                     "selected_tool_names": list(selected_tools.keys()),
                     "analysis_type": "universal_enhanced_discovery"

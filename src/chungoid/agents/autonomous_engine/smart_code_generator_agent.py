@@ -1227,6 +1227,206 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         
         return generation
 
+    async def _validate_generated_code(
+        self, 
+        generation_result: Dict[str, Any], 
+        task_input: SmartCodeGeneratorInput, 
+        shared_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        CRITICAL FIX: Validate generated code quality and completeness.
+        
+        This method was missing and causing AttributeError in the agent execution.
+        """
+        try:
+            generated_files = generation_result.get("generated_files", [])
+            validation_results = []
+            
+            for file_info in generated_files:
+                file_path = file_info.get("file_path", "unknown")
+                content = file_info.get("content", "")
+                file_type = file_info.get("file_type", "unknown")
+                
+                # Basic validation checks
+                validation = {
+                    "file_path": file_path,
+                    "file_type": file_type,
+                    "validation_status": "success",
+                    "issues": [],
+                    "quality_score": 0.0,
+                    "validation_details": {}
+                }
+                
+                # Check if content exists and is not empty
+                if not content or content.strip() == "":
+                    validation["validation_status"] = "error"
+                    validation["issues"].append("Empty or missing content")
+                    validation["quality_score"] = 0.0
+                else:
+                    # Content quality checks
+                    quality_checks = self._perform_content_quality_checks(content, file_type, file_path)
+                    validation["validation_details"] = quality_checks
+                    validation["quality_score"] = quality_checks.get("overall_score", 0.5)
+                    
+                    # Check for critical issues
+                    if quality_checks.get("syntax_issues", 0) > 0:
+                        validation["issues"].append(f"Potential syntax issues detected: {quality_checks.get('syntax_issues')}")
+                    
+                    if quality_checks.get("completeness_score", 0.5) < 0.3:
+                        validation["issues"].append("Code appears incomplete or minimal")
+                    
+                    # Set validation status based on quality
+                    if validation["quality_score"] >= 0.7:
+                        validation["validation_status"] = "success"
+                    elif validation["quality_score"] >= 0.4:
+                        validation["validation_status"] = "warning"
+                    else:
+                        validation["validation_status"] = "error"
+                
+                validation_results.append(validation)
+            
+            # Calculate overall validation summary
+            total_files = len(validation_results)
+            successful_files = len([v for v in validation_results if v["validation_status"] == "success"])
+            warning_files = len([v for v in validation_results if v["validation_status"] == "warning"])
+            error_files = len([v for v in validation_results if v["validation_status"] == "error"])
+            
+            overall_quality = sum(v["quality_score"] for v in validation_results) / total_files if total_files > 0 else 0.0
+            
+            validation_summary = {
+                "validation_results": validation_results,
+                "summary": {
+                    "total_files": total_files,
+                    "successful_files": successful_files,
+                    "warning_files": warning_files,
+                    "error_files": error_files,
+                    "overall_quality_score": overall_quality,
+                    "validation_timestamp": datetime.datetime.now().isoformat()
+                },
+                "validation_status": "success" if error_files == 0 else "partial" if successful_files > 0 else "failed"
+            }
+            
+            self.logger.info(f"[Validation] Completed validation of {total_files} files. Overall quality: {overall_quality:.2f}")
+            return validation_summary
+            
+        except Exception as e:
+            self.logger.error(f"[Validation] Code validation failed: {e}", exc_info=True)
+            return {
+                "validation_results": [],
+                "summary": {
+                    "total_files": 0,
+                    "successful_files": 0,
+                    "warning_files": 0,
+                    "error_files": 0,
+                    "overall_quality_score": 0.0,
+                    "validation_timestamp": datetime.datetime.now().isoformat()
+                },
+                "validation_status": "failed",
+                "error": str(e)
+            }
+
+    def _perform_content_quality_checks(self, content: str, file_type: str, file_path: str) -> Dict[str, Any]:
+        """Perform basic quality checks on generated content."""
+        try:
+            quality_metrics = {
+                "content_length": len(content),
+                "line_count": len(content.split('\n')),
+                "non_empty_lines": len([line for line in content.split('\n') if line.strip()]),
+                "comment_lines": 0,
+                "syntax_issues": 0,
+                "completeness_score": 0.5,
+                "overall_score": 0.5
+            }
+            
+            lines = content.split('\n')
+            
+            # Count comment lines (basic heuristic)
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('#') or stripped.startswith('//') or stripped.startswith('/*') or '"""' in stripped:
+                    quality_metrics["comment_lines"] += 1
+            
+            # Basic syntax checks based on file type
+            if file_path.endswith('.py'):
+                quality_metrics.update(self._check_python_syntax(content))
+            elif file_path.endswith('.js'):
+                quality_metrics.update(self._check_javascript_syntax(content))
+            
+            # Calculate completeness score
+            if quality_metrics["content_length"] > 100:  # Minimum content threshold
+                quality_metrics["completeness_score"] = min(1.0, quality_metrics["content_length"] / 500)
+            
+            # Calculate overall score
+            length_score = min(1.0, quality_metrics["content_length"] / 300)
+            comment_score = min(1.0, quality_metrics["comment_lines"] / max(1, quality_metrics["line_count"] * 0.1))
+            syntax_score = 1.0 if quality_metrics["syntax_issues"] == 0 else 0.5
+            
+            quality_metrics["overall_score"] = (length_score * 0.4 + comment_score * 0.2 + syntax_score * 0.4)
+            
+            return quality_metrics
+            
+        except Exception as e:
+            self.logger.warning(f"Quality check failed for {file_path}: {e}")
+            return {
+                "content_length": len(content),
+                "line_count": len(content.split('\n')),
+                "overall_score": 0.3,
+                "error": str(e)
+            }
+
+    def _check_python_syntax(self, content: str) -> Dict[str, Any]:
+        """Basic Python syntax checks."""
+        issues = 0
+        
+        # Check for basic Python patterns
+        if 'def ' not in content and 'class ' not in content and len(content) > 50:
+            issues += 1  # Likely missing function/class definitions
+        
+        # Check for proper imports (if content is substantial)
+        if len(content) > 200 and not any(line.strip().startswith('import ') or line.strip().startswith('from ') for line in content.split('\n')):
+            issues += 1  # Likely missing imports
+        
+        return {"syntax_issues": issues}
+
+    def _check_javascript_syntax(self, content: str) -> Dict[str, Any]:
+        """Basic JavaScript syntax checks."""
+        issues = 0
+        
+        # Check for basic JavaScript patterns
+        if 'function ' not in content and 'const ' not in content and 'let ' not in content and len(content) > 50:
+            issues += 1  # Likely missing function/variable definitions
+        
+        return {"syntax_issues": issues}
+
+    def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
+        """Calculate overall quality score based on validation results."""
+        try:
+            summary = validation_result.get("summary", {})
+            overall_quality = summary.get("overall_quality_score", 0.0)
+            
+            # Additional quality factors
+            total_files = summary.get("total_files", 0)
+            successful_files = summary.get("successful_files", 0)
+            error_files = summary.get("error_files", 0)
+            
+            if total_files == 0:
+                return 0.0
+            
+            # Calculate success rate
+            success_rate = successful_files / total_files
+            
+            # Penalize if there are errors
+            error_penalty = error_files / total_files * 0.3
+            
+            # Final quality score
+            final_score = max(0.0, min(1.0, overall_quality * success_rate - error_penalty))
+            
+            return final_score
+            
+        except Exception as e:
+            self.logger.warning(f"Quality score calculation failed: {e}")
+            return 0.3  # Default fallback score
+
     async def _generate_llm_code_content(
         self, 
         file_plan: Dict[str, Any], 

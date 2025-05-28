@@ -143,16 +143,21 @@ async def chroma_add_documents(
             
         # Ensure metadata list matches documents length
         if metadatas is None:
-            metadatas = [{"added_at": datetime.now().isoformat(), "project_id": project_id} for _ in documents]
+            # Create metadata with only non-None values
+            base_metadata = {"added_at": datetime.now().isoformat()}
+            if project_id is not None:
+                base_metadata["project_id"] = project_id
+            metadatas = [base_metadata.copy() for _ in documents]
         else:
             # Add project metadata to existing metadata
             for i, metadata in enumerate(metadatas):
                 if metadata is None:
                     metadatas[i] = {}
-                metadatas[i].update({
-                    "added_at": datetime.now().isoformat(),
-                    "project_id": project_id
-                })
+                # Only add non-None values to metadata
+                update_metadata = {"added_at": datetime.now().isoformat()}
+                if project_id is not None:
+                    update_metadata["project_id"] = project_id
+                metadatas[i].update(update_metadata)
         
         # Add documents using existing chroma_utils
         collection.add(

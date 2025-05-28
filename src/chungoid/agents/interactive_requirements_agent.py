@@ -48,6 +48,15 @@ class InteractiveRequirementsAgent(UnifiedAgent):
     # Pydantic field for conversation state
     conversation_state: Dict[str, Any] = Field(default_factory=dict)
     
+    def __init__(self, llm_provider, prompt_manager, **kwargs):
+        """Initialize the Interactive Requirements Agent with proper UAEI compliance"""
+        super().__init__(
+            llm_provider=llm_provider,
+            prompt_manager=prompt_manager,
+            enable_refinement=False,  # This agent doesn't need MCP refinement
+            **kwargs
+        )
+    
     # Conversation phase management
     CONVERSATION_PHASES: ClassVar[List[str]] = [
         "opening",

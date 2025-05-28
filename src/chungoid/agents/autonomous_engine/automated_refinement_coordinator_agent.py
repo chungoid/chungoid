@@ -874,13 +874,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
     def get_output_schema(self) -> Type[ARCAOutput]:
         return ARCAOutput
 
-    async def _get_all_available_mcp_tools(self) -> Dict[str, Any]:
-        # Implementation of _get_all_available_mcp_tools method
-        pass
-
-    async def _call_mcp_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
-        # Implementation of _call_mcp_tool method
-        pass
+    # Remove stub implementations - inherit from UnifiedAgent base class
 
     async def _enhanced_discovery_with_universal_tools(self, inputs: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Universal tool access pattern for AutomatedRefinementCoordinatorAgent."""
