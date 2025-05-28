@@ -768,28 +768,37 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         return final_score
 
     def _extract_json_from_response(self, response: str) -> str:
-        """Extract JSON content from LLM response, handling markdown code blocks."""
+        """Extract JSON content from LLM response, handling markdown code blocks and prose text."""
+        if not response or not response.strip():
+            self.logger.warning("[JSON DEBUG] Empty response provided to JSON extraction")
+            return ""
+            
         response = response.strip()
         
-        # Check if response is wrapped in markdown code blocks
-        if response.startswith('```json'):
-            # Find the end of the code block
-            lines = response.split('\n')
-            json_lines = []
-            in_json_block = False
+        # Strategy 1: Look for JSON in markdown code blocks anywhere in the response
+        if '```json' in response:
+            self.logger.debug("[JSON DEBUG] Found ```json marker, extracting from code block")
             
-            for line in lines:
-                if line.strip() == '```json':
-                    in_json_block = True
-                    continue
-                elif line.strip() == '```' and in_json_block:
-                    break
-                elif in_json_block:
-                    json_lines.append(line)
+            start_marker = '```json'
+            end_marker = '```'
             
-            return '\n'.join(json_lines)
-        elif response.startswith('```'):
-            # Handle generic code blocks
+            start_idx = response.find(start_marker)
+            if start_idx != -1:
+                # Find the start of JSON content (after the ```json line)
+                json_start = response.find('\n', start_idx) + 1
+                if json_start > 0:
+                    # Find the end marker
+                    end_idx = response.find(end_marker, json_start)
+                    if end_idx != -1:
+                        extracted = response[json_start:end_idx].strip()
+                        if extracted:
+                            self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from markdown block: {len(extracted)} chars")
+                            return extracted
+                        
+        # Strategy 2: Look for generic code blocks
+        elif '```' in response:
+            self.logger.debug("[JSON DEBUG] Found generic ``` marker, extracting from code block")
+            
             lines = response.split('\n')
             json_lines = []
             in_code_block = False
@@ -803,10 +812,52 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 elif in_code_block:
                     json_lines.append(line)
             
-            return '\n'.join(json_lines)
-        else:
-            # Response is already clean JSON
-            return response
+            extracted = '\n'.join(json_lines).strip()
+            if extracted:
+                self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from generic code block: {len(extracted)} chars")
+                return extracted
+        
+        # Strategy 3: Try to find JSON within the text using bracket matching
+        self.logger.debug("[JSON DEBUG] No code blocks found, using bracket matching")
+        return self._find_json_in_text(response)
+
+    def _find_json_in_text(self, text: str) -> str:
+        """Find JSON object within text using bracket matching."""
+        if not text:
+            return ""
+            
+        # Look for opening brace
+        start_idx = text.find('{')
+        if start_idx == -1:
+            self.logger.warning("[JSON DEBUG] No opening brace found in response")
+            return ""
+        
+        self.logger.debug(f"[JSON DEBUG] Found opening brace at position {start_idx}")
+        
+        # Count braces to find matching closing brace
+        brace_count = 0
+        for i, char in enumerate(text[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found matching closing brace
+                    potential_json = text[start_idx:i+1]
+                    try:
+                        # Validate it's actually JSON
+                        import json
+                        json.loads(potential_json)
+                        self.logger.debug(f"[JSON DEBUG] Successfully extracted and validated JSON: {len(potential_json)} chars")
+                        return potential_json
+                    except json.JSONDecodeError as e:
+                        self.logger.debug(f"[JSON DEBUG] Invalid JSON found, continuing search: {e}")
+                        # Continue looking for another JSON object
+                        continue
+        
+        # No valid JSON found
+        self.logger.warning("[JSON DEBUG] No valid JSON found in response")
+        return ""
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:

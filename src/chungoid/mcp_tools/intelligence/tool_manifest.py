@@ -24,8 +24,6 @@ Features:
 If intelligent discovery/composition fails, the system MUST fail gracefully with
 clear error messages. This preserves the integrity of the intelligent system and
 prevents degradation to simplistic rule-based behavior.
-
-FUCK FALLBACKS. INTELLIGENT DISCOVERY OR GRACEFUL FAILURE ONLY.
 """
 
 import logging

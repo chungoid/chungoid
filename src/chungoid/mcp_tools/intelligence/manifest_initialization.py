@@ -28,7 +28,7 @@ FUCK FALLBACK MANIFESTS. INTELLIGENT ANALYSIS OR NO MANIFEST AT ALL.
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 from .tool_manifest import (
     ToolManifest, ToolCapability, UsagePattern, ToolCategory, 
     UsageComplexity, ToolMetrics, tool_discovery

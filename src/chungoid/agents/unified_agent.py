@@ -17,6 +17,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, List, Optional, Dict, Type, Union
 from enum import Enum
+import inspect
 
 from pydantic import BaseModel, Field, ConfigDict, ValidationError, PrivateAttr
 
@@ -1258,7 +1259,6 @@ class UnifiedAgent(BaseModel, ABC):
                     "tool_name": tool_name
                 }
             
-            # Validate tool is callable
             if not callable(tool_func):
                 self.logger.error(f"[MCP] Tool {tool_name} is not callable")
                 return {
@@ -1267,11 +1267,30 @@ class UnifiedAgent(BaseModel, ABC):
                     "tool_name": tool_name
                 }
             
-            # Handle registry functions with mock responses
+            # <<< --- ADD LOGGING HERE --- >>>
+            try:
+                tool_signature = inspect.signature(tool_func)
+                param_details = []
+                for param_name, param_obj in tool_signature.parameters.items():
+                    param_kind_str = str(param_obj.kind).split('.')[-1] # e.g., POSITIONAL_OR_KEYWORD
+                    param_default = param_obj.default if param_obj.default is not inspect._empty else "NO_DEFAULT"
+                    param_annotation = str(param_obj.annotation) if param_obj.annotation is not inspect._empty else "Any"
+                    param_details.append(f"{param_name}: {param_annotation} (kind={param_kind_str}, default={param_default})")
+                tool_sig_str = f"({', '.join(param_details)})"
+            except (TypeError, ValueError):
+                tool_sig_str = "(Could not inspect signature)"
+
+            self.logger.info(
+                f"[MCP CALL] Agent '{getattr(self, 'AGENT_ID', 'UnknownAgent')}' invoking tool: '{tool_name}' (actual: '{actual_tool_name}')\n"
+                f"  Signature: {actual_tool_name}{tool_sig_str}\n"
+                f"  Original Args: {json.dumps(arguments, default=str, indent=2)}\n"
+                f"  Converted Args: {json.dumps(converted_arguments, default=str, indent=2)}"
+            )
+            # <<< --- END OF ADDED LOGGING --- >>>
+
             if tool_name.startswith('registry_'):
                 return await self._handle_registry_tool(tool_name, arguments)
             
-            # Call the tool with arguments
             import asyncio
             try:
                 if asyncio.iscoroutinefunction(tool_func):

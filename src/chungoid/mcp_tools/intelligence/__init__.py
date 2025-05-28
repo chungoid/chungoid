@@ -1,41 +1,34 @@
 """
-Intelligence Tools Module - PURE INTELLIGENT SYSTEM ONLY
+Intelligence MCP Tools Module
 
-  CRITICAL SYSTEM DIRECTIVE: NO FALLBACKS ALLOWED 
+This module provides MCP-compatible wrapper functions for intelligence tools
+that handle the 'context' and 'domain' parameters agents expect to pass.
 
-This module implements PURE INTELLIGENT SYSTEMS ONLY. Any attempt to add fallback
-mechanisms, hardcoded patterns, or "backwards compatible" logic is STRICTLY FORBIDDEN.
-
-RULES:
-- NO hardcoded tool suggestions based on agent names
-- NO "if intelligence fails, use this pattern" logic  
-- NO backwards compatibility with simple/dumb systems
-- INTELLIGENCE MUST SUCCEED OR FAIL GRACEFULLY WITH CLEAR ERROR MESSAGES
-- ALL functionality must be derived from intelligent analysis and discovery
-
-If intelligent discovery fails, the system MUST return appropriate error responses
-rather than falling back to predetermined patterns. This ensures the system remains
-truly intelligent and doesn't degrade to simplistic rule-based behavior.
-
-FUCK FALLBACKS. FUCK DUMB FALLBACKS. INTELLIGENT SYSTEMS ONLY.
+The wrappers maintain clean architectural separation between:
+- Core intelligence functions (domain-focused, rigid signatures)  
+- MCP tool interface (agent-friendly, flexible context parameters)
 """
 
-from .tool_manifest import (
-    get_tool_composition_recommendations,
-    discover_tools,
-    get_tool_performance_analytics,
-    tool_discovery,
-    ToolCategory,
-    ToolManifest,
-    DynamicToolDiscovery
+from .mcp_wrappers import (
+    adaptive_learning_analyze,
+    create_strategy_experiment,
+    apply_learning_recommendations,
+    create_intelligent_recovery_plan,
+    predict_potential_failures,
+    analyze_historical_patterns,
+    get_real_time_performance_analysis,
+    optimize_agent_resolution_mcp,
+    generate_performance_recommendations,
 )
 
 __all__ = [
-    "get_tool_composition_recommendations", 
-    "discover_tools",
-    "get_tool_performance_analytics",
-    "tool_discovery",
-    "ToolCategory",
-    "ToolManifest",
-    "DynamicToolDiscovery"
+    "adaptive_learning_analyze",
+    "create_strategy_experiment", 
+    "apply_learning_recommendations",
+    "create_intelligent_recovery_plan",
+    "predict_potential_failures",
+    "analyze_historical_patterns",
+    "get_real_time_performance_analysis",
+    "optimize_agent_resolution_mcp",
+    "generate_performance_recommendations",
 ]
