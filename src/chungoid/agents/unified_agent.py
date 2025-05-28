@@ -235,21 +235,26 @@ class UnifiedAgent(BaseModel, ABC):
                 "content": "content_data"
             },
             
-            # Intelligence tools - fix missing required parameters
+            # Intelligence tools - FIXED parameter mappings
             "get_tool_composition_recommendations": {
                 "analysis_context": "target_tools",
                 "target_tools": "target_tools"  # Required parameter
             },
             "adaptive_learning_analyze": {
-                "context": "learning_context",
-                "domain": "domain"
+                "context": "project_id",           # FIXED: context -> project_id
+                "domain": "time_window_days",      # FIXED: domain -> time_window_days
+                "learning_context": "project_id"   # FIXED: learning_context -> project_id
             },
             "predict_potential_failures": {
-                "context": "prediction_context"
+                "context": "failure_context",      # FIXED: context -> failure_context
+                "prediction_context": "failure_context"  # FIXED: prediction_context -> failure_context
             },
             "get_real_time_performance_analysis": {
-                "agent_id": "agent_id",
-                "context": "analysis_context"
+                # FIXED: This function takes no parameters, remove all mappings
+            },
+            "analyze_historical_patterns": {
+                "context": "failure_context",      # FIXED: context -> failure_context
+                "prediction_context": "failure_context"  # FIXED: prediction_context -> failure_context
             },
             
             # Terminal tools
@@ -1010,9 +1015,17 @@ class UnifiedAgent(BaseModel, ABC):
             
             for category, category_tools in tools_by_category.items():
                 for tool_name, tool_info in category_tools.items():
-                    # Ensure each tool has the category metadata that _intelligently_select_tools expects
-                    tool_info_with_category = tool_info.copy()
-                    tool_info_with_category["category"] = category
+                    # CRITICAL FIX: Handle case where tool_info might be a list instead of dict
+                    if isinstance(tool_info, dict):
+                        tool_info_with_category = tool_info.copy()
+                        tool_info_with_category["category"] = category
+                    else:
+                        # If tool_info is not a dict, create a proper dict structure
+                        tool_info_with_category = {
+                            "name": tool_name,
+                            "category": category,
+                            "info": tool_info
+                        }
                     all_tools_flat[tool_name] = tool_info_with_category
             
             selected_tools = self._intelligently_select_tools(
@@ -1070,9 +1083,11 @@ class UnifiedAgent(BaseModel, ABC):
                     }
                 }
                 
+                # FIXED: Use correct parameters for adaptive_learning_analyze
+                project_id = context.shared_context.get('project_id', 'unknown')
                 intelligence_analysis = await self._safe_tool_call_with_fallback(
                     "adaptive_learning_analyze",
-                    {"context": intelligence_context, "domain": self.AGENT_ID},
+                    {"project_id": project_id, "time_window_days": 30, "enable_cross_project": False},
                     ["analyze_historical_patterns", "get_real_time_performance_analysis"]
                 )
                 current_state["intelligence_analysis"] = intelligence_analysis
@@ -1109,18 +1124,20 @@ class UnifiedAgent(BaseModel, ABC):
                     "execution_mode": str(getattr(context, 'execution_mode', 'unknown'))
                 }
                 
+                # FIXED: Use correct parameters for predict_potential_failures
                 failure_predictions = await self._call_mcp_tool(
                     "predict_potential_failures",
-                    {"context": prediction_context}
+                    {"failure_context": prediction_context}
                 )
                 current_state["failure_predictions"] = failure_predictions
             
             # 8. PERFORMANCE OPTIMIZATION: Use performance tools
             if "get_real_time_performance_analysis" in selected_tools:
                 self.logger.info("[MCP] Executing real-time performance analysis")
+                # FIXED: get_real_time_performance_analysis takes no parameters
                 performance_analysis = await self._call_mcp_tool(
                     "get_real_time_performance_analysis",
-                    {"agent_id": self.AGENT_ID, "context": current_state}
+                    {}
                 )
                 current_state["performance_analysis"] = performance_analysis
             
@@ -1876,9 +1893,17 @@ class UnifiedAgent(BaseModel, ABC):
             
             for category, category_tools in tools_by_category.items():
                 for tool_name, tool_info in category_tools.items():
-                    # Ensure each tool has the category metadata that _intelligently_select_tools expects
-                    tool_info_with_category = tool_info.copy()
-                    tool_info_with_category["category"] = category
+                    # CRITICAL FIX: Handle case where tool_info might be a list instead of dict
+                    if isinstance(tool_info, dict):
+                        tool_info_with_category = tool_info.copy()
+                        tool_info_with_category["category"] = category
+                    else:
+                        # If tool_info is not a dict, create a proper dict structure
+                        tool_info_with_category = {
+                            "name": tool_name,
+                            "category": category,
+                            "info": tool_info
+                        }
                     all_tools_flat[tool_name] = tool_info_with_category
             
             self.logger.info(f"[MCP] Discovered {len(all_tools_flat)} tools across {len(tool_discovery['categories'])} categories")
@@ -1951,9 +1976,11 @@ class UnifiedAgent(BaseModel, ABC):
                     "inputs_summary": str(inputs)[:500]  # Truncated for safety
                 }
                 
+                # FIXED: Use correct parameters for adaptive_learning_analyze
+                project_id = shared_context.get('project_id', 'unknown')
                 intelligence_analysis = await self._safe_tool_call_with_fallback(
                     "adaptive_learning_analyze",
-                    {"context": intelligence_context, "domain": self.AGENT_ID},
+                    {"project_id": project_id, "time_window_days": 30, "enable_cross_project": False},
                     ["analyze_historical_patterns", "get_real_time_performance_analysis"]
                 )
                 analysis_results["intelligence_analysis"] = intelligence_analysis
@@ -2001,20 +2028,17 @@ class UnifiedAgent(BaseModel, ABC):
                 
                 failure_predictions = await self._call_mcp_tool(
                     "predict_potential_failures",
-                    {"context": prediction_context}
+                    {"current_context": prediction_context}
                 )
                 analysis_results["failure_predictions"] = failure_predictions
             
             # 9. PERFORMANCE OPTIMIZATION: Real-time performance analysis
             if "get_real_time_performance_analysis" in selected_tools:
                 self.logger.info("[MCP] Executing performance analysis")
+                # FIXED: get_real_time_performance_analysis takes no parameters
                 performance_analysis = await self._call_mcp_tool(
                     "get_real_time_performance_analysis",
-                    {
-                        "agent_id": self.AGENT_ID,
-                        "context": analysis_results,
-                        "metrics": ["execution_time", "tool_usage", "success_rate"]
-                    }
+                    {}
                 )
                 analysis_results["performance_analysis"] = performance_analysis
             
