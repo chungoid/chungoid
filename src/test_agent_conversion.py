@@ -13,6 +13,7 @@ def check_agent_conversion():
         ('AutomatedRefinementCoordinatorAgent_v1', 'chungoid.agents.autonomous_engine.automated_refinement_coordinator_agent'),
         ('ArchitectAgent_v1', 'chungoid.agents.autonomous_engine.architect_agent'),
         ('ProductAnalystAgent_v1', 'chungoid.agents.autonomous_engine.product_analyst_agent'),
+        ('EnhancedArchitectAgent_v1', 'chungoid.agents.autonomous_engine.architect_agent'),
         ('ProactiveRiskAssessorAgent_v1', 'chungoid.agents.autonomous_engine.proactive_risk_assessor_agent'),
         ('RequirementsTracerAgent_v1', 'chungoid.agents.autonomous_engine.requirements_tracer_agent'),
         ('CodeDebuggingAgent_v1', 'chungoid.agents.autonomous_engine.code_debugging_agent'),

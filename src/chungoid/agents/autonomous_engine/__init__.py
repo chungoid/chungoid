@@ -18,9 +18,8 @@ from chungoid.utils.agent_registry import AgentCard
 from .product_analyst_agent import ProductAnalystAgent_v1
 from .proactive_risk_assessor_agent import ProactiveRiskAssessorAgent_v1
 from .automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1
-from .architect_agent import ArchitectAgent_v1
+from .architect_agent import EnhancedArchitectAgent_v1
 from .requirements_tracer_agent import RequirementsTracerAgent_v1
-from .blueprint_reviewer_agent import BlueprintReviewerAgent_v1
 from .project_documentation_agent import ProjectDocumentationAgent_v1
 from .code_debugging_agent import CodeDebuggingAgent_v1
 from .environment_bootstrap_agent import EnvironmentBootstrapAgent
@@ -35,9 +34,8 @@ AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type['UnifiedAgent']] = [
     ProductAnalystAgent_v1,
     ProactiveRiskAssessorAgent_v1,
     AutomatedRefinementCoordinatorAgent_v1,
-    ArchitectAgent_v1,
+    EnhancedArchitectAgent_v1,
     RequirementsTracerAgent_v1,
-    BlueprintReviewerAgent_v1,
     ProjectDocumentationAgent_v1,
     CodeDebuggingAgent_v1,
     EnvironmentBootstrapAgent,
@@ -63,18 +61,25 @@ def get_autonomous_engine_agent_cards() -> List[AgentCard]:
 # All agents are now auto-registered via @register_agent decorators when imported
 # No fallback maps needed - registry is the single source of truth
 
+# Export all agents
 __all__ = [
     "get_autonomous_engine_agent_cards",
     # REMOVED: "get_autonomous_engine_agent_fallback_map" - no longer needed
     "ProductAnalystAgent_v1",
     "ProactiveRiskAssessorAgent_v1",
     "AutomatedRefinementCoordinatorAgent_v1",
-    "ArchitectAgent_v1",
+    "EnhancedArchitectAgent_v1",
     "RequirementsTracerAgent_v1",
-    "BlueprintReviewerAgent_v1",
     "ProjectDocumentationAgent_v1",
     "CodeDebuggingAgent_v1",
     "EnvironmentBootstrapAgent",
     "DependencyManagementAgent_v1",
     "SmartCodeGeneratorAgent_v1",
-] 
+]
+
+# Legacy agent map for backward compatibility
+LEGACY_AGENT_MAP = {
+    # ... existing code ...
+    # "BlueprintReviewerAgent_v1",  # REMOVED - Use EnhancedArchitectAgent_v1 instead
+    # ... existing code ...
+} 

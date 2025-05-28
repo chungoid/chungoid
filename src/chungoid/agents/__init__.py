@@ -52,7 +52,7 @@ def initialize_all_agents() -> Dict[str, bool]:
         from chungoid.agents.autonomous_engine.proactive_risk_assessor_agent import ProactiveRiskAssessorAgent_v1
         from chungoid.agents.autonomous_engine.product_analyst_agent import ProductAnalystAgent_v1
         from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
-        from chungoid.agents.autonomous_engine.blueprint_reviewer_agent import BlueprintReviewerAgent_v1
+        from chungoid.agents.autonomous_engine.blueprint_to_flow_agent import BlueprintToFlowAgent_v1
         from chungoid.agents.autonomous_engine.requirements_tracer_agent import RequirementsTracerAgent_v1
         from chungoid.agents.autonomous_engine.project_documentation_agent import ProjectDocumentationAgent_v1
         from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1

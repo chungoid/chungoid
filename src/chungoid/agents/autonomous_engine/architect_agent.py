@@ -32,9 +32,11 @@ logger = logging.getLogger(__name__)
 
 # MIGRATED: Collection constants moved here from PCMA
 LOPRD_ARTIFACTS_COLLECTION = "loprd_artifacts_collection"
-BLUEPRINT_ARTIFACTS_COLLECTION = "blueprint_artifacts_collection" 
+BLUEPRINT_ARTIFACTS_COLLECTION = "blueprint_artifacts_collection"
+EXECUTION_PLAN_ARTIFACTS_COLLECTION = "execution_plan_artifacts_collection"
 ARTIFACT_TYPE_PROJECT_BLUEPRINT_MD = "ProjectBlueprint_MD"
 ARTIFACT_TYPE_LOPRD_JSON = "LOPRD_JSON"
+ARTIFACT_TYPE_EXECUTION_PLAN_JSON = "ExecutionPlan_JSON"
 
 ARCHITECT_AGENT_PROMPT_NAME = "architect_agent_v1_prompt.yaml" # In server_prompts/autonomous_engine/
 
@@ -42,9 +44,9 @@ class ProtocolExecutionError(Exception):
     """Raised when protocol execution fails."""
     pass
 
-# --- Input and Output Schemas for the Agent --- #
+# --- Input and Output Schemas for the Enhanced Agent --- #
 
-class ArchitectAgentInput(BaseModel):
+class EnhancedArchitectAgentInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this Blueprint generation task.")
     project_id: Optional[str] = Field(None, description="Identifier for the current project.")
     
@@ -53,7 +55,11 @@ class ArchitectAgentInput(BaseModel):
     existing_blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of an existing Blueprint to refine, if any.")
     refinement_instructions: Optional[str] = Field(None, description="Specific instructions for refining an existing Blueprint.")
     cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
-    # target_technologies: Optional[List[str]] = Field(None, description="Preferred technologies or constraints for the architecture.")
+    
+    # NEW: Enhanced workflow control
+    output_blueprint_files: bool = Field(default=True, description="Whether to output blueprint files to filesystem like code generator")
+    generate_execution_plan: bool = Field(default=True, description="Whether to generate execution plan from blueprint")
+    output_directory: Optional[str] = Field(None, description="Directory to output blueprint files (defaults to ./blueprints/)")
     
     # ADDED: Intelligent project analysis from orchestrator
     project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
@@ -82,10 +88,22 @@ class ArchitectAgentInput(BaseModel):
                 raise ValueError("loprd_doc_id is required when intelligent_context=False")
             return v
 
-class ArchitectAgentOutput(BaseModel):
+class EnhancedArchitectAgentOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
     project_id: str = Field(..., description="Echoed project_id from input.")
+    
+    # Blueprint artifacts
     blueprint_document_id: Optional[str] = Field(None, description="ChromaDB document ID where the generated/updated Project Blueprint (Markdown) is stored.")
+    blueprint_files: Dict[str, str] = Field(default_factory=dict, description="Generated blueprint files saved to filesystem {file_path: content}")
+    
+    # Review results
+    review_results: Dict[str, Any] = Field(default_factory=dict, description="Self-review analysis of the generated blueprint")
+    
+    # Execution plan
+    execution_plan_document_id: Optional[str] = Field(None, description="ChromaDB document ID where the generated execution plan (JSON) is stored.")
+    execution_plan_generated: bool = Field(default=False, description="Whether execution plan was successfully generated")
+    
+    # Status and metadata
     status: str = Field(..., description="Status of the Blueprint generation (e.g., SUCCESS, FAILURE_LLM, FAILURE_INPUT_RETRIEVAL).")
     message: str = Field(..., description="A message detailing the outcome.")
     confidence_score: Optional[ConfidenceScore] = Field(None, description="Agent's confidence in the quality and completeness of the Blueprint.")
@@ -93,28 +111,36 @@ class ArchitectAgentOutput(BaseModel):
     llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
     usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
 
-@register_autonomous_engine_agent(capabilities=["architecture_design", "system_planning", "blueprint_generation"])
-class ArchitectAgent_v1(UnifiedAgent):
+@register_autonomous_engine_agent(capabilities=["architecture_design", "system_planning", "blueprint_generation", "blueprint_review", "execution_planning", "file_generation"])
+class EnhancedArchitectAgent_v1(UnifiedAgent):
     """
-    Generates a technical blueprint based on an LOPRD and project context.
+    ENHANCED ARCHITECT AGENT - Complete Blueprint Lifecycle Management
+    
+    Consolidates the capabilities of:
+    - ArchitectAgent_v1: Blueprint generation from LOPRD  
+    - BlueprintReviewerAgent_v1: Blueprint quality review and optimization
+    - BlueprintToFlowAgent_v1: Execution plan generation from blueprints
+    
+    Generates technical blueprints, performs self-review, outputs files like code generator,
+    and converts blueprints to execution plans - eliminating agent redundancy.
     
     PURE UAEI ARCHITECTURE - Unified Agent Execution Interface only.
     MCP TOOL INTEGRATION - Uses ChromaDB MCP tools for artifact management.
     """
     
-    AGENT_ID: ClassVar[str] = "ArchitectAgent_v1"
-    AGENT_NAME: ClassVar[str] = "Architect Agent v1"
-    AGENT_DESCRIPTION: ClassVar[str] = "Generates a technical blueprint based on an LOPRD and project context."
+    AGENT_ID: ClassVar[str] = "EnhancedArchitectAgent_v1"
+    AGENT_NAME: ClassVar[str] = "Enhanced Architect Agent v1"
+    AGENT_DESCRIPTION: ClassVar[str] = "Complete blueprint lifecycle: generation, review, file output, and execution planning."
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "architect_agent_v1_prompt.yaml"
-    AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["architecture_design", "system_planning", "blueprint_generation", "complex_analysis"]
+    AGENT_VERSION: ClassVar[str] = "2.0.0"
+    CAPABILITIES: ClassVar[List[str]] = ["architecture_design", "system_planning", "blueprint_generation", "blueprint_review", "execution_planning", "file_generation", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.PLANNING_AND_DESIGN 
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
-    INPUT_SCHEMA: ClassVar[Type[ArchitectAgentInput]] = ArchitectAgentInput
-    OUTPUT_SCHEMA: ClassVar[Type[ArchitectAgentOutput]] = ArchitectAgentOutput
+    INPUT_SCHEMA: ClassVar[Type[EnhancedArchitectAgentInput]] = EnhancedArchitectAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[EnhancedArchitectAgentOutput]] = EnhancedArchitectAgentOutput
     
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["architecture_planning", "enhanced_deep_planning"]
-    SECONDARY_PROTOCOLS: ClassVar[list[str]] = []
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["enhanced_architecture_planning", "blueprint_lifecycle_management"]
+    SECONDARY_PROTOCOLS: ClassVar[list[str]] = ["quality_validation", "execution_planning"]
     UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
 
     def __init__(self, 
@@ -136,7 +162,7 @@ class ArchitectAgent_v1(UnifiedAgent):
         self._llm_provider = llm_provider
         self._prompt_manager = prompt_manager
         
-        self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as UAEI agent.")
+        self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as Enhanced UAEI agent with full blueprint lifecycle.")
 
     async def _execute_iteration(
         self, 
@@ -144,33 +170,36 @@ class ArchitectAgent_v1(UnifiedAgent):
         iteration: int
     ) -> IterationResult:
         """
-        Phase 3 UAEI implementation - Core architecture design logic for single iteration.
+        Enhanced UAEI implementation - Complete blueprint lifecycle workflow.
         
-        Runs the complete architecture design workflow:
+        Runs the complete enhanced architecture design workflow:
         1. Discovery: Retrieve LOPRD and analyze requirements
         2. Analysis: Analyze system requirements and constraints
         3. Planning: Plan architecture approach and components
         4. Design: Create detailed blueprint structure
-        5. Validation: Validate architecture design quality
+        5. Review: Self-review blueprint quality and completeness (NEW)
+        6. Output: Save blueprint files to filesystem (NEW)
+        7. Flow Generation: Convert blueprint to execution plan (NEW)
+        8. Validation: Final validation of all outputs
         """
-        self.logger.info(f"[Architect] Starting iteration {iteration + 1}")
+        self.logger.info(f"[EnhancedArchitect] Starting iteration {iteration + 1} - Full blueprint lifecycle")
         
         # Convert inputs to proper type
         if isinstance(context.inputs, dict):
-            inputs = ArchitectAgentInput(**context.inputs)
-        elif isinstance(context.inputs, ArchitectAgentInput):
+            inputs = EnhancedArchitectAgentInput(**context.inputs)
+        elif isinstance(context.inputs, EnhancedArchitectAgentInput):
             inputs = context.inputs
         else:
             # Fallback for other types
             input_dict = context.inputs.dict() if hasattr(context.inputs, 'dict') else {}
-            inputs = ArchitectAgentInput(
+            inputs = EnhancedArchitectAgentInput(
                 project_id=str(input_dict.get("project_id", "default")),
                 loprd_doc_id=str(input_dict.get("loprd_doc_id", ""))
             )
         
         try:
             # Phase 1: Discovery - Retrieve LOPRD
-            self.logger.info("Starting LOPRD discovery phase")
+            self.logger.info("Phase 1: LOPRD discovery")
             
             # Check if we have intelligent project specifications from orchestrator
             if inputs.project_specifications and inputs.intelligent_context:
@@ -181,20 +210,32 @@ class ArchitectAgent_v1(UnifiedAgent):
                 loprd_data = await self._discover_loprd(inputs)
             
             # Phase 2: Analysis - Analyze requirements
-            self.logger.info("Starting requirements analysis phase")
+            self.logger.info("Phase 2: Requirements analysis")
             requirements = await self._analyze_requirements(loprd_data, inputs)
             
             # Phase 3: Planning - Plan architecture
-            self.logger.info("Starting architecture planning phase") 
+            self.logger.info("Phase 3: Architecture planning") 
             architecture_plan = await self._plan_architecture(requirements, inputs)
             
             # Phase 4: Design - Create blueprint
-            self.logger.info("Starting blueprint design phase")
+            self.logger.info("Phase 4: Blueprint design")
             blueprint = await self._design_blueprint(architecture_plan, inputs)
             
-            # Phase 5: Validation - Validate design
-            self.logger.info("Starting design validation phase")
-            validation_result = await self._validate_design(blueprint, inputs)
+            # Phase 5: Review - Self-review blueprint (NEW)
+            self.logger.info("Phase 5: Blueprint self-review")
+            review_results = await self._review_blueprint(blueprint, requirements, inputs)
+            
+            # Phase 6: Output - Save blueprint files (NEW)
+            self.logger.info("Phase 6: Blueprint file output")
+            blueprint_files = {}
+            if inputs.output_blueprint_files:
+                blueprint_files = await self._save_blueprint_files(blueprint, inputs)
+            
+            # Phase 7: Flow Generation - Convert to execution plan (NEW)
+            self.logger.info("Phase 7: Execution plan generation")
+            execution_plan_result = {}
+            if inputs.generate_execution_plan:
+                execution_plan_result = await self._generate_execution_plan(blueprint, review_results, inputs)
             
             # Store blueprint artifact in ChromaDB
             blueprint_doc_id = f"blueprint_{inputs.task_id}_{uuid.uuid4().hex[:8]}"
@@ -208,48 +249,67 @@ class ArchitectAgent_v1(UnifiedAgent):
                         "artifact_type": ARTIFACT_TYPE_PROJECT_BLUEPRINT_MD,
                         "project_id": inputs.project_id or "unknown",
                         "loprd_source": inputs.loprd_doc_id,
-                        "timestamp": datetime.datetime.now().isoformat()
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "enhanced_workflow": True,
+                        "review_completed": True,
+                        "files_generated": len(blueprint_files),
+                        "execution_plan_generated": execution_plan_result.get("success", False)
                     }
                 )
-                self.logger.info(f"Stored blueprint artifact with ID: {blueprint_doc_id}")
+                self.logger.info(f"Stored enhanced blueprint artifact with ID: {blueprint_doc_id}")
             except Exception as e:
                 self.logger.error(f"Failed to store blueprint artifact: {e}")
                 blueprint_doc_id = f"failed_storage_{uuid.uuid4().hex[:8]}"
             
-            # Calculate quality score
-            quality_score = self._calculate_quality_score(validation_result, blueprint, requirements)
+            # Phase 8: Validation - Final validation
+            self.logger.info("Phase 8: Final validation")
+            final_validation = await self._validate_enhanced_output(blueprint, review_results, blueprint_files, execution_plan_result, inputs)
             
-            # Create output
-            output = ArchitectAgentOutput(
+            # Calculate quality score
+            quality_score = self._calculate_enhanced_quality_score(final_validation, blueprint, review_results, execution_plan_result)
+            
+            # Create enhanced output
+            output = EnhancedArchitectAgentOutput(
                 task_id=inputs.task_id,
                 project_id=inputs.project_id or "unknown",
                 blueprint_document_id=blueprint_doc_id,
+                blueprint_files=blueprint_files,
+                review_results=review_results,
+                execution_plan_document_id=execution_plan_result.get("execution_plan_doc_id"),
+                execution_plan_generated=execution_plan_result.get("success", False),
                 status="SUCCESS",
-                message="Architecture blueprint generated via UAEI workflow",
+                message="Enhanced architecture blueprint lifecycle completed successfully",
                 confidence_score=ConfidenceScore(
                     value=quality_score,
-                    method="validation_and_completeness",
-                    explanation=f"Quality based on validation (valid: {validation_result.get('is_valid', False)}) and completeness"
+                    method="enhanced_lifecycle_validation",
+                    explanation=f"Quality based on blueprint design, self-review, file generation, and execution planning"
                 ),
                 usage_metadata={
                     "iteration": iteration + 1,
-                    "phases_executed": ["discovery", "analysis", "planning", "design", "validation"],
-                    "components_designed": len(blueprint.get("components", []))
+                    "phases_executed": ["discovery", "analysis", "planning", "design", "review", "output", "flow_generation", "validation"],
+                    "components_designed": len(blueprint.get("components", [])),
+                    "files_generated": len(blueprint_files),
+                    "review_issues_found": len(review_results.get("issues_found", [])),
+                    "execution_plan_stages": execution_plan_result.get("stages_count", 0)
                 }
             )
             
-            tools_used = ["architecture_discovery", "requirements_analysis", "blueprint_design", "validation"]
+            tools_used = ["architecture_discovery", "requirements_analysis", "blueprint_design", "self_review", "file_generation", "execution_planning", "enhanced_validation"]
             
         except Exception as e:
-            self.logger.error(f"ArchitectAgent iteration failed: {e}")
+            self.logger.error(f"EnhancedArchitectAgent iteration failed: {e}")
             
             # Create error output
-            output = ArchitectAgentOutput(
+            output = EnhancedArchitectAgentOutput(
                 task_id=inputs.task_id,
                 project_id=inputs.project_id or "unknown",
                 blueprint_document_id=None,
+                blueprint_files={},
+                review_results={"error": str(e)},
+                execution_plan_document_id=None,
+                execution_plan_generated=False,
                 status="FAILURE",
-                message=f"Architecture design failed: {str(e)}",
+                message=f"Enhanced architecture design failed: {str(e)}",
                 error_message=str(e),
                 confidence_score=ConfidenceScore(
                     value=0.1,
@@ -266,7 +326,7 @@ class ArchitectAgent_v1(UnifiedAgent):
             output=output,
             quality_score=quality_score,
             tools_used=tools_used,
-            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "architecture_planning"
+            protocol_used=self.PRIMARY_PROTOCOLS[0] if self.PRIMARY_PROTOCOLS else "enhanced_architecture_planning"
         )
 
     def _extract_loprd_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
@@ -310,7 +370,7 @@ class ArchitectAgent_v1(UnifiedAgent):
             "source": "intelligent_specifications"
         }
 
-    async def _discover_loprd(self, inputs: ArchitectAgentInput) -> Dict[str, Any]:
+    async def _discover_loprd(self, inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """Discover and retrieve LOPRD artifact."""
         
         # ENHANCED: Use universal MCP tool access for intelligent LOPRD discovery
@@ -411,7 +471,7 @@ class ArchitectAgent_v1(UnifiedAgent):
                 }
             }
 
-    async def _enhanced_discovery_with_universal_tools(self, inputs: ArchitectAgentInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _enhanced_discovery_with_universal_tools(self, inputs: EnhancedArchitectAgentInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Universal tool access pattern for ArchitectAgent."""
         
         # 1. Get ALL available tools (no filtering)
@@ -528,7 +588,7 @@ class ArchitectAgent_v1(UnifiedAgent):
         self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
         return selected
 
-    async def _analyze_requirements(self, loprd_data: Dict[str, Any], inputs: ArchitectAgentInput) -> Dict[str, Any]:
+    async def _analyze_requirements(self, loprd_data: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """Analyze requirements from LOPRD data."""
         loprd_content = loprd_data.get("content", {})
         
@@ -548,7 +608,7 @@ class ArchitectAgent_v1(UnifiedAgent):
             "analysis_confidence": 0.85
         }
     
-    async def _plan_architecture(self, requirements: Dict[str, Any], inputs: ArchitectAgentInput) -> Dict[str, Any]:
+    async def _plan_architecture(self, requirements: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """Plan architecture approach based on requirements."""
         complexity = requirements.get("complexity_score", 1)
         
@@ -593,7 +653,7 @@ class ArchitectAgent_v1(UnifiedAgent):
         
         return components
     
-    async def _design_blueprint(self, architecture_plan: Dict[str, Any], inputs: ArchitectAgentInput) -> Dict[str, Any]:
+    async def _design_blueprint(self, architecture_plan: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """Create detailed blueprint structure."""
         pattern = architecture_plan.get("architecture_pattern", "layered")
         components = architecture_plan.get("component_breakdown", [])
@@ -662,7 +722,7 @@ class ArchitectAgent_v1(UnifiedAgent):
             "coverage_target": "85%"
         }
     
-    async def _validate_design(self, blueprint: Dict[str, Any], inputs: ArchitectAgentInput) -> Dict[str, Any]:
+    async def _validate_design(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
         """Validate the architecture design quality."""
         validation_issues = []
         completeness_score = 1.0
@@ -722,29 +782,602 @@ class ArchitectAgent_v1(UnifiedAgent):
             
         return max(0.1, min(base_score, 1.0))
 
+    async def _review_blueprint(self, blueprint: Dict[str, Any], requirements: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
+        """NEW: Self-review blueprint quality and completeness."""
+        self.logger.info("Performing blueprint self-review")
+        
+        review_results = {
+            "review_completed": True,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "issues_found": [],
+            "strengths_identified": [],
+            "optimization_suggestions": [],
+            "completeness_scores": {},
+            "overall_review_score": 0.0
+        }
+        
+        try:
+            # Check completeness
+            required_sections = ["title", "architecture_pattern", "technology_stack", "components", "directory_structure"]
+            completeness_scores = {}
+            
+            for section in required_sections:
+                if section in blueprint and blueprint[section]:
+                    if isinstance(blueprint[section], (list, dict)):
+                        completeness_scores[section] = 1.0 if blueprint[section] else 0.0
+                    else:
+                        completeness_scores[section] = 1.0 if str(blueprint[section]).strip() else 0.0
+                else:
+                    completeness_scores[section] = 0.0
+                    review_results["issues_found"].append(f"Missing or empty section: {section}")
+            
+            review_results["completeness_scores"] = completeness_scores
+            
+            # Check component quality
+            components = blueprint.get("components", [])
+            if len(components) == 0:
+                review_results["issues_found"].append("No components defined in architecture")
+            elif len(components) < 2:
+                review_results["optimization_suggestions"].append("Consider breaking down functionality into more components")
+            else:
+                review_results["strengths_identified"].append(f"Well-structured with {len(components)} components")
+            
+            # Check technology choices
+            tech_stack = blueprint.get("technology_stack", {})
+            if not tech_stack.get("backend"):
+                review_results["issues_found"].append("Backend technology not specified")
+            if not tech_stack.get("database"):
+                review_results["optimization_suggestions"].append("Consider specifying database technology")
+            
+            # Check directory structure
+            dir_structure = blueprint.get("directory_structure", {})
+            if not dir_structure:
+                review_results["issues_found"].append("No directory structure provided")
+            elif len(dir_structure) < 3:
+                review_results["optimization_suggestions"].append("Directory structure could be more detailed")
+            else:
+                review_results["strengths_identified"].append("Comprehensive directory structure provided")
+            
+            # Calculate overall review score
+            avg_completeness = sum(completeness_scores.values()) / len(completeness_scores) if completeness_scores else 0.0
+            issues_penalty = len(review_results["issues_found"]) * 0.1
+            review_results["overall_review_score"] = max(0.0, avg_completeness - issues_penalty)
+            
+            self.logger.info(f"Blueprint self-review completed. Score: {review_results['overall_review_score']:.2f}")
+            
+        except Exception as e:
+            self.logger.error(f"Blueprint self-review failed: {e}")
+            review_results["issues_found"].append(f"Review process error: {str(e)}")
+            review_results["overall_review_score"] = 0.5
+        
+        return review_results
+
+    async def _save_blueprint_files(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, str]:
+        """NEW: Save blueprint files to filesystem like code generator."""
+        self.logger.info("Saving blueprint files to filesystem")
+        
+        blueprint_files = {}
+        output_dir = Path(inputs.output_directory or "./blueprints")
+        project_dir = output_dir / (inputs.project_id or "default_project")
+        
+        try:
+            # Ensure output directory exists
+            project_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 1. Main blueprint markdown file
+            blueprint_md = self._generate_blueprint_markdown(blueprint, inputs)
+            blueprint_file_path = project_dir / "architecture_blueprint.md"
+            blueprint_file_path.write_text(blueprint_md, encoding='utf-8')
+            blueprint_files["architecture_blueprint.md"] = blueprint_md
+            
+            # 2. Technology stack file
+            tech_stack_content = self._generate_tech_stack_file(blueprint.get("technology_stack", {}))
+            tech_file_path = project_dir / "technology_stack.md"
+            tech_file_path.write_text(tech_stack_content, encoding='utf-8')
+            blueprint_files["technology_stack.md"] = tech_stack_content
+            
+            # 3. Component specification files
+            components = blueprint.get("components", [])
+            if components:
+                components_dir = project_dir / "components"
+                components_dir.mkdir(exist_ok=True)
+                
+                for i, component in enumerate(components):
+                    comp_content = self._generate_component_spec(component, i)
+                    comp_name = component.get("name", f"component_{i+1}").lower().replace(" ", "_")
+                    comp_file_path = components_dir / f"{comp_name}_spec.md"
+                    comp_file_path.write_text(comp_content, encoding='utf-8')
+                    blueprint_files[f"components/{comp_name}_spec.md"] = comp_content
+            
+            # 4. Directory structure file
+            dir_structure = blueprint.get("directory_structure", {})
+            if dir_structure:
+                dir_content = self._generate_directory_structure_file(dir_structure)
+                dir_file_path = project_dir / "directory_structure.md"
+                dir_file_path.write_text(dir_content, encoding='utf-8')
+                blueprint_files["directory_structure.md"] = dir_content
+            
+            # 5. Deployment guide
+            deployment = blueprint.get("deployment_strategy", {})
+            if deployment:
+                deploy_content = self._generate_deployment_guide(deployment)
+                deploy_file_path = project_dir / "deployment_guide.md"
+                deploy_file_path.write_text(deploy_content, encoding='utf-8')
+                blueprint_files["deployment_guide.md"] = deploy_content
+            
+            self.logger.info(f"Successfully saved {len(blueprint_files)} blueprint files to {project_dir}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save blueprint files: {e}")
+            blueprint_files["error"] = f"File generation failed: {str(e)}"
+        
+        return blueprint_files
+
+    async def _generate_execution_plan(self, blueprint: Dict[str, Any], review_results: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
+        """NEW: Generate execution plan from blueprint."""
+        self.logger.info("Generating execution plan from blueprint")
+        
+        try:
+            # Create execution plan structure
+            execution_plan = {
+                "id": str(uuid.uuid4()),
+                "name": f"Implementation Plan for {inputs.project_id or 'Project'}",
+                "description": f"Execution plan generated from architecture blueprint. Confidence: {review_results.get('overall_review_score', 0.8)}",
+                "project_id": inputs.project_id,
+                "version": "1.0",
+                "created_at": datetime.datetime.now().isoformat(),
+                "updated_at": datetime.datetime.now().isoformat(),
+                "global_config": {
+                    "project_root": inputs.project_path or "./",
+                    "blueprint_id": inputs.task_id,
+                    "source_dir": "src",
+                    "test_dir": "tests"
+                },
+                "stages": {},
+                "initial_stage": "stage_1_environment_setup"
+            }
+            
+            # Generate stages based on blueprint components
+            stages = self._generate_execution_stages(blueprint, inputs)
+            execution_plan["stages"] = stages
+            
+            # Store execution plan in ChromaDB
+            plan_doc_id = f"execution_plan_{inputs.task_id}_{uuid.uuid4().hex[:8]}"
+            try:
+                await migrate_store_artifact(
+                    collection_name=EXECUTION_PLAN_ARTIFACTS_COLLECTION,
+                    document_id=plan_doc_id,
+                    content=json.dumps(execution_plan, indent=2),
+                    metadata={
+                        "agent_id": self.AGENT_ID,
+                        "artifact_type": ARTIFACT_TYPE_EXECUTION_PLAN_JSON,
+                        "project_id": inputs.project_id or "unknown",
+                        "blueprint_source": inputs.task_id,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "stages_count": len(stages)
+                    }
+                )
+                self.logger.info(f"Stored execution plan with ID: {plan_doc_id}")
+                
+                return {
+                    "success": True,
+                    "execution_plan_doc_id": plan_doc_id,
+                    "execution_plan": execution_plan,
+                    "stages_count": len(stages)
+                }
+                
+            except Exception as e:
+                self.logger.error(f"Failed to store execution plan: {e}")
+                return {
+                    "success": False,
+                    "error": f"Storage failed: {str(e)}",
+                    "execution_plan": execution_plan,
+                    "stages_count": len(stages)
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Execution plan generation failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "stages_count": 0
+            }
+
+    def _generate_execution_stages(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
+        """Generate execution stages for the execution plan."""
+        stages = {}
+        
+        # Stage 1: Environment Setup
+        stages["stage_1_environment_setup"] = {
+            "name": "Environment Setup",
+            "agent_id": "SystemFileSystemAgent_v1",
+            "description": "Set up project directory structure and initial configuration",
+            "number": 1.0,
+            "inputs": {
+                "project_id": f"{{{{context.project_id}}}}",
+                "directory_structure": blueprint.get("directory_structure", {}),
+                "operation": "create_project_structure"
+            },
+            "output_context_path": "stage_outputs.environment_setup",
+            "success_criteria": ["context.stage_outputs.environment_setup.status == 'SUCCESS'"],
+            "next_stage": "stage_2_dependencies_setup",
+            "task_context_dependencies": [
+                {"source_document_type": "blueprint", "section_id": "directory_structure"},
+                {"source_document_type": "blueprint", "section_id": "project_setup"}
+            ]
+        }
+        
+        # Stage 2: Dependencies Setup  
+        stages["stage_2_dependencies_setup"] = {
+            "name": "Dependencies and Configuration",
+            "agent_id": "SmartCodeGeneratorAgent_v1",
+            "description": "Generate dependency files and configuration based on technology stack",
+            "number": 2.0,
+            "inputs": {
+                "project_id": f"{{{{context.project_id}}}}",
+                "task_description": f"Generate dependency files for {blueprint.get('technology_stack', {})}",
+                "technologies": blueprint.get("technology_stack", {}),
+                "target_file_path": "requirements.txt"
+            },
+            "output_context_path": "stage_outputs.dependencies_setup",
+            "success_criteria": ["context.stage_outputs.dependencies_setup.status == 'SUCCESS'"],
+            "next_stage": "stage_3_core_implementation",
+            "depends_on": ["stage_1_environment_setup"],
+            "task_context_dependencies": [
+                {"source_document_type": "blueprint", "section_id": "technology_stack"},
+                {"source_document_type": "blueprint", "section_id": "dependencies"}
+            ]
+        }
+        
+        # Stage 3+: Component Implementation
+        components = blueprint.get("components", [])
+        if components:
+            for i, component in enumerate(components):
+                stage_num = 3 + i
+                stage_name = f"stage_{stage_num}_component_{component.get('name', f'comp_{i+1}').lower().replace(' ', '_')}"
+                
+                stages[stage_name] = {
+                    "name": f"Implement {component.get('name', f'Component {i+1}')}",
+                    "agent_id": "SmartCodeGeneratorAgent_v1",
+                    "description": f"Generate code for {component.get('responsibility', 'component functionality')}",
+                    "number": float(stage_num),
+                    "inputs": {
+                        "project_id": f"{{{{context.project_id}}}}",
+                        "task_description": component.get("responsibility", "Implement component"),
+                        "component_spec": component,
+                        "architecture_pattern": blueprint.get("architecture_pattern", "layered")
+                    },
+                    "output_context_path": f"stage_outputs.component_{i+1}",
+                    "success_criteria": [f"context.stage_outputs.component_{i+1}.status == 'SUCCESS'"],
+                    "next_stage": f"stage_{stage_num+1}_testing" if i == len(components) - 1 else f"stage_{stage_num+1}_component_{components[i+1].get('name', f'comp_{i+2}').lower().replace(' ', '_')}",
+                    "depends_on": ["stage_2_dependencies_setup"],
+                    "task_context_dependencies": [
+                        {"source_document_type": "blueprint", "section_id": f"components.{component.get('name', f'component_{i+1}')}"},
+                        {"source_document_type": "blueprint", "section_id": "architecture_pattern"}
+                    ]
+                }
+        
+        # Final stage: Testing
+        final_stage_num = 3 + len(components)
+        stages[f"stage_{final_stage_num}_testing"] = {
+            "name": "Generate Tests",
+            "agent_id": "CoreTestGeneratorAgent_v1",
+            "description": "Generate comprehensive tests for implemented components",
+            "number": float(final_stage_num),
+            "inputs": {
+                "project_id": f"{{{{context.project_id}}}}",
+                "testing_strategy": blueprint.get("testing_strategy", {}),
+                "components": components
+            },
+            "output_context_path": "stage_outputs.testing",
+            "success_criteria": ["context.stage_outputs.testing.status == 'SUCCESS'"],
+            "next_stage": "FINAL_STEP",
+            "depends_on": [f"stage_{final_stage_num-1}_component_{components[-1].get('name', f'comp_{len(components)}').lower().replace(' ', '_')}"] if components else ["stage_2_dependencies_setup"],
+            "task_context_dependencies": [
+                {"source_document_type": "blueprint", "section_id": "testing_strategy"},
+                {"source_document_type": "blueprint", "section_id": "components"}
+            ]
+        }
+        
+        return stages
+
+    async def _validate_enhanced_output(self, blueprint: Dict[str, Any], review_results: Dict[str, Any], 
+                                       blueprint_files: Dict[str, str], execution_plan_result: Dict[str, Any], 
+                                       inputs: EnhancedArchitectAgentInput) -> Dict[str, Any]:
+        """Final validation of all enhanced outputs."""
+        validation = {
+            "validation_completed": True,
+            "blueprint_valid": True,
+            "review_valid": True,
+            "files_valid": True,
+            "execution_plan_valid": True,
+            "overall_valid": True,
+            "validation_issues": []
+        }
+        
+        # Validate blueprint
+        if not blueprint or not blueprint.get("title"):
+            validation["blueprint_valid"] = False
+            validation["validation_issues"].append("Blueprint missing or incomplete")
+        
+        # Validate review
+        if not review_results.get("review_completed"):
+            validation["review_valid"] = False
+            validation["validation_issues"].append("Blueprint review not completed")
+        
+        # Validate files (if requested)
+        if inputs.output_blueprint_files:
+            if not blueprint_files or "error" in blueprint_files:
+                validation["files_valid"] = False
+                validation["validation_issues"].append("Blueprint files generation failed")
+        
+        # Validate execution plan (if requested)
+        if inputs.generate_execution_plan:
+            if not execution_plan_result.get("success"):
+                validation["execution_plan_valid"] = False
+                validation["validation_issues"].append("Execution plan generation failed")
+        
+        # Overall validation
+        validation["overall_valid"] = all([
+            validation["blueprint_valid"],
+            validation["review_valid"],
+            validation["files_valid"] or not inputs.output_blueprint_files,
+            validation["execution_plan_valid"] or not inputs.generate_execution_plan
+        ])
+        
+        return validation
+
+    def _calculate_enhanced_quality_score(self, validation_result: Dict[str, Any], blueprint: Dict[str, Any], 
+                                        review_results: Dict[str, Any], execution_plan_result: Dict[str, Any]) -> float:
+        """Calculate enhanced quality score based on all outputs."""
+        base_score = 1.0
+        
+        # Blueprint quality (40%)
+        blueprint_score = self._calculate_quality_score(validation_result, blueprint, {})
+        
+        # Review quality (25%)
+        review_score = review_results.get("overall_review_score", 0.5)
+        
+        # File generation quality (15%)
+        files_score = 1.0 if validation_result.get("files_valid", True) else 0.3
+        
+        # Execution plan quality (20%)
+        plan_score = 1.0 if execution_plan_result.get("success", False) else 0.3
+        
+        # Weighted average
+        enhanced_score = (
+            blueprint_score * 0.4 +
+            review_score * 0.25 +
+            files_score * 0.15 +
+            plan_score * 0.2
+        )
+        
+        return max(0.1, min(enhanced_score, 1.0))
+
+    def _generate_blueprint_markdown(self, blueprint: Dict[str, Any], inputs: EnhancedArchitectAgentInput) -> str:
+        """Generate comprehensive blueprint markdown content."""
+        title = blueprint.get("title", f"Architecture Blueprint - {inputs.project_id}")
+        pattern = blueprint.get("architecture_pattern", "unknown")
+        tech_stack = blueprint.get("technology_stack", {})
+        components = blueprint.get("components", [])
+        deployment = blueprint.get("deployment_strategy", {})
+        testing = blueprint.get("testing_strategy", {})
+        
+        content = f"""# {title}
+
+## Project Overview
+- **Project ID**: {inputs.project_id or 'Unknown'}
+- **Architecture Pattern**: {pattern}
+- **Generated**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Architecture Pattern
+This project follows a **{pattern}** architectural pattern, chosen for optimal {pattern} characteristics.
+
+## Technology Stack
+"""
+        
+        for category, technology in tech_stack.items():
+            if technology:
+                content += f"- **{category.title()}**: {technology}\n"
+        
+        content += f"""
+## Components
+
+This architecture consists of {len(components)} main components:
+
+"""
+        
+        for i, component in enumerate(components, 1):
+            name = component.get("name", f"Component {i}")
+            responsibility = component.get("responsibility", "No description available")
+            interfaces = component.get("interfaces", [])
+            
+            content += f"""### {i}. {name}
+**Responsibility**: {responsibility}
+
+**Interfaces**: {', '.join(interfaces) if interfaces else 'None specified'}
+
+"""
+        
+        if deployment:
+            content += f"""## Deployment Strategy
+- **Type**: {deployment.get('type', 'Unknown')}
+- **Orchestration**: {deployment.get('orchestration', 'Not specified')}
+- **Scaling**: {deployment.get('scaling', 'Not specified')}
+- **Monitoring**: {deployment.get('monitoring', 'Not specified')}
+
+"""
+        
+        if testing:
+            content += f"""## Testing Strategy
+- **Unit Tests**: {testing.get('unit_tests', 'Not specified')}
+- **Integration Tests**: {testing.get('integration_tests', 'Not specified')}
+- **E2E Tests**: {testing.get('e2e_tests', 'Not specified')}
+- **Coverage Target**: {testing.get('coverage_target', 'Not specified')}
+
+"""
+        
+        content += f"""## Implementation Notes
+This blueprint was generated by the Enhanced Architect Agent v{self.AGENT_VERSION} with full lifecycle management including self-review, file generation, and execution planning.
+
+For detailed component specifications, see the individual component files in the `components/` directory.
+"""
+        
+        return content
+
+    def _generate_tech_stack_file(self, tech_stack: Dict[str, Any]) -> str:
+        """Generate technology stack documentation."""
+        content = """# Technology Stack
+
+## Overview
+This document details the technology choices for this project.
+
+"""
+        
+        for category, technology in tech_stack.items():
+            if technology:
+                content += f"""## {category.title()}
+- **Choice**: {technology}
+- **Rationale**: Selected for {category} requirements
+
+"""
+        
+        return content
+
+    def _generate_component_spec(self, component: Dict[str, Any], index: int) -> str:
+        """Generate individual component specification."""
+        name = component.get("name", f"Component {index + 1}")
+        responsibility = component.get("responsibility", "No description available")
+        interfaces = component.get("interfaces", [])
+        dependencies = component.get("dependencies", [])
+        
+        content = f"""# {name} Specification
+
+## Responsibility
+{responsibility}
+
+## Interfaces
+"""
+        
+        if interfaces:
+            for interface in interfaces:
+                content += f"- {interface}\n"
+        else:
+            content += "- None specified\n"
+        
+        content += f"""
+## Dependencies
+"""
+        
+        if dependencies:
+            for dep in dependencies:
+                content += f"- {dep}\n"
+        else:
+            content += "- None specified\n"
+        
+        content += f"""
+## Implementation Notes
+This component should be implemented following the project's architecture pattern and coding standards.
+"""
+        
+        return content
+
+    def _generate_directory_structure_file(self, dir_structure: Dict[str, Any]) -> str:
+        """Generate directory structure documentation."""
+        content = """# Directory Structure
+
+## Project Layout
+This document describes the recommended directory structure for the project.
+
+```
+"""
+        
+        def format_structure(structure, indent=0):
+            result = ""
+            for key, value in structure.items():
+                result += "  " * indent + key + "\n"
+                if isinstance(value, dict):
+                    result += format_structure(value, indent + 1)
+            return result
+        
+        content += format_structure(dir_structure)
+        content += """```
+
+## Directory Descriptions
+Each directory serves a specific purpose in the project organization:
+
+"""
+        
+        # Add descriptions for common directories
+        common_descriptions = {
+            "src/": "Source code directory",
+            "tests/": "Test files and test utilities", 
+            "docs/": "Documentation files",
+            "config/": "Configuration files",
+            "requirements.txt": "Python dependencies",
+            "README.md": "Project overview and setup instructions"
+        }
+        
+        for path, desc in common_descriptions.items():
+            if any(path in str(dir_structure).lower() for path in [path.lower()]):
+                content += f"- **{path}**: {desc}\n"
+        
+        return content
+
+    def _generate_deployment_guide(self, deployment: Dict[str, Any]) -> str:
+        """Generate deployment guide."""
+        content = f"""# Deployment Guide
+
+## Overview
+This project uses a **{deployment.get('type', 'standard')}** deployment strategy.
+
+## Configuration
+- **Type**: {deployment.get('type', 'Not specified')}
+- **Orchestration**: {deployment.get('orchestration', 'Not specified')}
+- **Scaling**: {deployment.get('scaling', 'Not specified')}
+- **Monitoring**: {deployment.get('monitoring', 'Not specified')}
+
+## Deployment Steps
+1. Prepare the deployment environment
+2. Configure the application settings
+3. Deploy the application
+4. Verify the deployment
+5. Set up monitoring and logging
+
+## Monitoring
+Monitor the application health and performance using the configured monitoring solution.
+"""
+        
+        return content
+
     @staticmethod
     def get_agent_card_static() -> AgentCard:
-        input_schema = ArchitectAgentInput.model_json_schema()
-        output_schema = ArchitectAgentOutput.model_json_schema()
-        module_path = ArchitectAgent_v1.__module__
-        class_name = ArchitectAgent_v1.__name__
+        input_schema = EnhancedArchitectAgentInput.model_json_schema()
+        output_schema = EnhancedArchitectAgentOutput.model_json_schema()
+        module_path = EnhancedArchitectAgent_v1.__module__
+        class_name = EnhancedArchitectAgent_v1.__name__
 
         return AgentCard(
-            agent_id=ArchitectAgent_v1.AGENT_ID,
-            name=ArchitectAgent_v1.AGENT_NAME,
-            description=ArchitectAgent_v1.AGENT_DESCRIPTION,
-            version=ArchitectAgent_v1.AGENT_VERSION,
+            agent_id=EnhancedArchitectAgent_v1.AGENT_ID,
+            name=EnhancedArchitectAgent_v1.AGENT_NAME,
+            description=EnhancedArchitectAgent_v1.AGENT_DESCRIPTION,
+            version=EnhancedArchitectAgent_v1.AGENT_VERSION,
             input_schema=input_schema,
             output_schema=output_schema,
-            categories=[cat.value for cat in [ArchitectAgent_v1.CATEGORY, AgentCategory.AUTONOMOUS_PROJECT_ENGINE]],
-            visibility=ArchitectAgent_v1.VISIBILITY.value,
+            categories=[cat.value for cat in [EnhancedArchitectAgent_v1.CATEGORY, AgentCategory.AUTONOMOUS_PROJECT_ENGINE]],
+            visibility=EnhancedArchitectAgent_v1.VISIBILITY.value,
             capability_profile={
                 "consumes_artifacts": ["LOPRD_JSON"],
                 "generates_blueprints": ["ProjectBlueprint_Markdown"],
+                "generates_files": ["blueprint_md", "component_specs", "tech_stack", "deployment_guide"],
+                "generates_execution_plans": ["MasterExecutionPlan_JSON"],
                 "architecture_patterns": ["monolithic", "layered", "microservices"],
-                "primary_function": "Technical Architecture Design and Blueprint Generation"
+                "workflow_phases": ["discovery", "analysis", "planning", "design", "review", "output", "flow_generation", "validation"],
+                "primary_function": "Complete Blueprint Lifecycle Management"
             },
             metadata={
-                "callable_fn_path": f"{module_path}.{class_name}"
+                "callable_fn_path": f"{module_path}.{class_name}",
+                "enhanced_version": True,
+                "consolidates_agents": ["ArchitectAgent_v1", "BlueprintReviewerAgent_v1", "BlueprintToFlowAgent_v1"]
             }
         ) 

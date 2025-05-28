@@ -244,20 +244,23 @@ class UnifiedOrchestrator:
 
         # === PHASE 2: ARCHITECTURE & DESIGN ===
 
-        # 6. Architecture Design - ENHANCED: Design system architecture
+        # 5. Enhanced Architecture Design - ENHANCED: Complete architecture design with blueprint generation and review
         await self.execute_stage(
-            stage_id="architecture_design",
-            agent_id="ArchitectAgent_v1",
+            stage_id="enhanced_architecture_design",
+            agent_id="EnhancedArchitectAgent_v1",
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", ".")
+                "intelligent_context": True,  # Use intelligent context for seamless workflow
+                "project_path": self.shared_context.get("project_root_path", "."),
+                "output_blueprint_files": True,  # Generate blueprint files to filesystem
+                "generate_execution_plan": True,  # Generate execution plan for implementation
+                "output_directory": "./blueprints/"  # Output location for blueprint files
             },
-            max_iterations=self._get_max_iterations("architecture_design", 25)
+            max_iterations=self._get_max_iterations("enhanced_architecture_design", 25)
         )
 
-        # 7. Risk Assessment - ENHANCED: Assess project risks DURING design phase
+        # 6. Risk Assessment - ENHANCED: Assess designed architecture for project risks
         await self.execute_stage(
             stage_id="risk_assessment",
             agent_id="ProactiveRiskAssessorAgent_v1",
@@ -270,22 +273,9 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("risk_assessment", 22)
         )
 
-        # 8. Blueprint Review - ENHANCED: Review and validate architecture BEFORE implementation
-        await self.execute_stage(
-            stage_id="blueprint_review",
-            agent_id="BlueprintReviewerAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", ".")
-            },
-            max_iterations=self._get_max_iterations("blueprint_review", 15)
-        )
-
         # === PHASE 3: IMPLEMENTATION ===
 
-        # 9. Code Generation - ENHANCED: Generate actual project code files with FULL CONTEXT
+        # 7. Code Generation - ENHANCED: Generate actual project code files with FULL CONTEXT
         await self.execute_stage(
             stage_id="code_generation",
             agent_id="SmartCodeGeneratorAgent_v1",
@@ -300,14 +290,13 @@ class UnifiedOrchestrator:
                 "technologies": project_specs.get("technologies", []),
                 # ENHANCED: Pass outputs from all prior analysis stages for better context
                 "requirements_context": self.shared_context.get("outputs", {}).get("requirements_tracing"),
-                "architecture_context": self.shared_context.get("outputs", {}).get("architecture_design"),
-                "risk_context": self.shared_context.get("outputs", {}).get("risk_assessment"),
-                "blueprint_context": self.shared_context.get("outputs", {}).get("blueprint_review")
+                "architecture_context": self.shared_context.get("outputs", {}).get("enhanced_architecture_design"),  # Updated reference
+                "risk_context": self.shared_context.get("outputs", {}).get("risk_assessment")
             },
             max_iterations=self._get_max_iterations("code_generation", 30)
         )
 
-        # 10. Code Debugging - ENHANCED: Analyze and improve code quality IMMEDIATELY after generation
+        # 8. Code Debugging - ENHANCED: Analyze and improve code quality IMMEDIATELY after generation
         await self.execute_stage(
             stage_id="code_debugging",
             agent_id="CodeDebuggingAgent_v1",
@@ -320,7 +309,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("code_debugging", 28)
         )
 
-        # 11. Project Documentation - ENHANCED: Generate comprehensive documentation of FINAL system
+        # 9. Project Documentation - ENHANCED: Generate comprehensive documentation of FINAL system
         await self.execute_stage(
             stage_id="project_documentation",
             agent_id="ProjectDocumentationAgent_v1",
@@ -335,7 +324,7 @@ class UnifiedOrchestrator:
 
         # === PHASE 4: QUALITY ASSURANCE ===
 
-        # 12. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
+        # 10. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
         await self.execute_stage(
             stage_id="automated_refinement",
             agent_id="AutomatedRefinementCoordinatorAgent_v1",
@@ -349,7 +338,7 @@ class UnifiedOrchestrator:
             max_iterations=self._get_max_iterations("automated_refinement", 35)
         )
         
-        self.logger.info("[UAEI] Optimized autonomous development pipeline completed with 12 stages")
+        self.logger.info("[UAEI] Optimized autonomous development pipeline completed with 10 stages")
 
     # ------------------------------------------------------------------
     async def run(

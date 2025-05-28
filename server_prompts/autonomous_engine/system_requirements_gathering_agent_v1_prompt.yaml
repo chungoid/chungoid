@@ -1,53 +1,215 @@
 id: "system_requirements_gathering_v1"
 description: "Prompt for SystemRequirementsGatheringAgent_v1 to generate a Living Operational Planning & Requirements Document (LOPRD) in JSON format."
 version: "1.0"
-input_variables:
-  - name: "user_goal"
-    description: "The high-level user goal or problem statement."
-    type: "string"
-    required: true
-  - name: "project_context_summary"
-    description: "Optional summary of the existing project context, constraints, or relevant information."
-    type: "string"
-    required: false
+metadata:
+  title: "System Requirements Gathering Agent v1 Prompt"
+  tags: ["requirements_gathering", "loprd_generation", "system_analysis", "autonomous_project_engine"]
+  owner: "meta_engineering_team"
+  created_date: "2025-05-20"
+
+input_schema:
+  type: object
+  properties:
+    user_goal:
+      type: string
+      description: "The high-level user goal or problem statement."
+    project_context_summary:
+      type: string
+      description: "Optional summary of the existing project context, constraints, or relevant information."
+    project_specifications:
+      type: object
+      description: "Optional intelligent project specifications from orchestrator analysis."
+    intelligent_context:
+      type: boolean
+      description: "Whether intelligent project specifications are provided."
+    project_path:
+      type: string
+      description: "Project directory path for context."
+  required:
+    - user_goal
+
+output_schema:
+  type: object
+  description: "The agent's output containing the LOPRD and confidence assessment."
+  properties:
+    loprd_artifact:
+      type: object
+      description: "The generated LOPRD as a structured JSON object containing all required sections."
+      properties:
+        loprd_id:
+          type: string
+          description: "Unique identifier for this LOPRD document."
+        document_version:
+          type: string
+          description: "Version of the document."
+        generated_at:
+          type: string
+          format: date-time
+          description: "ISO 8601 timestamp when the document was generated."
+        user_goal_received:
+          type: string
+          description: "The original user goal as received."
+        project_context_received:
+          type: string
+          description: "The project context as received."
+        executive_summary:
+          type: string
+          description: "Brief overview of the project and its objectives."
+        scope:
+          type: object
+          properties:
+            in_scope:
+              type: array
+              items:
+                type: string
+              description: "List of features/functionalities that are IN scope."
+            out_of_scope:
+              type: array
+              items:
+                type: string
+              description: "List of features/functionalities that are OUT of scope."
+          required: ["in_scope", "out_of_scope"]
+        functional_requirements:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: "Unique identifier for the requirement."
+              description:
+                type: string
+                description: "Detailed description of the functional requirement."
+              priority:
+                type: string
+                enum: ["Must Have", "Should Have", "Could Have"]
+                description: "Priority level of the requirement."
+            required: ["id", "description", "priority"]
+          description: "List of functional requirements."
+        non_functional_requirements:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: "Unique identifier for the requirement."
+              category:
+                type: string
+                description: "Category of the non-functional requirement."
+              description:
+                type: string
+                description: "Detailed description of the non-functional requirement."
+            required: ["id", "category", "description"]
+          description: "List of non-functional requirements."
+        assumptions:
+          type: array
+          items:
+            type: string
+          description: "List of assumptions made during requirements gathering."
+        constraints:
+          type: array
+          items:
+            type: string
+          description: "List of constraints (technical, budget, timeline, etc.)."
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+          description: "Overall criteria for accepting the final product/solution."
+        glossary:
+          type: object
+          description: "Key terms and definitions."
+        stakeholders:
+          type: array
+          items:
+            type: string
+          description: "List of identified stakeholders or roles involved."
+      required:
+        - loprd_id
+        - document_version
+        - generated_at
+        - user_goal_received
+        - executive_summary
+        - scope
+        - functional_requirements
+        - non_functional_requirements
+        - assumptions
+        - constraints
+        - acceptance_criteria
+    confidence_score:
+      type: object
+      properties:
+        value:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: "Quantifiable confidence score (0.0-1.0) for the generated LOPRD."
+        method:
+          type: string
+          description: "Methodology used for self-assessment."
+        explanation:
+          type: string
+          description: "Brief explanation for the score, including adherence and key decisions."
+      required:
+        - value
+        - method
+        - explanation
+  required:
+    - loprd_artifact
+    - confidence_score
 
 system_prompt: |
   You are an expert requirements analyst and AI assistant. Your task is to transform a user's goal and any provided project context into a comprehensive Living Operational Planning & Requirements Document (LOPRD).
 
-  The LOPRD must be a single, valid JSON object.
+  Your entire output MUST be a single, valid JSON object conforming to the `output_schema` defined in this prompt.
 
-  The LOPRD JSON object should include, but is not limited to, the following top-level keys:
-  - "loprd_id": A unique identifier for this document (e.g., a UUID - you can generate one or use a placeholder like "generate_uuid_later").
-  - "document_version": "1.0"
-  - "generated_at": Current ISO 8601 timestamp (e.g., "YYYY-MM-DDTHH:MM:SSZ").
-  - "user_goal_received": "{{ user_goal }}"
-  - "project_context_received": "{{ project_context_summary | default('N/A') }}"
-  - "executive_summary": A brief overview of the project and its objectives derived from the goal.
-  - "scope": {
-      "in_scope": ["List of features/functionalities that are IN scope."],
-      "out_of_scope": ["List of features/functionalities that are explicitly OUT of scope."]
-    }
-  - "functional_requirements": [
-      { "id": "FR001", "description": "Detailed description of a functional requirement.", "priority": "Must Have/Should Have/Could Have" }
-    ],
-  - "non_functional_requirements": [
-      { "id": "NFR001", "category": "Performance/Security/Usability/Scalability/Maintainability/etc.", "description": "Detailed description of a non-functional requirement." }
-    ],
-  - "assumptions": ["List of assumptions made during requirements gathering."],
-  - "constraints": ["List of constraints (technical, budget, timeline, etc.)."],
-  - "acceptance_criteria": ["Overall criteria for accepting the final product/solution."],
-  - "glossary": { "term": "definition" } # Optional: Key terms and definitions.
-  - "stakeholders": ["List identified stakeholders or roles involved."] # Optional
+  The LOPRD artifact within your JSON output should be a structured object containing all the required sections as defined in the schema, including:
+  - Unique loprd_id and version information
+  - Executive summary derived from the user goal
+  - Detailed scope definition (in-scope and out-of-scope items)
+  - Comprehensive functional requirements with unique IDs and priorities
+  - Non-functional requirements categorized appropriately
+  - Clear assumptions and constraints
+  - Testable acceptance criteria
+  - Glossary of key terms (if applicable)
+  - Identified stakeholders
 
-  Please analyze the provided user goal and project context to generate the LOPRD JSON object now. Ensure it is well-structured and detailed.
+  Ensure all requirements have unique, traceable IDs and are well-structured for downstream processing.
+
+  Generate a confidence score reflecting your assessment of the LOPRD's completeness and accuracy based on the input provided.
 
 user_prompt: |
-  User Goal: "{{ user_goal }}"
-  Project Context: "{{ project_context_summary | default('No specific project context provided.') }}"
+  ## Requirements Analysis Task: Generate LOPRD and Confidence Assessment
 
-# model_settings: # Optional: If you want to specify model settings for this prompt
-#   model_name: "gpt-4-turbo-preview"
-#   temperature: 0.3
-#   max_tokens: 2000
+  **Objective:** Create a detailed LOPRD and assess your confidence, based on the following inputs. Output a single JSON object matching the required output schema.
 
-# The old 'template:' key has been removed and its content split into system_prompt and user_prompt. 
+  **1. User Goal:**
+  ```
+  {{ user_goal }}
+  ```
+
+  **2. Project Context (if provided):**
+  ```
+  {{ project_context_summary | default('No specific project context provided.') }}
+  ```
+
+  **3. Intelligent Project Specifications (if provided):**
+  ```
+  {{ project_specifications | default('No intelligent specifications provided.') }}
+  ```
+
+  **Instructions:**
+  1. Analyze the user goal and any provided context thoroughly
+  2. Generate a comprehensive LOPRD following the loprd_artifact schema
+  3. Ensure all functional requirements have clear priorities (Must Have/Should Have/Could Have)
+  4. Create testable acceptance criteria
+  5. Identify appropriate non-functional requirements based on the project type
+  6. Provide a detailed confidence assessment
+
+  **Produce the complete JSON output now, adhering to the output schema:**
+
+model_settings:
+  temperature: 0.3
+  max_tokens: 4000 
