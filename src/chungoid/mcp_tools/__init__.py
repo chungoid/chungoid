@@ -21,6 +21,7 @@ from .intelligence.tool_manifest import (
     discover_tools,
     get_tool_composition_recommendations,
     get_tool_performance_analytics,
+    get_tool_discovery_health,
     tool_discovery,
 )
 
@@ -251,7 +252,9 @@ __all__ = [
     # Tool Discovery & Manifest tools
     "generate_tool_manifest",
     "discover_tools",
+    "get_tool_composition_recommendations",
     "get_tool_performance_analytics",
+    "get_tool_discovery_health",
     "tool_discovery",
     
     # Intelligence tools - ALWAYS AVAILABLE
@@ -264,7 +267,6 @@ __all__ = [
     "get_real_time_performance_analysis",
     "optimize_agent_resolution_mcp",
     "generate_performance_recommendations",
-    "get_tool_composition_recommendations",
     
     # Missing tools that cause categorization failures - ADD THEM
     "optimize_execution_strategy",

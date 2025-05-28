@@ -396,17 +396,47 @@ class DynamicToolDiscovery:
     def _reconstruct_manifest_from_dict(self, name: str, data: Dict[str, Any]) -> Optional[ToolManifest]:
         """Reconstruct ToolManifest from dictionary data."""
         try:
-            # This is a simplified reconstruction - full implementation would be more robust
-            metrics = ToolMetrics(**data.get('metrics', {}))
+            # Reconstruct metrics
+            metrics_data = data.get('metrics', {})
+            metrics = ToolMetrics(**metrics_data)
             
-            # For now, create a basic manifest
+            # Reconstruct capabilities properly
+            capabilities = []
+            capabilities_data = data.get('capabilities', [])
+            for cap_data in capabilities_data:
+                capability = ToolCapability(
+                    name=cap_data.get('name', ''),
+                    description=cap_data.get('description', ''),
+                    input_types=cap_data.get('input_types', []),
+                    output_types=cap_data.get('output_types', []),
+                    examples=cap_data.get('examples', []),
+                    prerequisites=cap_data.get('prerequisites', [])
+                )
+                capabilities.append(capability)
+            
+            # Reconstruct usage patterns properly
+            usage_patterns = []
+            patterns_data = data.get('usage_patterns', [])
+            for pattern_data in patterns_data:
+                pattern = UsagePattern(
+                    pattern_name=pattern_data.get('pattern_name', ''),
+                    description=pattern_data.get('description', ''),
+                    tool_sequence=pattern_data.get('tool_sequence', []),
+                    use_cases=pattern_data.get('use_cases', []),
+                    success_rate=pattern_data.get('success_rate', 0.0),
+                    avg_execution_time=pattern_data.get('avg_execution_time', 0.0),
+                    complexity=UsageComplexity(pattern_data.get('complexity', 'moderate'))
+                )
+                usage_patterns.append(pattern)
+            
+            # Create properly reconstructed manifest
             manifest = ToolManifest(
                 tool_name=name,
                 display_name=data.get('display_name', name),
                 description=data.get('description', ''),
                 category=ToolCategory(data.get('category', 'development')),
-                capabilities=[],  # Would reconstruct properly in full implementation
-                usage_patterns=[],  # Would reconstruct properly in full implementation
+                capabilities=capabilities,  # Now properly reconstructed!
+                usage_patterns=usage_patterns,  # Now properly reconstructed!
                 metrics=metrics,
                 dependencies=data.get('dependencies', []),
                 related_tools=data.get('related_tools', []),
@@ -423,9 +453,145 @@ class DynamicToolDiscovery:
     
     def _initialize_default_manifests(self):
         """Initialize with default tool manifests for known tools."""
-        # This would be populated with actual tool manifests
-        # For now, just log that we're starting fresh
-        logger.info("Initializing with default tool manifests")
+        logger.info("🚀🚀🚀 INITIALIZING TOOL MANIFESTS - CRITICAL FOR INTELLIGENT AGENT BEHAVIOR 🚀🚀🚀")
+        
+        try:
+            # Import inside function to avoid circular import
+            logger.info("📋 CALLING COMPREHENSIVE MANIFEST INITIALIZATION...")
+            
+            # Call the comprehensive initialization that includes auto-manifests
+            result = self._call_manifest_initialization()
+            
+            if result and result.get("success"):
+                total_tools = result.get("total_tools", 0)
+                total_available = result.get("total_available", 0)
+                coverage_percentage = result.get("coverage_percentage", 0)
+                rich_manifests = result.get("rich_manifests", 0)
+                auto_manifests = result.get("auto_manifests", 0)
+                operational_status = result.get("operational_status", "UNKNOWN")
+                
+                logger.info("🎉🎉🎉 COMPREHENSIVE TOOL MANIFEST INITIALIZATION COMPLETE! 🎉🎉🎉")
+                logger.info(f"📊 FINAL COVERAGE: {total_tools}/{total_available} tools ({coverage_percentage:.1f}%)")
+                logger.info(f"🎯 BREAKDOWN:")
+                logger.info(f"   ✅ RICH MANIFESTS: {rich_manifests} tools with detailed intelligence")
+                logger.info(f"   🔧 AUTO-MANIFESTS: {auto_manifests} tools with basic intelligence")
+                logger.info(f"🚀 OPERATIONAL STATUS: {operational_status}")
+                
+                if operational_status == "FULLY_OPERATIONAL":
+                    logger.info("🧠 INTELLIGENT TOOL DISCOVERY IS FULLY OPERATIONAL!")
+                    logger.info("🔥 AGENTS HAVE COMPLETE SOPHISTICATED TOOL SELECTION!")
+                elif operational_status == "MOSTLY_OPERATIONAL":
+                    logger.info("🧠 INTELLIGENT TOOL DISCOVERY IS MOSTLY OPERATIONAL!")
+                    logger.info("🔥 AGENTS HAVE EXTENSIVE INTELLIGENT TOOL SELECTION!")
+                elif operational_status == "PARTIALLY_OPERATIONAL":
+                    logger.warning("⚠️  INTELLIGENT TOOL DISCOVERY IS PARTIALLY OPERATIONAL!")
+                    logger.warning("🚨 AGENTS HAVE LIMITED INTELLIGENT TOOL SELECTION!")
+                else:
+                    logger.error("❌ INTELLIGENT TOOL DISCOVERY IS BARELY OPERATIONAL!")
+                    logger.error("🚨 AGENTS WILL MOSTLY USE BASIC TOOL SELECTION!")
+            else:
+                logger.error("❌ COMPREHENSIVE INITIALIZATION FAILED!")
+                error_msg = result.get("error", "Unknown error") if result else "No result returned"
+                logger.error(f"💥 ERROR: {error_msg}")
+                
+        except ImportError as e:
+            logger.error("❌❌❌ CRITICAL: MANIFEST INITIALIZATION MODULE NOT FOUND! ❌❌❌")
+            logger.error(f"💥 IMPORT ERROR: {e}")
+            logger.error("⚠️  TOOL DISCOVERY WILL BE COMPLETELY BROKEN!")
+            logger.error("🚨 AGENTS WILL OPERATE IN DUMB MODE!")
+            
+        except Exception as e:
+            logger.error("❌❌❌ UNEXPECTED ERROR DURING MANIFEST INITIALIZATION! ❌❌❌")
+            logger.error(f"💥 ERROR: {e}")
+            logger.error("⚠️  TOOL DISCOVERY SYSTEM COMPROMISED!")
+            
+        # Always log final status
+        final_count = len(self.manifests)
+        if final_count > 0:
+            logger.info(f"✅ FINAL STATUS: {final_count} TOOLS AVAILABLE FOR INTELLIGENT DISCOVERY")
+        else:
+            logger.error("❌ FINAL STATUS: ZERO TOOLS AVAILABLE - SYSTEM IS BROKEN!")
+            logger.error("🚨 ALL AGENTS WILL USE GENERIC FALLBACK TOOLS!")
+
+    def _call_manifest_initialization(self):
+        """Call manifest initialization avoiding circular imports."""
+        try:
+            from .manifest_initialization import initialize_all_tool_manifests
+            
+            logger.info("📋 CALLING COMPREHENSIVE MANIFEST INITIALIZATION...")
+            
+            # Call the comprehensive initialization that includes auto-manifests
+            return initialize_all_tool_manifests(self)
+            
+        except Exception as e:
+            logger.error(f"💥 MANIFEST INITIALIZATION FAILED: {e}")
+            return {"success": False, "error": str(e)}
+
+
+    def get_discovery_health_status(self) -> Dict[str, Any]:
+        """Get blatant health status of tool discovery system."""
+        total_tools = len(self.manifests)
+        
+        # Use known tool count to avoid circular import
+        total_available = 67  # Known tool count from __all__ list in __init__.py
+        coverage_percentage = (total_tools / total_available * 100) if total_available > 0 else 0
+        
+        if total_tools == 0:
+            logger.error("💀💀💀 TOOL DISCOVERY SYSTEM IS DEAD! 💀💀💀")
+            logger.error("🚨 ZERO TOOLS REGISTERED - AGENTS OPERATING IN DUMB MODE!")
+            return {
+                "healthy": False,
+                "status": "CRITICAL_FAILURE",
+                "total_tools": 0,
+                "total_available": total_available,
+                "coverage_percentage": 0.0,
+                "message": "NO TOOLS REGISTERED - SYSTEM BROKEN",
+                "impact": "AGENTS FALL BACK TO GENERIC TOOLS"
+            }
+        elif coverage_percentage >= 95:
+            logger.info(f"✅ TOOL DISCOVERY FULLY OPERATIONAL: {total_tools}/{total_available} tools ({coverage_percentage:.1f}%)")
+            return {
+                "healthy": True,
+                "status": "FULLY_OPERATIONAL",
+                "total_tools": total_tools,
+                "total_available": total_available,
+                "coverage_percentage": coverage_percentage,
+                "message": "COMPLETE INTELLIGENT TOOL DISCOVERY",
+                "impact": "AGENTS HAVE FULL CAPABILITIES"
+            }
+        elif coverage_percentage >= 80:
+            logger.info(f"✅ TOOL DISCOVERY MOSTLY OPERATIONAL: {total_tools}/{total_available} tools ({coverage_percentage:.1f}%)")
+            return {
+                "healthy": True,
+                "status": "MOSTLY_OPERATIONAL",
+                "total_tools": total_tools,
+                "total_available": total_available,
+                "coverage_percentage": coverage_percentage,
+                "message": "EXTENSIVE INTELLIGENT TOOL DISCOVERY",
+                "impact": "AGENTS HAVE EXCELLENT CAPABILITIES"
+            }
+        elif coverage_percentage >= 50:
+            logger.warning(f"⚠️  TOOL DISCOVERY PARTIALLY OPERATIONAL: {total_tools}/{total_available} tools ({coverage_percentage:.1f}%)")
+            return {
+                "healthy": False,
+                "status": "PARTIALLY_OPERATIONAL",
+                "total_tools": total_tools,
+                "total_available": total_available,
+                "coverage_percentage": coverage_percentage,
+                "message": "LIMITED INTELLIGENT TOOL DISCOVERY",
+                "impact": "AGENTS HAVE REDUCED CAPABILITIES"
+            }
+        else:
+            logger.warning(f"⚠️  TOOL DISCOVERY BARELY OPERATIONAL: {total_tools}/{total_available} tools ({coverage_percentage:.1f}%)")
+            return {
+                "healthy": False,
+                "status": "BARELY_OPERATIONAL",
+                "total_tools": total_tools,
+                "total_available": total_available,
+                "coverage_percentage": coverage_percentage,
+                "message": "MINIMAL INTELLIGENT TOOL DISCOVERY",
+                "impact": "AGENTS MOSTLY USE BASIC TOOLS"
+            }
 
 
 # Global tool discovery instance
@@ -510,6 +676,24 @@ async def discover_tools(
         Dict containing discovered tools and recommendations
     """
     try:
+        # Check if tool discovery is healthy first
+        total_registered = len(tool_discovery.manifests)
+        if total_registered == 0:
+            logger.error(f"💀 TOOL DISCOVERY FAILURE: Query '{query}' - NO TOOLS REGISTERED!")
+            logger.error("🚨 AGENT WILL FALL BACK TO GENERIC TOOLS!")
+            return {
+                "success": False,
+                "error": "NO_TOOLS_REGISTERED",
+                "query": query,
+                "context": context or {},
+                "discovered_tools": [],
+                "recommendations": [],
+                "composition_suggestions": [],
+                "health_status": "CRITICAL_FAILURE"
+            }
+            
+        logger.debug(f"🔍 TOOL DISCOVERY: Searching for '{query}' in {total_registered} registered tools")
+        
         results = {
             "query": query,
             "context": context or {},
@@ -564,17 +748,29 @@ async def discover_tools(
                 for tool, score in recommendations
             ]
         
+        # Log discovery results
+        discovered_count = len(results["discovered_tools"])
+        recommendation_count = len(results["recommendations"])
+        
+        if discovered_count > 0 or recommendation_count > 0:
+            logger.info(f"✅ TOOL DISCOVERY SUCCESS: '{query}' → {discovered_count} tools, {recommendation_count} recommendations")
+            results["health_status"] = "OPERATIONAL"
+        else:
+            logger.warning(f"⚠️  TOOL DISCOVERY EMPTY: '{query}' → No tools found (from {total_registered} registered)")
+            results["health_status"] = "EMPTY_RESULTS"
+        
         return {
             "success": True,
             **results,
         }
         
     except Exception as e:
-        logger.error(f"Tool discovery failed: {e}")
+        logger.error(f"💥 TOOL DISCOVERY ERROR: Query '{query}' failed - {e}")
         return {
             "success": False,
             "error": str(e),
             "query": query,
+            "health_status": "ERROR"
         }
 
 
@@ -615,6 +811,8 @@ async def get_tool_composition_recommendations(
             # PURE INTELLIGENT discovery - no fallbacks
             if task_type or agent_id:
                 discovery_query = task_type if task_type else f"tools for {agent_id}"
+                logger.info(f"🔍 AUTO-DISCOVERING TOOLS: '{discovery_query}'")
+                
                 discovery_result = await discover_tools(
                     query=discovery_query,
                     context=context,
@@ -623,16 +821,24 @@ async def get_tool_composition_recommendations(
                 
                 if discovery_result.get("success") and discovery_result.get("discovered_tools"):
                     target_tools = [tool["tool_name"] for tool in discovery_result["discovered_tools"]]
-                    logger.info(f"[PURE INTELLIGENT] Successfully discovered tools: {target_tools}")
+                    logger.info(f"✅ INTELLIGENT DISCOVERY SUCCESS: Found {len(target_tools)} tools: {target_tools}")
                 else:
                     # NO FALLBACKS - pure intelligence only
-                    logger.warning(f"[PURE INTELLIGENT] Failed to discover tools intelligently for query: {discovery_query}")
+                    health_status = discovery_result.get("health_status", "UNKNOWN")
+                    logger.warning(f"❌ PURE INTELLIGENT DISCOVERY FAILED: Query '{discovery_query}' - Status: {health_status}")
+                    
+                    if health_status == "CRITICAL_FAILURE":
+                        logger.error("💀 TOOL REGISTRY IS EMPTY - SYSTEM IS BROKEN!")
+                    elif health_status == "EMPTY_RESULTS":
+                        logger.warning("🔍 NO TOOLS MATCH QUERY - SEARCH CRITERIA TOO SPECIFIC?")
+                    
                     return {
                         "success": False,
                         "error": "Pure intelligent discovery failed - no tools could be discovered intelligently",
                         "target_tools": [],
                         "context": context,
                         "intelligence_level": "discovery_failed",
+                        "health_status": health_status,
                         "message": "PURE INTELLIGENT SYSTEM: No hardcoded fallbacks available. Intelligent discovery required."
                     }
 
@@ -755,3 +961,40 @@ def _generate_performance_insights(report: Dict[str, Any]) -> List[str]:
         insights.append(f"System has processed {total_executions} total tool executions across all categories")
     
     return insights 
+
+
+# Health check function for agents
+async def get_tool_discovery_health() -> Dict[str, Any]:
+    """
+    Get blatant health status of the tool discovery system.
+    Agents can call this to verify intelligent tool discovery is working.
+    """
+    health_status = tool_discovery.get_discovery_health_status()
+    
+    # Add additional runtime checks
+    try:
+        # Test capability search
+        test_result = tool_discovery.find_tools_by_capability("test")
+        health_status["capability_search_working"] = True
+        
+        # Test category search
+        category_result = tool_discovery.find_tools_by_category(ToolCategory.DATABASE)
+        health_status["category_search_working"] = True
+        
+        # Test manifest loading
+        health_status["manifests_loaded"] = len(tool_discovery.manifests) > 0
+        
+        if health_status["healthy"]:
+            logger.info("✅ TOOL DISCOVERY HEALTH CHECK: SYSTEM OPERATIONAL")
+        else:
+            logger.error(f"❌ TOOL DISCOVERY HEALTH CHECK: {health_status['status']}")
+            
+    except Exception as e:
+        logger.error(f"💥 TOOL DISCOVERY HEALTH CHECK FAILED: {e}")
+        health_status.update({
+            "healthy": False,
+            "status": "HEALTH_CHECK_FAILED",
+            "error": str(e)
+        })
+    
+    return health_status 

@@ -997,6 +997,10 @@ class UnifiedAgent(BaseModel, ABC):
         try:
             self.logger.info(f"[MCP] Calling tool {tool_name} with {len(arguments)} arguments")
             
+            # CRITICAL FIX: Initialize variables before try block to prevent NameError
+            actual_tool_name = tool_name  # Default fallback
+            converted_arguments = arguments.copy()  # Default fallback
+            
             # Import the MCP tools module dynamically
             from ..mcp_tools import __all__ as available_tools
             
