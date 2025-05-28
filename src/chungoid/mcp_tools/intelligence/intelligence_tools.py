@@ -1,9 +1,28 @@
 """
-Intelligence Tools Module
+Intelligence Tools Module - PURE INTELLIGENT SYSTEM
 
-Centralized interface for intelligence system MCP tools.
-Provides direct access to adaptive learning, advanced replanning, and performance optimization
-capabilities for agent refinement cycles.
+  *** CRITICAL SYSTEM DIRECTIVE: NO FALLBACKS ALLOWED ***
+
+This module provides centralized interface for intelligence system MCP tools through
+PURE INTELLIGENT METHODS ONLY. Any attempt to add fallback mechanisms, simplified
+logic, or "backwards compatible" patterns is STRICTLY FORBIDDEN.
+
+INTELLIGENCE-ONLY RULES:
+- NO simplified fallbacks when intelligence functions are unavailable
+- NO hardcoded responses or predetermined patterns
+- ALL functionality MUST derive from intelligent analysis systems
+- GRACEFUL failure with clear error messages when intelligence unavailable
+- NO degradation to rule-based or simplistic behavior
+
+This module provides direct access to:
+- Adaptive learning and pattern analysis (NO SIMPLE FALLBACKS)
+- Advanced replanning intelligence (NO PREDETERMINED PLANS)  
+- Performance optimization (NO HARDCODED OPTIMIZATIONS)
+
+If underlying intelligence systems are unavailable, functions MUST return clear
+error responses rather than attempting to provide "simple" alternatives.
+
+FUCK FALLBACKS. INTELLIGENT SYSTEMS OR GRACEFUL FAILURE ONLY.
 """
 
 import logging

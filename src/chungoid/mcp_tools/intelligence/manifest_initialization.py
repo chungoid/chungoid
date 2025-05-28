@@ -1,9 +1,30 @@
 """
-Tool Manifest Initialization
+Tool Manifest Initialization - PURE INTELLIGENT SYSTEM
 
-Initializes the dynamic discovery system with comprehensive manifests
-for all existing MCP tools. Provides rich metadata, capabilities,
-usage patterns, and best practices.
+  *** CRITICAL SYSTEM DIRECTIVE: NO FALLBACKS ALLOWED ***
+
+This module initializes the dynamic discovery system with comprehensive manifests
+for all existing MCP tools through PURE INTELLIGENT METHODS ONLY. Any attempt to add
+simplified manifest generation, hardcoded tool definitions, or "basic" fallback 
+manifests is STRICTLY FORBIDDEN.
+
+INTELLIGENCE-ONLY MANIFEST RULES:
+- NO simplified or stripped-down tool manifests
+- NO hardcoded capability definitions without intelligent analysis
+- ALL tool metadata MUST be derived from intelligent analysis of actual tool behavior
+- NO "basic" fallback manifests when intelligent analysis fails
+- MANIFESTS must reflect true intelligent capabilities, not simplified approximations
+
+This module provides:
+- Rich metadata derived from intelligent tool analysis (NO HARDCODED DEFINITIONS)
+- Dynamic capabilities discovery (NO STATIC CAPABILITY LISTS)
+- Usage patterns from intelligent observation (NO PREDETERMINED PATTERNS)
+- Performance-based best practices (NO GENERIC BEST PRACTICES)
+
+If intelligent manifest generation fails, the system MUST log errors and proceed
+without that manifest rather than falling back to simplified definitions.
+
+FUCK FALLBACK MANIFESTS. INTELLIGENT ANALYSIS OR NO MANIFEST AT ALL.
 """
 
 import logging

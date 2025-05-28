@@ -16,7 +16,7 @@ from .chromadb import *
 from .filesystem import *
 from .terminal import *
 from .content import *
-from .tool_manifest import (
+from .intelligence.tool_manifest import (
     generate_tool_manifest,
     discover_tools,
     get_tool_composition_recommendations,
@@ -36,10 +36,8 @@ from .filesystem.directory_operations import (
 
 # CRITICAL FIX: Intelligence tools should ALWAYS be available to all agents
 # These are core functionality, not optional features
-from chungoid.mcp_tools.intelligence.tool_composition import (
-    adaptive_learning_analyze,
-)
 from chungoid.intelligence.adaptive_learning_system import (
+    adaptive_learning_analyze,
     create_strategy_experiment,
     apply_learning_recommendations,
 )
@@ -256,7 +254,6 @@ __all__ = [
     # Tool Discovery & Manifest tools
     "generate_tool_manifest",
     "discover_tools",
-    "get_tool_composition_recommendations", 
     "get_tool_performance_analytics",
     "tool_discovery",
     
@@ -270,6 +267,7 @@ __all__ = [
     "get_real_time_performance_analysis",
     "optimize_agent_resolution_mcp",
     "generate_performance_recommendations",
+    "get_tool_composition_recommendations",
     
     # Missing tools that cause categorization failures - ADD THEM
     "optimize_execution_strategy",
@@ -604,7 +602,7 @@ def get_available_tools():
     Returns:
         Dict[str, Dict[str, Any]]: Dictionary of tool_name -> tool_metadata
     """
-    from .tool_manifest import DynamicToolDiscovery
+    from .intelligence.tool_manifest import DynamicToolDiscovery
     import sys
     
     def _categorize_tool_fallback(tool_name: str) -> str:

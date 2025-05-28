@@ -1,16 +1,31 @@
 """
-Dynamic Tool Discovery & Manifest System
+Dynamic Tool Discovery & Manifest System - PURE INTELLIGENT SYSTEM
 
-Provides intelligent tool selection, composition, and discovery capabilities
-for the Chungoid MCP tool ecosystem. Enables autonomous tool chaining
-and performance-based tool recommendations.
+  *** CRITICAL SYSTEM DIRECTIVE: NO FALLBACKS ALLOWED ***
+
+This module provides intelligent tool selection, composition, and discovery capabilities
+for the Chungoid MCP tool ecosystem. It enables autonomous tool chaining and
+performance-based tool recommendations through PURE INTELLIGENT METHODS ONLY.
+
+STRICT INTELLIGENCE-ONLY RULES:
+- NO hardcoded tool lists or patterns based on agent types
+- NO "if discovery fails, suggest these tools" fallback logic
+- NO backwards compatibility with simple/rule-based systems
+- ALL tool recommendations MUST come from intelligent analysis
+- FAILURE modes return clear errors rather than degrading to fallbacks
 
 Features:
 - Rich tool metadata with capability descriptions
-- Usage patterns and best practices
-- Historical performance tracking  
-- Dynamic capability matching
-- Intelligent tool composition recommendations
+- Usage patterns and best practices derived from intelligent analysis
+- Historical performance tracking for continuous learning
+- Dynamic capability matching using intelligent algorithms
+- Intelligent tool composition recommendations (NO HARDCODED PATTERNS)
+
+If intelligent discovery/composition fails, the system MUST fail gracefully with
+clear error messages. This preserves the integrity of the intelligent system and
+prevents degradation to simplistic rule-based behavior.
+
+FUCK FALLBACKS. INTELLIGENT DISCOVERY OR GRACEFUL FAILURE ONLY.
 """
 
 import logging
@@ -566,28 +581,84 @@ async def discover_tools(
 
 
 async def get_tool_composition_recommendations(
-    target_tools: List[str],
+    target_tools: Optional[List[str]] = None,
     context: Optional[Dict[str, Any]] = None,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Get recommendations for tool composition and chaining.
     
+    PURE INTELLIGENT SYSTEM: Uses ONLY intelligent discovery mechanisms.
+    NO fallbacks, NO hardcoded patterns, PURE intelligence only.
+    
     Args:
-        target_tools: List of tools to find composition patterns for
-        context: Optional execution context
+        target_tools: List of tools to find composition patterns for (optional)
+        context: Optional execution context (can include agent_id, task_type, etc.)
+        **kwargs: Additional parameters from agent calls
         
     Returns:
         Dict containing composition recommendations
     """
     try:
+        # Handle None parameters gracefully
+        if target_tools is None:
+            target_tools = []
+        if context is None:
+            context = {}
+        
+        # PURE INTELLIGENT ENHANCEMENT: If no target_tools provided, discover them intelligently
+        if not target_tools and context:
+            logger.info(f"[PURE INTELLIGENT] Auto-discovering tools from context: {context}")
+            
+            # Extract task information from context
+            task_type = context.get("task_type", "")
+            agent_id = context.get("agent_id", "")
+            
+            # PURE INTELLIGENT discovery - no fallbacks
+            if task_type or agent_id:
+                discovery_query = task_type if task_type else f"tools for {agent_id}"
+                discovery_result = await discover_tools(
+                    query=discovery_query,
+                    context=context,
+                    max_results=5
+                )
+                
+                if discovery_result.get("success") and discovery_result.get("discovered_tools"):
+                    target_tools = [tool["tool_name"] for tool in discovery_result["discovered_tools"]]
+                    logger.info(f"[PURE INTELLIGENT] Successfully discovered tools: {target_tools}")
+                else:
+                    # NO FALLBACKS - pure intelligence only
+                    logger.warning(f"[PURE INTELLIGENT] Failed to discover tools intelligently for query: {discovery_query}")
+                    return {
+                        "success": False,
+                        "error": "Pure intelligent discovery failed - no tools could be discovered intelligently",
+                        "target_tools": [],
+                        "context": context,
+                        "intelligence_level": "discovery_failed",
+                        "message": "PURE INTELLIGENT SYSTEM: No hardcoded fallbacks available. Intelligent discovery required."
+                    }
+
+        # Continue with intelligent composition only if we have tools
+        if not target_tools:
+            return {
+                "success": False,
+                "error": "No target tools provided and intelligent discovery unsuccessful",
+                "target_tools": [],
+                "context": context,
+                "intelligence_level": "no_tools",
+                "message": "PURE INTELLIGENT SYSTEM: Requires either explicit tools or successful intelligent discovery."
+            }
+
         suggestions = tool_discovery.get_tool_composition_suggestions(
             target_tools, context or {}
         )
         
-        return {
+        # Enhanced intelligent response
+        result = {
             "success": True,
             "target_tools": target_tools,
-            "context": context or {},
+            "context": context,
+            "intelligently_discovered": len(target_tools) > 0 and not kwargs.get("explicit_tools", False),
             "composition_patterns": [
                 {
                     "pattern_name": pattern.pattern_name,
@@ -602,12 +673,45 @@ async def get_tool_composition_recommendations(
             ],
         }
         
+        # Add intelligent recommendations if we have context
+        if context and target_tools:
+            try:
+                # Get performance insights for the recommended tools
+                performance_report = tool_discovery.get_performance_report()
+                
+                # Add tool-specific recommendations
+                tool_recommendations = []
+                for tool in target_tools:
+                    if tool in tool_discovery.manifests:
+                        manifest = tool_discovery.manifests[tool]
+                        tool_recommendations.append({
+                            "tool_name": tool,
+                            "success_rate": manifest.metrics.success_rate,
+                            "complexity": manifest.complexity.value,
+                            "recommended_use_cases": [cap.name for cap in manifest.capabilities[:3]]
+                        })
+                
+                result["tool_recommendations"] = tool_recommendations
+                result["intelligence_level"] = "advanced"
+                
+            except Exception as e:
+                logger.warning(f"Could not generate advanced recommendations: {e}")
+                result["intelligence_level"] = "basic"
+        else:
+            result["intelligence_level"] = "basic"
+        
+        logger.info(f"[PURE INTELLIGENT] Generated {len(result['composition_patterns'])} composition patterns for {len(target_tools)} tools")
+        return result
+
     except Exception as e:
-        logger.error(f"Tool composition recommendation failed: {e}")
+        logger.error(f"Pure intelligent tool composition failed: {e}")
         return {
             "success": False,
             "error": str(e),
-            "target_tools": target_tools,
+            "target_tools": target_tools or [],
+            "context": context or {},
+            "intelligence_level": "error",
+            "message": "PURE INTELLIGENT SYSTEM: An error occurred during intelligent processing."
         }
 
 
