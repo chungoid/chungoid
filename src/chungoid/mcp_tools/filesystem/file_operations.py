@@ -92,7 +92,23 @@ def _create_backup(file_path: Path, backup_dir: Optional[Path] = None) -> Option
             return None
             
         if backup_dir is None:
-            backup_dir = file_path.parent / '.chungoid_backups'
+            # Find the project root by walking up from file_path
+            current_path = file_path.parent
+            project_root = None
+            
+            # Look for project indicators (.chungoid, .git, etc.) or stop at filesystem root
+            while current_path != current_path.parent:
+                if any((current_path / indicator).exists() for indicator in ['.chungoid', '.git', 'goal.txt']):
+                    project_root = current_path
+                    break
+                current_path = current_path.parent
+            
+            # If no project root found, use the file's parent directory
+            if project_root is None:
+                project_root = file_path.parent
+                
+            # Always use project root for backups - centralized location
+            backup_dir = project_root / '.chungoid_backups'
             
         backup_dir.mkdir(parents=True, exist_ok=True)
         

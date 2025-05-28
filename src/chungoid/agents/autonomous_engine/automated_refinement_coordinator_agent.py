@@ -18,12 +18,12 @@ from chungoid.utils.prompt_manager import PromptManager # If decision logic uses
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.schemas.arca_request_and_response import ARCAReviewArtifactType # ADDED IMPORT
 # Mocked Agent Inputs for agents ARCA might call
-# from .product_analyst_agent import ProductAnalystInput # For LOPRD refinement - OLD
-from . import product_analyst_agent as pa_module # For LOPRD refinement - NEW
+# UPDATED: Use new consolidated RequirementsRiskAgent instead of separate ProductAnalystAgent
+from .requirements_risk_agent import RequirementsRiskInput # For LOPRD + Risk assessment refinement
 from .architect_agent import EnhancedArchitectAgentInput # For blueprint refinement
 from chungoid.schemas.agent_master_planner import MasterPlannerInput # For instructing plan refinement
 # Import the new documentation agent's input schema
-from .project_documentation_agent import ProjectDocumentationAgentInput, ProjectDocumentationAgent_v1 
+from .project_documentation_agent import ProjectDocumentationInput, ProjectDocumentationAgent_v1 
 
 # NEW: Import StateManager and related schemas
 from chungoid.utils.state_manager import StateManager, StatusFileError
@@ -88,7 +88,7 @@ from ...schemas.unified_execution_schemas import (
 
 logger = logging.getLogger(__name__)
 
-ARCA_PROMPT_NAME = "automated_refinement_coordinator_agent_v1.yaml" # If LLM-based decision making is used
+ARCA_PROMPT_NAME = "automated_refinement_coordinator_agent_v1_prompt.yaml" # If LLM-based decision making is used
 ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME = "arca_optimization_evaluator_v1_prompt.yaml" # NEW PROMPT
 
 # Constants for ARCA behavior
@@ -260,8 +260,8 @@ class ARCAOutput(BaseModel):
     confidence_in_decision: Optional[ConfidenceScore] = Field(None, description="ARCA's confidence in its own decision.")
     
     # If decision is REFINEMENT_REQUIRED, these fields provide details for the orchestrator
-    next_agent_id_for_refinement: Optional[str] = Field(None, description="The agent_id to call for refinement (e.g., ProductAnalystAgent_v1, EnhancedArchitectAgent_v1, SystemMasterPlannerAgent_v1).")
-    next_agent_input: Optional[Union[pa_module.ProductAnalystAgentInput, EnhancedArchitectAgentInput, MasterPlannerInput, ProjectDocumentationAgentInput, Dict[str, Any]]] = Field(None, description="The full input payload for the next agent if refinement is needed.")
+    next_agent_id_for_refinement: Optional[str] = Field(None, description="The agent_id to call for refinement (e.g., RequirementsRiskAgent, EnhancedArchitectAgent_v1, SystemMasterPlannerAgent_v1).")
+    next_agent_input: Optional[Union[RequirementsRiskInput, EnhancedArchitectAgentInput, MasterPlannerInput, ProjectDocumentationInput, Dict[str, Any]]] = Field(None, description="The full input payload for the next agent if refinement is needed.")
     
     # If decision is TEST_FAILURE_HANDOFF
     debugging_task_input: Optional[DebuggingTaskInput] = Field(None, description="Input for the CodeDebuggingAgent if a test failure is being handed off.")
@@ -280,7 +280,7 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
     AGENT_ID: ClassVar[str] = "AutomatedRefinementCoordinatorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Automated Refinement Coordinator Agent v1"
     AGENT_DESCRIPTION: ClassVar[str] = "Coordinates the iterative refinement of project artifacts, invoking specialist agents as needed."
-    PROMPT_TEMPLATE_NAME: ClassVar[str] = "automated_refinement_coordinator_agent_v1.yaml" # Points to server_prompts/autonomous_engine/
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "automated_refinement_coordinator_agent_v1_prompt.yaml" # Points to server_prompts/autonomous_engine/
     AGENT_VERSION: ClassVar[str] = "0.1.0"
     CAPABILITIES: ClassVar[List[str]] = ["autonomous_coordination", "quality_gates", "refinement_orchestration", "complex_analysis"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.AUTONOMOUS_COORDINATION # MODIFIED

@@ -47,10 +47,12 @@ def initialize_all_agents() -> Dict[str, bool]:
     
     # Autonomous engine agents
     try:
-        from chungoid.agents.autonomous_engine.environment_bootstrap_agent import EnvironmentBootstrapAgent
-        from chungoid.agents.autonomous_engine.dependency_management_agent import DependencyManagementAgent_v1
-        from chungoid.agents.autonomous_engine.proactive_risk_assessor_agent import ProactiveRiskAssessorAgent_v1
-        from chungoid.agents.autonomous_engine.product_analyst_agent import ProductAnalystAgent_v1
+        # REMOVED: These agents were consolidated into other agents:
+        # - EnvironmentBootstrapAgent → ProjectSetupAgent_v1 (environment capability)
+        # - DependencyManagementAgent_v1 → ProjectSetupAgent_v1 (dependencies capability)
+        # - ProductAnalystAgent_v1 + ProactiveRiskAssessorAgent_v1 → RequirementsRiskAgent
+        
+        from chungoid.agents.autonomous_engine.requirements_risk_agent import RequirementsRiskAgent
         from chungoid.agents.autonomous_engine.architect_agent import EnhancedArchitectAgent_v1
         # NOTE: BlueprintToFlowAgent_v1 was consolidated into EnhancedArchitectAgent_v1
         from chungoid.agents.autonomous_engine.requirements_tracer_agent import RequirementsTracerAgent_v1
@@ -58,11 +60,12 @@ def initialize_all_agents() -> Dict[str, bool]:
         from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
         from chungoid.agents.autonomous_engine.automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1
         from chungoid.agents.autonomous_engine.project_documentation_agent import ProjectDocumentationAgent_v1
+        from chungoid.agents.autonomous_engine.project_setup_agent import ProjectSetupAgent_v1
         
         # NOTE: SystemRequirementsGatheringAgent_v1 and ARCAOptimizationEvaluatorAgent_v1 are 
         # orphaned prompts (prompt files exist but no agent class implementations)
         # The functionality exists in other agents:
-        # - ProductAnalystAgent_v1 handles requirements gathering
+        # - RequirementsRiskAgent handles requirements gathering and risk assessment
         # - AutomatedRefinementCoordinatorAgent_v1 handles optimization evaluation
         # - Protocol classes provide additional optimization capabilities
         

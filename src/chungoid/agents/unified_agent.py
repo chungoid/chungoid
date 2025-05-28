@@ -604,6 +604,11 @@ class UnifiedAgent(BaseModel, ABC):
                     
                     self.logger.debug(f"[JSON] Added default value for missing required field: {field_name}")
         
+        # UNIVERSAL PARAMETER MAPPING: working_directory -> project_path
+        # Many LLMs try to use working_directory but MCP tools expect project_path
+        if "working_directory" in cleaned_data and "project_path" not in cleaned_data:
+            cleaned_data["project_path"] = cleaned_data.pop("working_directory")
+        
         return cleaned_data
 
     async def _retry_json_extraction(self, response: str, max_retries: int = None) -> str:
@@ -1155,6 +1160,11 @@ class UnifiedAgent(BaseModel, ABC):
                 elif tool_name == "terminal_check_command_availability":
                     # BIG-BANG FIX #14: Keep only valid parameters
                     converted_arguments = {"command": arguments.get("command", "python")}
+
+                # UNIVERSAL PARAMETER MAPPING: working_directory -> project_path
+                # Many LLMs try to use working_directory but MCP tools expect project_path
+                if "working_directory" in converted_arguments and "project_path" not in converted_arguments:
+                    converted_arguments["project_path"] = converted_arguments.pop("working_directory")
 
                 # Content operations parameter conversions
                 elif tool_name == "content_extract_text" and actual_tool_name == "web_content_extract":

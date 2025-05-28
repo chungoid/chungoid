@@ -35,7 +35,7 @@ from chungoid.registry import register_autonomous_engine_agent
 
 logger = logging.getLogger(__name__)
 
-CDA_PROMPT_NAME = "code_debugging_agent_v1_prompt"
+CDA_PROMPT_NAME = "code_debugging_agent_v1_prompt.yaml"
 
 # --- Input and Output Schemas based on Design Document --- #
 
@@ -345,82 +345,151 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         return analysis
 
     async def _analyze_code_and_failures(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 1: Analysis - Analyze code and test failures."""
-        self.logger.info("Starting code and test failure analysis")
+        """Analyze code and failure patterns using LLM-driven tool selection."""
+        self.logger.info("Starting code and failure analysis")
         
-        # ENHANCED: Use universal MCP tool access for intelligent code analysis
+        # ENHANCED: Use LLM-driven tool selection for intelligent debugging analysis
         if self.enable_refinement:
-            self.logger.info("[MCP] Using universal MCP tool access for intelligent code analysis")
+            self.logger.info("[LLM-Driven] Using LLM-driven tool selection for debugging analysis")
             
-            # Get ALL available tools (no filtering)
-            tool_discovery = await self._get_all_available_mcp_tools()
-            
-            if tool_discovery["discovery_successful"]:
-                all_tools = tool_discovery["tools"]
+            try:
+                # Get all available tools for LLM to choose from
+                available_tools = await self._get_all_available_mcp_tools()
                 
-                # Use filesystem tools for comprehensive code analysis
-                code_analysis = {}
-                faulty_code_path = inputs.get("faulty_code_path", "")
-                project_path = inputs.get("project_path", shared_context.get("project_root_path", "."))
+                # Let LLM choose tools and approach for debugging analysis
+                analysis_prompt = f"""You need to analyze code and failure patterns for debugging.
+
+DEBUGGING TASK:
+Project Path: {inputs.get('project_path', shared_context.get('project_root_path', 'Not provided'))}
+Faulty Code Path: {inputs.get('faulty_code_path', 'Not provided')}
+Code Snippet Available: {bool(inputs.get('faulty_code_snippet'))}
+Failed Tests: {len(inputs.get('failed_test_reports', []))} tests failed
+Previous Attempts: {len(inputs.get('previous_debugging_attempts', []))} previous attempts
+
+TASK: Analyze the codebase and failure patterns to understand the debugging context:
+- Scan project structure and identify problematic areas
+- Analyze failed test reports and error patterns
+- Read faulty code files for detailed analysis
+- Gather environment information for context
+- Use intelligent analysis tools for debugging strategy
+
+AVAILABLE TOOLS:
+{self._format_available_tools(available_tools)}
+
+Please choose the appropriate tools for debugging analysis and return JSON:
+{{
+    "analysis_approach": "description of your debugging analysis strategy",
+    "tools_to_use": [
+        {{
+            "tool_name": "tool_name",
+            "arguments": {{"param": "value"}},
+            "purpose": "why using this tool for debugging analysis"
+        }}
+    ],
+    "debugging_strategy": {{
+        "focus_areas": ["area 1", "area 2"],
+        "analysis_depth": "surface|detailed|comprehensive",
+        "expected_insights": ["insight type 1", "insight type 2"]
+    }},
+    "expected_outputs": {{
+        "code_structure": "what to learn about code structure",
+        "failure_patterns": "what patterns to identify",
+        "environmental_factors": "what environment info needed",
+        "debugging_recommendations": "what debugging approach to take"
+    }}
+}}
+
+Return ONLY the JSON response."""
                 
-                if "filesystem_project_scan" in all_tools:
-                    self.logger.info("[MCP] Using filesystem_project_scan for code analysis")
-                    code_analysis = await self._call_mcp_tool(
-                        "filesystem_project_scan", 
-                        {"path": str(project_path), "include_patterns": ["*.py", "*.js", "*.ts", "*.java", "*.cpp"]}
-                    )
+                # Get LLM response
+                llm_response = await self.llm_provider.generate(analysis_prompt)
                 
-                # Use content tools for code structure analysis
-                content_analysis = {}
-                if "content_analyze_structure" in all_tools and code_analysis.get("success"):
-                    self.logger.info("[MCP] Using content analysis for code structure analysis")
-                    content_analysis = await self._call_mcp_tool(
-                        "content_analyze_structure",
-                        {"content": code_analysis["result"]}
-                    )
+                # Parse LLM response
+                analysis_plan = self._extract_json_from_response(llm_response)
+                if isinstance(analysis_plan, str):
+                    analysis_plan = json.loads(analysis_plan)
                 
-                # Use intelligence tools for debugging strategy
-                intelligence_analysis = {}
-                if "adaptive_learning_analyze" in all_tools:
-                    self.logger.info("[MCP] Using adaptive_learning_analyze for debugging strategy")
-                    intelligence_analysis = await self._call_mcp_tool(
-                        "adaptive_learning_analyze",
-                        {
-                            "context": {
-                                "code_analysis": code_analysis,
-                                "content_analysis": content_analysis,
-                                "failed_tests": inputs.get("failed_test_reports", []),
-                                "project_path": project_path
-                            }, 
-                            "domain": "code_debugging"
-                        }
-                    )
+                # Execute LLM-chosen tools for debugging analysis
+                tool_results = {}
+                for tool_spec in analysis_plan.get("tools_to_use", []):
+                    tool_name = tool_spec.get("tool_name")
+                    arguments = tool_spec.get("arguments", {})
+                    
+                    try:
+                        result = await self._call_mcp_tool(tool_name, arguments)
+                        tool_results[tool_name] = result
+                        self.logger.info(f"Executed LLM-chosen tool: {tool_name}")
+                    except Exception as e:
+                        self.logger.warning(f"Tool {tool_name} failed: {e}")
+                        tool_results[tool_name] = {"error": str(e)}
                 
-                # Use filesystem tools to read faulty code if path provided
-                faulty_code_content = {}
-                if faulty_code_path and "filesystem_read_file" in all_tools:
-                    self.logger.info("[MCP] Using filesystem_read_file for faulty code analysis")
-                    faulty_code_content = await self._call_mcp_tool(
-                        "filesystem_read_file",
-                        {"path": faulty_code_path}
-                    )
+                # Process debugging analysis results
+                analysis_successful = any(result.get("success") for result in tool_results.values())
                 
-                # Use terminal tools for environment validation
-                environment_info = {}
-                if "terminal_get_environment" in all_tools:
-                    self.logger.info("[MCP] Using terminal tools for environment validation")
-                    environment_info = await self._call_mcp_tool(
-                        "terminal_get_environment",
-                        {}
-                    )
+                return {
+                    "analysis_completed": analysis_successful,
+                    "code_location": inputs.get("faulty_code_path", ""),
+                    "has_code_snippet": bool(inputs.get("faulty_code_snippet")),
+                    "failure_count": len(inputs.get("failed_test_reports", [])),
+                    "analysis_confidence": 0.9 if analysis_successful else 0.6,
+                    "analysis_plan": analysis_plan,
+                    "tool_results": tool_results,
+                    "llm_driven": True,
+                    "debugging_strategy": analysis_plan.get("debugging_strategy", {}),
+                    "success": analysis_successful
+                }
                 
-                # Convert MCP tool analysis to failure analysis
-                if any([code_analysis.get("success"), content_analysis.get("success"), intelligence_analysis.get("success")]):
-                    self.logger.info("[MCP] Converting MCP tool analysis to failure analysis")
-                    return await self._convert_mcp_analysis_to_failure_analysis(
-                        code_analysis, content_analysis, intelligence_analysis, faulty_code_content, environment_info, inputs
-                    )
+            except Exception as e:
+                self.logger.error(f"LLM-driven debugging analysis failed: {e}")
+                # Fall back to traditional approach
         
+        # ENHANCED: Enhanced MCP tool discovery and usage
+        if hasattr(self, 'enable_refinement') and self.enable_refinement:
+            try:
+                return await self._enhanced_discovery_with_universal_tools(inputs, shared_context)
+            except Exception as e:
+                self.logger.error(f"Enhanced discovery failed: {e}")
+        
+        # DEFAULT: Traditional tool access pattern
+        project_path = inputs.get("project_path", shared_context.get("project_root_path", "."))
+        faulty_code_path = inputs.get("faulty_code_path")
+        
+        # Get available tools
+        all_tools = await self._get_all_available_mcp_tools()
+        
+        if all_tools.get("discovery_successful"):
+            all_tools = all_tools["tools"]
+            
+            # Default tool usage pattern (fallback)
+            analysis_results = {}
+            
+            # Basic project scan if available
+            if "filesystem_project_scan" in all_tools:
+                try:
+                    result = await self._call_mcp_tool("filesystem_project_scan", {"path": str(project_path)})
+                    analysis_results["project_scan"] = result
+                except Exception as e:
+                    self.logger.warning(f"Project scan failed: {e}")
+            
+            # Basic file read if faulty code path provided
+            if faulty_code_path and "filesystem_read_file" in all_tools:
+                try:
+                    result = await self._call_mcp_tool("filesystem_read_file", {"path": faulty_code_path})
+                    analysis_results["faulty_code"] = result
+                except Exception as e:
+                    self.logger.warning(f"File read failed: {e}")
+            
+            if analysis_results:
+                return await self._convert_mcp_analysis_to_failure_analysis(
+                    analysis_results.get("project_scan", {}),
+                    {}, # content_analysis
+                    {}, # intelligence_analysis  
+                    analysis_results.get("faulty_code", {}),
+                    {}, # environment_info
+                    inputs
+                )
+        
+        # Traditional fallback analysis
         faulty_code_path = inputs.get("faulty_code_path", "")
         failed_test_reports = inputs.get("failed_test_reports", [])
         code_snippet = inputs.get("faulty_code_snippet")
@@ -657,6 +726,15 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
         
         self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
         return selected
+
+    def _format_available_tools(self, tools: Dict[str, Any]) -> str:
+        """Format ALL available tools for LLM to choose from - no filtering."""
+        formatted = []
+        for tool_name, tool_info in tools.items():
+            description = tool_info.get('description', f'Tool: {tool_name}')
+            formatted.append(f"- {tool_name}: {description}")
+        
+        return "\n".join(formatted) if formatted else "No tools available"
 
     async def _diagnose_bug(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Diagnosis - Identify root causes of the bug."""

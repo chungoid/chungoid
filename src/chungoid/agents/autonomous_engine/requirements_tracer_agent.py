@@ -473,124 +473,119 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         }
 
     async def _discover_artifacts(self, task_input: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 1: Discovery - Discover and retrieve artifacts using MCP tools."""
-        self.logger.info("Starting artifact discovery for traceability analysis")
+        """Phase 1: Discovery - Discover and retrieve traceability artifacts using LLM-driven tool selection."""
+        self.logger.info(f"Starting artifact discovery for {task_input.source_artifact_type} → {task_input.target_artifact_type}")
         
         def get_collection_for_artifact_type(artifact_type: str) -> str:
-            """Map artifact type to collection name."""
+            """Map artifact type to ChromaDB collection name."""
             mapping = {
-                "LOPRD": LOPRD_ARTIFACTS_COLLECTION,
-                "UserStories": LOPRD_ARTIFACTS_COLLECTION,
-                "Blueprint": BLUEPRINT_ARTIFACTS_COLLECTION,
-                "MasterExecutionPlan": EXECUTION_PLANS_COLLECTION,
+                "LOPRD": "loprd_artifacts_collection",
+                "Blueprint": "blueprint_artifacts_collection", 
+                "UserStories": "user_stories_collection",
+                "MasterExecutionPlan": "execution_plans_collection",
+                "CodeModules": "generated_code_artifacts_collection"
             }
-            return mapping.get(artifact_type, LOPRD_ARTIFACTS_COLLECTION)
+            return mapping.get(artifact_type, "unknown_artifacts_collection")
         
-        # ENHANCED: Use universal MCP tool access for intelligent artifact discovery
+        # ENHANCED: Use LLM-driven tool selection for intelligent artifact discovery
         if self.enable_refinement:
-            self.logger.info("[MCP] Using universal MCP tool access for intelligent artifact discovery")
+            self.logger.info("[LLM-Driven] Using LLM-driven tool selection for artifact discovery")
             
-            # Get ALL available tools (no filtering)
-            tool_discovery = await self._get_all_available_mcp_tools()
-            
-            if tool_discovery["discovery_successful"]:
-                all_tools = tool_discovery["tools"]
+            try:
+                # Get all available tools for LLM to choose from
+                available_tools = await self._get_all_available_mcp_tools()
                 
-                # Use ChromaDB tools for enhanced artifact retrieval
-                source_artifact = {}
+                # Let LLM choose tools and approach for traceability analysis
+                discovery_prompt = f"""You need to discover and analyze artifacts for requirements traceability analysis.
+
+TRACEABILITY TASK:
+Source Artifact: {task_input.source_artifact_type} (ID: {task_input.source_artifact_doc_id})
+Target Artifact: {task_input.target_artifact_type} (ID: {task_input.target_artifact_doc_id})
+Project ID: {task_input.project_id}
+Project Path: {task_input.project_path or 'Not provided'}
+
+TASK: Discover and retrieve artifacts to analyze traceability between source and target artifacts:
+- Retrieve source and target artifacts from appropriate collections
+- Analyze artifact content and structure
+- Gather project context for traceability analysis
+- Use appropriate tools for comprehensive artifact discovery
+
+AVAILABLE TOOLS:
+{self._format_available_tools(available_tools)}
+
+Please choose the appropriate tools for artifact discovery and return JSON:
+{{
+    "discovery_approach": "description of your discovery strategy",
+    "tools_to_use": [
+        {{
+            "tool_name": "tool_name",
+            "arguments": {{"param": "value"}},
+            "purpose": "why using this tool for artifact discovery"
+        }}
+    ],
+    "artifact_analysis": {{
+        "source_collection": "{get_collection_for_artifact_type(task_input.source_artifact_type)}",
+        "target_collection": "{get_collection_for_artifact_type(task_input.target_artifact_type)}",
+        "analysis_strategy": "how to analyze the artifacts",
+        "traceability_focus": ["focus area 1", "focus area 2"]
+    }},
+    "expected_outputs": {{
+        "source_artifact_data": "what to extract from source",
+        "target_artifact_data": "what to extract from target", 
+        "contextual_information": "what context is needed",
+        "traceability_mappings": "what mappings to identify"
+    }}
+}}
+
+Return ONLY the JSON response."""
+                
+                # Get LLM response
+                llm_response = await self.llm_provider.generate(discovery_prompt)
+                
+                # Parse LLM response
+                discovery_plan = self._extract_json_from_response(llm_response)
+                if isinstance(discovery_plan, str):
+                    discovery_plan = json.loads(discovery_plan)
+                
+                # Execute LLM-chosen tools for artifact discovery
+                tool_results = {}
+                for tool_spec in discovery_plan.get("tools_to_use", []):
+                    tool_name = tool_spec.get("tool_name")
+                    arguments = tool_spec.get("arguments", {})
+                    
+                    try:
+                        result = await self._call_mcp_tool(tool_name, arguments)
+                        tool_results[tool_name] = result
+                        self.logger.info(f"Executed LLM-chosen tool: {tool_name}")
+                    except Exception as e:
+                        self.logger.warning(f"Tool {tool_name} failed: {e}")
+                        tool_results[tool_name] = {"error": str(e)}
+                
+                # Process discovery results
+                source_artifact = tool_results.get("chromadb_query_documents", {}) if "chromadb_query_documents" in tool_results else {}
                 target_artifact = {}
                 
-                if "chromadb_query_documents" in all_tools:
-                    self.logger.info("[MCP] Using ChromaDB for enhanced artifact retrieval")
-                    
-                    # Retrieve source artifact with enhanced context
-                    source_artifact = await self._call_mcp_tool(
-                        "chromadb_query_documents",
-                        {
-                            "query": f"document_id:{task_input.source_artifact_doc_id} project_id:{task_input.project_id}",
-                            "collection": get_collection_for_artifact_type(task_input.source_artifact_type),
-                            "limit": 1
-                        }
-                    )
-                    
-                    # Retrieve target artifact with enhanced context
-                    target_artifact = await self._call_mcp_tool(
-                        "chromadb_query_documents",
-                        {
-                            "query": f"document_id:{task_input.target_artifact_doc_id} project_id:{task_input.project_id}",
-                            "collection": get_collection_for_artifact_type(task_input.target_artifact_type),
-                            "limit": 1
-                        }
-                    )
+                # Check if we got artifacts from the tool results
+                artifacts_retrieved = any(result.get("success") for result in tool_results.values())
                 
-                # Use content tools for artifact analysis
-                source_analysis = {}
-                target_analysis = {}
-                if "web_content_extract" in all_tools:
-                    self.logger.info("[MCP] Using content extraction for artifact analysis")
-                    source_analysis = await self._call_mcp_tool(
-                        "web_content_extract",
-                        {
-                            "content": str(source_artifact.get("structure", {})),
-                            "extraction_type": "text"
-                        }
-                    )
-                    
-                    target_analysis = await self._call_mcp_tool(
-                        "web_content_extract",
-                        {
-                            "content": str(target_artifact.get("structure", {})),
-                            "extraction_type": "text"
-                        }
-                    )
+                return {
+                    "source_artifact": source_artifact,
+                    "target_artifact": target_artifact, 
+                    "artifacts_retrieved": artifacts_retrieved,
+                    "source_type": task_input.source_artifact_type,
+                    "target_type": task_input.target_artifact_type,
+                    "discovery_plan": discovery_plan,
+                    "tool_results": tool_results,
+                    "llm_driven": True,
+                    "success": artifacts_retrieved
+                }
                 
-                # Use intelligence tools for traceability strategy
-                intelligence_analysis = {}
-                if "adaptive_learning_analyze" in all_tools:
-                    self.logger.info("[MCP] Using adaptive_learning_analyze for traceability strategy")
-                    intelligence_analysis = await self._call_mcp_tool(
-                        "adaptive_learning_analyze",
-                        {
-                            "context": {
-                                "source_artifact": source_artifact,
-                                "target_artifact": target_artifact,
-                                "source_analysis": source_analysis,
-                                "target_analysis": target_analysis,
-                                "traceability_type": f"{task_input.source_artifact_type}_to_{task_input.target_artifact_type}"
-                            }, 
-                            "domain": "requirements_traceability"
-                        }
-                    )
-                
-                # Use filesystem tools for project context
-                project_context = {}
-                if "filesystem_project_scan" in all_tools:
-                    self.logger.info("[MCP] Using filesystem_project_scan for project context")
-                    project_context = await self._call_mcp_tool(
-                        "filesystem_project_scan",
-                        {"scan_path": f"./projects/{task_input.project_id}"}
-                    )
-                
-                # Combine MCP tool results for enhanced artifact discovery
-                if any([source_artifact.get("success"), target_artifact.get("success"), intelligence_analysis.get("success")]):
-                    self.logger.info("[MCP] Successfully enhanced artifact discovery with MCP tools")
-                    return {
-                        "source_artifact": source_artifact,
-                        "target_artifact": target_artifact,
-                        "artifacts_retrieved": True,
-                        "source_type": task_input.source_artifact_type,
-                        "target_type": task_input.target_artifact_type,
-                        "enhanced_analysis": {
-                            "source_analysis": source_analysis,
-                            "target_analysis": target_analysis,
-                            "intelligence_analysis": intelligence_analysis,
-                            "project_context": project_context
-                        },
-                        "mcp_enhanced": True
-                    }
+            except Exception as e:
+                self.logger.error(f"LLM-driven artifact discovery failed: {e}")
+                # Fall back to traditional approach
         
         try:
-            # Retrieve source artifact using MCP tools
+            # Fallback: Retrieve source artifact using MCP tools
             source_collection = get_collection_for_artifact_type(task_input.source_artifact_type)
             source_result = await migrate_retrieve_artifact(
                 collection_name=source_collection,
@@ -617,7 +612,8 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 "target_artifact": target_result,
                 "artifacts_retrieved": True,
                 "source_type": task_input.source_artifact_type,
-                "target_type": task_input.target_artifact_type
+                "target_type": task_input.target_artifact_type,
+                "llm_driven": False
             }
             
         except Exception as e:
@@ -745,6 +741,15 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
         
         self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
         return selected
+
+    def _format_available_tools(self, tools: Dict[str, Any]) -> str:
+        """Format ALL available tools for LLM to choose from - no filtering."""
+        formatted = []
+        for tool_name, tool_info in tools.items():
+            description = tool_info.get('description', f'Tool: {tool_name}')
+            formatted.append(f"- {tool_name}: {description}")
+        
+        return "\n".join(formatted) if formatted else "No tools available"
 
     async def _analyze_traceability(self, discovery_result: Dict[str, Any], task_input: RequirementsTracerInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """Phase 2: Analysis - Analyze traceability between artifacts."""

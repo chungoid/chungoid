@@ -1,1284 +1,555 @@
+"""
+ProjectDocumentationAgent_v1: Dead simple, LLM-powered documentation generation.
+
+This agent generates project documentation by:
+1. Using MCP tools to understand the project structure and code
+2. Using main prompt template from YAML  
+3. Letting the LLM run the show to create comprehensive documentation
+
+No complex phases, no brittle parsing, just LLM + MCP tools.
+"""
+
 from __future__ import annotations
 
 import logging
 import datetime
-import json
 import uuid
-import time
+import json
+from typing import Any, Dict, Optional, List, ClassVar, Type
 from pathlib import Path
-from typing import Any, Dict, Optional, List, ClassVar
 
-class ProtocolExecutionError(Exception):
-    """Raised when protocol execution fails."""
-    pass
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.llm_provider import LLMProvider
-from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.utils.prompt_manager import PromptManager
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.registry import register_autonomous_engine_agent
+
 from ...schemas.unified_execution_schemas import (
     ExecutionContext as UEContext,
-    AgentExecutionResult,
-    ExecutionMetadata,
-    ExecutionMode,
-    CompletionReason,
     IterationResult,
-    StageInfo,
 )
 
 logger = logging.getLogger(__name__)
 
-# PROJECT_DOCUMENTATION_AGENT_PROMPT_NAME = "ProjectDocumentationAgent.yaml" # In server_prompts/autonomous_project_engine/
-# Consistent prompt naming
-PROMPT_NAME = "project_documentation_agent_v1_prompt.yaml"
-PROMPT_SUB_DIR = "autonomous_engine"
-
-# --- Input and Output Schemas based on the prompt file --- #
-
-class ProjectDocumentationAgentInput(BaseModel):
+class ProjectDocumentationInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this documentation task.")
+    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project ID for context.")
     
-    # Traditional fields - optional when using intelligent context
-    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
-    refined_user_goal_doc_id: Optional[str] = Field(None, description="Document ID of the refined user goal specification.")
-    project_blueprint_doc_id: Optional[str] = Field(None, description="Document ID of the project blueprint.")
-    master_execution_plan_doc_id: Optional[str] = Field(None, description="Document ID of the master execution plan.")
-    generated_code_root_path: Optional[str] = Field(None, description="Path to the root directory of the generated codebase.")
-    test_summary_doc_id: Optional[str] = Field(None, description="Optional document ID of the test summary report.")
-    cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle, passed by ARCA for lineage tracking.")
+    # Core fields - simplified
+    user_goal: Optional[str] = Field(None, description="What the user built")
+    project_path: Optional[str] = Field(None, description="Where the project is located")
     
-    # ADDED: Intelligent project analysis from orchestrator
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
+    # Traditional fields for backward compatibility
+    project_blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of project blueprint if available")
+    generated_code_root_path: Optional[str] = Field(None, description="Path to generated codebase")
+    
+    # Context fields from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Project specs from orchestrator")
     intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
-    user_goal: Optional[str] = Field(None, description="Original user goal for context")
-    project_path: Optional[str] = Field(None, description="Project path for context")
+    
+    # Documentation options
+    include_api_docs: bool = Field(default=True, description="Whether to generate API documentation")
+    include_user_guide: bool = Field(default=True, description="Whether to generate user guide")
+    include_dependency_audit: bool = Field(default=True, description="Whether to generate dependency audit")
+    
+    @model_validator(mode='after')
+    def check_minimum_requirements(self) -> 'ProjectDocumentationInput':
+        """Ensure we have minimum info to generate documentation."""
+        
+        # Need either user_goal or project_path
+        if not self.user_goal and not self.project_path:
+            raise ValueError("Either user_goal or project_path is required")
+        
+        # Default project_path if not provided
+        if not self.project_path:
+            self.project_path = "."
+        
+        return self
 
-class ProjectDocumentationAgentOutput(BaseModel):
+class ProjectDocumentationOutput(BaseModel):
     task_id: str = Field(..., description="Echoed task_id from input.")
     project_id: str = Field(..., description="Echoed project_id from input.")
+    status: str = Field(..., description="Status of documentation generation (SUCCESS, FAILURE, etc.).")
     
-    readme_doc_id: Optional[str] = Field(None, description="ChromaDB document ID for the generated README.md.")
-    docs_directory_doc_id: Optional[str] = Field(None, description="ChromaDB document ID for a manifest or bundle representing the generated 'docs/' directory content.")
-    codebase_dependency_audit_doc_id: Optional[str] = Field(None, description="ChromaDB document ID for the generated codebase_dependency_audit.md.")
-    release_notes_doc_id: Optional[str] = Field(None, description="Optional ChromaDB document ID for generated RELEASE_NOTES.md.")
+    # Generated documentation files
+    documentation_files: Dict[str, str] = Field(default_factory=dict, description="Generated documentation files {file_path: content}")
     
-    status: str = Field(..., description="Status of the documentation generation (e.g., SUCCESS, FAILURE_LLM).")
-    message: str = Field(..., description="A message detailing the outcome.")
-    agent_confidence_score: Optional[ConfidenceScore] = Field(None, description="Agent's confidence in the generated documentation.")
-    error_message: Optional[str] = Field(None, description="Error message if status is not SUCCESS.")
-    llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging.")
-    # usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
-
+    # Results
+    generation_summary: str = Field(..., description="Summary of documentation generation")
+    files_created: List[str] = Field(default_factory=list, description="List of documentation files created")
+    
+    # Status and metadata
+    message: str = Field(..., description="Message detailing the outcome.")
+    confidence_score: Optional[ConfidenceScore] = Field(None, description="Agent's confidence in the documentation quality.")
+    error_message: Optional[str] = Field(None, description="Error message if generation failed.")
+    usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata about the generation process.")
 
 @register_autonomous_engine_agent(capabilities=["documentation_generation", "project_analysis", "comprehensive_reporting"])
 class ProjectDocumentationAgent_v1(UnifiedAgent):
+    """
+    Dead simple documentation generation agent.
+    
+    1. MCP tools for project understanding and file operations
+    2. Main prompt from YAML template  
+    3. LLM runs the show - creates comprehensive documentation without complex phases
+    """
+    
     AGENT_ID: ClassVar[str] = "ProjectDocumentationAgent_v1"
     AGENT_NAME: ClassVar[str] = "Project Documentation Agent v1"
-    DESCRIPTION: ClassVar[str] = "Generates project documentation (README, API docs, dependency audit) from project artifacts and codebase context."
-    AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["documentation_generation", "project_analysis", "comprehensive_reporting", "complex_analysis"]
+    AGENT_DESCRIPTION: ClassVar[str] = "Simple, LLM-powered documentation generation with MCP tools."
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "project_documentation_agent_v1_prompt.yaml"
+    AGENT_VERSION: ClassVar[str] = "3.0.0"  # Major version bump for simplification
+    CAPABILITIES: ClassVar[List[str]] = ["documentation_generation", "project_analysis", "comprehensive_reporting"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.DOCUMENTATION_GENERATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
+    INPUT_SCHEMA: ClassVar[Type[ProjectDocumentationInput]] = ProjectDocumentationInput
+    OUTPUT_SCHEMA: ClassVar[Type[ProjectDocumentationOutput]] = ProjectDocumentationOutput
 
-    _llm_provider: LLMProvider
-    _prompt_manager: PromptManager
-    _logger: logging.Logger
-    # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["agent_communication"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "agent_communication"]
-    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'tool_validation']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["simple_documentation_generation"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["mcp_file_operations"]
+    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing']
 
+    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, **kwargs):
+        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as simple documentation agent.")
 
-    def __init__(
-        self,
-        llm_provider: LLMProvider,
-        prompt_manager: PromptManager,
-        **kwargs
-    ):
-        # Enable refinement capabilities for intelligent documentation generation
-        super().__init__(
-            llm_provider=llm_provider, 
-            prompt_manager=prompt_manager, 
-            enable_refinement=True,  # Enable intelligent refinement
-            **kwargs
-        )
+    def _convert_pydantic_to_dict(self, obj: Any) -> Any:
+        """Recursively convert Pydantic objects to dictionaries."""
+        if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
+            return obj.dict()
+        elif isinstance(obj, dict):
+            return {key: self._convert_pydantic_to_dict(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._convert_pydantic_to_dict(item) for item in obj]
+        else:
+            return obj
 
-    async def _execute_iteration(
-        self, 
-        context: UEContext, 
-        iteration: int
-    ) -> IterationResult:
+    async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        Pure UAEI implementation for project documentation generation.
-        Runs comprehensive documentation workflow: discovery → analysis → documentation → validation
+        Dead simple execution: Let the LLM understand the project and generate documentation.
+        No complex phases, just LLM + MCP tools.
         """
-        start_time = time.time()
-        
         try:
-            # Convert inputs to expected format - handle both dict and object inputs
+            # Convert inputs - handle both dict and Pydantic objects
             if isinstance(context.inputs, dict):
-                inputs = context.inputs
+                converted_inputs = self._convert_pydantic_to_dict(context.inputs)
+                task_input = ProjectDocumentationInput(**converted_inputs)
             elif hasattr(context.inputs, 'dict'):
-                inputs = context.inputs.dict()
+                task_input = ProjectDocumentationInput(**context.inputs.dict())
             else:
-                inputs = context.inputs
+                task_input = context.inputs
 
-            # Phase 1: Discovery - Analyze project artifacts and codebase
-            if inputs.get("intelligent_context") and inputs.get("project_specifications"):
-                self.logger.info("Using intelligent project specifications from orchestrator")
-                discovery_result = await self._extract_artifacts_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
-            else:
-                self.logger.info("Using traditional artifact discovery")
-                discovery_result = await self._discover_project_artifacts(inputs, context.shared_context)
+            self.logger.info(f"Starting simple documentation generation for: {task_input.user_goal or 'project'}")
+
+            # 1. Gather project context using MCP tools
+            project_context = await self._gather_project_context(task_input)
             
-            # Phase 2: Analysis - Understand project structure and requirements
-            analysis_result = await self._analyze_project_structure(discovery_result, inputs, context.shared_context)
+            # 2. Let LLM generate documentation using main prompt template
+            documentation_result = await self._generate_documentation_with_llm(task_input, project_context)
             
-            # Phase 3: Documentation Generation - Create comprehensive documentation files
-            documentation_result = await self._generate_documentation(analysis_result, inputs, context.shared_context)
-            
-            # Phase 4: Validation - Verify documentation quality and completeness
-            validation_result = await self._validate_documentation(documentation_result, inputs, context.shared_context)
-            
-            # Calculate quality score based on validation results
-            quality_score = self._calculate_quality_score(validation_result)
-            
-            # Create output
-            output = ProjectDocumentationAgentOutput(
-                task_id=inputs.get("task_id", str(uuid.uuid4())),
-                project_id=inputs.get("project_id") or "intelligent_project",
-                readme_doc_id=documentation_result.get("readme_doc_id"),
-                docs_directory_doc_id=documentation_result.get("docs_directory_doc_id"),
-                codebase_dependency_audit_doc_id=documentation_result.get("codebase_dependency_audit_doc_id"),
-                release_notes_doc_id=documentation_result.get("release_notes_doc_id"),
-                status="SUCCESS",
-                message="Documentation generation completed successfully",
-                agent_confidence_score=ConfidenceScore(
-                    value=quality_score, 
-                    method="comprehensive_validation",
-                    explanation="Based on comprehensive validation"
-                )
+            # 3. Create simple output
+            output = ProjectDocumentationOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
+                status="SUCCESS" if documentation_result["success"] else "FAILURE",
+                documentation_files=documentation_result.get("documentation_files", {}),
+                generation_summary=documentation_result.get("generation_summary", "Documentation generation completed"),
+                files_created=list(documentation_result.get("documentation_files", {}).keys()),
+                message=documentation_result.get("message", "Documentation generation completed"),
+                confidence_score=ConfidenceScore(
+                    value=documentation_result.get("confidence", 0.8),
+                    method="llm_self_assessment",
+                    explanation="LLM assessed its own documentation generation quality"
+                ),
+                error_message=documentation_result.get("error"),
+                usage_metadata={
+                    "iteration": iteration + 1,
+                    "files_generated": len(documentation_result.get("documentation_files", {})),
+                    "documentation_created": documentation_result.get("success", False)
+                }
             )
             
-            # Return iteration result for Phase 3 multi-iteration support
             return IterationResult(
                 output=output,
-                quality_score=quality_score,
-                tools_used=["project_analysis", "document_generation", "code_scanning"],
-                protocol_used="documentation_generation_protocol"
+                quality_score=documentation_result.get("confidence", 0.8),
+                tools_used=["llm_analysis", "mcp_file_operations"],
+                protocol_used="simple_documentation_generation"
             )
             
         except Exception as e:
             self.logger.error(f"Documentation generation failed: {e}")
             
-            # Create error output
-            error_output = ProjectDocumentationAgentOutput(
-                task_id=inputs.get("task_id", str(uuid.uuid4())),
-                project_id=inputs.get("project_id", "unknown"),
-                status="FAILURE_LLM",
-                message=f"Documentation generation failed: {str(e)}",
+            # Safe error output
+            task_id = getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4())
+            project_id = getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown'
+            
+            error_output = ProjectDocumentationOutput(
+                task_id=task_id,
+                project_id=project_id,
+                status="ERROR",
+                documentation_files={},
+                generation_summary="Documentation generation failed",
+                files_created=[],
+                message="Documentation generation failed",
                 error_message=str(e)
             )
             
-            # Return iteration result for Phase 3 multi-iteration support
             return IterationResult(
                 output=error_output,
                 quality_score=0.0,
                 tools_used=[],
-                protocol_used="documentation_generation_protocol"
+                protocol_used="simple_documentation_generation"
             )
 
-
-    async def _extract_artifacts_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract artifact-like data from intelligent project specifications using LLM processing."""
+    async def _gather_project_context(self, task_input: ProjectDocumentationInput) -> str:
+        """
+        Simple method: Gather all relevant project context for the LLM.
+        "Learn about the project" - scan files, read code, understand structure.
+        """
+        self.logger.info(f"Gathering project context from: {task_input.project_path}")
         
+        context_parts = []
+        
+        # Add user goal
+        if task_input.user_goal:
+            context_parts.append(f"User Goal: {task_input.user_goal}")
+        
+        # Add project specifications if available
+        if task_input.project_specifications:
+            context_parts.append(f"Project Specifications: {json.dumps(task_input.project_specifications, indent=2)}")
+        
+        # Try to read existing blueprint if available
+        if task_input.project_blueprint_doc_id:
+            try:
+                blueprint_result = await self._call_mcp_tool("chromadb_retrieve_document", {
+                    "collection_name": "blueprint_artifacts_collection",
+                    "document_id": task_input.project_blueprint_doc_id
+                })
+                if blueprint_result.get("success"):
+                    blueprint_content = blueprint_result.get("content", "")
+                    context_parts.append(f"Project Blueprint: {blueprint_content}")
+                    self.logger.info("Successfully retrieved project blueprint")
+            except Exception as e:
+                self.logger.warning(f"Could not retrieve blueprint: {e}")
+        
+        # Scan project directory with MCP tools
         try:
-            if self.llm_provider:
-                # Use LLM to intelligently analyze the project specifications and plan documentation strategy
-                prompt = f"""
-                You are a project documentation agent. Analyze the following project specifications and user goal to create an intelligent documentation strategy and artifact analysis.
-                
-                User Goal: {user_goal}
-                
-                Project Specifications:
-                - Project Type: {project_specs.get('project_type', 'unknown')}
-                - Primary Language: {project_specs.get('primary_language', 'unknown')}
-                - Target Languages: {project_specs.get('target_languages', [])}
-                - Target Platforms: {project_specs.get('target_platforms', [])}
-                - Technologies: {project_specs.get('technologies', [])}
-                - Required Dependencies: {project_specs.get('required_dependencies', [])}
-                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
-                
-                Based on this information, provide a detailed JSON analysis for documentation planning with the following structure:
-                {{
-                    "documentation_strategy": {{
-                        "readme_sections": ["section1", "section2", "section3"],
-                        "api_documentation_needed": true|false,
-                        "user_guide_sections": ["section1", "section2"],
-                        "developer_guide_sections": ["section1", "section2"]
-                    }},
-                    "artifact_analysis": {{
-                        "refined_goal_available": true,
-                        "blueprint_available": true,
-                        "execution_plan_available": true,
-                        "codebase_available": false,
-                        "test_summary_available": false,
-                        "artifacts_found": ["artifact1", "artifact2"]
-                    }},
-                    "documentation_priorities": ["priority1", "priority2", "priority3"],
-                    "content_sources": ["source1", "source2"],
-                    "complexity_assessment": "simple|medium|complex",
-                    "estimated_documentation_scope": "minimal|standard|comprehensive",
-                    "special_considerations": ["consideration1", "consideration2"],
-                    "confidence_score": 0.0-1.0,
-                    "reasoning": "explanation of documentation approach"
-                }}
-                """
-                
-                response = await self.llm_provider.generate(prompt)
-                
-                if response:
-                    try:
-                        # Extract JSON from markdown code blocks if present
-                        json_content = self._extract_json_from_response(response)
-                        parsed_result = json.loads(json_content)
-                        
-                        # Validate that we got a dictionary as expected
-                        if not isinstance(parsed_result, dict):
-                            self.logger.warning(f"Expected dict from documentation analysis, got {type(parsed_result)}. Using fallback.")
-                            return self._generate_fallback_documentation_analysis(project_specs, user_goal)
-                        
-                        analysis = parsed_result
-                        
-                        # Create intelligent artifact discovery based on LLM analysis
-                        artifacts = {
-                            "refined_goal_available": analysis.get("artifact_analysis", {}).get("refined_goal_available", True),
-                            "blueprint_available": analysis.get("artifact_analysis", {}).get("blueprint_available", True),
-                            "execution_plan_available": analysis.get("artifact_analysis", {}).get("execution_plan_available", True),
-                            "codebase_available": analysis.get("artifact_analysis", {}).get("codebase_available", False),
-                            "test_summary_available": analysis.get("artifact_analysis", {}).get("test_summary_available", False),
-                            "artifacts_found": analysis.get("artifact_analysis", {}).get("artifacts_found", ["refined_user_goal", "project_blueprint", "master_execution_plan"]),
-                            "intelligent_analysis": True,
-                            "project_type": project_specs.get("project_type", "unknown"),
-                            "technologies": project_specs.get("technologies", []),
-                            "dependencies": project_specs.get("required_dependencies", []),
-                            "documentation_strategy": analysis.get("documentation_strategy", {}),
-                            "documentation_priorities": analysis.get("documentation_priorities", []),
-                            "complexity_assessment": analysis.get("complexity_assessment", "medium"),
-                            "estimated_scope": analysis.get("estimated_documentation_scope", "standard"),
-                            "special_considerations": analysis.get("special_considerations", []),
-                            "llm_confidence": analysis.get("confidence_score", 0.8),
-                            "analysis_method": "llm_intelligent_processing"
-                        }
-                        
-                        return artifacts
-                    except json.JSONDecodeError as e:
-                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
-            
-            # Fallback to basic extraction if LLM fails
-            self.logger.info("Using fallback artifact analysis due to LLM unavailability")
-            return self._generate_fallback_artifact_analysis(project_specs, user_goal)
-            
-        except Exception as e:
-            self.logger.error(f"Error in intelligent artifact specs analysis: {e}")
-            return self._generate_fallback_artifact_analysis(project_specs, user_goal)
-
-    def _generate_fallback_artifact_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Generate fallback artifact analysis when LLM is unavailable."""
-        
-        # Create basic artifact discovery from project specifications
-        artifacts = {
-            "refined_goal_available": True,  # We have the user goal
-            "blueprint_available": True,     # We can derive blueprint info
-            "execution_plan_available": True, # We can derive execution info
-            "codebase_available": False,     # No actual code yet
-            "test_summary_available": False, # No tests yet
-            "artifacts_found": ["refined_user_goal", "project_blueprint", "master_execution_plan"],
-            "intelligent_analysis": True,
-            "project_type": project_specs.get("project_type", "unknown"),
-            "technologies": project_specs.get("technologies", []),
-            "dependencies": project_specs.get("required_dependencies", []),
-            "analysis_method": "fallback_extraction"
-        }
-        
-        return artifacts
-
-    async def _discover_project_artifacts(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 1: Discovery - Analyze project artifacts and codebase structure."""
-        self.logger.info("Starting project artifact discovery")
-        
-        # ENHANCED: Use universal MCP tool access for intelligent project artifact discovery
-        if self.enable_refinement:
-            self.logger.info("[MCP] Using universal MCP tool access for intelligent project artifact discovery")
-            
-            # Get ALL available tools (no filtering)
-            tool_discovery = await self._get_all_available_mcp_tools()
-            
-            if tool_discovery["discovery_successful"]:
-                all_tools = tool_discovery["tools"]
-                
-                # Use filesystem tools for comprehensive project analysis
-                project_analysis = {}
-                if "filesystem_project_scan" in all_tools:
-                    self.logger.info("[MCP] Using filesystem_project_scan for project analysis")
-                    project_path = inputs.get("generated_code_root_path", shared_context.get("project_root_path", "."))
-                    project_analysis = await self._call_mcp_tool(
-                        "filesystem_project_scan", 
-                        {"scan_path": str(project_path)}
-                    )
-                
-                # Use content tools for deeper analysis
-                structure_analysis = {}
-                if "web_content_extract" in all_tools and project_analysis.get("success"):
-                    self.logger.info("[MCP] Using content extraction for project structure analysis")
-                    structure_analysis = await self._call_mcp_tool(
-                        "web_content_extract",
-                        {
-                            "content": str(project_analysis.get("structure", {})),
-                            "extraction_type": "text"
-                        }
-                    )
-                
-                # Use intelligence tools for documentation strategy
-                intelligence_analysis = {}
-                if "adaptive_learning_analyze" in all_tools:
-                    self.logger.info("[MCP] Using adaptive_learning_analyze for documentation strategy")
-                    intelligence_analysis = await self._call_mcp_tool(
-                        "adaptive_learning_analyze",
-                        {
-                            "context": {
-                                "project_analysis": project_analysis,
-                                "structure_analysis": structure_analysis,
-                                "project_id": inputs.get("project_id")
-                            }, 
-                            "domain": "documentation_generation"
-                        }
-                    )
-                
-                # Use ChromaDB tools for artifact retrieval
-                artifact_retrieval = {}
-                if "chromadb_query_documents" in all_tools:
-                    self.logger.info("[MCP] Using ChromaDB for artifact retrieval")
-                    project_id = inputs.get("project_id", "unknown")
-                    artifact_retrieval = await self._call_mcp_tool(
-                        "chromadb_query_documents",
-                        {"query": f"project_id:{project_id}", "limit": 10}
-                    )
-                
-                # Use terminal tools for environment validation
-                environment_info = {}
-                if "terminal_get_environment" in all_tools:
-                    self.logger.info("[MCP] Using terminal tools for environment validation")
-                    environment_info = await self._call_mcp_tool(
-                        "terminal_get_environment",
-                        {}
-                    )
-                
-                # Convert MCP tool analysis to artifact discovery
-                if any([project_analysis.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
-                    self.logger.info("[MCP] Converting MCP tool analysis to artifact discovery")
-                    return await self._convert_mcp_analysis_to_artifact_discovery(
-                        project_analysis, structure_analysis, intelligence_analysis, artifact_retrieval, environment_info, inputs
-                    )
-        
-        # Extract document IDs from inputs
-        refined_goal_id = inputs.get("refined_user_goal_doc_id")
-        blueprint_id = inputs.get("project_blueprint_doc_id")
-        execution_plan_id = inputs.get("master_execution_plan_doc_id")
-        code_root_path = inputs.get("generated_code_root_path")
-        
-        # Simulate artifact discovery
-        artifacts = {
-            "refined_goal_available": bool(refined_goal_id),
-            "blueprint_available": bool(blueprint_id),
-            "execution_plan_available": bool(execution_plan_id),
-            "codebase_available": bool(code_root_path),
-            "test_summary_available": bool(inputs.get("test_summary_doc_id")),
-            "artifacts_found": []
-        }
-        
-        if refined_goal_id:
-            artifacts["artifacts_found"].append("refined_user_goal")
-        if blueprint_id:
-            artifacts["artifacts_found"].append("project_blueprint")
-        if execution_plan_id:
-            artifacts["artifacts_found"].append("master_execution_plan")
-        if code_root_path:
-            artifacts["artifacts_found"].append("generated_codebase")
-            
-        return artifacts
-
-    async def _convert_mcp_analysis_to_artifact_discovery(
-        self, 
-        project_analysis: Dict[str, Any], 
-        structure_analysis: Dict[str, Any], 
-        intelligence_analysis: Dict[str, Any],
-        artifact_retrieval: Dict[str, Any],
-        environment_info: Dict[str, Any],
-        inputs: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Convert MCP tool analysis results to artifact discovery."""
-        
-        try:
-            # Extract artifact information from MCP tool results
-            artifacts_found = []
-            
-            # Analyze project scan results
-            if project_analysis.get("success") and project_analysis.get("result"):
-                scan_result = project_analysis["result"]
-                if isinstance(scan_result, dict):
-                    # Check for different types of project artifacts
-                    if scan_result.get("readme_files"):
-                        artifacts_found.append("existing_readme")
-                    if scan_result.get("documentation_files"):
-                        artifacts_found.append("existing_documentation")
-                    if scan_result.get("code_files"):
-                        artifacts_found.append("generated_codebase")
-                    if scan_result.get("test_files"):
-                        artifacts_found.append("test_summary")
-                    if scan_result.get("dependency_files"):
-                        artifacts_found.append("dependency_info")
-            
-            # Analyze structure analysis results
-            if structure_analysis.get("success") and structure_analysis.get("result"):
-                structure_result = structure_analysis["result"]
-                if isinstance(structure_result, dict):
-                    # Extract documentation requirements from structure analysis
-                    if structure_result.get("api_endpoints"):
-                        artifacts_found.append("api_documentation_needed")
-                    if structure_result.get("modules"):
-                        artifacts_found.append("module_documentation_needed")
-            
-            # Analyze artifact retrieval results
-            if artifact_retrieval.get("success") and artifact_retrieval.get("result"):
-                retrieval_result = artifact_retrieval["result"]
-                if isinstance(retrieval_result, list):
-                    for artifact in retrieval_result:
-                        if isinstance(artifact, dict):
-                            artifact_type = artifact.get("metadata", {}).get("artifact_type", "")
-                            if "LOPRD" in artifact_type:
-                                artifacts_found.append("refined_user_goal")
-                            elif "Blueprint" in artifact_type:
-                                artifacts_found.append("project_blueprint")
-                            elif "ExecutionPlan" in artifact_type:
-                                artifacts_found.append("master_execution_plan")
-            
-            # Use intelligence analysis for documentation strategy
-            documentation_strategy = {}
-            if intelligence_analysis.get("success") and intelligence_analysis.get("result"):
-                intel_result = intelligence_analysis["result"]
-                if isinstance(intel_result, dict):
-                    documentation_strategy = intel_result.get("documentation_strategy", {})
-            
-            # Remove duplicates
-            unique_artifacts = list(set(artifacts_found))
-            
-            # Determine availability flags
-            artifacts = {
-                "refined_goal_available": "refined_user_goal" in unique_artifacts,
-                "blueprint_available": "project_blueprint" in unique_artifacts,
-                "execution_plan_available": "master_execution_plan" in unique_artifacts,
-                "codebase_available": "generated_codebase" in unique_artifacts,
-                "test_summary_available": "test_summary" in unique_artifacts,
-                "artifacts_found": unique_artifacts,
-                "documentation_strategy": documentation_strategy,
-                "mcp_enhanced": True,
-                "discovery_confidence": 0.95
-            }
-            
-            self.logger.info(f"[MCP] Discovered {len(unique_artifacts)} artifacts from MCP analysis")
-            return artifacts
-            
-        except Exception as e:
-            self.logger.error(f"[MCP] Failed to convert MCP analysis to artifact discovery: {e}")
-            # Fall back to basic discovery
-            return {
-                "refined_goal_available": False,
-                "blueprint_available": False,
-                "execution_plan_available": False,
-                "codebase_available": False,
-                "test_summary_available": False,
-                "artifacts_found": [],
-                "error": str(e)
-            }
-
-    async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Universal tool access pattern for ProjectDocumentationAgent."""
-        
-        # 1. Get ALL available tools (no filtering)
-        tool_discovery = await self._get_all_available_mcp_tools()
-        
-        if not tool_discovery["discovery_successful"]:
-            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
-            return {"error": "Tool discovery failed", "limited_functionality": True}
-        
-        all_tools = tool_discovery["tools"]
-        
-        # 2. Intelligent tool selection based on context
-        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
-        
-        # 3. Use filesystem tools for project analysis
-        project_analysis = {}
-        if "filesystem_project_scan" in selected_tools:
-            project_path = inputs.get("generated_code_root_path", shared_context.get("project_root_path", "."))
-            project_analysis = await self._call_mcp_tool(
-                "filesystem_project_scan", 
-                {"scan_path": str(project_path)}
-            )
-        
-        # 4. Use intelligence tools for documentation strategy
-        intelligence_analysis = {}
-        if "adaptive_learning_analyze" in selected_tools:
-            intelligence_analysis = await self._call_mcp_tool(
-                "adaptive_learning_analyze",
-                {"context": project_analysis, "domain": self.AGENT_ID}
-            )
-        
-        # 5. Use content tools for project structure analysis
-        structure_analysis = {}
-        if "web_content_extract" in selected_tools and project_analysis.get("success"):
-            structure_analysis = await self._call_mcp_tool(
-                "web_content_extract",
-                {
-                    "content": str(project_analysis.get("structure", {})),
-                    "extraction_type": "text"
-                }
-            )
-        
-        # 6. Use ChromaDB tools for artifact retrieval
-        artifact_retrieval = {}
-        if "chromadb_query_documents" in selected_tools:
-            project_id = inputs.get("project_id", "unknown")
-            artifact_retrieval = await self._call_mcp_tool(
-                "chromadb_query_documents",
-                {"query": f"project_id:{project_id} documentation", "limit": 10}
-            )
-        
-        # 7. Use terminal tools for environment validation
-        environment_info = {}
-        if "terminal_get_environment" in selected_tools:
-            environment_info = await self._call_mcp_tool(
-                "terminal_get_environment",
-                {}
-            )
-        
-        # 8. Use tool discovery for documentation recommendations
-        tool_recommendations = {}
-        if "get_tool_composition_recommendations" in selected_tools:
-            tool_recommendations = await self._call_mcp_tool(
-                "get_tool_composition_recommendations",
-                {"context": {"agent_id": self.AGENT_ID, "task_type": "documentation_generation"}}
-            )
-        
-        # 9. Combine all analyses
-        return {
-            "universal_tool_access": True,
-            "tools_available": len(all_tools),
-            "tools_selected": len(selected_tools),
-            "tool_categories": tool_discovery["categories"],
-            "project_analysis": project_analysis,
-            "intelligence_analysis": intelligence_analysis,
-            "structure_analysis": structure_analysis,
-            "artifact_retrieval": artifact_retrieval,
-            "environment_info": environment_info,
-            "tool_recommendations": tool_recommendations,
-            "agent_domain": self.AGENT_ID,
-            "analysis_timestamp": time.time()
-        }
-
-    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Intelligent tool selection - agents choose which tools to use."""
-        
-        # Start with core tools every agent should consider
-        core_tools = [
-            "filesystem_project_scan",
-            "chromadb_query_documents", 
-            "terminal_get_environment"
-        ]
-        
-        # Add documentation-specific tools
-        documentation_tools = [
-            "web_content_extract",
-            "content_generate_dynamic",
-            "filesystem_read_file",
-            "filesystem_write_file"
-        ]
-        core_tools.extend(documentation_tools)
-        
-        # Add intelligence tools for all agents
-        intelligence_tools = [
-            "adaptive_learning_analyze",
-            "get_real_time_performance_analysis",
-            "generate_performance_recommendations"
-        ]
-        core_tools.extend(intelligence_tools)
-        
-        # Select available tools
-        selected = {}
-        for tool_name in core_tools:
-            if tool_name in all_tools:
-                selected[tool_name] = all_tools[tool_name]
-        
-        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
-        return selected
-
-    async def _analyze_project_structure(self, discovery_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 2: Analysis - Understand project structure and requirements."""
-        self.logger.info("Starting project structure analysis")
-        
-        # Analyze based on discovered artifacts
-        artifacts_count = len(discovery_result.get("artifacts_found", []))
-        
-        structure_analysis = {
-            "project_complexity": "high" if artifacts_count >= 4 else "medium" if artifacts_count >= 2 else "low",
-            "documentation_requirements": {
-                "readme_required": True,
-                "api_docs_required": discovery_result.get("codebase_available", False),
-                "dependency_audit_required": discovery_result.get("codebase_available", False),
-                "release_notes_required": discovery_result.get("execution_plan_available", False)
-            },
-            "content_sources": discovery_result.get("artifacts_found", []),
-            "analysis_confidence": min(0.9, 0.5 + (artifacts_count * 0.1))
-        }
-        
-        return structure_analysis
-
-    async def _generate_documentation(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 3: Documentation Generation - Create comprehensive documentation files."""
-        self.logger.info("Starting actual documentation file generation")
-        
-        requirements = analysis_result.get("documentation_requirements", {})
-        project_path = inputs.get("project_path", ".")
-        project_id = inputs.get("project_id", "unknown")
-        
-        # Create project path if it doesn't exist
-        project_root = Path(project_path)
-        project_root.mkdir(parents=True, exist_ok=True)
-        
-        generated_files = {}
-        created_files = []
-        
-        try:
-            # 1. Generate README.md if required
-            if requirements.get("readme_required", True):
-                readme_path = await self._generate_and_write_readme(project_root, analysis_result, inputs, shared_context)
-                if readme_path:
-                    generated_files["readme_doc_id"] = str(readme_path)
-                    created_files.append(str(readme_path))
-                    self.logger.info(f"✅ Created README.md at {readme_path}")
-            
-            # 2. Generate API documentation if required
-            if requirements.get("api_docs_required", False):
-                docs_dir = await self._generate_and_write_api_docs(project_root, analysis_result, inputs, shared_context)
-                if docs_dir:
-                    generated_files["docs_directory_doc_id"] = str(docs_dir)
-                    created_files.append(str(docs_dir))
-                    self.logger.info(f"✅ Created API docs at {docs_dir}")
-            
-            # 3. Generate dependency audit if required
-            if requirements.get("dependency_audit_required", False):
-                audit_path = await self._generate_and_write_dependency_audit(project_root, analysis_result, inputs, shared_context)
-                if audit_path:
-                    generated_files["codebase_dependency_audit_doc_id"] = str(audit_path)
-                    created_files.append(str(audit_path))
-                    self.logger.info(f"✅ Created dependency audit at {audit_path}")
-            
-            # 4. Generate release notes if required
-            if requirements.get("release_notes_required", False):
-                release_path = await self._generate_and_write_release_notes(project_root, analysis_result, inputs, shared_context)
-                if release_path:
-                    generated_files["release_notes_doc_id"] = str(release_path)
-                    created_files.append(str(release_path))
-                    self.logger.info(f"✅ Created release notes at {release_path}")
-            
-            generated_files.update({
-                "generation_success": True,
-                "documents_created": len(created_files),
-                "created_files": created_files,
-                "files_written": True
+            list_result = await self._call_mcp_tool("filesystem_list_directory", {
+                "directory_path": task_input.project_path
             })
             
-            self.logger.info(f"📝 Successfully generated {len(created_files)} documentation files")
-            return generated_files
-            
-        except Exception as e:
-            self.logger.error(f"❌ Documentation generation failed: {e}")
-            return {
-                "generation_success": False,
-                "documents_created": 0,
-                "created_files": [],
-                "files_written": False,
-                "error": str(e)
-            }
-
-    async def _generate_and_write_readme(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
-        """Generate and write README.md file."""
-        try:
-            readme_content = await self._generate_readme_content(analysis_result, inputs, shared_context)
-            if readme_content:
-                readme_path = project_root / "README.md"
-                await self._write_file_safely(readme_path, readme_content)
-                return readme_path
-            return None
-        except Exception as e:
-            self.logger.error(f"Failed to generate README.md: {e}")
-            return None
-
-    async def _generate_and_write_api_docs(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
-        """Generate and write API documentation directory."""
-        try:
-            # Create docs directory structure
-            docs_dir = project_root / "docs"
-            docs_dir.mkdir(exist_ok=True)
-            
-            # Generate API documentation content
-            api_content = await self._generate_api_docs_content(analysis_result, inputs, shared_context)
-            if api_content:
-                api_path = docs_dir / "API.md"
-                await self._write_file_safely(api_path, api_content)
-                
-                # Generate additional docs if needed
-                user_guide_content = await self._generate_user_guide_content(analysis_result, inputs, shared_context)
-                if user_guide_content:
-                    user_guide_path = docs_dir / "USER_GUIDE.md"
-                    await self._write_file_safely(user_guide_path, user_guide_content)
-                
-                return docs_dir
-            return None
-        except Exception as e:
-            self.logger.error(f"Failed to generate API docs: {e}")
-            return None
-
-    async def _generate_and_write_dependency_audit(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
-        """Generate and write dependency audit file."""
-        try:
-            audit_content = await self._generate_dependency_audit_content(analysis_result, inputs, shared_context)
-            if audit_content:
-                audit_path = project_root / "DEPENDENCY_AUDIT.md"
-                await self._write_file_safely(audit_path, audit_content)
-                return audit_path
-            return None
-        except Exception as e:
-            self.logger.error(f"Failed to generate dependency audit: {e}")
-            return None
-
-    async def _generate_and_write_release_notes(self, project_root: Path, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Optional[Path]:
-        """Generate and write release notes file."""
-        try:
-            release_content = await self._generate_release_notes_content(analysis_result, inputs, shared_context)
-            if release_content:
-                release_path = project_root / "RELEASE_NOTES.md"
-                await self._write_file_safely(release_path, release_content)
-                return release_path
-            return None
-        except Exception as e:
-            self.logger.error(f"Failed to generate release notes: {e}")
-            return None
-
-    async def _generate_readme_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
-        """Generate comprehensive README.md content using LLM."""
-        if not self.llm_provider:
-            return self._generate_fallback_readme(analysis_result, inputs)
-        
-        try:
-            # Extract project information
-            project_specs = shared_context.get("project_specifications", {})
-            user_goal = inputs.get("user_goal", "Unknown project goal")
-            project_type = project_specs.get("project_type", "Unknown")
-            primary_language = project_specs.get("primary_language", "Unknown")
-            technologies = project_specs.get("technologies", [])
-            
-            prompt = f"""
-            Generate a comprehensive, professional README.md file for this project.
-            
-            Project Information:
-            - User Goal: {user_goal}
-            - Project Type: {project_type}
-            - Primary Language: {primary_language}
-            - Technologies: {', '.join(technologies) if technologies else 'None specified'}
-            
-            Create a README.md with the following sections:
-            1. Project title and description
-            2. Features and capabilities
-            3. Installation instructions
-            4. Usage examples
-            5. Configuration (if applicable)
-            6. Development setup
-            7. Contributing guidelines
-            8. License information
-            
-            Make it professional, comprehensive, and user-friendly. Use proper Markdown formatting.
-            The README should be suitable for both end users and developers.
-            """
-            
-            response = await self.llm_provider.generate(prompt)
-            return response.strip() if response else self._generate_fallback_readme(analysis_result, inputs)
-            
-        except Exception as e:
-            self.logger.error(f"LLM README generation failed: {e}")
-            return self._generate_fallback_readme(analysis_result, inputs)
-
-    async def _generate_api_docs_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
-        """Generate API documentation content using LLM."""
-        if not self.llm_provider:
-            return self._generate_fallback_api_docs(analysis_result, inputs)
-        
-        try:
-            project_specs = shared_context.get("project_specifications", {})
-            user_goal = inputs.get("user_goal", "Unknown project goal")
-            project_type = project_specs.get("project_type", "Unknown")
-            primary_language = project_specs.get("primary_language", "Unknown")
-            
-            prompt = f"""
-            Generate comprehensive API documentation for this project.
-            
-            Project Information:
-            - User Goal: {user_goal}
-            - Project Type: {project_type}
-            - Primary Language: {primary_language}
-            
-            Create API documentation with:
-            1. API Overview
-            2. Authentication (if applicable)
-            3. Endpoints/Functions documentation
-            4. Request/Response examples
-            5. Error codes and handling
-            6. Rate limiting (if applicable)
-            7. SDK/Client libraries (if applicable)
-            
-            Use proper Markdown formatting and provide clear, practical examples.
-            """
-            
-            response = await self.llm_provider.generate(prompt)
-            return response.strip() if response else self._generate_fallback_api_docs(analysis_result, inputs)
-            
-        except Exception as e:
-            self.logger.error(f"LLM API docs generation failed: {e}")
-            return self._generate_fallback_api_docs(analysis_result, inputs)
-
-    async def _generate_user_guide_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
-        """Generate user guide content using LLM."""
-        if not self.llm_provider:
-            return self._generate_fallback_user_guide(analysis_result, inputs)
-        
-        try:
-            project_specs = shared_context.get("project_specifications", {})
-            user_goal = inputs.get("user_goal", "Unknown project goal")
-            
-            prompt = f"""
-            Generate a comprehensive user guide for this project.
-            
-            Project Goal: {user_goal}
-            Project Type: {project_specs.get("project_type", "Unknown")}
-            
-            Create a user guide with:
-            1. Getting Started
-            2. Basic Usage
-            3. Advanced Features
-            4. Troubleshooting
-            5. FAQ
-            6. Tips and Best Practices
-            
-            Write it for end users, not developers. Use clear, simple language.
-            """
-            
-            response = await self.llm_provider.generate(prompt)
-            return response.strip() if response else self._generate_fallback_user_guide(analysis_result, inputs)
-            
-        except Exception as e:
-            self.logger.error(f"LLM user guide generation failed: {e}")
-            return self._generate_fallback_user_guide(analysis_result, inputs)
-
-    async def _generate_dependency_audit_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
-        """Generate dependency audit content using LLM."""
-        if not self.llm_provider:
-            return self._generate_fallback_dependency_audit(analysis_result, inputs)
-        
-        try:
-            project_specs = shared_context.get("project_specifications", {})
-            dependencies = project_specs.get("required_dependencies", [])
-            optional_deps = project_specs.get("optional_dependencies", [])
-            
-            prompt = f"""
-            Generate a comprehensive dependency audit report for this project.
-            
-            Required Dependencies: {', '.join(dependencies) if dependencies else 'None specified'}
-            Optional Dependencies: {', '.join(optional_deps) if optional_deps else 'None specified'}
-            
-            Create a dependency audit with:
-            1. Dependencies Overview
-            2. Security Analysis
-            3. License Compliance
-            4. Version Compatibility
-            5. Recommendations
-            6. Potential Issues
-            7. Upgrade Path
-            
-            Focus on security, compliance, and maintainability.
-            """
-            
-            response = await self.llm_provider.generate(prompt)
-            return response.strip() if response else self._generate_fallback_dependency_audit(analysis_result, inputs)
-            
-        except Exception as e:
-            self.logger.error(f"LLM dependency audit generation failed: {e}")
-            return self._generate_fallback_dependency_audit(analysis_result, inputs)
-
-    async def _generate_release_notes_content(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> str:
-        """Generate release notes content using LLM."""
-        if not self.llm_provider:
-            return self._generate_fallback_release_notes(analysis_result, inputs)
-        
-        try:
-            user_goal = inputs.get("user_goal", "Unknown project goal")
-            project_specs = shared_context.get("project_specifications", {})
-            
-            prompt = f"""
-            Generate initial release notes for this project.
-            
-            Project Goal: {user_goal}
-            Project Type: {project_specs.get("project_type", "Unknown")}
-            
-            Create release notes for version 1.0.0 with:
-            1. Release overview
-            2. New features
-            3. Known issues
-            4. Installation notes
-            5. Breaking changes (if any)
-            6. Next steps
-            
-            Write professional release notes suitable for users and stakeholders.
-            """
-            
-            response = await self.llm_provider.generate(prompt)
-            return response.strip() if response else self._generate_fallback_release_notes(analysis_result, inputs)
-            
-        except Exception as e:
-            self.logger.error(f"LLM release notes generation failed: {e}")
-            return self._generate_fallback_release_notes(analysis_result, inputs)
-
-    async def _write_file_safely(self, file_path: Path, content: str) -> bool:
-        """Write content to file safely with error handling."""
-        try:
-            # Ensure parent directory exists
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write content to file
-            file_path.write_text(content, encoding='utf-8')
-            
-            self.logger.info(f"✅ Successfully wrote {len(content)} characters to {file_path}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"❌ Failed to write file {file_path}: {e}")
-            return False
-
-    def _generate_fallback_readme(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
-        """Generate a basic README when LLM is unavailable."""
-        user_goal = inputs.get("user_goal", "Unknown project goal")
-        project_id = inputs.get("project_id", "unknown")
-        
-        return f"""# {project_id.title()} Project
-
-## Description
-{user_goal}
-
-## Installation
-```bash
-# Add installation instructions here
-```
-
-## Usage
-```bash
-# Add usage examples here
-```
-
-## Development
-```bash
-# Add development setup instructions here
-```
-
-## Contributing
-Please read the contributing guidelines before submitting pull requests.
-
-## License
-This project is licensed under the MIT License.
-"""
-
-    def _generate_fallback_api_docs(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
-        """Generate basic API docs when LLM is unavailable."""
-        return """# API Documentation
-
-## Overview
-This document describes the API endpoints and usage.
-
-## Endpoints
-TBD - Add API endpoints here
-
-## Authentication
-TBD - Add authentication details here
-
-## Examples
-TBD - Add usage examples here
-"""
-
-    def _generate_fallback_user_guide(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
-        """Generate basic user guide when LLM is unavailable."""
-        return """# User Guide
-
-## Getting Started
-TBD - Add getting started instructions here
-
-## Basic Usage
-TBD - Add basic usage instructions here
-
-## Advanced Features
-TBD - Add advanced features here
-
-## Troubleshooting
-TBD - Add troubleshooting guide here
-"""
-
-    def _generate_fallback_dependency_audit(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
-        """Generate basic dependency audit when LLM is unavailable."""
-        return """# Dependency Audit Report
-
-## Overview
-This document provides an audit of project dependencies.
-
-## Dependencies
-TBD - Add dependency analysis here
-
-## Security
-TBD - Add security analysis here
-
-## Recommendations
-TBD - Add recommendations here
-"""
-
-    def _generate_fallback_release_notes(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any]) -> str:
-        """Generate basic release notes when LLM is unavailable."""
-        return """# Release Notes
-
-## Version 1.0.0
-
-### New Features
-- Initial release
-
-### Known Issues
-- None
-
-### Installation
-Follow the README instructions for installation.
-"""
-
-    def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score based on validation results."""
-        base_score = validation_result.get("validation_score", 0.0)
-        issues_count = len(validation_result.get("issues_found", []))
-        
-        # Reduce score based on issues found
-        penalty = min(0.3, issues_count * 0.1)
-        final_score = max(0.0, base_score - penalty)
-        
-        return final_score
-
-    def _extract_json_from_response(self, response: str) -> str:
-        """Extract JSON content from LLM response, handling markdown code blocks and prose text."""
-        if not response or not response.strip():
-            self.logger.warning("[JSON DEBUG] Empty response provided to JSON extraction")
-            return ""
-            
-        response = response.strip()
-        
-        # Strategy 1: Look for JSON in markdown code blocks anywhere in the response
-        if '```json' in response:
-            self.logger.debug("[JSON DEBUG] Found ```json marker, extracting from code block")
-            
-            start_marker = '```json'
-            end_marker = '```'
-            
-            start_idx = response.find(start_marker)
-            if start_idx != -1:
-                # Find the start of JSON content (after the ```json line)
-                json_start = response.find('\n', start_idx) + 1
-                if json_start > 0:
-                    # Find the end marker
-                    end_idx = response.find(end_marker, json_start)
-                    if end_idx != -1:
-                        extracted = response[json_start:end_idx].strip()
-                        if extracted:
-                            self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from markdown block: {len(extracted)} chars")
-                            return extracted
+            if list_result.get("success"):
+                files = list_result.get("files", [])
+                if files:
+                    context_parts.append(f"Project files in {task_input.project_path}: {files}")
+                    
+                    # Read key project files for context
+                    important_files = []
+                    for file_info in files[:15]:  # Limit to first 15 files
+                        filename = file_info.get("name", "") if isinstance(file_info, dict) else str(file_info)
                         
-        # Strategy 2: Look for generic code blocks
-        elif '```' in response:
-            self.logger.debug("[JSON DEBUG] Found generic ``` marker, extracting from code block")
-            
-            lines = response.split('\n')
-            json_lines = []
-            in_code_block = False
-            
-            for line in lines:
-                if line.strip().startswith('```') and not in_code_block:
-                    in_code_block = True
-                    continue
-                elif line.strip() == '```' and in_code_block:
-                    break
-                elif in_code_block:
-                    json_lines.append(line)
-            
-            extracted = '\n'.join(json_lines).strip()
-            if extracted:
-                self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from generic code block: {len(extracted)} chars")
-                return extracted
-        
-        # Strategy 3: Try to find JSON within the text using bracket matching
-        self.logger.debug("[JSON DEBUG] No code blocks found, using bracket matching")
-        return self._find_json_in_text(response)
-
-    def _find_json_in_text(self, text: str) -> str:
-        """Find JSON object within text using bracket matching."""
-        if not text:
-            return ""
-            
-        # Look for opening brace
-        start_idx = text.find('{')
-        if start_idx == -1:
-            self.logger.warning("[JSON DEBUG] No opening brace found in response")
-            return ""
-        
-        self.logger.debug(f"[JSON DEBUG] Found opening brace at position {start_idx}")
-        
-        # Count braces to find matching closing brace
-        brace_count = 0
-        for i, char in enumerate(text[start_idx:], start_idx):
-            if char == '{':
-                brace_count += 1
-            elif char == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    # Found matching closing brace
-                    potential_json = text[start_idx:i+1]
+                        # Prioritize important project files
+                        if any(pattern in filename.lower() for pattern in [
+                            "readme", "setup.py", "pyproject.toml", "package.json", "main.", "app.", "index.", 
+                            "requirements", "__init__.py", "config", "settings"
+                        ]):
+                            important_files.append(filename)
+                    
+                    # Read important files for context
+                    for filename in important_files[:8]:  # Limit to 8 important files
+                        try:
+                            file_result = await self._call_mcp_tool("filesystem_read_file", {
+                                "file_path": f"{task_input.project_path}/{filename}"
+                            })
+                            if file_result.get("success"):
+                                content = file_result.get("content", "")
+                                # Truncate very long files
+                                if len(content) > 2000:
+                                    content = content[:2000] + "... [truncated]"
+                                context_parts.append(f"--- {filename} ---\n{content}")
+                        except Exception as e:
+                            self.logger.warning(f"Could not read {filename}: {e}")
+                    
+                    # Get directory structure for better understanding
                     try:
-                        # Validate it's actually JSON
-                        import json
-                        json.loads(potential_json)
-                        self.logger.debug(f"[JSON DEBUG] Successfully extracted and validated JSON: {len(potential_json)} chars")
-                        return potential_json
-                    except json.JSONDecodeError as e:
-                        self.logger.debug(f"[JSON DEBUG] Invalid JSON found, continuing search: {e}")
-                        # Continue looking for another JSON object
-                        continue
+                        structure_result = await self._call_mcp_tool("filesystem_list_directory", {
+                            "directory_path": task_input.project_path,
+                            "recursive": True
+                        })
+                        if structure_result.get("success"):
+                            all_files = structure_result.get("files", [])
+                            context_parts.append(f"Project structure: {all_files[:30]}")  # Limit structure info
+                    except Exception as e:
+                        self.logger.warning(f"Could not get project structure: {e}")
+                else:
+                    context_parts.append(f"Project directory {task_input.project_path} is empty")
+            else:
+                context_parts.append(f"Could not scan project directory: {list_result.get('error', 'unknown error')}")
+                
+        except Exception as e:
+            self.logger.warning(f"Error scanning project directory: {e}")
+            context_parts.append(f"Error scanning project directory: {str(e)}")
         
-        # No valid JSON found
-        self.logger.warning("[JSON DEBUG] No valid JSON found in response")
-        return ""
+        return "\n\n".join(context_parts)
 
-    async def _validate_documentation(self, documentation_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 4: Validation - Verify documentation quality and completeness."""
-        self.logger.info("Starting documentation validation")
-        
-        documents_created = documentation_result.get("documents_created", 0)
-        generation_success = documentation_result.get("generation_success", False)
-        files_written = documentation_result.get("files_written", False)
-        created_files = documentation_result.get("created_files", [])
-        
-        validation = {
-            "quality_checks": {
-                "completeness": documents_created >= 1,  # At least README required
-                "generation_success": generation_success,
-                "files_written": files_written,
-                "required_documents_present": documents_created > 0,
-                "files_accessible": self._verify_files_exist(created_files)
-            },
-            "validation_score": 0.0,
-            "issues_found": [],
-            "created_files": created_files,
-            "files_count": documents_created
-        }
-        
-        # Calculate validation score
-        score = 0.0
-        if validation["quality_checks"]["generation_success"]:
-            score += 0.3
-        if validation["quality_checks"]["files_written"]:
-            score += 0.3
-        if validation["quality_checks"]["completeness"]:
-            score += 0.2
-        if validation["quality_checks"]["files_accessible"]:
-            score += 0.2
+    async def _generate_documentation_with_llm(self, task_input: ProjectDocumentationInput, project_context: str) -> Dict[str, Any]:
+        """
+        Main method: Use YAML prompt template + project context to let LLM generate documentation.
+        LLM returns structured documentation data, we execute file creation with MCP tools.
+        """
+        try:
+            # Get main prompt from YAML template (or fallback)
+            main_prompt = await self._get_main_prompt(task_input, project_context)
             
-        validation["validation_score"] = score
-        
-        if not generation_success:
-            validation["issues_found"].append("Document generation failed")
-        if not files_written:
-            validation["issues_found"].append("Files were not written to filesystem")
-        if documents_created == 0:
-            validation["issues_found"].append("No documents were created")
-        if not validation["quality_checks"]["files_accessible"]:
-            validation["issues_found"].append("Some created files are not accessible")
-        
-        return validation
+            # Let LLM run the show
+            self.logger.info("Generating documentation with LLM...")
+            response = await self.llm_provider.generate(
+                prompt=main_prompt,
+                max_tokens=8000,
+                temperature=0.1
+            )
+            
+            if not response:
+                return {"success": False, "error": "No response from LLM"}
+            
+            # Try to parse structured response (LLM should return JSON with documentation data)
+            try:
+                documentation_data = json.loads(response)
+                self.logger.info(f"LLM provided documentation with {len(documentation_data.get('documents', []))} documents")
+                
+                # Create documentation files using MCP tools
+                documentation_files = await self._create_documentation_files(documentation_data, task_input)
+                
+                return {
+                    "success": True,
+                    "documentation_data": documentation_data,
+                    "documentation_files": documentation_files,
+                    "confidence": documentation_data.get("confidence", 0.8),
+                    "generation_summary": f"Generated {len(documentation_files)} documentation files",
+                    "message": f"Generated documentation with {len(documentation_files)} files",
+                    "llm_response": response
+                }
+                
+            except json.JSONDecodeError:
+                # Fallback: treat response as markdown documentation
+                self.logger.info("LLM response not JSON, treating as markdown documentation")
+                return await self._fallback_markdown_documentation(response, task_input)
+                
+        except Exception as e:
+            self.logger.error(f"LLM documentation generation failed: {e}")
+            return {"success": False, "error": str(e)}
 
-    def _verify_files_exist(self, file_paths: List[str]) -> bool:
-        """Verify that all created files actually exist on the filesystem."""
-        if not file_paths:
-            return False
+    async def _get_main_prompt(self, task_input: ProjectDocumentationInput, project_context: str) -> str:
+        """
+        Get the main prompt template from YAML and inject project context.
+        Falls back to built-in prompt if YAML not available.
+        """
+        try:
+            # Try to get prompt from YAML template
+            prompt_template = self.prompt_manager.get_prompt_definition(
+                "project_documentation_agent_v1_prompt",  # prompt_name from YAML id field
+                "1.0.0",  # prompt_version from YAML version field
+                sub_path="autonomous_engine"  # subdirectory where prompt is located
+            )
+            
+            # Use LLMProvider to render the prompt with variables
+            rendered_prompt = await self.llm_provider.generate_response_with_prompt_id(
+                prompt_template.id,
+                {
+                    "user_goal": task_input.user_goal or "Generate project documentation",
+                    "project_path": task_input.project_path,
+                    "project_context": project_context,
+                    "project_id": task_input.project_id,
+                    "include_api_docs": task_input.include_api_docs,
+                    "include_user_guide": task_input.include_user_guide,
+                    "include_dependency_audit": task_input.include_dependency_audit
+                }
+            )
+            self.logger.info("Using YAML prompt template")
+            return rendered_prompt
+            
+        except Exception as e:
+            self.logger.warning(f"Could not load YAML prompt template: {e}, using built-in fallback")
+            
+            # Built-in fallback prompt
+            return f"""You are a project documentation generation agent. Create comprehensive documentation for this project.
+
+PROJECT CONTEXT:
+{project_context}
+
+INSTRUCTIONS:
+1. Analyze the project structure, code, and purpose
+2. Generate appropriate documentation for the project type
+3. Create clear, professional documentation that helps users understand and use the project
+4. Return a JSON response with this exact structure:
+
+{{
+    "project_title": "descriptive project title",
+    "project_description": "clear description of what this project does",
+    "documents": [
+        {{
+            "filename": "README.md",
+            "content": "comprehensive README content with setup, usage, etc.",
+            "type": "readme"
+        }},
+        {{
+            "filename": "API_DOCS.md", 
+            "content": "API documentation if applicable",
+            "type": "api_docs"
+        }},
+        {{
+            "filename": "USER_GUIDE.md",
+            "content": "user guide with examples and tutorials",
+            "type": "user_guide"
+        }},
+        {{
+            "filename": "DEPENDENCIES.md",
+            "content": "dependency audit and security information",
+            "type": "dependency_audit"
+        }}
+    ],
+    "confidence": 0.85,
+    "reasoning": "explanation of documentation choices"
+}}
+
+REQUIREMENTS:
+- Create documentation appropriate for the project type and complexity
+- Include clear setup and usage instructions
+- Document APIs, functions, and key features
+- Provide examples where helpful
+- Include dependency information and security considerations
+- Use professional, clear writing style
+- Format with proper Markdown syntax
+
+USER GOAL: {task_input.user_goal or "Generate project documentation"}
+PROJECT: {task_input.project_id}
+
+Return ONLY the JSON response, no additional text."""
+
+    async def _create_documentation_files(self, documentation_data: Dict[str, Any], task_input: ProjectDocumentationInput) -> Dict[str, str]:
+        """
+        Create documentation files using MCP tools.
+        """
+        self.logger.info("Creating documentation files")
+        
+        created_files = {}
+        project_path = task_input.project_path
         
         try:
-            for file_path in file_paths:
-                path = Path(file_path)
-                if not path.exists():
-                    self.logger.warning(f"Created file not found: {file_path}")
-                    return False
-            return True
+            documents = documentation_data.get("documents", [])
+            
+            # Create docs directory if it doesn't exist
+            docs_dir_result = await self._call_mcp_tool("filesystem_create_directory", {
+                "directory_path": f"{project_path}/docs",
+                "create_parents": True
+            })
+            
+            for doc in documents:
+                filename = doc.get("filename", "document.md")
+                content = doc.get("content", "")
+                doc_type = doc.get("type", "document")
+                
+                # Determine file path based on document type
+                if doc_type == "readme":
+                    file_path = f"{project_path}/{filename}"
+                else:
+                    file_path = f"{project_path}/docs/{filename}"
+                
+                # Write file using MCP tools
+                write_result = await self._call_mcp_tool("filesystem_write_file", {
+                    "file_path": file_path,
+                    "content": content
+                })
+                
+                if write_result.get("success"):
+                    relative_path = filename if doc_type == "readme" else f"docs/{filename}"
+                    created_files[relative_path] = content
+                    self.logger.info(f"✓ Created {relative_path}")
+                else:
+                    self.logger.error(f"Failed to create {filename}: {write_result.get('error', 'unknown error')}")
+            
+            self.logger.info(f"Successfully created {len(created_files)} documentation files")
+            
         except Exception as e:
-            self.logger.error(f"Error verifying files: {e}")
-            return False
+            self.logger.error(f"Failed to create documentation files: {e}")
+            created_files["error"] = f"Documentation file creation failed: {str(e)}"
+        
+        return created_files
+
+    async def _fallback_markdown_documentation(self, response: str, task_input: ProjectDocumentationInput) -> Dict[str, Any]:
+        """
+        Fallback when LLM doesn't return structured JSON - treat response as README content.
+        """
+        try:
+            # Clean up response
+            content = response.strip()
+            
+            # Use a proper project name based on user goal, not UUID
+            if task_input.user_goal:
+                # Convert user goal to a safe filename
+                project_name = "".join(c for c in task_input.user_goal.lower().replace(" ", "_") if c.isalnum() or c == "_")[:30]
+                if not project_name:
+                    project_name = "project"
+            else:
+                project_name = "project"
+                
+            filename = "README.md"
+            
+            full_path = Path(task_input.project_path) / filename
+            
+            write_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": str(full_path),
+                "content": content
+            })
+            
+            if write_result.get("success"):
+                self.logger.info(f"✓ Generated fallback documentation: {filename}")
+                return {
+                    "success": True,
+                    "documentation_files": {filename: content},
+                    "confidence": 0.7,
+                    "generation_summary": "Generated documentation (fallback format)",
+                    "message": "Generated documentation (fallback format)"
+                }
+            else:
+                return {"success": False, "error": "Failed to write fallback documentation"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Fallback documentation generation failed: {str(e)}"}
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
+        """Generate agent card for registry."""
+        input_schema = ProjectDocumentationInput.model_json_schema()
+        output_schema = ProjectDocumentationOutput.model_json_schema()
+        
         return AgentCard(
             agent_id=ProjectDocumentationAgent_v1.AGENT_ID,
             name=ProjectDocumentationAgent_v1.AGENT_NAME,
-            description=ProjectDocumentationAgent_v1.DESCRIPTION,
-            version="0.2.0",
-            input_schema=ProjectDocumentationAgentInput.model_json_schema(),
-            output_schema=ProjectDocumentationAgentOutput.model_json_schema(),
-            categories=[cat.value for cat in [ProjectDocumentationAgent_v1.CATEGORY, AgentCategory.AUTONOMOUS_PROJECT_ENGINE]],
+            description=ProjectDocumentationAgent_v1.AGENT_DESCRIPTION,
+            version=ProjectDocumentationAgent_v1.AGENT_VERSION,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            categories=[ProjectDocumentationAgent_v1.CATEGORY.value],
             visibility=ProjectDocumentationAgent_v1.VISIBILITY.value,
             capability_profile={
-                "generates_documentation": [
-                    "README.md (content)", 
-                    "API_Docs_Markdown (content map)", 
-                    "DependencyAudit_Markdown (content)", 
-                    "ReleaseNotes_Markdown (content, optional)"
-                ],
-                "consumes_artifacts_via_pcma_doc_ids": [
-                    "RefinedUserGoal", 
-                    "ProjectBlueprint", 
-                    "MasterExecutionPlan", 
-                    "TestSummary (optional)"
-                ],
-                "consumes_direct_inputs": ["generated_code_root_path"],
-                "primary_function": "Automated Project Documentation Generation from comprehensive project context.",
-                "pcma_collections_used": [
-                    "project_goals",
-                    "project_planning_artifacts",
-                    "test_reports_collection",
-                    "documentation_artifacts"
-                ]
+                "generates_documentation": True,
+                "simple_documentation": True,
+                "llm_powered": True,
+                "mcp_tools_integrated": True,
+                "creates_multiple_docs": True
             },
             metadata={
-                "prompt_name": PROMPT_NAME,
-                "prompt_sub_dir": PROMPT_SUB_DIR,
                 "callable_fn_path": f"{ProjectDocumentationAgent_v1.__module__}.{ProjectDocumentationAgent_v1.__name__}"
             }
-        ) 
+        )
+
+    def get_input_schema(self) -> Type[ProjectDocumentationInput]:
+        return ProjectDocumentationInput
+
+    def get_output_schema(self) -> Type[ProjectDocumentationOutput]:
+        return ProjectDocumentationOutput 
