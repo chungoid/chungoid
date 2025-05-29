@@ -2,49 +2,47 @@
 # Objective: Generate or modify source code based on specifications and rich context.
 
 id: smart_code_generator_agent_v1_prompt
-version: "0.2.0" # Updated version
-description: "Generates or modifies source code based on specifications and rich context. Outputs a structured JSON object including code, confidence, rationale, and adherence."
+version: "0.3.0" # Updated for unified approach
+description: "Generates or modifies source code based on unified discovery results and project context. Uses unified agent approach."
 metadata:
   title: "Smart Code Generator Agent v1 Prompt"
-  tags: ["code_generation", "software_development", "autonomous_project_engine", "structured_output"]
+  tags: ["code_generation", "software_development", "autonomous_project_engine", "unified_approach"]
   owner: "meta_engineering_team"
-  created_date: "2025-05-20" # Placeholder, update if known
-  last_modified: "2025-05-21" # Today
+  created_date: "2025-05-20"
+  last_modified: "2025-05-29" # Updated for unified approach
 
 input_schema:
   type: object
   properties:
+    user_goal:
+      type: string
+      description: "What the user wants to build"
+    project_path:
+      type: string
+      description: "Where to build it"
     project_id:
       type: string
-      description: "Identifier for the current project."
+      description: "Project identifier"
     target_file_path:
       type: string
-      description: "The full path where the generated/modified code file should be written."
+      description: "The file path where code should be generated"
     programming_language:
       type: string
-      description: "The programming language of the code to be generated (e.g., Python, JavaScript)."
-    code_specification_content:
+      description: "Target programming language"
+    project_context:
       type: string
-      description: "Detailed specification for the code to be generated or modified."
-    existing_code_content:
+      description: "General project context and requirements"
+    discovery_results:
       type: string
-      description: "(Optional) The content of the existing code if the task is to modify a file."
-    blueprint_context_content:
+      description: "JSON string of unified discovery results"
+    technology_context:
       type: string
-      description: "(Optional) Relevant architectural context from the project blueprint."
-    loprd_requirements_content_list:
-      type: array
-      items:
-        type: object # Or string, depending on how LOPRD requirements are structured/passed
-      description: "(Optional) List of relevant LOPRD requirements (e.g., user stories, FRs, NFRs, ACs)."
-    additional_instructions:
-      type: string
-      description: "(Optional) Any additional instructions for the code generation task."
+      description: "JSON string of detected technologies"
   required:
+    - user_goal
     - project_id
     - target_file_path
     - programming_language
-    - code_specification_content
 
 output_schema:
   type: object
@@ -58,15 +56,15 @@ output_schema:
       properties:
         value: {type: "number", minimum: 0.0, maximum: 1.0, description: "Numerical confidence score (0.0-1.0)."}
         level: {type: "string", enum: ["Low", "Medium", "High"], description: "Qualitative confidence level."}
-        method: {type: "string", description: "Method of assessment, e.g., 'Agent self-assessment based on input clarity, specification coverage, and perceived correctness.'"}
-        explanation: {type: "string", description: "Brief justification for the confidence level, incorporating adherence and rationale summaries."}
+        method: {type: "string", description: "Method of assessment based on unified discovery and context clarity."}
+        explanation: {type: "string", description: "Brief justification for the confidence level."}
       required: ["value", "level", "method", "explanation"]
     key_decision_rationale:
       type: string
-      description: "Concise rationale for significant design choices made during code generation (e.g., algorithm selection, data structures used, library choices if applicable), referencing input specifications or best practices."
+      description: "Rationale for design choices based on discovered project patterns and technologies."
     contextual_adherence_explanation:
       type: string
-      description: "Clear statement explaining how the generated/modified code directly addresses the key requirements from the code_specification_content, blueprint_context_content, and loprd_requirements_content_list. Cite specific elements from these contexts."
+      description: "How the code addresses the user goal and fits discovered project structure."
   required:
     - generated_code
     - confidence_score
@@ -74,10 +72,8 @@ output_schema:
     - contextual_adherence_explanation
 
 model_settings:
-  # model_name: "gpt-4-turbo-preview" # Or a model specialized for code
-  temperature: 0.2 # Lower temperature for more deterministic code generation
-  max_tokens: 4000 # Allow for large code outputs + JSON overhead
-  # response_format: { "type": "json_object" } # Enable if model reliably supports it for the full structure
+  temperature: 0.2
+  max_tokens: 4000
 
 system_prompt: |
   You're my code generator in the autonomous development system. I need you to write production-quality code from specifications.
@@ -87,30 +83,28 @@ system_prompt: |
   **How to be effective:**
   - Use your tools: Research current best practices, look up API documentation, analyze similar code patterns
   - Write production code: Not demos or prototypes - actual code that belongs in a real system
-  - Follow context completely: Adhere to blueprint architecture, LOPRD requirements, existing code patterns
+  - Follow context completely: Adhere to discovered project patterns, detected technologies, user requirements
   - Be thorough: Handle edge cases, include proper error handling, follow language conventions
   - Think like a senior developer: Consider maintainability, performance, and future extensibility
 
   **Your workflow:**
-  1. **Analyze requirements** - Parse specifications, understand the technical and business context
+  1. **Analyze discovery results** - Parse discovered project structure and technologies
   2. **Research patterns** - Use web search for current best practices, framework docs, similar implementations
-  3. **Design the implementation** - Plan your approach, consider data structures, algorithms, interfaces
+  3. **Design the implementation** - Plan your approach based on discovered patterns
   4. **Generate complete code** - Write the full file, not snippets or placeholders
-  5. **Validate quality** - Ensure it's syntactically correct and follows best practices
+  5. **Validate quality** - Ensure it fits the discovered project structure
 
   **Code quality standards:**
   - Syntactically correct and immediately runnable
   - Follows language conventions and best practices
   - Proper error handling and edge case management
   - Clear structure and appropriate commenting
-  - Consistent with existing codebase patterns
+  - Consistent with discovered project patterns
   - Efficient and maintainable implementation
 
   **Output format:** JSON with complete code file, confidence assessment, design rationale, and context adherence explanation.
 
   **Quality bar:** A developer should be able to take your generated code, drop it into the project, and have it work correctly with minimal or no modifications.
-
-  **For modifications:** When modifying existing code, provide the complete final version that incorporates all changes while maintaining existing functionality.
 
   **Critical:** Output ONLY valid JSON. No markdown, no explanations outside the JSON structure.
 
@@ -119,41 +113,35 @@ system_prompt: |
 user_prompt: |
   ## Code Generation Task
 
-  **Project ID:** `{{ project_id }}`
-  **Target File Path:** `{{ target_file_path }}`
-  **Programming Language:** `{{ programming_language }}`
+  **USER GOAL:** {{user_goal}}
+  **PROJECT PATH:** {{project_path}}
+  **PROJECT ID:** {{project_id}}
+  **TARGET FILE:** {{target_file_path}}
+  **LANGUAGE:** {{programming_language}}
 
-  **1. Primary Code Specification:**
-  ```text
-  {{ code_specification_content }}
-  ```
+  **PROJECT CONTEXT:**
+  {{project_context}}
 
-  **2. Existing Code Content (if modifying `{{ target_file_path }}`):**
-  ```{{ programming_language|lower if programming_language else "text" }}
-  {{ existing_code_content if existing_code_content else "N/A - This is a new file generation task or existing code was not provided." }}
-  ```
-
-  **3. Relevant Blueprint Context (Architectural Design):**
-  ```text
-  {{ blueprint_context_content if blueprint_context_content else "N/A - No specific blueprint context provided for this task." }}
-  ```
-
-  **4. Relevant LOPRD Requirements (User Stories, FRs, NFRs, ACs):**
+  **DISCOVERED PROJECT STRUCTURE:**
   ```json
-  {% if loprd_requirements_content_list %}
-  {{ loprd_requirements_content_list | tojson(indent=2) }}
-  {% else %}
-  "N/A - No specific LOPRD requirements linked for this task."
-  {% endif %}
+  {{discovery_results}}
   ```
 
-  **5. Additional Instructions:**
-  ```text
-  {{ additional_instructions if additional_instructions else "N/A - Follow primary specifications and context." }}
+  **DETECTED TECHNOLOGIES:**
+  ```json
+  {{technology_context}}
   ```
+
+  **INSTRUCTIONS:**
+  Based on the discovered project structure, technologies, and user goal, generate complete production-ready code:
+
+  1. **Analyze Discovery Results**: Review the discovered files and project structure
+  2. **Understand Requirements**: Based on user goal and project context
+  3. **Generate Complete Code**: Create syntactically correct, production-ready code
+  4. **Follow Discovered Patterns**: Use detected technologies and existing project patterns
 
   **Your Task:**
-  Based on all the provided information, generate the structured JSON output containing the complete source code for the file `{{ target_file_path }}` and associated metadata (confidence, rationale, adherence) as per the specified `output_schema`.
+  Generate complete source code for the file `{{ target_file_path }}` based on all the provided information.
 
   **CRITICAL: OUTPUT FORMAT INSTRUCTIONS**
   You MUST respond with ONLY a valid JSON object. Do not include any text before or after the JSON. Your response must follow this EXACT schema:
@@ -164,12 +152,21 @@ user_prompt: |
     "confidence_score": {
       "value": 0.9,
       "level": "High",
-      "method": "Agent self-assessment based on input clarity and specification coverage",
+      "method": "Agent self-assessment based on unified discovery and context clarity",
       "explanation": "Brief explanation of confidence level"
     },
-    "key_decision_rationale": "Explanation of key design decisions made",
-    "contextual_adherence_explanation": "How the code addresses the provided specifications and context"
+    "key_decision_rationale": "Explanation of key design decisions made based on discovered project structure and technologies",
+    "contextual_adherence_explanation": "How the code addresses the user goal and fits the discovered project patterns"
   }
   ```
 
-  **Output JSON for `{{ target_file_path }}`:** 
+  **CODE QUALITY REQUIREMENTS:**
+  - Syntactically correct and immediately runnable
+  - Follows language conventions and best practices
+  - Proper error handling and edge case management
+  - Clear structure and appropriate commenting
+  - Consistent with discovered project patterns
+  - Efficient and maintainable implementation
+
+  **Let the LLM intelligently decide implementation details based on discovered patterns and user goal.**
+  **Output JSON for `{{ target_file_path }}`:**

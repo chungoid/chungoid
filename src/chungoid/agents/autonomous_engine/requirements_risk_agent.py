@@ -1,749 +1,447 @@
 """
-Requirements & Risk Agent - Consolidated LOPRD Generation + Risk Assessment
+RequirementsRiskAgent_v1: Clean, unified LLM-powered requirements and risk analysis.
 
-This agent combines the capabilities of:
-1. ProductAnalystAgent - LOPRD Generation  
-2. ProactiveRiskAssessorAgent - Risk Assessment
+This agent provides comprehensive requirements analysis with risk assessment by:
+1. Using unified discovery to understand project structure and requirements
+2. Using YAML prompt template with rich discovery data
+3. Letting the LLM make intelligent requirements and risk decisions with maximum intelligence
 
-Instead of two separate agents with handoffs, this LLM-driven agent can:
-- Generate LOPRD from user requirements
-- Immediately assess risks in that LOPRD
-- Provide optimized requirements with built-in risk mitigation
-- Use ALL available MCP tools (LLM chooses the right ones)
-
-Pipeline efficiency: User Goal → LOPRD + Risk Assessment (1 agent instead of 2)
+No legacy patterns, no hardcoded phases, no complex tool orchestration.
+Pure unified approach for maximum agentic requirements and risk intelligence.
 """
 
-import json
+from __future__ import annotations
+
 import logging
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Type, Literal, ClassVar
+import json
+from typing import Any, Dict, Optional, List, ClassVar, Type
 
-from pydantic import BaseModel, Field, model_validator, validator
+from pydantic import BaseModel, Field, model_validator
 
-from chungoid.agents.unified_agent import (
-    UnifiedAgent, 
-    IterationResult,
-    ExecutionContext as UEContext
-)
+from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.llm_provider import LLMProvider
 from chungoid.utils.prompt_manager import PromptManager
-from chungoid.schemas.unified_execution_schemas import AgentOutput
 from chungoid.schemas.common import ConfidenceScore
-from chungoid.registry import register_autonomous_engine_agent
-from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.utils.agent_registry import AgentCard
-from chungoid.utils.chromadb_migration_utils import migrate_store_artifact
+from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
+from chungoid.registry import register_autonomous_engine_agent
+
+from ...schemas.unified_execution_schemas import (
+    ExecutionContext as UEContext,
+    IterationResult,
+)
+
+logger = logging.getLogger(__name__)
 
 
-class RequirementsRiskInput(BaseModel):
-    """Input for the consolidated Requirements & Risk Agent."""
-    
-    # Core task identification
+class RequirementsRiskAgentInput(BaseModel):
+    """Clean input schema focused on core requirements and risk analysis needs."""
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique task identifier")
     project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project identifier")
     
-    # User requirements input
-    user_goal: Optional[str] = Field(None, description="Original user goal/requirements")
+    # Core requirements
+    user_goal: str = Field(..., description="What the user wants analyzed for requirements and risks")
+    project_path: str = Field(default=".", description="Project directory path")
+    
+    # Requirements context
     refined_user_goal_md: Optional[str] = Field(None, description="Refined user goal in Markdown format")
-    
-    # Schema and context
     loprd_json_schema_str: Optional[str] = Field(None, description="JSON schema for LOPRD validation")
-    
-    # Intelligent context from orchestrator
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specs from orchestrator")
-    intelligent_context: bool = Field(default=False, description="Whether using intelligent project specifications")
-    project_path: Optional[str] = Field(None, description="Project directory path")
-    
-    # Risk assessment focus
     focus_areas: Optional[List[str]] = Field(None, description="Specific risk areas to focus on")
     
+    # Intelligent context from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent specifications provided")
+    
     @model_validator(mode='after')
-    def check_minimum_requirements(self) -> 'RequirementsRiskInput':
-        """Ensure we have either traditional goal or intelligent context."""
-        if not self.intelligent_context and not self.user_goal and not self.refined_user_goal_md:
-            raise ValueError("Must provide either user_goal/refined_user_goal_md or intelligent_context=True with project_specifications")
+    def validate_requirements(self) -> 'RequirementsRiskAgentInput':
+        """Ensure we have minimum requirements for analysis."""
+        if not self.user_goal or not self.user_goal.strip():
+            raise ValueError("user_goal is required for requirements and risk analysis")
         return self
 
 
-class RequirementsRiskOutput(AgentOutput):
-    """Output from the consolidated Requirements & Risk Agent."""
+class RequirementsRiskAgentOutput(BaseModel):
+    """Clean output schema focused on requirements and risk deliverables."""
+    task_id: str = Field(..., description="Task identifier")
+    project_id: str = Field(..., description="Project identifier")
+    status: str = Field(..., description="Execution status")
     
-    # LOPRD outputs
-    loprd_doc_id: str = Field(..., description="Document ID of generated LOPRD in Chroma")
-    loprd_content: Optional[Dict[str, Any]] = Field(None, description="Generated LOPRD content")
+    # Core requirements deliverables
+    loprd_content: Dict[str, Any] = Field(default_factory=dict, description="Generated LOPRD content")
+    integrated_requirements: Dict[str, Any] = Field(default_factory=dict, description="Requirements with risk mitigation integrated")
     
-    # Risk assessment outputs  
-    risk_assessment_report_doc_id: Optional[str] = Field(None, description="Document ID of risk assessment report")
-    optimization_suggestions_report_doc_id: Optional[str] = Field(None, description="Document ID of optimization suggestions")
+    # Risk analysis deliverables
+    risk_assessment: Dict[str, Any] = Field(default_factory=dict, description="Comprehensive risk assessment")
+    risk_summary: Dict[str, Any] = Field(default_factory=dict, description="Summary of identified risks and mitigations")
+    mitigation_strategies: List[Dict[str, Any]] = Field(default_factory=list, description="Risk mitigation strategies")
     
-    # Consolidated results
-    integrated_requirements: Optional[Dict[str, Any]] = Field(None, description="Requirements with risk mitigation integrated")
-    risk_summary: Optional[Dict[str, Any]] = Field(None, description="Summary of identified risks and mitigations")
+    # Quality insights
+    requirements_analysis: Dict[str, Any] = Field(default_factory=dict, description="Analysis of requirements quality")
+    risk_coverage: Dict[str, Any] = Field(default_factory=dict, description="Assessment of risk coverage")
+    optimization_suggestions: List[str] = Field(default_factory=list, description="Suggestions for optimization")
     
-    # Status and metadata
-    status: str = Field(..., description="Overall status (SUCCESS, PARTIAL_SUCCESS, FAILURE)")
-    message: str = Field(..., description="Detailed outcome message")
-    confidence_score: Optional[ConfidenceScore] = Field(None, description="Confidence in the integrated output")
-    validation_errors: Optional[str] = Field(None, description="Any validation errors encountered")
-    usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Processing metadata")
+    # Metadata  
+    confidence_score: ConfidenceScore = Field(..., description="Agent confidence in requirements and risk analysis")
+    message: str = Field(..., description="Human-readable result message")
+    error_message: Optional[str] = Field(None, description="Error details if failed")
 
 
 @register_autonomous_engine_agent(capabilities=["requirements_analysis", "risk_assessment", "optimization"])
-class RequirementsRiskAgent(UnifiedAgent):
+class RequirementsRiskAgent_v1(UnifiedAgent):
     """
-    Consolidated Requirements & Risk Agent - LLM-DRIVEN
+    Clean, unified requirements and risk analysis agent.
     
-    Combines LOPRD generation + Risk assessment in one workflow:
-    1. Analyzes user requirements → Generates LOPRD
-    2. Immediately assesses risks in that LOPRD  
-    3. Optimizes requirements with risk mitigation built-in
-    4. LLM chooses the right MCP tools for each task
-    
-    REPLACES: ProductAnalystAgent + ProactiveRiskAssessorAgent
-    PIPELINE EFFICIENCY: 2 agents → 1 agent, eliminates handoff overhead
+    Uses unified discovery + YAML templates + maximum LLM intelligence for requirements and risk analysis.
+    No legacy patterns, no hardcoded phases, no complex tool orchestration.
     """
     
-    AGENT_ID: ClassVar[str] = "RequirementsRiskAgent"
-    AGENT_NAME: ClassVar[str] = "Requirements & Risk Agent"
-    AGENT_DESCRIPTION: ClassVar[str] = "Consolidated agent for LOPRD generation and risk assessment with LLM-driven tool selection"
+    AGENT_ID: ClassVar[str] = "RequirementsRiskAgent_v1"
+    AGENT_NAME: ClassVar[str] = "Requirements & Risk Agent v1"
+    AGENT_DESCRIPTION: ClassVar[str] = "Clean, unified LLM-powered requirements and risk analysis"
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "requirements_risk_agent_v1_prompt.yaml"
-    AGENT_VERSION: ClassVar[str] = "1.0.0"
-    
+    AGENT_VERSION: ClassVar[str] = "2.0.0"  # Major version for clean rewrite
+    CAPABILITIES: ClassVar[List[str]] = ["requirements_analysis", "risk_assessment", "optimization"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.REQUIREMENTS_ANALYSIS
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
-    CAPABILITIES: ClassVar[List[str]] = ["requirements_analysis", "risk_assessment", "optimization", "complex_analysis"]
-    
-    INPUT_SCHEMA: ClassVar[Type[RequirementsRiskInput]] = RequirementsRiskInput
-    OUTPUT_SCHEMA: ClassVar[Type[RequirementsRiskOutput]] = RequirementsRiskOutput
-    
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["requirements_analysis", "risk_assessment"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "tool_validation"]
-    UNIVERSAL_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "context_sharing", "tool_validation"]
-    
-    # Collection constants for artifact storage
-    LOPRD_ARTIFACTS_COLLECTION: ClassVar[str] = "loprd_artifacts_collection"
-    RISK_ASSESSMENT_REPORTS_COLLECTION: ClassVar[str] = "risk_assessment_reports"
-    OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION: ClassVar[str] = "optimization_suggestion_reports"
+    INPUT_SCHEMA: ClassVar[Type[RequirementsRiskAgentInput]] = RequirementsRiskAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[RequirementsRiskAgentOutput]] = RequirementsRiskAgentOutput
+
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["unified_requirements_risk"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["intelligent_discovery"]
+    UNIVERSAL_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "context_sharing"]
 
     def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, **kwargs):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
-        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        self.logger.info(f"{self.AGENT_ID} v{self.AGENT_VERSION} initialized - clean unified requirements and risk")
 
     async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        LLM-driven Requirements & Risk workflow:
-        1. Requirements Analysis → Generate LOPRD  
-        2. Risk Assessment → Analyze LOPRD for risks
-        3. Optimization → Integrate risk mitigations into requirements
-        4. Validation → Ensure quality and completeness
+        Clean execution: Unified discovery + YAML template + LLM requirements and risk intelligence.
+        Single iteration, maximum intelligence, no hardcoded phases.
         """
-        self.logger.info(f"[RequirementsRisk] Starting consolidated iteration {iteration + 1}")
-        
-        # Convert inputs
-        if isinstance(context.inputs, dict):
-            inputs = RequirementsRiskInput(**context.inputs)
-        elif isinstance(context.inputs, RequirementsRiskInput):
-            inputs = context.inputs
-        else:
-            input_dict = context.inputs.dict() if hasattr(context.inputs, 'dict') else {}
-            inputs = RequirementsRiskInput(**input_dict)
-        
         try:
-            # Phase 1: Requirements Analysis with LLM-driven tool selection
-            self.logger.info("Phase 1: Requirements Analysis")
-            loprd_result = await self._generate_loprd_with_llm_tools(inputs)
+            # Parse inputs cleanly
+            task_input = self._parse_inputs(context.inputs)
+            self.logger.info(f"Analyzing requirements and risks: {task_input.user_goal}")
+
+            # Generate requirements and risk analysis using unified approach
+            analysis_result = await self._generate_requirements_risk_analysis(task_input)
             
-            # Phase 2: Risk Assessment with LLM-driven tool selection  
-            self.logger.info("Phase 2: Risk Assessment")
-            risk_result = await self._assess_risks_with_llm_tools(loprd_result, inputs)
-            
-            # Phase 3: Requirements Optimization with LLM-driven integration
-            self.logger.info("Phase 3: Requirements Optimization") 
-            optimization_result = await self._optimize_requirements_with_llm_tools(loprd_result, risk_result, inputs)
-            
-            # Phase 4: Validation and Quality Assessment
-            self.logger.info("Phase 4: Validation")
-            validation_result = await self._validate_integrated_output(optimization_result, inputs)
-            
-            # Store artifacts using LLM-chosen storage approach
-            storage_result = await self._store_artifacts_with_llm_tools(optimization_result, inputs)
-            
-            # Calculate quality score
-            quality_score = self._calculate_integrated_quality_score(
-                loprd_result, risk_result, optimization_result, validation_result
-            )
-            
-            # Create consolidated output
-            output = RequirementsRiskOutput(
-                loprd_doc_id=storage_result.get("loprd_doc_id", f"loprd_{uuid.uuid4().hex[:8]}"),
-                loprd_content=optimization_result.get("optimized_loprd"),
-                risk_assessment_report_doc_id=storage_result.get("risk_report_id"),
-                optimization_suggestions_report_doc_id=storage_result.get("optimization_report_id"),
-                integrated_requirements=optimization_result.get("integrated_requirements"),
-                risk_summary=risk_result.get("risk_summary"),
+            # Create clean output
+            output = RequirementsRiskAgentOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
                 status="SUCCESS",
-                message="Successfully generated LOPRD with integrated risk assessment and optimization",
+                loprd_content=analysis_result["loprd_content"],
+                integrated_requirements=analysis_result["integrated_requirements"],
+                risk_assessment=analysis_result["risk_assessment"],
+                risk_summary=analysis_result["risk_summary"],
+                mitigation_strategies=analysis_result["mitigation_strategies"],
+                requirements_analysis=analysis_result["requirements_analysis"],
+                risk_coverage=analysis_result["risk_coverage"],
+                optimization_suggestions=analysis_result["optimization_suggestions"],
+                confidence_score=analysis_result["confidence_score"],
+                message=f"Generated requirements and risk analysis for: {task_input.user_goal}"
+            )
+            
+            return IterationResult(
+                output=output,
+                quality_score=analysis_result["confidence_score"].value,
+                tools_used=["unified_discovery", "yaml_template", "llm_requirements_risk"],
+                protocol_used="unified_requirements_risk"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Requirements and risk analysis failed: {e}")
+            
+            # Clean error handling
+            error_output = RequirementsRiskAgentOutput(
+                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
+                project_id=getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown',
+                status="ERROR",
                 confidence_score=ConfidenceScore(
-                    value=0.9,
-                    method="integrated_requirements_risk_assessment",
-                    explanation="High confidence in integrated requirements analysis, risk assessment, and optimization"
+                    value=0.0,
+                    method="error_state",
+                    explanation="Requirements and risk analysis failed"
                 ),
-                usage_metadata={
-                    "phases_completed": ["requirements", "risk_assessment", "optimization", "validation"],
-                    "tools_used": optimization_result.get("tools_used", []),
-                    "risks_identified": len(risk_result.get("risks", [])),
-                    "optimizations_applied": len(optimization_result.get("optimizations", []))
-                }
+                message="Requirements and risk analysis failed",
+                error_message=str(e)
             )
             
-            tools_used = ["requirements_analysis", "risk_assessment", "optimization", "validation"]
-            
-        except Exception as e:
-            self.logger.error(f"RequirementsRiskAgent iteration failed: {e}")
-            
-            # Create error output
-            output = RequirementsRiskOutput(
-                loprd_doc_id=f"error_{uuid.uuid4().hex[:8]}",
-                status="FAILURE",
-                message=f"Consolidated requirements and risk assessment failed: {str(e)}",
-                confidence_score=ConfidenceScore(
-                    value=0.1,
-                    method="error_fallback",
-                    explanation="Execution failed with exception"
-                ),
-                validation_errors=str(e)
+            return IterationResult(
+                output=error_output,
+                quality_score=0.0,
+                tools_used=[],
+                protocol_used="unified_requirements_risk"
             )
-            
-            quality_score = 0.1
-            tools_used = []
-        
-        return IterationResult(
-            output=output,
-            quality_score=quality_score,
-            tools_used=tools_used,
-            protocol_used="requirements_analysis"
-        )
 
-    async def _generate_loprd_with_llm_tools(self, inputs: RequirementsRiskInput) -> Dict[str, Any]:
-        """Phase 1: Generate LOPRD using LLM to choose the right tools."""
-        try:
-            # Get all available tools for LLM to choose from
-            available_tools_result = await self._get_all_available_mcp_tools()
-            available_tools = available_tools_result.get("tools", {})  # Extract tools from result
-            
-            # Let LLM choose tools and approach for requirements analysis
-            requirements_prompt = f"""You need to analyze user requirements and generate a LOPRD (List of Product Requirements Document).
-
-USER INPUT:
-User Goal: {inputs.user_goal or 'Not provided'}
-Refined Goal: {inputs.refined_user_goal_md or 'Not provided'}
-Project Path: {inputs.project_path or 'Not provided'}
-Intelligent Context: {inputs.intelligent_context}
-
-TASK: Generate a comprehensive LOPRD that includes:
-- Core objectives and requirements
-- User stories and acceptance criteria  
-- Functional and non-functional requirements
-- Success metrics and constraints
-
-AVAILABLE TOOLS:
-{self._format_available_tools(available_tools)}
-
-Please choose the appropriate tools to analyze the requirements and return JSON with your approach:
-{{
-    "analysis_approach": "description of your approach",
-    "tools_to_use": [
-        {{
-            "tool_name": "tool_name",
-            "arguments": {{"param": "value"}},
-            "purpose": "why using this tool"
-        }}
-    ],
-    "loprd_structure": {{
-        "core_objectives": ["objective1", "objective2"],
-        "user_stories": ["{{"story": "As a user...", "acceptance_criteria": ["criteria1"]}}"],
-        "functional_requirements": ["req1", "req2"],
-        "non_functional_requirements": ["req1", "req2"],
-        "success_metrics": ["metric1", "metric2"],
-        "constraints": ["constraint1", "constraint2"]
-    }}
-}}
-
-Return ONLY the JSON response."""
-            
-            # Get LLM response
-            llm_response = await self.llm_provider.generate(requirements_prompt)
-            
-            # Parse LLM response
-            analysis_plan = self._extract_json_from_response(llm_response)
-            if isinstance(analysis_plan, str):
-                analysis_plan = json.loads(analysis_plan)
-            
-            # Execute LLM-chosen tools
-            tool_results = {}
-            for tool_spec in analysis_plan.get("tools_to_use", []):
-                tool_name = tool_spec.get("tool_name")
-                arguments = tool_spec.get("arguments", {})
-                
-                try:
-                    result = await self._call_mcp_tool(tool_name, arguments)
-                    tool_results[tool_name] = result
-                    self.logger.info(f"Executed LLM-chosen tool: {tool_name}")
-                except Exception as e:
-                    self.logger.warning(f"Tool {tool_name} failed: {e}")
-                    tool_results[tool_name] = {"error": str(e)}
-            
-            # Generate final LOPRD based on analysis and tool results
-            final_loprd = analysis_plan.get("loprd_structure", {})
-            final_loprd["metadata"] = {
-                "generated_by": self.AGENT_ID,
-                "timestamp": datetime.now().isoformat(),
-                "analysis_approach": analysis_plan.get("analysis_approach"),
-                "tools_used": list(tool_results.keys())
-            }
-            
-            return {
-                "loprd": final_loprd,
-                "analysis_plan": analysis_plan,
-                "tool_results": tool_results,
-                "success": True
-            }
-            
-        except Exception as e:
-            self.logger.error(f"LOPRD generation failed: {e}")
-            return {
-                "loprd": self._generate_fallback_loprd(inputs),
-                "error": str(e),
-                "success": False
-            }
-
-    async def _assess_risks_with_llm_tools(self, loprd_result: Dict[str, Any], inputs: RequirementsRiskInput) -> Dict[str, Any]:
-        """Phase 2: Assess risks in the generated LOPRD using LLM-chosen tools."""
-        try:
-            available_tools_result = await self._get_all_available_mcp_tools()
-            available_tools = available_tools_result.get("tools", {})  # Extract tools from result
-            
-            # Let LLM choose tools for risk assessment
-            risk_prompt = f"""You need to assess risks in the generated LOPRD and identify potential issues.
-
-LOPRD TO ASSESS:
-{json.dumps(loprd_result.get('loprd', {}), indent=2)}
-
-FOCUS AREAS: {inputs.focus_areas or 'General risk assessment'}
-
-TASK: Identify risks, issues, and optimization opportunities in this LOPRD:
-- Technical risks and challenges
-- Business risks and assumptions  
-- Implementation risks and dependencies
-- Quality risks and gaps
-- Optimization opportunities
-
-AVAILABLE TOOLS:
-{self._format_available_tools(available_tools)}
-
-Choose tools to help with risk analysis and return JSON:
-{{
-    "risk_assessment_approach": "your assessment approach",
-    "tools_to_use": [
-        {{
-            "tool_name": "tool_name", 
-            "arguments": {{"param": "value"}},
-            "purpose": "why using this tool for risk assessment"
-        }}
-    ],
-    "risks": {{
-        "critical_risks": [
-            {{"risk": "description", "impact": "high/medium/low", "likelihood": "high/medium/low", "mitigation": "suggested mitigation"}}
-        ],
-        "moderate_risks": [
-            {{"risk": "description", "impact": "medium", "likelihood": "medium", "mitigation": "suggested mitigation"}}
-        ],
-        "optimization_opportunities": [
-            {{"opportunity": "description", "benefit": "expected benefit", "effort": "low/medium/high"}}
-        ]
-    }},
-    "risk_summary": {{
-        "total_risks": 0,
-        "risk_level": "LOW/MEDIUM/HIGH",
-        "key_concerns": ["concern1", "concern2"],
-        "recommended_actions": ["action1", "action2"]
-    }}
-}}
-
-Return ONLY the JSON response."""
-            
-            # Get LLM response  
-            llm_response = await self.llm_provider.generate(risk_prompt)
-            
-            # Parse LLM response
-            risk_analysis = self._extract_json_from_response(llm_response)
-            if isinstance(risk_analysis, str):
-                risk_analysis = json.loads(risk_analysis)
-            
-            # Execute LLM-chosen tools for risk assessment
-            tool_results = {}
-            for tool_spec in risk_analysis.get("tools_to_use", []):
-                tool_name = tool_spec.get("tool_name")
-                arguments = tool_spec.get("arguments", {})
-                
-                try:
-                    result = await self._call_mcp_tool(tool_name, arguments)
-                    tool_results[tool_name] = result
-                    self.logger.info(f"Executed risk assessment tool: {tool_name}")
-                except Exception as e:
-                    self.logger.warning(f"Risk tool {tool_name} failed: {e}")
-                    tool_results[tool_name] = {"error": str(e)}
-            
-            return {
-                "risks": risk_analysis.get("risks", {}),
-                "risk_summary": risk_analysis.get("risk_summary", {}),
-                "assessment_approach": risk_analysis.get("risk_assessment_approach"),
-                "tool_results": tool_results,
-                "success": True
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Risk assessment failed: {e}")
-            return {
-                "risks": {"critical_risks": [], "moderate_risks": [], "optimization_opportunities": []},
-                "risk_summary": {"total_risks": 0, "risk_level": "UNKNOWN", "key_concerns": [], "recommended_actions": []},
-                "error": str(e),
-                "success": False
-            }
-
-    async def _optimize_requirements_with_llm_tools(self, loprd_result: Dict[str, Any], risk_result: Dict[str, Any], inputs: RequirementsRiskInput) -> Dict[str, Any]:
-        """Phase 3: Optimize requirements by integrating risk mitigations using LLM-chosen tools."""
-        try:
-            available_tools_result = await self._get_all_available_mcp_tools()
-            available_tools = available_tools_result.get("tools", {})  # Extract tools from result
-            
-            # Let LLM choose tools for optimization
-            optimization_prompt = f"""You need to optimize the LOPRD by integrating risk mitigations and improvements.
-
-ORIGINAL LOPRD:
-{json.dumps(loprd_result.get('loprd', {}), indent=2)}
-
-IDENTIFIED RISKS:
-{json.dumps(risk_result.get('risks', {}), indent=2)}
-
-RISK SUMMARY:
-{json.dumps(risk_result.get('risk_summary', {}), indent=2)}
-
-TASK: Create an optimized version of the LOPRD that:
-- Addresses identified critical and moderate risks
-- Integrates risk mitigations into requirements
-- Applies optimization opportunities
-- Maintains requirement completeness and clarity
-
-AVAILABLE TOOLS:
-{self._format_available_tools(available_tools)}
-
-Choose tools to help with optimization and return JSON:
-{{
-    "optimization_approach": "your optimization strategy",
-    "tools_to_use": [
-        {{
-            "tool_name": "tool_name",
-            "arguments": {{"param": "value"}},
-            "purpose": "why using this tool for optimization"
-        }}
-    ],
-    "optimized_loprd": {{
-        "core_objectives": ["updated objectives with risk considerations"],
-        "user_stories": ["{{"story": "enhanced user story", "acceptance_criteria": ["criteria with risk mitigations"]}}"],
-        "functional_requirements": ["requirements with risk mitigations"],
-        "non_functional_requirements": ["enhanced non-functional requirements"],
-        "success_metrics": ["metrics including risk indicators"],
-        "constraints": ["constraints including risk controls"],
-        "risk_mitigations": [
-            {{"risk": "risk description", "mitigation": "how this is addressed in requirements"}}
-        ]
-    }},
-    "integrated_requirements": {{
-        "requirements_with_mitigations": ["req with built-in risk control"],
-        "new_requirements_for_risks": ["new req to address specific risk"],
-        "enhanced_acceptance_criteria": ["acceptance criteria that verify risk controls"]
-    }},
-    "optimizations": [
-        {{"optimization": "what was improved", "rationale": "why this improves the requirements"}}
-    ]
-}}
-
-Return ONLY the JSON response."""
-            
-            # Get LLM response
-            llm_response = await self.llm_provider.generate(optimization_prompt)
-            
-            # Parse LLM response
-            optimization_plan = self._extract_json_from_response(llm_response)
-            if isinstance(optimization_plan, str):
-                optimization_plan = json.loads(optimization_plan)
-            
-            # Execute LLM-chosen tools for optimization
-            tool_results = {}
-            for tool_spec in optimization_plan.get("tools_to_use", []):
-                tool_name = tool_spec.get("tool_name")
-                arguments = tool_spec.get("arguments", {})
-                
-                try:
-                    result = await self._call_mcp_tool(tool_name, arguments)
-                    tool_results[tool_name] = result
-                    self.logger.info(f"Executed optimization tool: {tool_name}")
-                except Exception as e:
-                    self.logger.warning(f"Optimization tool {tool_name} failed: {e}")
-                    tool_results[tool_name] = {"error": str(e)}
-            
-            # Add metadata to optimized LOPRD
-            optimized_loprd = optimization_plan.get("optimized_loprd", loprd_result.get('loprd', {}))
-            optimized_loprd["metadata"] = {
-                "generated_by": self.AGENT_ID,
-                "timestamp": datetime.now().isoformat(),
-                "optimization_approach": optimization_plan.get("optimization_approach"),
-                "risks_addressed": len(risk_result.get('risks', {}).get('critical_risks', [])) + len(risk_result.get('risks', {}).get('moderate_risks', [])),
-                "optimizations_applied": len(optimization_plan.get("optimizations", [])),
-                "tools_used": list(tool_results.keys())
-            }
-            
-            return {
-                "optimized_loprd": optimized_loprd,
-                "integrated_requirements": optimization_plan.get("integrated_requirements", {}),
-                "optimizations": optimization_plan.get("optimizations", []),
-                "optimization_approach": optimization_plan.get("optimization_approach"),
-                "tool_results": tool_results,
-                "tools_used": list(tool_results.keys()),
-                "success": True
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Requirements optimization failed: {e}")
-            return {
-                "optimized_loprd": loprd_result.get('loprd', {}),
-                "integrated_requirements": {},
-                "optimizations": [],
-                "error": str(e),
-                "success": False
-            }
-
-    async def _validate_integrated_output(self, optimization_result: Dict[str, Any], inputs: RequirementsRiskInput) -> Dict[str, Any]:
-        """Phase 4: Validate the integrated requirements and risk assessment output."""
-        try:
-            optimized_loprd = optimization_result.get("optimized_loprd", {})
-            
-            validation_results = {
-                "is_valid": True,
-                "completeness_score": 1.0,
-                "issues": [],
-                "quality_indicators": {}
-            }
-            
-            # Check LOPRD completeness
-            required_sections = ["core_objectives", "user_stories", "functional_requirements", "non_functional_requirements"]
-            missing_sections = []
-            
-            for section in required_sections:
-                if section not in optimized_loprd or not optimized_loprd[section]:
-                    missing_sections.append(section)
-            
-            if missing_sections:
-                validation_results["issues"].append(f"Missing required sections: {missing_sections}")
-                validation_results["completeness_score"] -= 0.2 * len(missing_sections)
-            
-            # Check risk mitigation integration
-            risk_mitigations = optimized_loprd.get("risk_mitigations", [])
-            if not risk_mitigations:
-                validation_results["issues"].append("No risk mitigations found in optimized LOPRD")
-                validation_results["completeness_score"] -= 0.1
-            
-            # Check optimization quality
-            optimizations = optimization_result.get("optimizations", [])
-            validation_results["quality_indicators"] = {
-                "sections_present": len([s for s in required_sections if s in optimized_loprd]),
-                "total_requirements": len(optimized_loprd.get("functional_requirements", [])) + len(optimized_loprd.get("non_functional_requirements", [])),
-                "risk_mitigations": len(risk_mitigations),
-                "optimizations_applied": len(optimizations)
-            }
-            
-            # Overall validation
-            if validation_results["completeness_score"] < 0.6:
-                validation_results["is_valid"] = False
-            
-            return validation_results
-            
-        except Exception as e:
-            self.logger.error(f"Validation failed: {e}")
-            return {
-                "is_valid": False,
-                "completeness_score": 0.1,
-                "issues": [f"Validation error: {str(e)}"],
-                "quality_indicators": {}
-            }
-
-    async def _store_artifacts_with_llm_tools(self, optimization_result: Dict[str, Any], inputs: RequirementsRiskInput) -> Dict[str, Any]:
-        """Store the generated artifacts using LLM-chosen storage approach."""
-        try:
-            storage_results = {}
-            
-            # Store optimized LOPRD
-            loprd_doc_id = f"loprd_{uuid.uuid4().hex[:8]}"
-            await migrate_store_artifact(
-                collection_name=self.LOPRD_ARTIFACTS_COLLECTION,
-                document_id=loprd_doc_id,
-                content=json.dumps(optimization_result.get("optimized_loprd", {}), indent=2),
-                metadata={
-                    "agent_id": self.AGENT_ID,
-                    "artifact_type": "OptimizedLOPRD_JSON",
-                    "project_id": inputs.project_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "has_risk_mitigations": len(optimization_result.get("optimized_loprd", {}).get("risk_mitigations", [])) > 0
-                }
-            )
-            storage_results["loprd_doc_id"] = loprd_doc_id
-            
-            # Store risk assessment report
-            risk_report_id = f"risk_report_{uuid.uuid4().hex[:8]}"
-            risk_report_content = f"""# Risk Assessment Report
-Generated by: {self.AGENT_ID}
-Timestamp: {datetime.now().isoformat()}
-
-## Risk Summary
-- Total Risks Identified: {len(optimization_result.get('optimized_loprd', {}).get('risk_mitigations', []))}
-- Optimization Approach: {optimization_result.get('optimization_approach', 'Standard optimization')}
-
-## Risk Mitigations Integrated
-{json.dumps(optimization_result.get('optimized_loprd', {}).get('risk_mitigations', []), indent=2)}
-
-## Applied Optimizations
-{json.dumps(optimization_result.get('optimizations', []), indent=2)}
-"""
-            
-            await migrate_store_artifact(
-                collection_name=self.RISK_ASSESSMENT_REPORTS_COLLECTION,
-                document_id=risk_report_id,
-                content=risk_report_content,
-                metadata={
-                    "agent_id": self.AGENT_ID,
-                    "artifact_type": "IntegratedRiskAssessment_MD",
-                    "project_id": inputs.project_id,
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
-            storage_results["risk_report_id"] = risk_report_id
-            
-            self.logger.info(f"Stored artifacts: LOPRD({loprd_doc_id}), Risk Report({risk_report_id})")
-            return storage_results
-            
-        except Exception as e:
-            self.logger.error(f"Artifact storage failed: {e}")
-            return {
-                "loprd_doc_id": f"storage_failed_{uuid.uuid4().hex[:8]}",
-                "error": str(e)
-            }
-
-    def _format_available_tools(self, tools: Dict[str, Any]) -> str:
-        """Format ALL available tools for LLM to choose from - no filtering."""
-        formatted = []
-        for tool_name, tool_info in tools.items():
-            description = tool_info.get('description', f'Tool: {tool_name}')
-            formatted.append(f"- {tool_name}: {description}")
-        
-        return "\n".join(formatted) if formatted else "No tools available"
-
-    def _extract_json_from_response(self, response: str) -> Any:
-        """Extract JSON from LLM response."""
-        if hasattr(response, 'content'):
-            text = response.content
+    def _parse_inputs(self, inputs: Any) -> RequirementsRiskAgentInput:
+        """Parse inputs cleanly into RequirementsRiskAgentInput."""
+        if isinstance(inputs, RequirementsRiskAgentInput):
+            return inputs
+        elif isinstance(inputs, dict):
+            return RequirementsRiskAgentInput(**inputs)
+        elif hasattr(inputs, 'dict'):
+            return RequirementsRiskAgentInput(**inputs.dict())
         else:
-            text = str(response)
-        
-        # Find JSON in the response
-        json_start = text.find('{')
-        json_end = text.rfind('}') + 1
-        
-        if json_start >= 0 and json_end > json_start:
-            json_str = text[json_start:json_end]
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-        
-        # Fallback to simple parsing
-        return {"error": "Could not parse JSON from LLM response", "raw_response": text}
+            raise ValueError(f"Invalid input type: {type(inputs)}")
 
-    def _generate_fallback_loprd(self, inputs: RequirementsRiskInput) -> Dict[str, Any]:
-        """Generate a basic fallback LOPRD when analysis fails."""
-        user_goal = inputs.user_goal or inputs.refined_user_goal_md or "Create a software solution"
+    async def _generate_requirements_risk_analysis(self, task_input: RequirementsRiskAgentInput) -> Dict[str, Any]:
+        """
+        Generate requirements and risk analysis using unified discovery + YAML template.
+        Pure unified approach - no hardcoded phases or analysis logic.
+        """
+        try:
+            # Get YAML template (no fallbacks)
+            prompt_template = self.prompt_manager.get_prompt_definition(
+                "requirements_risk_agent_v1_prompt",
+                "1.0.0",
+                sub_path="autonomous_engine"
+            )
+            
+            # Unified discovery for intelligent requirements and risk context
+            discovery_results = await self._universal_discovery(
+                task_input.project_path,
+                ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "architecture", "risks"]
+            )
+            
+            technology_context = await self._universal_technology_discovery(
+                task_input.project_path
+            )
+            
+            # Build template variables for maximum LLM requirements and risk intelligence
+            template_vars = {
+                # Original template variables (maintaining compatibility)
+                "user_goal": task_input.user_goal,
+                "project_path": task_input.project_path,
+                "intelligent_context": task_input.intelligent_context,
+                "project_specifications": task_input.project_specifications or {},
+                
+                # Enhanced unified discovery variables for maximum intelligence
+                "discovery_results": json.dumps(discovery_results, indent=2),
+                "technology_context": json.dumps(technology_context, indent=2),
+                
+                # Additional context for intelligent requirements and risk analysis
+                "refined_user_goal_md": task_input.refined_user_goal_md or "",
+                "loprd_json_schema_str": task_input.loprd_json_schema_str or "",
+                "focus_areas": task_input.focus_areas or [],
+                
+                # Rich context from discovery
+                "project_structure": discovery_results.get("structure", {}),
+                "existing_requirements": discovery_results.get("requirements", {}),
+                "identified_risks": discovery_results.get("risks", {}),
+                "dependencies": discovery_results.get("dependencies", {}),
+                "patterns": discovery_results.get("patterns", {}),
+                "architecture": discovery_results.get("architecture", {}),
+                
+                # Available tools for template use
+                "available_tools": await self._get_available_tools_description()
+            }
+            
+            # Render template
+            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
+                prompt_template.user_prompt_template,
+                template_vars
+            )
+            
+            # Get system prompt if available
+            system_prompt = getattr(prompt_template, 'system_prompt', None)
+            
+            # Call LLM with maximum requirements and risk intelligence
+            response = await self.llm_provider.generate(
+                prompt=formatted_prompt,
+                system_prompt=system_prompt,
+                temperature=0.2,
+                max_tokens=4000
+            )
+            
+            # Parse LLM response (expecting JSON from template)
+            try:
+                result = json.loads(response)
+                
+                # Transform template output to our clean schema
+                return {
+                    "loprd_content": result.get("loprd_with_risk_mitigation", {}),
+                    "integrated_requirements": result.get("integrated_requirements", {}),
+                    "risk_assessment": result.get("risk_assessment", {}),
+                    "risk_summary": self._extract_risk_summary(result, discovery_results),
+                    "mitigation_strategies": self._extract_mitigation_strategies(result, discovery_results),
+                    "requirements_analysis": {
+                        "completeness": self._assess_requirements_completeness(result, discovery_results),
+                        "quality": self._assess_requirements_quality(result, discovery_results),
+                        "traceability": "analyzed_with_unified_discovery",
+                        "consistency": "validated_with_llm_intelligence"
+                    },
+                    "risk_coverage": {
+                        "technical_risks": len(result.get("risk_assessment", {}).get("technical_risks", [])),
+                        "business_risks": len(result.get("risk_assessment", {}).get("business_risks", [])),
+                        "timeline_risks": len(result.get("risk_assessment", {}).get("timeline_risks", [])),
+                        "quality_risks": len(result.get("risk_assessment", {}).get("quality_risks", [])),
+                        "coverage_percentage": self._calculate_risk_coverage_percentage(result, discovery_results)
+                    },
+                    "optimization_suggestions": self._extract_optimization_suggestions(result, discovery_results),
+                    "confidence_score": ConfidenceScore(
+                        value=result.get("confidence_assessment", {}).get("overall_confidence", 0.8),
+                        method="llm_requirements_risk_assessment",
+                        explanation=f"Requirements and risk analysis completed with unified discovery: {result.get('confidence_assessment', {}).get('overall_confidence', 0.8)}"
+                    )
+                }
+                
+            except json.JSONDecodeError as e:
+                self.logger.error(f"LLM response not valid JSON: {e}")
+                raise ValueError(f"LLM response parsing failed: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"Requirements and risk analysis generation failed: {e}")
+            raise
+
+    async def _get_available_tools_description(self) -> str:
+        """Get available tools description for template use."""
+        try:
+            # Get available tools through unified mechanism
+            tools = await self._get_all_available_mcp_tools()
+            if tools.get("discovery_successful") and tools.get("tools"):
+                tool_list = []
+                for tool_name, tool_info in tools["tools"].items():
+                    description = tool_info.get('description', f'Tool: {tool_name}')
+                    tool_list.append(f"- {tool_name}: {description}")
+                return "\n".join(tool_list)
+            else:
+                return "Standard unified discovery tools available"
+        except Exception as e:
+            self.logger.warning(f"Could not get tools description: {e}")
+            return "Standard unified discovery tools available"
+
+    def _extract_risk_summary(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract risk summary from LLM result and discovery."""
+        risk_assessment = llm_result.get("risk_assessment", {})
+        
+        total_risks = 0
+        high_priority_risks = 0
+        
+        for risk_category in ["technical_risks", "business_risks", "timeline_risks", "quality_risks"]:
+            risks = risk_assessment.get(risk_category, [])
+            total_risks += len(risks)
+            # Count high priority risks (simplified heuristic)
+            high_priority_risks += len([r for r in risks if isinstance(r, dict) and r.get("severity") == "high"])
         
         return {
-            "core_objectives": [f"Implement solution for: {user_goal[:100]}"],
-            "user_stories": [
-                {
-                    "story": f"As a user, I want to use the system to achieve my goal: {user_goal[:100]}",
-                    "acceptance_criteria": ["System should be functional", "System should be user-friendly"]
-                }
-            ],
-            "functional_requirements": ["Core functionality implementation", "User interface design"],
-            "non_functional_requirements": ["Performance requirements", "Security requirements"],
-            "success_metrics": ["User satisfaction", "System reliability"],
-            "constraints": ["Budget constraints", "Time constraints"],
-            "metadata": {
-                "generated_by": self.AGENT_ID,
-                "timestamp": datetime.now().isoformat(),
-                "fallback": True
-            }
+            "total_risks_identified": total_risks,
+            "high_priority_risks": high_priority_risks,
+            "risk_categories": list(risk_assessment.keys()),
+            "mitigation_coverage": len(risk_assessment.get("risk_mitigation_strategies", [])),
+            "risk_analysis_method": "unified_discovery_with_llm_analysis"
         }
 
-    def _calculate_integrated_quality_score(self, loprd_result: Dict[str, Any], risk_result: Dict[str, Any], 
-                                          optimization_result: Dict[str, Any], validation_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score for the integrated output."""
-        base_score = 1.0
+    def _extract_mitigation_strategies(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract mitigation strategies from analysis."""
+        strategies = []
         
-        # LOPRD quality contribution (40%)
-        loprd_success = loprd_result.get("success", False)
-        loprd_score = 0.8 if loprd_success else 0.4
+        risk_assessment = llm_result.get("risk_assessment", {})
+        mitigation_strategies = risk_assessment.get("risk_mitigation_strategies", [])
         
-        # Risk assessment quality contribution (30%)
-        risk_success = risk_result.get("success", False)
-        risk_score = 0.8 if risk_success else 0.4
+        for strategy in mitigation_strategies:
+            if isinstance(strategy, dict):
+                strategies.append(strategy)
+            else:
+                # Convert string strategies to structured format
+                strategies.append({
+                    "strategy": str(strategy),
+                    "type": "general",
+                    "priority": "medium"
+                })
         
-        # Optimization quality contribution (20%)
-        optimization_success = optimization_result.get("success", False)
-        optimization_score = 0.8 if optimization_success else 0.4
+        return strategies
+
+    def _assess_requirements_completeness(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> str:
+        """Assess completeness of requirements."""
+        loprd = llm_result.get("loprd_with_risk_mitigation", {})
         
-        # Validation quality contribution (10%)
-        validation_score = validation_result.get("completeness_score", 0.5)
+        # Check for key LOPRD sections
+        required_sections = ["project_overview", "user_stories", "functional_requirements", "non_functional_requirements"]
+        present_sections = [section for section in required_sections if section in loprd]
         
-        # Weighted average
-        final_score = (
-            loprd_score * 0.4 +
-            risk_score * 0.3 + 
-            optimization_score * 0.2 +
-            validation_score * 0.1
-        )
+        completeness_ratio = len(present_sections) / len(required_sections)
         
-        return max(0.1, min(final_score, 1.0))
+        if completeness_ratio >= 0.8:
+            return "high"
+        elif completeness_ratio >= 0.6:
+            return "medium"
+        else:
+            return "low"
+
+    def _assess_requirements_quality(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> str:
+        """Assess quality of requirements."""
+        confidence_assessment = llm_result.get("confidence_assessment", {})
+        requirements_confidence = confidence_assessment.get("requirements_confidence", 0.7)
+        
+        if requirements_confidence >= 0.8:
+            return "high"
+        elif requirements_confidence >= 0.6:
+            return "medium"
+        else:
+            return "low"
+
+    def _calculate_risk_coverage_percentage(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> float:
+        """Calculate percentage of risk coverage."""
+        confidence_assessment = llm_result.get("confidence_assessment", {})
+        risk_coverage_confidence = confidence_assessment.get("risk_coverage_confidence", 0.8)
+        
+        return risk_coverage_confidence * 100
+
+    def _extract_optimization_suggestions(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> List[str]:
+        """Extract optimization suggestions from analysis."""
+        suggestions = [
+            "Regular review and update of requirements based on project evolution",
+            "Continuous risk monitoring and mitigation strategy updates",
+            "Maintain traceability between requirements and implementation"
+        ]
+        
+        # Add discovery-based suggestions
+        if discovery_results.get("patterns", {}).get("complexity") == "high":
+            suggestions.append("Consider simplifying complex patterns to reduce implementation risks")
+        
+        if discovery_results.get("dependencies", {}).get("external_count", 0) > 10:
+            suggestions.append("Review external dependencies to reduce integration risks")
+        
+        # Add LLM-suggested optimizations if available
+        integrated_requirements = llm_result.get("integrated_requirements", {})
+        if "optimization_notes" in integrated_requirements:
+            suggestions.extend(integrated_requirements["optimization_notes"])
+        
+        return suggestions
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
-        """Get the agent card for registration."""
+        """Generate agent card for registry."""
+        input_schema = RequirementsRiskAgentInput.model_json_schema()
+        output_schema = RequirementsRiskAgentOutput.model_json_schema()
+        
         return AgentCard(
-            agent_id=RequirementsRiskAgent.AGENT_ID,
-            agent_name=RequirementsRiskAgent.AGENT_NAME,
-            description=RequirementsRiskAgent.AGENT_DESCRIPTION,
-            version=RequirementsRiskAgent.AGENT_VERSION,
-            category=RequirementsRiskAgent.CATEGORY,
-            visibility=RequirementsRiskAgent.VISIBILITY,
-            capabilities=RequirementsRiskAgent.CAPABILITIES,
-            primary_protocols=RequirementsRiskAgent.PRIMARY_PROTOCOLS,
-            secondary_protocols=RequirementsRiskAgent.SECONDARY_PROTOCOLS,
-            universal_protocols=RequirementsRiskAgent.UNIVERSAL_PROTOCOLS,
-            input_schema=RequirementsRiskAgent.INPUT_SCHEMA,
-            output_schema=RequirementsRiskAgent.OUTPUT_SCHEMA
+            agent_id=RequirementsRiskAgent_v1.AGENT_ID,
+            name=RequirementsRiskAgent_v1.AGENT_NAME,
+            description=RequirementsRiskAgent_v1.AGENT_DESCRIPTION,
+            version=RequirementsRiskAgent_v1.AGENT_VERSION,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            categories=[RequirementsRiskAgent_v1.CATEGORY.value],
+            visibility=RequirementsRiskAgent_v1.VISIBILITY.value,
+            capability_profile={
+                "unified_discovery": True,
+                "yaml_templates": True,
+                "llm_requirements_risk": True,
+                "clean_analysis": True,
+                "no_hardcoded_logic": True,
+                "maximum_agentic": True
+            },
+            metadata={
+                "callable_fn_path": f"{RequirementsRiskAgent_v1.__module__}.{RequirementsRiskAgent_v1.__name__}"
+            }
         )
 
-    def get_input_schema(self) -> Type[RequirementsRiskInput]:
-        return RequirementsRiskInput
+    def get_input_schema(self) -> Type[RequirementsRiskAgentInput]:
+        return RequirementsRiskAgentInput
 
-    def get_output_schema(self) -> Type[RequirementsRiskOutput]:
-        return RequirementsRiskOutput 
+    def get_output_schema(self) -> Type[RequirementsRiskAgentOutput]:
+        return RequirementsRiskAgentOutput 

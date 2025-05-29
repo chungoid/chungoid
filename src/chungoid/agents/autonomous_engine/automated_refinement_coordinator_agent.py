@@ -1,412 +1,166 @@
+"""
+AutomatedRefinementCoordinatorAgent_v1: Clean, unified LLM-powered coordination.
+
+This agent coordinates project refinement by:
+1. Using unified discovery to understand project state and progress
+2. Using YAML prompt template with rich discovery data
+3. Letting the LLM make intelligent coordination decisions with maximum intelligence
+
+No legacy patterns, no hardcoded decision logic, no complex phases.
+Pure unified approach for maximum agentic coordination intelligence.
+"""
+
 from __future__ import annotations
 
 import logging
-import datetime
 import uuid
 import json
-import time
+from typing import Any, Dict, Optional, List, ClassVar, Type
 
-from typing import Any, Dict, Optional, Literal, Union, ClassVar, List, Type, get_args, TYPE_CHECKING
-from enum import Enum
-import yaml
-
-from pydantic import BaseModel, Field, model_validator, PrivateAttr
+from pydantic import BaseModel, Field, model_validator
 
 from chungoid.agents.unified_agent import UnifiedAgent
-from chungoid.utils.llm_provider import LLMProvider # Assuming direct LLM call for complex decisions might be an option
-from chungoid.utils.prompt_manager import PromptManager # If decision logic uses prompts
+from chungoid.utils.llm_provider import LLMProvider
+from chungoid.utils.prompt_manager import PromptManager
 from chungoid.schemas.common import ConfidenceScore
-from chungoid.schemas.arca_request_and_response import ARCAReviewArtifactType # ADDED IMPORT
-# Mocked Agent Inputs for agents ARCA might call
-# UPDATED: Use new consolidated RequirementsRiskAgent instead of separate ProductAnalystAgent
-from .requirements_risk_agent import RequirementsRiskInput # For LOPRD + Risk assessment refinement
-from .architect_agent import EnhancedArchitectAgentInput # For blueprint refinement
-from chungoid.schemas.agent_master_planner import MasterPlannerInput # For instructing plan refinement
-# Import the new documentation agent's input schema
-from .project_documentation_agent import ProjectDocumentationInput, ProjectDocumentationAgent_v1 
-
-# NEW: Import StateManager and related schemas
-from chungoid.utils.state_manager import StateManager, StatusFileError
-from chungoid.schemas.project_status_schema import ProjectStateV2, CycleStatus, ProjectOverallStatus, CycleInfo # Corrected import
-
-from chungoid.utils.agent_registry import AgentCard # For AgentCard
-from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility # For AgentCard
-# COMMENTED OUT: Defunct project_chroma_manager_agent imports
-# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
-#     ProjectChromaManagerAgent_v1, 
-#     GENERATED_CODE_ARTIFACTS_COLLECTION,
-#     RetrieveArtifactOutput, # Added
-#     RISK_ASSESSMENT_REPORTS_COLLECTION, # Added
-#     OPTIMIZATION_SUGGESTION_REPORTS_COLLECTION, # Added
-#     TRACEABILITY_REPORTS_COLLECTION, # Added
-#     REVIEW_REPORTS_COLLECTION, # Added
-#     EXECUTION_PLANS_COLLECTION # ADDED IMPORT
-# )
-
-# Added import for FailedTestReport
-from chungoid.schemas.code_debugging_agent_schemas import FailedTestReport
-# NEW Imports for Debugging Logic
-from chungoid.schemas.code_debugging_agent_schemas import DebuggingTaskInput, DebuggingTaskOutput
-from chungoid.agents.autonomous_engine.code_debugging_agent import CodeDebuggingAgent_v1
-
-# NEW: Import utility schemas for CodeIntegration and TestRunner
-from chungoid.schemas.autonomous_engine_utility_schemas import (
-    CodeIntegrationTaskInput,
-    CodeIntegrationTaskOutput,
-    TestRunnerTaskInput,
-    TestRunnerTaskOutput
-)
-
-# NEW: Import for ARCA Logging
-from chungoid.schemas.agent_logs import ARCALogEntry
-# COMMENTED OUT: Defunct project_chroma_manager_agent imports
-# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import ProjectChromaManagerAgent_v1, LogStorageConfirmation # For type hinting PCMA
-# NEW QA LOG IMPORTS
-from chungoid.schemas.agent_logs import QualityAssuranceLogEntry, QAEventType, OverallQualityStatus
-# COMMENTED OUT: Defunct project_chroma_manager_agent imports
-# from chungoid.agents.autonomous_engine.project_chroma_manager_agent import (
-#     QUALITY_ASSURANCE_LOGS_COLLECTION, 
-#     ARTIFACT_TYPE_QA_LOG_ENTRY_JSON,
-#     StoreArtifactInput # Ensure this is imported for store_artifact
-# )
-
-# Import for plan modification
-from chungoid.schemas.master_flow import MasterExecutionPlan, MasterStageSpec
-
-# Registry-first architecture import
+from chungoid.utils.agent_registry import AgentCard
+from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.registry import register_autonomous_engine_agent
 
 from ...schemas.unified_execution_schemas import (
     ExecutionContext as UEContext,
-    AgentExecutionResult,
-    ExecutionMetadata,
-    ExecutionMode,
-    CompletionReason,
     IterationResult,
-    StageInfo,
 )
 
 logger = logging.getLogger(__name__)
 
-ARCA_PROMPT_NAME = "automated_refinement_coordinator_agent_v1_prompt.yaml" # If LLM-based decision making is used
-ARCA_OPTIMIZATION_EVALUATOR_PROMPT_NAME = "arca_optimization_evaluator_v1_prompt.yaml" # NEW PROMPT
 
-# Constants for ARCA behavior
-MAX_DEBUGGING_ATTEMPTS_PER_MODULE: ClassVar[int] = 3 # Added ClassVar
-DEFAULT_ACCEPTANCE_THRESHOLD: ClassVar[float] = 0.85 # MODIFIED: Added ClassVar
-
-
-# ------------------------------------------------------------------
-# Fallback type aliases for yet-to-be-migrated PCMA structures --------
-# These keep Phase-2 compiling; Phase-3 will remove PCMA dependencies.
-# ------------------------------------------------------------------
-
-try:
-    from chungoid.schemas.project_status_schema import ProjectStateDataV2  # type: ignore
-except Exception:  # pragma: no cover – schema not available yet
-    ProjectStateDataV2 = Any  # type: ignore
-
-try:
-    from chungoid.schemas.autonomous_engine.project_chroma_schemas import RetrieveArtifactOutput  # type: ignore
-except Exception:  # pragma: no cover
-    RetrieveArtifactOutput = Any  # type: ignore
-
-
-# Ensure ProtocolExecutionError exists (may have been dropped during refactor)
-class ProtocolExecutionError(Exception):
-    """Raised when the protocol-based execution encounters unrecoverable error."""
-
-    pass
-
-
-# --- Input and Output Schemas for ARCA --- #
-class ARCAReviewInput(BaseModel):
-    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this ARCA review task.")
+class CoordinatorAgentInput(BaseModel):
+    """Clean input schema focused on core coordination needs."""
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique task identifier")
+    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project identifier")
     
-    # Traditional fields - optional when using intelligent context
-    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
-    cycle_id: Optional[str] = Field(None, description="The ID of the current refinement cycle.")
-    artifact_type: Optional[ARCAReviewArtifactType] = Field(None, description="The type of artifact ARCA needs to review or act upon.")
-    artifact_doc_id: Optional[str] = Field(
-        None, description="The document ID of the primary artifact in ChromaDB."
-    )
+    # Core requirements
+    user_goal: str = Field(..., description="What the user wants to achieve")
+    project_path: str = Field(default=".", description="Project directory path")
     
-    # ADDED: Intelligent project analysis from orchestrator
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
-    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
-    user_goal: Optional[str] = Field(None, description="Original user goal for context")
-    project_path: Optional[str] = Field(None, description="Project path for context")
-    # New fields for CodeModule_TestFailure
-    code_module_file_path: Optional[str] = Field(
-        None, description="Path to the code file that has failed tests. Required if artifact_type is CodeModule_TestFailure."
-    )
-    failed_test_report_details: Optional[List[FailedTestReport]] = Field(
-        None, description="List of failed test report objects. Required if artifact_type is CodeModule_TestFailure."
-    )
-    generator_agent_id: Optional[str] = Field(None, description="ID of the agent that generated the artifact. Optional in intelligent context mode.")
-    generator_agent_confidence: Optional[ConfidenceScore] = Field(None, description="Confidence score from the generating agent.")
+    # Coordination context
+    current_cycle_id: Optional[str] = Field(None, description="Current refinement cycle identifier")
+    coordination_focus: Optional[str] = Field(None, description="Specific area to focus coordination on")
     
-    # Specific inputs based on artifact_type
-    praa_risk_report_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the PRAA Risk Assessment Report for the artifact.")
-    praa_optimization_report_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the PRAA Optimization Suggestions Report.")
-    # praa_confidence_score: Optional[ConfidenceScore] = Field(None, description="Confidence score from PRAA.")
-
-    rta_report_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the RTA Traceability Report (e.g., LOPRD to Blueprint, Blueprint to Plan).")
-    # rta_confidence_score: Optional[ConfidenceScore] = Field(None, description="Confidence score from RTA.")
-
-    # For Blueprint Reviewer feedback if applicable before planning
-    blueprint_reviewer_report_doc_id: Optional[str] = Field(None, description="ChromaDB ID of the Blueprint Reviewer Agent's report.")
-
-    # Inputs specifically for initiating documentation generation after a cycle completes
-    # These would be populated by the orchestrator when calling ARCA to trigger documentation
-    # Or ARCA itself sets them up when transitioning to documentation.
-    # For clarity, let's assume if artifact_type is e.g. MasterExecutionPlan and ACCEPTED,
-    # ARCA will construct the input for ProjectDocumentationAgent.
-    final_loprd_doc_id_for_docs: Optional[str] = Field(None, description="Doc ID of the final LOPRD for documentation.")
-    final_blueprint_doc_id_for_docs: Optional[str] = Field(None, description="Doc ID of the final Blueprint for documentation.")
-    final_plan_doc_id_for_docs: Optional[str] = Field(None, description="Doc ID of the final MasterExecutionPlan for documentation.")
-    final_code_root_path_for_docs: Optional[str] = Field(None, description="Path to generated code root for documentation.")
-    final_test_summary_doc_id_for_docs: Optional[str] = Field(None, description="Doc ID of the final test summary for documentation.")
-
-    # Ensure that relevant report IDs are provided based on artifact type
+    # Intelligent context from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent specifications provided")
+    
     @model_validator(mode='after')
-    def check_intelligent_context_requirements(self) -> 'ARCAReviewInput':
-        """Validate requirements based on execution mode (intelligent context vs traditional)."""
-        
-        if self.intelligent_context:
-            # Intelligent context mode - requires project specifications and user goal
-            if not self.project_specifications:
-                raise ValueError("project_specifications is required when intelligent_context=True")
-            if not self.user_goal:
-                raise ValueError("user_goal is required when intelligent_context=True")
-            
-            # In intelligent context mode, traditional fields are optional
-            # The smart agent will use its LLM processing abilities to handle coordination
-            
-        else:
-            # Traditional mode - requires generator_agent_id and artifact details
-            if not self.generator_agent_id:
-                raise ValueError("generator_agent_id is required when intelligent_context=False")
-            if not self.artifact_type:
-                raise ValueError("artifact_type is required when intelligent_context=False")
-            if not self.artifact_doc_id:
-                raise ValueError("artifact_doc_id is required when intelligent_context=False")
-        
+    def validate_requirements(self) -> 'CoordinatorAgentInput':
+        """Ensure we have minimum requirements for coordination."""
+        if not self.user_goal or not self.user_goal.strip():
+            raise ValueError("user_goal is required for coordination")
         return self
 
-    @model_validator(mode='after')
-    def check_report_ids(self) -> 'ARCAReviewInput':
-        # Only check report IDs in traditional mode
-        if not self.intelligent_context and self.artifact_type in ["LOPRD", "Blueprint", "MasterExecutionPlan", "CodeModule"]:
-            if not self.praa_risk_report_doc_id or not self.praa_optimization_report_doc_id:
-                logger.warning(f"PRAA report IDs missing for {self.artifact_type} review in ARCA. This might limit decision quality.")
-        if not self.intelligent_context and self.artifact_type in ["Blueprint", "MasterExecutionPlan", "CodeModule"]:
-            if not self.rta_report_doc_id:
-                logger.warning(f"RTA report ID missing for {self.artifact_type} review in ARCA. This might limit decision quality.")
-        return self
 
-    @model_validator(mode='after')
-    def check_artifact_specific_fields(cls, values: 'ARCAReviewInput') -> 'ARCAReviewInput':
-        artifact_type = values.artifact_type
-        artifact_doc_id = values.artifact_doc_id
-        code_module_file_path = values.code_module_file_path
-        failed_test_report_details = values.failed_test_report_details
-
-        if artifact_type == "LOPRD":
-            if not artifact_doc_id:
-                raise ValueError("artifact_doc_id is required for LOPRD artifact_type")
-        elif artifact_type == "ProjectBlueprint":
-            if not artifact_doc_id:
-                raise ValueError("artifact_doc_id is required for ProjectBlueprint artifact_type")
-            # Potentially add checks for LOPRD related IDs if needed for blueprint context
-        elif artifact_type == "MasterExecutionPlan":
-            if not artifact_doc_id:
-                raise ValueError("artifact_doc_id is required for MasterExecutionPlan artifact_type")
-        elif artifact_type == "CodeModule":
-            if not artifact_doc_id:
-                raise ValueError("artifact_doc_id is required for CodeModule artifact_type")
-        elif artifact_type == "CodeModule_TestFailure": # New validation block
-            if not code_module_file_path:
-                raise ValueError("code_module_file_path is required for CodeModule_TestFailure artifact_type")
-            if not failed_test_report_details:
-                raise ValueError("failed_test_report_details are required for CodeModule_TestFailure artifact_type")
-            # artifact_doc_id might still be relevant here if it refers to the CodeModule's ID
-            # For example, if the CodeModule itself is an artifact, and test failures are *about* it.
-            # If artifact_doc_id is always the code_module_file_path for this type, ensure consistency or clarify.
-            # For now, not making artifact_doc_id mandatory for CodeModule_TestFailure but it might be needed for context.
-
-        # Add checks for other artifact_types as they are defined and have specific field requirements
-        # e.g., RiskAssessmentReport, TraceabilityReport etc.
-        elif artifact_type in ["RiskAssessmentReport", "TraceabilityReport", "OptimizationSuggestionReport", "ProjectDocumentation"]:
-            if not artifact_doc_id:
-                raise ValueError(f"artifact_doc_id is required for {artifact_type}")
-        
-        # Ensure that generator_agent_id and generator_agent_confidence are present if the artifact_type
-        # implies a generated artifact that needs quality assessment (e.g. CodeModule, LOPRD, Blueprint)
-        if artifact_type in ["LOPRD", "ProjectBlueprint", "MasterExecutionPlan", "CodeModule"]:
-            if values.generator_agent_id is None or values.generator_agent_confidence is None:
-                # Allowing these to be None for now as per original schema, but consider if they should be mandatory
-                pass # raise ValueError(f"generator_agent_id and generator_agent_confidence are required for {artifact_type}")
-
-        return values
-
-class ARCAOutput(BaseModel):
-    task_id: str = Field(..., description="Echoed task_id from input.")
-    project_id: str = Field(..., description="Echoed project_id from input.")
-    reviewed_artifact_doc_id: str = Field(..., description="ChromaDB ID of the artifact that was reviewed.")
-    reviewed_artifact_type: ARCAReviewArtifactType = Field(..., description="Type of the artifact reviewed.")
-    decision: Literal["ACCEPT_ARTIFACT", "REFINEMENT_REQUIRED", "ESCALATE_TO_USER", "TEST_FAILURE_HANDOFF", "PROCEED_TO_DOCUMENTATION", "PLAN_MODIFIED_NEW_TASKS_ADDED", "ERROR"] = Field(..., description="The final decision of the ARCA review.")
-    reasoning: str = Field(..., description="The detailed reasoning behind the decision.")
-    confidence_in_decision: Optional[ConfidenceScore] = Field(None, description="ARCA's confidence in its own decision.")
+class CoordinatorAgentOutput(BaseModel):
+    """Clean output schema focused on coordination decisions."""
+    task_id: str = Field(..., description="Task identifier")
+    project_id: str = Field(..., description="Project identifier")
+    status: str = Field(..., description="Execution status")
     
-    # If decision is REFINEMENT_REQUIRED, these fields provide details for the orchestrator
-    next_agent_id_for_refinement: Optional[str] = Field(None, description="The agent_id to call for refinement (e.g., RequirementsRiskAgent, EnhancedArchitectAgent_v1, SystemMasterPlannerAgent_v1).")
-    next_agent_input: Optional[Union[RequirementsRiskInput, EnhancedArchitectAgentInput, MasterPlannerInput, ProjectDocumentationInput, Dict[str, Any]]] = Field(None, description="The full input payload for the next agent if refinement is needed.")
+    # Core coordination deliverables
+    coordination_decision: str = Field(..., description="Primary coordination decision")
+    coordination_reasoning: str = Field(..., description="LLM reasoning for the coordination decision")
+    next_actions: List[Dict[str, Any]] = Field(default_factory=list, description="Recommended next actions")
+    project_status_assessment: Dict[str, Any] = Field(default_factory=dict, description="Assessment of overall project status")
     
-    # If decision is TEST_FAILURE_HANDOFF
-    debugging_task_input: Optional[DebuggingTaskInput] = Field(None, description="Input for the CodeDebuggingAgent if a test failure is being handed off.")
-
-    # If decision is ACCEPT_ARTIFACT or PLAN_MODIFIED_NEW_TASKS_ADDED
-    final_artifact_doc_id: Optional[str] = Field(None, description="The doc_id of the artifact if accepted (usually same as input artifact_doc_id). For PLAN_MODIFIED_NEW_TASKS_ADDED, this will be the new MasterExecutionPlan doc_id.")
+    # Quality and refinement insights
+    quality_gates_status: Dict[str, Any] = Field(default_factory=dict, description="Status of quality gates")
+    refinement_recommendations: List[Dict[str, Any]] = Field(default_factory=list, description="Specific refinement recommendations")
     
-    # If decision is PLAN_MODIFIED_NEW_TASKS_ADDED
-    new_master_plan_doc_id: Optional[str] = Field(None, description="The document ID of the newly created/modified MasterExecutionPlan if new tasks were added.")
-
-    error_message: Optional[str] = Field(None, description="Error message if ARCA encountered an issue.")
+    # Metadata
+    confidence_score: ConfidenceScore = Field(..., description="Agent confidence in coordination decision")
+    message: str = Field(..., description="Human-readable result message")
+    error_message: Optional[str] = Field(None, description="Error details if failed")
 
 
 @register_autonomous_engine_agent(capabilities=["autonomous_coordination", "quality_gates", "refinement_orchestration"])
 class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
+    """
+    Clean, unified project coordination agent.
+    
+    Uses unified discovery + YAML templates + maximum LLM intelligence for coordination.
+    No legacy patterns, no hardcoded logic, no complex phases.
+    """
+    
     AGENT_ID: ClassVar[str] = "AutomatedRefinementCoordinatorAgent_v1"
     AGENT_NAME: ClassVar[str] = "Automated Refinement Coordinator Agent v1"
-    AGENT_DESCRIPTION: ClassVar[str] = "Coordinates the iterative refinement of project artifacts, invoking specialist agents as needed."
-    PROMPT_TEMPLATE_NAME: ClassVar[str] = "automated_refinement_coordinator_agent_v1_prompt.yaml" # Points to server_prompts/autonomous_engine/
-    AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["autonomous_coordination", "quality_gates", "refinement_orchestration", "complex_analysis"]
-    CATEGORY: ClassVar[AgentCategory] = AgentCategory.AUTONOMOUS_COORDINATION # MODIFIED
-    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL # Usually internal, invoked by higher orchestrator
-    INPUT_SCHEMA: ClassVar[Type[ARCAReviewInput]] = ARCAReviewInput
-    OUTPUT_SCHEMA: ClassVar[Type[ARCAOutput]] = ARCAOutput
+    AGENT_DESCRIPTION: ClassVar[str] = "Clean, unified LLM-powered project coordination and refinement orchestration"
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "automated_refinement_coordinator_agent_v1_prompt.yaml"
+    AGENT_VERSION: ClassVar[str] = "2.0.0"  # Major version for clean rewrite
+    CAPABILITIES: ClassVar[List[str]] = ["autonomous_coordination", "quality_gates", "refinement_orchestration"]
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.AUTONOMOUS_COORDINATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL
+    INPUT_SCHEMA: ClassVar[Type[CoordinatorAgentInput]] = CoordinatorAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[CoordinatorAgentOutput]] = CoordinatorAgentOutput
 
-    # Declare private attributes using PrivateAttr
-    _llm_provider: Optional[LLMProvider] = PrivateAttr(default=None)
-    _prompt_manager: Optional[PromptManager] = PrivateAttr(default=None)
-    # COMMENTED OUT: Defunct project_chroma_manager_agent references
-    # _project_chroma_manager: Optional[ProjectChromaManagerAgent_v1] = PrivateAttr(default=None)
-    _code_debugging_agent_instance: Optional[CodeDebuggingAgent_v1] = PrivateAttr(default=None)
-    _logger_instance: logging.Logger = PrivateAttr() # No default, will be set in __init__
-    _state_manager: Optional[StateManager] = PrivateAttr(default=None)
-    _current_debug_attempts_for_module: int = PrivateAttr(default=0)
-    _last_feedback_doc_id: Optional[str] = PrivateAttr(default=None)
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["unified_coordination"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["intelligent_discovery"]
+    UNIVERSAL_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "context_sharing"]
 
-    # Thresholds for decision making (can be made configurable later)
-    MIN_GENERATOR_CONFIDENCE: ClassVar[float] = 0.6
-    MIN_PRAA_CONFIDENCE: ClassVar[float] = 0.5
-    MIN_RTA_CONFIDENCE: ClassVar[float] = 0.6
-    MIN_DOC_AGENT_CONFIDENCE_FOR_ACCEPT: ClassVar[float] = 0.5
+    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, **kwargs):
+        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        self.logger.info(f"{self.AGENT_ID} v{self.AGENT_VERSION} initialized - clean unified coordination")
 
-    DEFAULT_ACCEPTANCE_THRESHOLD: ClassVar[float] = 0.75 # Default acceptance threshold
-    # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["autonomous_team_formation", "enhanced_deep_planning"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "goal_tracking"]
-    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing', 'error_recovery']
-
-
-    def __init__(
-        self,
-        llm_provider: LLMProvider,
-        prompt_manager: PromptManager,
-        state_manager: Optional[StateManager] = None,
-        **kwargs
-    ):
-        # Enable refinement capabilities for intelligent coordination
-        super().__init__(
-            llm_provider=llm_provider, 
-            prompt_manager=prompt_manager, 
-            enable_refinement=True,  # Enable intelligent refinement
-            **kwargs
-        )
-        self._state_manager = state_manager
-
-    async def _execute_iteration(
-        self, 
-        context: UEContext, 
-        iteration: int
-    ) -> IterationResult:
+    async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        Phase 3 UAEI implementation for automated refinement coordination.
-        Runs comprehensive artifact review workflow: assessment → analysis → decision → coordination
+        Clean execution: Unified discovery + YAML template + LLM coordination intelligence.
+        Single iteration, maximum intelligence, no hardcoded phases.
         """
         try:
-            # Convert inputs to expected format - handle both dict and object inputs
-            if isinstance(context.inputs, dict):
-                task_input = ARCAReviewInput(**context.inputs)
-            elif hasattr(context.inputs, 'dict'):
-                inputs = context.inputs.dict()
-                task_input = ARCAReviewInput(**inputs)
-            else:
-                task_input = context.inputs
+            # Parse inputs cleanly
+            task_input = self._parse_inputs(context.inputs)
+            self.logger.info(f"Coordinating refinement: {task_input.user_goal}")
 
-            # Phase 1: Assessment - Assess artifact and gather context
-            if task_input.intelligent_context and task_input.project_specifications:
-                self.logger.info("Using intelligent project specifications from orchestrator")
-                assessment_result = await self._extract_assessment_from_intelligent_specs(task_input.project_specifications, task_input.user_goal)
-            else:
-                self.logger.info("Using traditional artifact assessment")
-                assessment_result = await self._assess_artifact(task_input, context.shared_context)
+            # Generate coordination decision using unified approach
+            coordination_result = await self._generate_coordination_decision(task_input)
             
-            # Phase 2: Analysis - Analyze quality and compliance
-            analysis_result = await self._analyze_quality_and_compliance(assessment_result, task_input, context.shared_context)
-            
-            # Phase 3: Decision - Make coordination decision
-            decision_result = await self._make_coordination_decision(analysis_result, task_input, context.shared_context)
-            
-            # Phase 4: Coordination - Execute coordination actions
-            coordination_result = await self._execute_coordination_actions(decision_result, task_input, context.shared_context)
-            
-            # Calculate quality score based on decision confidence
-            quality_score = self._calculate_quality_score(coordination_result)
-            
-            # Create output
-            output = ARCAOutput(
+            # Create clean output
+            output = CoordinatorAgentOutput(
                 task_id=task_input.task_id,
-                project_id=task_input.project_id or "intelligent_project",
-                reviewed_artifact_doc_id=task_input.artifact_doc_id or "intelligent_artifact",
-                reviewed_artifact_type=task_input.artifact_type or "LOPRD",
-                decision=coordination_result.get("decision", "ERROR"),
-                reasoning=coordination_result.get("reasoning", "Coordination completed"),
-                confidence_in_decision=ConfidenceScore(
-                    value=0.9,
-                    method="comprehensive_assessment",
-                    explanation="High confidence in refinement coordination decision and analysis"
-                ),
-                next_agent_id_for_refinement=coordination_result.get("next_agent_id"),
-                next_agent_input=coordination_result.get("next_agent_input"),
-                debugging_task_input=coordination_result.get("debugging_task_input"),
-                final_artifact_doc_id=coordination_result.get("final_artifact_doc_id"),
-                new_master_plan_doc_id=coordination_result.get("new_master_plan_doc_id")
+                project_id=task_input.project_id,
+                status="SUCCESS",
+                coordination_decision=coordination_result["coordination_decision"],
+                coordination_reasoning=coordination_result["coordination_reasoning"],
+                next_actions=coordination_result["next_actions"],
+                project_status_assessment=coordination_result["project_status_assessment"],
+                quality_gates_status=coordination_result["quality_gates_status"],
+                refinement_recommendations=coordination_result["refinement_recommendations"],
+                confidence_score=coordination_result["confidence_score"],
+                message=f"Generated coordination decision for: {task_input.user_goal}"
             )
-            
-            tools_used = ["artifact_assessment", "quality_analysis", "coordination_decision"]
             
             return IterationResult(
                 output=output,
-                quality_score=quality_score,
-                tools_used=tools_used,
-                protocol_used="refinement_coordination_protocol"
+                quality_score=coordination_result["confidence_score"].value,
+                tools_used=["unified_discovery", "yaml_template", "llm_coordination"],
+                protocol_used="unified_coordination"
             )
             
         except Exception as e:
-            self.logger.error(f"Refinement coordination iteration failed: {e}")
+            self.logger.error(f"Coordination decision generation failed: {e}")
             
-            # Create error output
-            error_output = ARCAOutput(
-                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())),
-                project_id=getattr(task_input, 'project_id', None) or 'intelligent_project',
-                reviewed_artifact_doc_id=getattr(task_input, 'artifact_doc_id', None) or 'intelligent_artifact',
-                reviewed_artifact_type=getattr(task_input, 'artifact_type', None) or 'LOPRD',
-                decision="ERROR",
-                reasoning=f"Refinement coordination failed: {str(e)}",
+            # Clean error handling
+            error_output = CoordinatorAgentOutput(
+                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
+                project_id=getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown',
+                status="ERROR",
+                coordination_decision="ERROR",
+                coordination_reasoning="Coordination failed",
+                confidence_score=ConfidenceScore(
+                    value=0.0,
+                    method="error_state",
+                    explanation="Coordination generation failed"
+                ),
+                message="Coordination decision generation failed",
                 error_message=str(e)
             )
             
@@ -414,491 +168,203 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 output=error_output,
                 quality_score=0.0,
                 tools_used=[],
-                protocol_used="refinement_coordination_protocol"
+                protocol_used="unified_coordination"
             )
 
-    async def _extract_assessment_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract assessment from intelligent project specifications using LLM processing."""
-        
+    def _parse_inputs(self, inputs: Any) -> CoordinatorAgentInput:
+        """Parse inputs cleanly into CoordinatorAgentInput."""
+        if isinstance(inputs, CoordinatorAgentInput):
+            return inputs
+        elif isinstance(inputs, dict):
+            return CoordinatorAgentInput(**inputs)
+        elif hasattr(inputs, 'dict'):
+            return CoordinatorAgentInput(**inputs.dict())
+        else:
+            raise ValueError(f"Invalid input type: {type(inputs)}")
+
+    async def _generate_coordination_decision(self, task_input: CoordinatorAgentInput) -> Dict[str, Any]:
+        """
+        Generate coordination decision using unified discovery + YAML template.
+        Pure unified approach - no hardcoded phases or decision logic.
+        """
         try:
-            if self.llm_provider:
-                # Use LLM to intelligently analyze the project specifications and plan refinement coordination strategy
-                prompt = f"""
-                You are an automated refinement coordinator agent. Analyze the following project specifications and user goal to create an intelligent refinement coordination and quality assurance strategy.
-                
-                User Goal: {user_goal}
-                
-                Project Specifications:
-                - Project Type: {project_specs.get('project_type', 'unknown')}
-                - Primary Language: {project_specs.get('primary_language', 'unknown')}
-                - Target Languages: {project_specs.get('target_languages', [])}
-                - Target Platforms: {project_specs.get('target_platforms', [])}
-                - Technologies: {project_specs.get('technologies', [])}
-                - Required Dependencies: {project_specs.get('required_dependencies', [])}
-                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
-                
-                Provide a detailed JSON analysis with the following structure:
-                {{
-                    "artifact_available": true,
-                    "artifact_quality": 0.0-1.0,
-                    "assessment_confidence": 0.0-1.0,
-                    "project_type": "...",
-                    "technologies": [...],
-                    "coordination_strategy": {{
-                        "approach": "...",
-                        "quality_gates": [...],
-                        "refinement_priorities": [...],
-                        "coordination_phases": [...]
-                    }},
-                    "quality_assessment": {{
-                        "acceptance_criteria": [...],
-                        "quality_metrics": [...],
-                        "validation_checkpoints": [...],
-                        "risk_factors": [...]
-                    }},
-                    "refinement_areas": {{
-                        "architecture": [...],
-                        "implementation": [...],
-                        "testing": [...],
-                        "documentation": [...]
-                    }},
-                    "coordination_decisions": {{
-                        "decision_criteria": [...],
-                        "escalation_triggers": [...],
-                        "automation_opportunities": [...]
-                    }},
-                    "agent_coordination": {{
-                        "specialist_agents": [...],
-                        "handoff_protocols": [...],
-                        "feedback_loops": [...]
-                    }},
-                    "timeline_considerations": {{
-                        "estimated_cycles": 0,
-                        "bottleneck_risks": [...],
-                        "optimization_opportunities": [...]
-                    }},
-                    "confidence_score": 0.0-1.0,
-                    "reasoning": "..."
-                }}
-                """
-                
-                response = await self.llm_provider.generate(prompt)
-                
-                if response:
-                    try:
-                        # Extract JSON from markdown code blocks if present
-                        json_content = self._extract_json_from_response(response)
-                        parsed_result = json.loads(json_content)
-                        
-                        # Validate that we got a dictionary as expected
-                        if not isinstance(parsed_result, dict):
-                            self.logger.warning(f"Expected dict from coordination assessment, got {type(parsed_result)}. Using fallback.")
-                            return self._generate_fallback_coordination_assessment(project_specs, user_goal)
-                        
-                        # Add metadata about the intelligent analysis
-                        parsed_result["intelligent_analysis"] = True
-                        parsed_result["project_specifications"] = project_specs
-                        parsed_result["analysis_method"] = "llm_intelligent_processing"
-                        parsed_result["coordination_needed"] = True
-                        return parsed_result
-                    except json.JSONDecodeError as e:
-                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
-            
-            # Fallback to basic extraction if LLM fails
-            self.logger.info("Using fallback assessment due to LLM unavailability")
-            return self._generate_fallback_coordination_assessment(project_specs, user_goal)
-            
-        except Exception as e:
-            self.logger.error(f"Error in intelligent specs assessment: {e}")
-            return self._generate_fallback_coordination_assessment(project_specs, user_goal)
-
-    def _generate_fallback_coordination_assessment(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Generate fallback coordination assessment when LLM is unavailable."""
-        
-        assessment = {
-            "artifact_available": True,
-            "artifact_quality": 0.85,
-            "assessment_confidence": 0.9,
-            "project_type": project_specs.get("project_type", "unknown"),
-            "technologies": project_specs.get("technologies", []),
-            "coordination_strategy": {
-                "approach": "systematic_refinement",
-                "quality_gates": ["initial_review", "specialist_validation", "final_approval"],
-                "refinement_priorities": ["correctness", "completeness", "quality"],
-                "coordination_phases": ["assessment", "analysis", "decision", "execution"]
-            },
-            "quality_assessment": {
-                "acceptance_criteria": ["meets_requirements", "passes_validation", "acceptable_quality"],
-                "quality_metrics": ["completeness", "accuracy", "consistency"],
-                "validation_checkpoints": ["initial_check", "specialist_review", "final_validation"],
-                "risk_factors": ["complexity", "dependencies", "time_constraints"]
-            },
-            "refinement_areas": {
-                "architecture": ["design_patterns", "scalability", "maintainability"],
-                "implementation": ["code_quality", "error_handling", "performance"],
-                "testing": ["test_coverage", "edge_cases", "integration_tests"],
-                "documentation": ["completeness", "clarity", "examples"]
-            },
-            "coordination_decisions": {
-                "decision_criteria": ["quality_threshold", "confidence_level", "risk_assessment"],
-                "escalation_triggers": ["low_confidence", "repeated_failures", "complex_issues"],
-                "automation_opportunities": ["routine_checks", "standard_validations", "common_fixes"]
-            },
-            "agent_coordination": {
-                "specialist_agents": ["ProductAnalyst", "Architect", "CodeGenerator", "Debugger"],
-                "handoff_protocols": ["clear_requirements", "context_preservation", "feedback_loops"],
-                "feedback_loops": ["continuous_improvement", "learning_from_failures", "optimization"]
-            },
-            "timeline_considerations": {
-                "estimated_cycles": 2,
-                "bottleneck_risks": ["complex_requirements", "technical_challenges", "resource_constraints"],
-                "optimization_opportunities": ["parallel_processing", "automated_checks", "reusable_components"]
-            },
-            "intelligent_analysis": True,
-            "analysis_method": "fallback_extraction",
-            "coordination_needed": True
-        }
-        
-        return assessment
-
-    def _extract_json_from_response(self, response: str) -> str:
-        """Extract JSON content from LLM response, handling markdown code blocks and prose text."""
-        if not response or not response.strip():
-            self.logger.warning("[JSON DEBUG] Empty response provided to JSON extraction")
-            return ""
-            
-        response = response.strip()
-        
-        # Strategy 1: Look for JSON in markdown code blocks anywhere in the response
-        if '```json' in response:
-            self.logger.debug("[JSON DEBUG] Found ```json marker, extracting from code block")
-            
-            start_marker = '```json'
-            end_marker = '```'
-            
-            start_idx = response.find(start_marker)
-            if start_idx != -1:
-                # Find the start of JSON content (after the ```json line)
-                json_start = response.find('\n', start_idx) + 1
-                if json_start > 0:
-                    # Find the end marker
-                    end_idx = response.find(end_marker, json_start)
-                    if end_idx != -1:
-                        extracted = response[json_start:end_idx].strip()
-                        if extracted:
-                            self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from markdown block: {len(extracted)} chars")
-                            return extracted
-                        
-        # Strategy 2: Look for generic code blocks
-        elif '```' in response:
-            self.logger.debug("[JSON DEBUG] Found generic ``` marker, extracting from code block")
-            
-            lines = response.split('\n')
-            json_lines = []
-            in_code_block = False
-            
-            for line in lines:
-                if line.strip().startswith('```') and not in_code_block:
-                    in_code_block = True
-                    continue
-                elif line.strip() == '```' and in_code_block:
-                    break
-                elif in_code_block:
-                    json_lines.append(line)
-            
-            extracted = '\n'.join(json_lines).strip()
-            if extracted:
-                self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from generic code block: {len(extracted)} chars")
-                return extracted
-        
-        # Strategy 3: Try to find JSON within the text using bracket matching
-        self.logger.debug("[JSON DEBUG] No code blocks found, using bracket matching")
-        return self._find_json_in_text(response)
-
-    def _find_json_in_text(self, text: str) -> str:
-        """Find JSON object within text using bracket matching."""
-        if not text:
-            return ""
-            
-        # Look for opening brace
-        start_idx = text.find('{')
-        if start_idx == -1:
-            self.logger.warning("[JSON DEBUG] No opening brace found in response")
-            return ""
-        
-        self.logger.debug(f"[JSON DEBUG] Found opening brace at position {start_idx}")
-        
-        # Count braces to find matching closing brace
-        brace_count = 0
-        for i, char in enumerate(text[start_idx:], start_idx):
-            if char == '{':
-                brace_count += 1
-            elif char == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    # Found matching closing brace
-                    potential_json = text[start_idx:i+1]
-                    try:
-                        # Validate it's actually JSON
-                        import json
-                        json.loads(potential_json)
-                        self.logger.debug(f"[JSON DEBUG] Successfully extracted and validated JSON: {len(potential_json)} chars")
-                        return potential_json
-                    except json.JSONDecodeError as e:
-                        self.logger.debug(f"[JSON DEBUG] Invalid JSON found, continuing search: {e}")
-                        # Continue looking for another JSON object
-                        continue
-        
-        # No valid JSON found
-        self.logger.warning("[JSON DEBUG] No valid JSON found in response")
-        return ""
-
-    async def _assess_artifact(self, task_input: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 1: Assessment - Assess artifact and gather context."""
-        self.logger.info(f"Starting artifact assessment for {task_input.artifact_type}")
-        
-        # ENHANCED: Use universal MCP tool access for intelligent artifact assessment
-        if self.enable_refinement:
-            self.logger.info("[MCP] Using universal MCP tool access for intelligent artifact assessment")
-            
-            # Get ALL available tools (no filtering)
-            tool_discovery = await self._get_all_available_mcp_tools()
-            
-            if tool_discovery["discovery_successful"]:
-                all_tools = tool_discovery["tools"]
-                
-                # Use ChromaDB tools for enhanced artifact retrieval
-                artifact_result = {}
-                if "chromadb_query_documents" in all_tools and task_input.artifact_doc_id:
-                    self.logger.info("[MCP] Using ChromaDB for enhanced artifact retrieval")
-                    artifact_result = await self._call_mcp_tool(
-                        "chromadb_query_documents",
-                        {
-                            "query": f"document_id:{task_input.artifact_doc_id} project_id:{task_input.project_id}",
-                            "limit": 1
-                        }
-                    )
-                
-                # Use content tools for deeper analysis
-                structure_analysis = {}
-                if "web_content_extract" in all_tools and artifact_result.get("success"):
-                    self.logger.info("[MCP] Using content extraction for artifact structure analysis")
-                    structure_analysis = await self._call_mcp_tool(
-                        "web_content_extract",
-                        {
-                            "content": str(artifact_result.get("structure", {})),
-                            "extraction_type": "text"
-                        }
-                    )
-                
-                # Use intelligence tools for coordination strategy
-                intelligence_analysis = {}
-                if "adaptive_learning_analyze" in all_tools:
-                    self.logger.info("[MCP] Using adaptive_learning_analyze for coordination strategy")
-                    intelligence_analysis = await self._call_mcp_tool(
-                        "adaptive_learning_analyze",
-                        {
-                            "context": {
-                                "artifact_data": artifact_result,
-                                "content_analysis": structure_analysis,
-                                "artifact_type": task_input.artifact_type,
-                                "project_id": task_input.project_id
-                            }, 
-                            "domain": "refinement_coordination"
-                        }
-                    )
-                
-                # Use filesystem tools for project context
-                project_context = {}
-                if "filesystem_project_scan" in all_tools:
-                    self.logger.info("[MCP] Using filesystem_project_scan for project context")
-                    project_context = await self._call_mcp_tool(
-                        "filesystem_project_scan",
-                        {"scan_path": f"./projects/{task_input.project_id}"}
-                    )
-                
-                # Use terminal tools for environment validation
-                environment_info = {}
-                if "terminal_get_environment" in all_tools:
-                    self.logger.info("[MCP] Using terminal tools for environment validation")
-                    environment_info = await self._call_mcp_tool(
-                        "terminal_get_environment",
-                        {}
-                    )
-                
-                # Combine MCP tool results for enhanced artifact assessment
-                if any([artifact_result.get("success"), structure_analysis.get("success"), intelligence_analysis.get("success")]):
-                    self.logger.info("[MCP] Successfully enhanced artifact assessment with MCP tools")
-                    
-                    # Calculate enhanced artifact score
-                    artifact_score = 0.7  # Default score
-                    if task_input.artifact_type == "CodeModule_TestFailure":
-                        artifact_score = 0.3  # Low score for failed tests
-                    elif task_input.generator_agent_confidence:
-                        artifact_score = task_input.generator_agent_confidence.value
-                    
-                    # Boost score based on MCP analysis
-                    if intelligence_analysis.get("success"):
-                        artifact_score = min(0.95, artifact_score + 0.1)
-                    if structure_analysis.get("success"):
-                        artifact_score = min(0.95, artifact_score + 0.05)
-                    
-                    return {
-                        "artifact_type": task_input.artifact_type,
-                        "artifact_id": task_input.artifact_doc_id,
-                        "generator_confidence": artifact_score,
-                        "has_risk_reports": bool(task_input.praa_risk_report_doc_id),
-                        "has_optimization_reports": bool(task_input.praa_optimization_report_doc_id),
-                        "has_traceability_reports": bool(task_input.rta_report_doc_id),
-                        "assessment_timestamp": datetime.datetime.now().isoformat(),
-                        "enhanced_analysis": {
-                            "artifact_result": artifact_result,
-                            "content_analysis": structure_analysis,
-                            "intelligence_analysis": intelligence_analysis,
-                            "project_context": project_context,
-                            "environment_info": environment_info
-                        },
-                        "mcp_enhanced": True
-                    }
-        
-        # Assess artifact based on type
-        artifact_score = 0.7  # Default score
-        
-        if task_input.artifact_type == "CodeModule_TestFailure":
-            artifact_score = 0.3  # Low score for failed tests
-        elif task_input.generator_agent_confidence:
-            artifact_score = task_input.generator_agent_confidence.value
-        
-        assessment = {
-            "artifact_type": task_input.artifact_type,
-            "artifact_id": task_input.artifact_doc_id,
-            "generator_confidence": artifact_score,
-            "has_risk_reports": bool(task_input.praa_risk_report_doc_id),
-            "has_optimization_reports": bool(task_input.praa_optimization_report_doc_id),
-            "has_traceability_reports": bool(task_input.rta_report_doc_id),
-            "assessment_timestamp": datetime.datetime.now().isoformat()
-        }
-        
-        return assessment
-
-    async def _analyze_quality_and_compliance(self, assessment_result: Dict[str, Any], task_input: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 2: Analysis - Analyze quality and compliance."""
-        self.logger.info("Starting quality and compliance analysis")
-        
-        generator_confidence = assessment_result.get("generator_confidence", 0.0)
-        has_reports = assessment_result.get("has_risk_reports", False)
-        
-        # Quality analysis based on confidence and available reports
-        if generator_confidence >= self.DEFAULT_ACCEPTANCE_THRESHOLD and has_reports:
-            quality_status = "HIGH"
-            compliance_score = 0.9
-        elif generator_confidence >= 0.6:
-            quality_status = "MEDIUM"
-            compliance_score = 0.7
-        else:
-            quality_status = "LOW"
-            compliance_score = 0.4
-            
-        analysis = {
-            "quality_status": quality_status,
-            "compliance_score": compliance_score,
-            "meets_acceptance_threshold": compliance_score >= self.DEFAULT_ACCEPTANCE_THRESHOLD,
-            "requires_refinement": compliance_score < 0.6,
-            "analysis_confidence": min(0.9, compliance_score + 0.1)
-        }
-        
-        return analysis
-
-    async def _make_coordination_decision(self, analysis_result: Dict[str, Any], task_input: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 3: Decision - Make coordination decision."""
-        self.logger.info("Making coordination decision")
-        
-        meets_threshold = analysis_result.get("meets_acceptance_threshold", False)
-        requires_refinement = analysis_result.get("requires_refinement", True)
-        quality_status = analysis_result.get("quality_status", "LOW")
-        
-        # Decision logic based on artifact type and quality
-        if task_input.artifact_type == "CodeModule_TestFailure":
-            decision = "TEST_FAILURE_HANDOFF"
-            reasoning = "Code module has test failures requiring debugging"
-        elif meets_threshold:
-            decision = "ACCEPT_ARTIFACT"
-            reasoning = f"Artifact meets quality threshold with {quality_status} quality status"
-        elif requires_refinement:
-            decision = "REFINEMENT_REQUIRED"
-            reasoning = f"Artifact requires refinement due to {quality_status} quality status"
-        else:
-            decision = "ESCALATE_TO_USER"
-            reasoning = "Unable to determine appropriate action, escalating to user"
-            
-        decision_result = {
-            "decision": decision,
-            "reasoning": reasoning,
-            "decision_confidence": analysis_result.get("analysis_confidence", 0.5),
-            "quality_status": quality_status,
-            "artifact_type": task_input.artifact_type
-        }
-        
-        return decision_result
-
-    async def _execute_coordination_actions(self, decision_result: Dict[str, Any], task_input: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 4: Coordination - Execute coordination actions."""
-        self.logger.info(f"Executing coordination actions for decision: {decision_result.get('decision')}")
-        
-        decision = decision_result.get("decision", "ERROR")
-        
-        coordination = {
-            "decision": decision,
-            "reasoning": decision_result.get("reasoning", ""),
-            "execution_timestamp": datetime.datetime.now().isoformat()
-        }
-        
-        # Execute specific coordination actions based on decision
-        if decision == "ACCEPT_ARTIFACT":
-            coordination["final_artifact_doc_id"] = task_input.artifact_doc_id
-            
-        elif decision == "REFINEMENT_REQUIRED":
-            # Determine which agent should handle refinement
-            if task_input.artifact_type == "LOPRD":
-                coordination["next_agent_id"] = "ProductAnalystAgent_v1"
-                coordination["next_agent_input"] = {"project_id": task_input.project_id, "refinement_required": True}
-            elif task_input.artifact_type in ["Blueprint", "ProjectBlueprint"]:
-                coordination["next_agent_id"] = "EnhancedArchitectAgent_v1"
-                coordination["next_agent_input"] = {"project_id": task_input.project_id, "refinement_required": True}
-            elif task_input.artifact_type == "MasterExecutionPlan":
-                coordination["next_agent_id"] = "SystemMasterPlannerAgent_v1"
-                coordination["next_agent_input"] = {"project_id": task_input.project_id, "refinement_required": True}
-                
-        elif decision == "TEST_FAILURE_HANDOFF":
-            # Create debugging task input
-            debugging_input = DebuggingTaskInput(
-                project_id=task_input.project_id,
-                faulty_code_path=task_input.code_module_file_path or "unknown",
-                failed_test_reports=task_input.failed_test_report_details or [],
-                relevant_loprd_requirements_ids=[]
+            # Get YAML template (no fallbacks)
+            prompt_template = self.prompt_manager.get_prompt_definition(
+                "automated_refinement_coordinator_agent_v1_prompt",
+                "0.2.0",
+                sub_path="autonomous_engine"
             )
-            coordination["debugging_task_input"] = debugging_input
             
-        return coordination
+            # Unified discovery for intelligent coordination context
+            discovery_results = await self._universal_discovery(
+                task_input.project_path,
+                ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "progress"]
+            )
+            
+            technology_context = await self._universal_technology_discovery(
+                task_input.project_path
+            )
+            
+            # Build project state from discovery
+            project_state = await self._build_project_state_from_discovery(
+                task_input, discovery_results, technology_context
+            )
+            
+            # Build template variables for maximum LLM coordination intelligence
+            template_vars = {
+                "project_id": task_input.project_id,
+                "current_cycle_id": task_input.current_cycle_id or "initial_cycle",
+                
+                # Template expects these specific variables
+                "project_state_v2_json": json.dumps(project_state, indent=2),
+                "recent_agent_outputs_json": json.dumps(discovery_results.get("agent_outputs", []), indent=2),
+                "key_project_artifact_ids_json": json.dumps(discovery_results.get("artifacts", {}), indent=2),
+                
+                # Rich discovery data for intelligent decisions
+                "discovery_results": json.dumps(discovery_results, indent=2),
+                "technology_context": json.dumps(technology_context, indent=2),
+                
+                # Coordination context
+                "user_goal": task_input.user_goal,
+                "project_path": task_input.project_path,
+                "coordination_focus": task_input.coordination_focus or "overall_progress",
+                "intelligent_context": task_input.intelligent_context,
+                "project_specifications": task_input.project_specifications or {}
+            }
+            
+            # Render template
+            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
+                prompt_template.user_prompt_template,
+                template_vars
+            )
+            
+            # Get system prompt if available
+            system_prompt = getattr(prompt_template, 'system_prompt', None)
+            
+            # Call LLM with maximum coordination intelligence
+            response = await self.llm_provider.generate(
+                prompt=formatted_prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
+                max_tokens=3000
+            )
+            
+            # Parse LLM response (expecting JSON from template)
+            try:
+                result = json.loads(response)
+                
+                # Transform template output to our clean schema
+                return {
+                    "coordination_decision": result.get("decision_outcome", "PROCEED_TO_NEXT_STAGE"),
+                    "coordination_reasoning": result.get("decision_rationale", ""),
+                    "next_actions": self._extract_next_actions(result),
+                    "project_status_assessment": {
+                        "current_status": project_state.get("overall_status", "active"),
+                        "recommended_status": result.get("next_overall_project_status", "active_development"),
+                        "confidence": result.get("decision_confidence", {})
+                    },
+                    "quality_gates_status": discovery_results.get("quality_assessment", {}),
+                    "refinement_recommendations": result.get("feedback_for_refinement_agents", []),
+                    "confidence_score": ConfidenceScore(
+                        value=result.get("decision_confidence", {}).get("value", 0.8),
+                        method=result.get("decision_confidence", {}).get("level", "llm_coordination"),
+                        explanation=result.get("decision_confidence", {}).get("reasoning", "Coordination decision generated successfully")
+                    )
+                }
+                
+            except json.JSONDecodeError as e:
+                self.logger.error(f"LLM response not valid JSON: {e}")
+                raise ValueError(f"LLM response parsing failed: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"Coordination decision generation failed: {e}")
+            raise
 
-    def _calculate_quality_score(self, coordination_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score based on coordination results."""
-        decision = coordination_result.get("decision", "ERROR")
+    async def _build_project_state_from_discovery(
+        self, 
+        task_input: CoordinatorAgentInput, 
+        discovery_results: Dict[str, Any],
+        technology_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build project state from unified discovery results."""
         
-        # Score based on decision type
-        if decision == "ACCEPT_ARTIFACT":
-            return 0.9
-        elif decision in ["REFINEMENT_REQUIRED", "TEST_FAILURE_HANDOFF"]:
-            return 0.7
-        elif decision == "ESCALATE_TO_USER":
-            return 0.5
-        else:
-            return 0.2
+        # Extract key information from discovery
+        structure = discovery_results.get("structure", {})
+        patterns = discovery_results.get("patterns", {})
+        requirements = discovery_results.get("requirements", {})
+        artifacts = discovery_results.get("artifacts", {})
+        
+        # Build comprehensive project state
+        project_state = {
+            "project_id": task_input.project_id,
+            "user_goal": task_input.user_goal,
+            "project_path": task_input.project_path,
+            "current_cycle": task_input.current_cycle_id or "initial",
+            "overall_status": "active_development",  # Can be derived from discovery
+            
+            # Discovery-based state
+            "structure_analysis": structure,
+            "technology_stack": technology_context,
+            "identified_patterns": patterns,
+            "requirements_analysis": requirements,
+            "available_artifacts": artifacts,
+            
+            # Quality assessment from discovery
+            "quality_metrics": discovery_results.get("quality_assessment", {}),
+            "completion_status": discovery_results.get("progress", {}),
+            "risk_factors": discovery_results.get("risks", []),
+            
+            # Coordination metadata
+            "coordination_focus": task_input.coordination_focus,
+            "intelligent_context": task_input.intelligent_context,
+            "last_updated": discovery_results.get("timestamp", "")
+        }
+        
+        return project_state
+
+    def _extract_next_actions(self, llm_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract and format next actions from LLM decision result."""
+        actions = []
+        
+        # Extract from feedback_for_refinement_agents
+        refinement_feedback = llm_result.get("feedback_for_refinement_agents", [])
+        for feedback in refinement_feedback:
+            actions.append({
+                "action_type": "refinement",
+                "target_agent": feedback.get("target_agent_id", ""),
+                "target_artifact": feedback.get("target_artifact_id_to_refine", ""),
+                "directives": feedback.get("refinement_directives", ""),
+                "priority": "high"
+            })
+        
+        # Extract from decision outcome
+        decision = llm_result.get("decision_outcome", "")
+        if decision == "REQUEST_HUMAN_REVIEW":
+            actions.append({
+                "action_type": "human_review",
+                "description": llm_result.get("issues_for_human_review_summary", ""),
+                "priority": "urgent"
+            })
+        elif decision == "PROCEED_TO_NEXT_STAGE":
+            actions.append({
+                "action_type": "proceed",
+                "description": "Continue to next development stage",
+                "priority": "normal"
+            })
+        elif decision == "MARK_CYCLE_COMPLETE_SUCCESS":
+            actions.append({
+                "action_type": "complete",
+                "description": "Mark cycle as successfully completed",
+                "priority": "normal"
+            })
+        
+        return actions
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
-        input_schema = ARCAReviewInput.model_json_schema()
-        output_schema = ARCAOutput.model_json_schema()
+        """Generate agent card for registry."""
+        input_schema = CoordinatorAgentInput.model_json_schema()
+        output_schema = CoordinatorAgentOutput.model_json_schema()
         
         return AgentCard(
             agent_id=AutomatedRefinementCoordinatorAgent_v1.AGENT_ID,
@@ -910,136 +376,20 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
             categories=[AutomatedRefinementCoordinatorAgent_v1.CATEGORY.value],
             visibility=AutomatedRefinementCoordinatorAgent_v1.VISIBILITY.value,
             capability_profile={
-                "coordinates_refinement": True,
-                "manages_quality_gates": True,
-                "orchestrates_agents": True
+                "unified_discovery": True,
+                "yaml_templates": True,
+                "llm_coordination": True,
+                "clean_coordination": True,
+                "no_hardcoded_logic": True,
+                "maximum_agentic": True
             },
             metadata={
                 "callable_fn_path": f"{AutomatedRefinementCoordinatorAgent_v1.__module__}.{AutomatedRefinementCoordinatorAgent_v1.__name__}"
             }
         )
 
-    def get_input_schema(self) -> Type[ARCAReviewInput]:
-        return ARCAReviewInput
+    def get_input_schema(self) -> Type[CoordinatorAgentInput]:
+        return CoordinatorAgentInput
 
-    def get_output_schema(self) -> Type[ARCAOutput]:
-        return ARCAOutput
-
-    # Remove stub implementations - inherit from UnifiedAgent base class
-
-    async def _enhanced_discovery_with_universal_tools(self, inputs: ARCAReviewInput, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Universal tool access pattern for AutomatedRefinementCoordinatorAgent."""
-        
-        # 1. Get ALL available tools (no filtering)
-        tool_discovery = await self._get_all_available_mcp_tools()
-        
-        if not tool_discovery["discovery_successful"]:
-            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
-            return {"error": "Tool discovery failed", "limited_functionality": True}
-        
-        all_tools = tool_discovery["tools"]
-        
-        # 2. Intelligent tool selection based on context
-        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
-        
-        # 3. Use ChromaDB tools for artifact retrieval and historical coordination patterns
-        artifact_analysis = {}
-        if "chromadb_query_documents" in selected_tools:
-            artifact_analysis = await self._call_mcp_tool(
-                "chromadb_query_documents",
-                {"query": f"project_id:{inputs.project_id} refinement_coordination", "limit": 10}
-            )
-        
-        # 4. Use intelligence tools for coordination strategy
-        intelligence_analysis = {}
-        if "adaptive_learning_analyze" in selected_tools:
-            intelligence_analysis = await self._call_mcp_tool(
-                "adaptive_learning_analyze",
-                {"context": artifact_analysis, "domain": self.AGENT_ID}
-            )
-        
-        # 5. Use content tools for artifact structure analysis
-        content_analysis = {}
-        if "web_content_extract" in selected_tools and artifact_analysis.get("success"):
-            content_analysis = await self._call_mcp_tool(
-                "web_content_extract",
-                {
-                    "content": str(artifact_analysis.get("result", {})),
-                    "extraction_type": "text"
-                }
-            )
-        
-        # 6. Use filesystem tools for project structure analysis
-        project_structure = {}
-        if "filesystem_project_scan" in selected_tools:
-            project_structure = await self._call_mcp_tool(
-                "filesystem_project_scan",
-                {"scan_path": shared_context.get("project_root_path", ".")}
-            )
-        
-        # 7. Use terminal tools for environment validation
-        environment_info = {}
-        if "terminal_get_environment" in selected_tools:
-            environment_info = await self._call_mcp_tool(
-                "terminal_get_environment",
-                {}
-            )
-        
-        # 8. Use tool discovery for coordination recommendations
-        tool_recommendations = {}
-        if "get_tool_composition_recommendations" in selected_tools:
-            tool_recommendations = await self._call_mcp_tool(
-                "get_tool_composition_recommendations",
-                {"context": {"agent_id": self.AGENT_ID, "task_type": "refinement_coordination"}}
-            )
-        
-        # 9. Combine all analyses
-        return {
-            "universal_tool_access": True,
-            "tools_available": len(all_tools),
-            "tools_selected": len(selected_tools),
-            "tool_categories": tool_discovery["categories"],
-            "artifact_analysis": artifact_analysis,
-            "intelligence_analysis": intelligence_analysis,
-            "content_analysis": content_analysis,
-            "project_structure": project_structure,
-            "environment_info": environment_info,
-            "tool_recommendations": tool_recommendations,
-            "agent_domain": self.AGENT_ID,
-            "analysis_timestamp": time.time()
-        }
-
-    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Intelligent tool selection - agents choose which tools to use."""
-        
-        # Start with core tools every agent should consider
-        core_tools = [
-            "filesystem_project_scan",
-            "chromadb_query_documents", 
-            "terminal_get_environment"
-        ]
-        
-        # Add coordination-specific tools
-        coordination_tools = [
-            "web_content_extract",
-            "chromadb_query_collection",
-            "get_tool_composition_recommendations"
-        ]
-        core_tools.extend(coordination_tools)
-        
-        # Add intelligence tools for all agents
-        intelligence_tools = [
-            "adaptive_learning_analyze",
-            "get_real_time_performance_analysis",
-            "generate_performance_recommendations"
-        ]
-        core_tools.extend(intelligence_tools)
-        
-        # Select available tools
-        selected = {}
-        for tool_name in core_tools:
-            if tool_name in all_tools:
-                selected[tool_name] = all_tools[tool_name]
-        
-        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
-        return selected 
+    def get_output_schema(self) -> Type[CoordinatorAgentOutput]:
+        return CoordinatorAgentOutput 

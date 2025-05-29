@@ -59,7 +59,7 @@ from chungoid.utils.llm_provider import MockLLMProvider, LLMManager # Keep MockL
 # Using the new autonomous_engine agents and UnifiedOrchestrator
 
 # Core Phase-3 agents that exist
-from chungoid.agents.autonomous_engine.architect_agent import EnhancedArchitectAgent_v1
+from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
 
 # Legacy agents are temporarily disabled during Phase-3 migration
 # These will be re-enabled as they are migrated to UnifiedAgent pattern
@@ -110,7 +110,7 @@ from chungoid.schemas.agent_master_planner import MasterPlannerInput # <<< ADD T
 # from chungoid.runtime.agents.core_code_generator_agent import CoreCodeGeneratorAgent_v1 as CodeGeneratorAgent
 # from chungoid.runtime.agents.core_test_generator_agent import CoreTestGeneratorAgent_v1 as TestGeneratorAgent  # COMMENTED OUT - Module doesn't exist
 # from chungoid.runtime.agents.smart_code_integration_agent import SmartCodeIntegrationAgent_v1
-# Updated to use EnhancedArchitectAgent_v1
+# Updated to use ArchitectAgent_v1
 
 # New imports for MockTestGenerationAgentV1
 # from chungoid.runtime.agents.mocks.mock_test_generation_agent import MockTestGenerationAgentV1, get_agent_card_static as get_mock_test_generation_agent_v1_card

@@ -1,22 +1,21 @@
 """
-ProjectDocumentationAgent_v1: Dead simple, LLM-powered documentation generation.
+ProjectDocumentationAgent_v1: Clean, unified LLM-powered documentation generation.
 
-This agent generates project documentation by:
-1. Using MCP tools to understand the project structure and code
-2. Using main prompt template from YAML  
-3. Letting the LLM run the show to create comprehensive documentation
+This agent generates comprehensive project documentation by:
+1. Using unified discovery to understand project structure and technology stack
+2. Using YAML prompt template with rich discovery data
+3. Letting the LLM make intelligent documentation decisions with maximum intelligence
 
-No complex phases, no brittle parsing, just LLM + MCP tools.
+No legacy patterns, no hardcoded logic, no complex phases.
+Pure unified approach for maximum agentic documentation intelligence.
 """
 
 from __future__ import annotations
 
 import logging
-import datetime
 import uuid
 import json
 from typing import Any, Dict, Optional, List, ClassVar, Type
-from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -35,165 +34,131 @@ from ...schemas.unified_execution_schemas import (
 
 logger = logging.getLogger(__name__)
 
-class ProjectDocumentationInput(BaseModel):
-    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this documentation task.")
-    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project ID for context.")
+
+class DocumentationAgentInput(BaseModel):
+    """Clean input schema focused on core documentation needs."""
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique task identifier")
+    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project identifier")
     
-    # Core fields - simplified
-    user_goal: Optional[str] = Field(None, description="What the user built")
-    project_path: Optional[str] = Field(None, description="Where the project is located")
-    
-    # Traditional fields for backward compatibility
-    project_blueprint_doc_id: Optional[str] = Field(None, description="ChromaDB ID of project blueprint if available")
-    generated_code_root_path: Optional[str] = Field(None, description="Path to generated codebase")
-    
-    # Context fields from orchestrator
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Project specs from orchestrator")
-    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
+    # Core requirements
+    user_goal: str = Field(..., description="What the user wants documented")
+    project_path: str = Field(default=".", description="Project directory path")
     
     # Documentation options
     include_api_docs: bool = Field(default=True, description="Whether to generate API documentation")
     include_user_guide: bool = Field(default=True, description="Whether to generate user guide")
     include_dependency_audit: bool = Field(default=True, description="Whether to generate dependency audit")
     
+    # Intelligent context from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent specifications provided")
+    
     @model_validator(mode='after')
-    def check_minimum_requirements(self) -> 'ProjectDocumentationInput':
-        """Ensure we have minimum info to generate documentation."""
-        
-        # Need either user_goal or project_path
-        if not self.user_goal and not self.project_path:
-            raise ValueError("Either user_goal or project_path is required")
-        
-        # Default project_path if not provided
-        if not self.project_path:
-            self.project_path = "."
-        
+    def validate_requirements(self) -> 'DocumentationAgentInput':
+        """Ensure we have minimum requirements for documentation."""
+        if not self.user_goal or not self.user_goal.strip():
+            raise ValueError("user_goal is required for documentation generation")
         return self
 
-class ProjectDocumentationOutput(BaseModel):
-    task_id: str = Field(..., description="Echoed task_id from input.")
-    project_id: str = Field(..., description="Echoed project_id from input.")
-    status: str = Field(..., description="Status of documentation generation (SUCCESS, FAILURE, etc.).")
+
+class DocumentationAgentOutput(BaseModel):
+    """Clean output schema focused on documentation deliverables."""
+    task_id: str = Field(..., description="Task identifier")
+    project_id: str = Field(..., description="Project identifier")
+    status: str = Field(..., description="Execution status")
     
-    # Generated documentation files
+    # Core documentation deliverables
     documentation_files: Dict[str, str] = Field(default_factory=dict, description="Generated documentation files {file_path: content}")
+    documentation_summary: str = Field(..., description="Summary of generated documentation")
+    documentation_recommendations: List[str] = Field(default_factory=list, description="Recommendations for documentation maintenance")
     
-    # Results
-    generation_summary: str = Field(..., description="Summary of documentation generation")
+    # Quality insights
     files_created: List[str] = Field(default_factory=list, description="List of documentation files created")
+    project_analysis: Dict[str, Any] = Field(default_factory=dict, description="Analysis of project for documentation purposes")
     
-    # Status and metadata
-    message: str = Field(..., description="Message detailing the outcome.")
-    confidence_score: Optional[ConfidenceScore] = Field(None, description="Agent's confidence in the documentation quality.")
-    error_message: Optional[str] = Field(None, description="Error message if generation failed.")
-    usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata about the generation process.")
+    # Metadata
+    confidence_score: ConfidenceScore = Field(..., description="Agent confidence in documentation quality")
+    message: str = Field(..., description="Human-readable result message")
+    error_message: Optional[str] = Field(None, description="Error details if failed")
+
 
 @register_autonomous_engine_agent(capabilities=["documentation_generation", "project_analysis", "comprehensive_reporting"])
 class ProjectDocumentationAgent_v1(UnifiedAgent):
     """
-    Dead simple documentation generation agent.
+    Clean, unified project documentation agent.
     
-    1. MCP tools for project understanding and file operations
-    2. Main prompt from YAML template  
-    3. LLM runs the show - creates comprehensive documentation without complex phases
+    Uses unified discovery + YAML templates + maximum LLM intelligence for documentation.
+    No legacy patterns, no hardcoded logic, no complex phases.
     """
     
     AGENT_ID: ClassVar[str] = "ProjectDocumentationAgent_v1"
     AGENT_NAME: ClassVar[str] = "Project Documentation Agent v1"
-    AGENT_DESCRIPTION: ClassVar[str] = "Simple, LLM-powered documentation generation with MCP tools."
+    AGENT_DESCRIPTION: ClassVar[str] = "Clean, unified LLM-powered project documentation generation"
     PROMPT_TEMPLATE_NAME: ClassVar[str] = "project_documentation_agent_v1_prompt.yaml"
-    AGENT_VERSION: ClassVar[str] = "3.0.0"  # Major version bump for simplification
+    AGENT_VERSION: ClassVar[str] = "4.0.0"  # Major version for clean rewrite
     CAPABILITIES: ClassVar[List[str]] = ["documentation_generation", "project_analysis", "comprehensive_reporting"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.DOCUMENTATION_GENERATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.PUBLIC
-    INPUT_SCHEMA: ClassVar[Type[ProjectDocumentationInput]] = ProjectDocumentationInput
-    OUTPUT_SCHEMA: ClassVar[Type[ProjectDocumentationOutput]] = ProjectDocumentationOutput
+    INPUT_SCHEMA: ClassVar[Type[DocumentationAgentInput]] = DocumentationAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[DocumentationAgentOutput]] = DocumentationAgentOutput
 
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["simple_documentation_generation"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["mcp_file_operations"]
-    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'context_sharing']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["unified_documentation"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["intelligent_discovery"]
+    UNIVERSAL_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "context_sharing"]
 
     def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, **kwargs):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
-        self.logger.info(f"{self.AGENT_ID} (v{self.AGENT_VERSION}) initialized as simple documentation agent.")
-
-    def _convert_pydantic_to_dict(self, obj: Any) -> Any:
-        """Recursively convert Pydantic objects to dictionaries."""
-        if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
-            return obj.dict()
-        elif isinstance(obj, dict):
-            return {key: self._convert_pydantic_to_dict(value) for key, value in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [self._convert_pydantic_to_dict(item) for item in obj]
-        else:
-            return obj
+        self.logger.info(f"{self.AGENT_ID} v{self.AGENT_VERSION} initialized - clean unified documentation")
 
     async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        Dead simple execution: Let the LLM understand the project and generate documentation.
-        No complex phases, just LLM + MCP tools.
+        Clean execution: Unified discovery + YAML template + LLM documentation intelligence.
+        Single iteration, maximum intelligence, no hardcoded phases.
         """
         try:
-            # Convert inputs - handle both dict and Pydantic objects
-            if isinstance(context.inputs, dict):
-                converted_inputs = self._convert_pydantic_to_dict(context.inputs)
-                task_input = ProjectDocumentationInput(**converted_inputs)
-            elif hasattr(context.inputs, 'dict'):
-                task_input = ProjectDocumentationInput(**context.inputs.dict())
-            else:
-                task_input = context.inputs
+            # Parse inputs cleanly
+            task_input = self._parse_inputs(context.inputs)
+            self.logger.info(f"Generating documentation: {task_input.user_goal}")
 
-            self.logger.info(f"Starting simple documentation generation for: {task_input.user_goal or 'project'}")
-
-            # 1. Gather project context using MCP tools
-            project_context = await self._gather_project_context(task_input)
+            # Generate documentation using unified approach
+            documentation_result = await self._generate_documentation(task_input)
             
-            # 2. Let LLM generate documentation using main prompt template
-            documentation_result = await self._generate_documentation_with_llm(task_input, project_context)
-            
-            # 3. Create simple output
-            output = ProjectDocumentationOutput(
+            # Create clean output
+            output = DocumentationAgentOutput(
                 task_id=task_input.task_id,
                 project_id=task_input.project_id,
-                status="SUCCESS" if documentation_result["success"] else "FAILURE",
-                documentation_files=documentation_result.get("documentation_files", {}),
-                generation_summary=documentation_result.get("generation_summary", "Documentation generation completed"),
-                files_created=list(documentation_result.get("documentation_files", {}).keys()),
-                message=documentation_result.get("message", "Documentation generation completed"),
-                confidence_score=ConfidenceScore(
-                    value=0.9,
-                    method="llm_self_assessment",
-                    explanation="High confidence in documentation generation quality and completeness"
-                ),
-                error_message=documentation_result.get("error"),
-                usage_metadata={
-                    "iteration": iteration + 1,
-                    "files_generated": len(documentation_result.get("documentation_files", {})),
-                    "documentation_created": documentation_result.get("success", False)
-                }
+                status="SUCCESS",
+                documentation_files=documentation_result["documentation_files"],
+                documentation_summary=documentation_result["documentation_summary"],
+                documentation_recommendations=documentation_result["documentation_recommendations"],
+                files_created=list(documentation_result["documentation_files"].keys()),
+                project_analysis=documentation_result["project_analysis"],
+                confidence_score=documentation_result["confidence_score"],
+                message=f"Generated documentation for: {task_input.user_goal}"
             )
             
             return IterationResult(
                 output=output,
-                quality_score=documentation_result.get("confidence", 0.8),
-                tools_used=["llm_analysis", "mcp_file_operations"],
-                protocol_used="simple_documentation_generation"
+                quality_score=documentation_result["confidence_score"].value,
+                tools_used=["unified_discovery", "yaml_template", "llm_documentation"],
+                protocol_used="unified_documentation"
             )
             
         except Exception as e:
             self.logger.error(f"Documentation generation failed: {e}")
             
-            # Safe error output
-            task_id = getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4())
-            project_id = getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown'
-            
-            error_output = ProjectDocumentationOutput(
-                task_id=task_id,
-                project_id=project_id,
+            # Clean error handling
+            error_output = DocumentationAgentOutput(
+                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
+                project_id=getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown',
                 status="ERROR",
                 documentation_files={},
-                generation_summary="Documentation generation failed",
-                files_created=[],
+                documentation_summary="Documentation generation failed",
+                confidence_score=ConfidenceScore(
+                    value=0.0,
+                    method="error_state",
+                    explanation="Documentation generation failed"
+                ),
                 message="Documentation generation failed",
                 error_message=str(e)
             )
@@ -202,361 +167,157 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 output=error_output,
                 quality_score=0.0,
                 tools_used=[],
-                protocol_used="simple_documentation_generation"
+                protocol_used="unified_documentation"
             )
 
-    async def _gather_project_context(self, task_input: ProjectDocumentationInput) -> str:
-        """
-        Simple method: Gather all relevant project context for the LLM.
-        "Learn about the project" - scan files, read code, understand structure.
-        """
-        self.logger.info(f"Gathering project context from: {task_input.project_path}")
-        
-        context_parts = []
-        
-        # Add user goal
-        if task_input.user_goal:
-            context_parts.append(f"User Goal: {task_input.user_goal}")
-        
-        # Add project specifications if available
-        if task_input.project_specifications:
-            context_parts.append(f"Project Specifications: {json.dumps(task_input.project_specifications, indent=2)}")
-        
-        # Try to read existing blueprint if available
-        if task_input.project_blueprint_doc_id:
-            try:
-                blueprint_result = await self._call_mcp_tool("chromadb_retrieve_document", {
-                    "collection_name": "blueprint_artifacts_collection",
-                    "document_id": task_input.project_blueprint_doc_id
-                })
-                if blueprint_result.get("success"):
-                    blueprint_content = blueprint_result.get("content", "")
-                    context_parts.append(f"Project Blueprint: {blueprint_content}")
-                    self.logger.info("Successfully retrieved project blueprint")
-            except Exception as e:
-                self.logger.warning(f"Could not retrieve blueprint: {e}")
-        
-        # Scan project directory with MCP tools
-        try:
-            list_result = await self._call_mcp_tool("filesystem_list_directory", {
-                "directory_path": task_input.project_path
-            })
-            
-            if list_result.get("success"):
-                files = list_result.get("files", [])
-                if files:
-                    context_parts.append(f"Project files in {task_input.project_path}: {files}")
-                    
-                    # Read key project files for context
-                    important_files = []
-                    for file_info in files[:15]:  # Limit to first 15 files
-                        filename = file_info.get("name", "") if isinstance(file_info, dict) else str(file_info)
-                        
-                        # Prioritize important project files
-                        if any(pattern in filename.lower() for pattern in [
-                            "readme", "setup.py", "pyproject.toml", "package.json", "main.", "app.", "index.", 
-                            "requirements", "__init__.py", "config", "settings"
-                        ]):
-                            important_files.append(filename)
-                    
-                    # Read important files for context
-                    for filename in important_files[:8]:  # Limit to 8 important files
-                        try:
-                            file_result = await self._call_mcp_tool("filesystem_read_file", {
-                                "file_path": f"{task_input.project_path}/{filename}"
-                            })
-                            if file_result.get("success"):
-                                content = file_result.get("content", "")
-                                # Truncate very long files
-                                if len(content) > 2000:
-                                    content = content[:2000] + "... [truncated]"
-                                context_parts.append(f"--- {filename} ---\n{content}")
-                        except Exception as e:
-                            self.logger.warning(f"Could not read {filename}: {e}")
-                    
-                    # Get directory structure for better understanding
-                    try:
-                        structure_result = await self._call_mcp_tool("filesystem_list_directory", {
-                            "directory_path": task_input.project_path,
-                            "recursive": True
-                        })
-                        if structure_result.get("success"):
-                            all_files = structure_result.get("files", [])
-                            context_parts.append(f"Project structure: {all_files[:30]}")  # Limit structure info
-                    except Exception as e:
-                        self.logger.warning(f"Could not get project structure: {e}")
-                else:
-                    context_parts.append(f"Project directory {task_input.project_path} is empty")
-            else:
-                context_parts.append(f"Could not scan project directory: {list_result.get('error', 'unknown error')}")
-                
-        except Exception as e:
-            self.logger.warning(f"Error scanning project directory: {e}")
-            context_parts.append(f"Error scanning project directory: {str(e)}")
-        
-        return "\n\n".join(context_parts)
+    def _parse_inputs(self, inputs: Any) -> DocumentationAgentInput:
+        """Parse inputs cleanly into DocumentationAgentInput."""
+        if isinstance(inputs, DocumentationAgentInput):
+            return inputs
+        elif isinstance(inputs, dict):
+            return DocumentationAgentInput(**inputs)
+        elif hasattr(inputs, 'dict'):
+            return DocumentationAgentInput(**inputs.dict())
+        else:
+            raise ValueError(f"Invalid input type: {type(inputs)}")
 
-    async def _generate_documentation_with_llm(self, task_input: ProjectDocumentationInput, project_context: str) -> Dict[str, Any]:
+    async def _generate_documentation(self, task_input: DocumentationAgentInput) -> Dict[str, Any]:
         """
-        Main method: Use YAML prompt template + project context to let LLM generate documentation.
-        LLM returns structured documentation data, we execute file creation with MCP tools.
-        """
-        try:
-            # Get main prompt from YAML template (or fallback)
-            main_prompt = await self._get_main_prompt(task_input, project_context)
-            
-            # Let LLM run the show
-            self.logger.info("Generating documentation with LLM...")
-            response = await self.llm_provider.generate(
-                prompt=main_prompt,
-                max_tokens=8000,
-                temperature=0.1
-            )
-            
-            if not response:
-                return {"success": False, "error": "No response from LLM"}
-            
-            # Try to parse structured response (LLM should return JSON with documentation data)
-            try:
-                documentation_data = json.loads(response)
-                self.logger.info(f"LLM provided documentation with {len(documentation_data.get('documents', []))} documents")
-                
-                # Create documentation files using MCP tools
-                documentation_files = await self._create_documentation_files(documentation_data, task_input)
-                
-                return {
-                    "success": True,
-                    "documentation_data": documentation_data,
-                    "documentation_files": documentation_files,
-                    "confidence": documentation_data.get("confidence", 0.8),
-                    "generation_summary": f"Generated {len(documentation_files)} documentation files",
-                    "message": f"Generated documentation with {len(documentation_files)} files",
-                    "llm_response": response
-                }
-                
-            except json.JSONDecodeError:
-                # Fallback: treat response as markdown documentation
-                self.logger.info("LLM response not JSON, treating as markdown documentation")
-                return await self._fallback_markdown_documentation(response, task_input)
-                
-        except Exception as e:
-            self.logger.error(f"LLM documentation generation failed: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def _get_main_prompt(self, task_input: ProjectDocumentationInput, project_context: str) -> str:
-        """
-        Get main prompt for documentation generation - either from YAML template or built-in fallback.
+        Generate documentation using unified discovery + YAML template.
+        Pure unified approach - no hardcoded phases or documentation logic.
         """
         try:
-            # Try to get prompt from YAML template
+            # Get YAML template (no fallbacks)
             prompt_template = self.prompt_manager.get_prompt_definition(
-                "project_documentation_agent_v1_prompt",  # prompt_name from YAML id field
-                "1.0.0",  # prompt_version from YAML version field
-                sub_path="autonomous_engine"  # subdirectory where prompt is located
+                "project_documentation_agent_v1_prompt",
+                "1.0.0",
+                sub_path="autonomous_engine"
             )
             
-            # Format the prompt with variables using prompt manager
+            # Unified discovery for intelligent documentation context
+            discovery_results = await self._universal_discovery(
+                task_input.project_path,
+                ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "code_analysis"]
+            )
+            
+            technology_context = await self._universal_technology_discovery(
+                task_input.project_path
+            )
+            
+            # Build template variables for maximum LLM documentation intelligence
             template_vars = {
-                "user_goal": task_input.user_goal or "Generate project documentation",
+                # Original template variables (maintaining compatibility)
+                "user_goal": task_input.user_goal,
                 "project_path": task_input.project_path,
                 "project_id": task_input.project_id,
                 "include_api_docs": task_input.include_api_docs,
                 "include_user_guide": task_input.include_user_guide,
                 "include_dependency_audit": task_input.include_dependency_audit,
-                "available_tools": self._format_available_tools_for_prompt()
+                "available_tools": self._format_available_tools(),
+                
+                # Enhanced unified discovery variables for maximum intelligence
+                "discovery_results": json.dumps(discovery_results, indent=2),
+                "technology_context": json.dumps(technology_context, indent=2),
+                
+                # Additional context for intelligent documentation
+                "project_specifications": task_input.project_specifications or {},
+                "intelligent_context": task_input.intelligent_context
             }
             
+            # Render template
             formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
                 prompt_template.user_prompt_template,
                 template_vars
             )
             
-            # Use LLMProvider to generate response
+            # Get system prompt if available
+            system_prompt = getattr(prompt_template, 'system_prompt', None)
+            
+            # Call LLM with maximum documentation intelligence
             response = await self.llm_provider.generate(
                 prompt=formatted_prompt,
-                system_prompt=prompt_template.system_prompt if hasattr(prompt_template, 'system_prompt') else None,
+                system_prompt=system_prompt,
                 temperature=0.3,
                 max_tokens=4000
             )
             
-            self.logger.info("Used YAML prompt template successfully")
-            return response
-            
-        except Exception as e:
-            self.logger.warning(f"Could not load YAML prompt template: {e}, using built-in fallback")
-            
-            # Built-in fallback prompt
-            return f"""You are a project documentation generation agent. Create comprehensive documentation for this project.
-
-PROJECT CONTEXT:
-{project_context}
-
-INSTRUCTIONS:
-1. Analyze the project structure, code, and purpose
-2. Generate appropriate documentation for the project type
-3. Create clear, professional documentation that helps users understand and use the project
-4. Return a JSON response with this exact structure:
-
-{{
-    "project_title": "descriptive project title",
-    "project_description": "clear description of what this project does",
-    "documents": [
-        {{
-            "filename": "README.md",
-            "content": "comprehensive README content with setup, usage, etc.",
-            "type": "readme"
-        }},
-        {{
-            "filename": "API_DOCS.md", 
-            "content": "API documentation if applicable",
-            "type": "api_docs"
-        }},
-        {{
-            "filename": "USER_GUIDE.md",
-            "content": "user guide with examples and tutorials",
-            "type": "user_guide"
-        }},
-        {{
-            "filename": "DEPENDENCIES.md",
-            "content": "dependency audit and security information",
-            "type": "dependency_audit"
-        }}
-    ],
-    "confidence": 0.85,
-    "reasoning": "explanation of documentation choices"
-}}
-
-REQUIREMENTS:
-- Create documentation appropriate for the project type and complexity
-- Include clear setup and usage instructions
-- Document APIs, functions, and key features
-- Provide examples where helpful
-- Include dependency information and security considerations
-- Use professional, clear writing style
-- Format with proper Markdown syntax
-
-USER GOAL: {task_input.user_goal or "Generate project documentation"}
-PROJECT: {task_input.project_id}
-
-Return ONLY the JSON response, no additional text."""
-
-    def _format_available_tools_for_prompt(self) -> str:
-        """Format available MCP tools for inclusion in prompt."""
-        try:
-            # Get available tools through MCP
-            tools_info = []
-            
-            # Add basic tools that are commonly available
-            basic_tools = [
-                "filesystem_read_file - Read file contents",
-                "filesystem_list_directory - List directory contents", 
-                "filesystem_write_file - Write content to files",
-                "web_search - Search web for information",
-                "content_analysis - Analyze text content"
-            ]
-            
-            return "Available tools:\n" + "\n".join(f"- {tool}" for tool in basic_tools)
-            
-        except Exception as e:
-            self.logger.warning(f"Could not format available tools: {e}")
-            return "Tools available for project analysis and documentation generation"
-
-    async def _create_documentation_files(self, documentation_data: Dict[str, Any], task_input: ProjectDocumentationInput) -> Dict[str, str]:
-        """
-        Create documentation files using MCP tools.
-        """
-        self.logger.info("Creating documentation files")
-        
-        created_files = {}
-        project_path = task_input.project_path
-        
-        try:
-            documents = documentation_data.get("documents", [])
-            
-            # Create docs directory if it doesn't exist
-            docs_dir_result = await self._call_mcp_tool("filesystem_create_directory", {
-                "directory_path": f"{project_path}/docs",
-                "create_parents": True
-            })
-            
-            for doc in documents:
-                filename = doc.get("filename", "document.md")
-                content = doc.get("content", "")
-                doc_type = doc.get("type", "document")
+            # Parse LLM response (expecting JSON from template)
+            try:
+                result = json.loads(response)
                 
-                # Determine file path based on document type
-                if doc_type == "readme":
-                    file_path = f"{project_path}/{filename}"
-                else:
-                    file_path = f"{project_path}/docs/{filename}"
+                # Transform template output to our clean schema
+                documentation_files = {}
+                doc_files = result.get("documentation_files", [])
                 
-                # Write file using MCP tools
-                write_result = await self._call_mcp_tool("filesystem_write_file", {
-                    "file_path": file_path,
-                    "content": content
-                })
+                for doc in doc_files:
+                    file_path = doc.get("path", "README.md")
+                    content = doc.get("content", "")
+                    documentation_files[file_path] = content
                 
-                if write_result.get("success"):
-                    relative_path = filename if doc_type == "readme" else f"docs/{filename}"
-                    created_files[relative_path] = content
-                    self.logger.info(f"✓ Created {relative_path}")
-                else:
-                    self.logger.error(f"Failed to create {filename}: {write_result.get('error', 'unknown error')}")
-            
-            self.logger.info(f"Successfully created {len(created_files)} documentation files")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create documentation files: {e}")
-            created_files["error"] = f"Documentation file creation failed: {str(e)}"
-        
-        return created_files
-
-    async def _fallback_markdown_documentation(self, response: str, task_input: ProjectDocumentationInput) -> Dict[str, Any]:
-        """
-        Fallback when LLM doesn't return structured JSON - treat response as README content.
-        """
-        try:
-            # Clean up response
-            content = response.strip()
-            
-            # Use a proper project name based on user goal, not UUID
-            if task_input.user_goal:
-                # Convert user goal to a safe filename
-                project_name = "".join(c for c in task_input.user_goal.lower().replace(" ", "_") if c.isalnum() or c == "_")[:30]
-                if not project_name:
-                    project_name = "project"
-            else:
-                project_name = "project"
-                
-            filename = "README.md"
-            
-            full_path = Path(task_input.project_path) / filename
-            
-            write_result = await self._call_mcp_tool("filesystem_write_file", {
-                "file_path": str(full_path),
-                "content": content
-            })
-            
-            if write_result.get("success"):
-                self.logger.info(f"✓ Generated fallback documentation: {filename}")
                 return {
-                    "success": True,
-                    "documentation_files": {filename: content},
-                    "confidence": 0.7,
-                    "generation_summary": "Generated documentation (fallback format)",
-                    "message": "Generated documentation (fallback format)"
+                    "documentation_files": documentation_files,
+                    "documentation_summary": self._create_documentation_summary(result, discovery_results),
+                    "documentation_recommendations": result.get("recommendations", []),
+                    "project_analysis": {
+                        "project_type": technology_context.get("primary_language", "unknown"),
+                        "complexity": discovery_results.get("complexity_assessment", "moderate"),
+                        "documentation_scope": len(documentation_files),
+                        "discovered_patterns": discovery_results.get("patterns", {})
+                    },
+                    "confidence_score": ConfidenceScore(
+                        value=result.get("confidence", 0.85),
+                        method="llm_documentation_assessment",
+                        explanation=result.get("reasoning", "Documentation generated successfully with unified discovery")
+                    )
                 }
-            else:
-                return {"success": False, "error": "Failed to write fallback documentation"}
+                
+            except json.JSONDecodeError as e:
+                self.logger.error(f"LLM response not valid JSON: {e}")
+                raise ValueError(f"LLM response parsing failed: {e}")
                 
         except Exception as e:
-            return {"success": False, "error": f"Fallback documentation generation failed: {str(e)}"}
+            self.logger.error(f"Documentation generation failed: {e}")
+            raise
+
+    def _create_documentation_summary(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> str:
+        """Create a comprehensive documentation summary from LLM result and discovery."""
+        doc_files = llm_result.get("documentation_files", [])
+        files_count = len(doc_files)
+        
+        project_info = discovery_results.get("structure", {})
+        tech_stack = discovery_results.get("technology", {})
+        
+        summary_parts = [
+            f"Generated {files_count} documentation files",
+            f"Project type: {tech_stack.get('primary_language', 'detected from codebase')}",
+            f"Documentation scope: {llm_result.get('reasoning', 'comprehensive project documentation')}"
+        ]
+        
+        if project_info.get("has_tests"):
+            summary_parts.append("Included testing documentation")
+        
+        if tech_stack.get("framework"):
+            summary_parts.append(f"Framework-specific documentation for {tech_stack['framework']}")
+        
+        return ". ".join(summary_parts) + "."
+
+    def _format_available_tools(self) -> str:
+        """Format available tools for template (simplified unified approach)."""
+        tools = [
+            "filesystem_read_file - Read and analyze project files",
+            "filesystem_list_directory - Explore project structure", 
+            "filesystem_write_file - Create documentation files",
+            "web_search - Research documentation best practices",
+            "unified_discovery - Comprehensive project analysis"
+        ]
+        
+        return "Available tools:\n" + "\n".join(f"- {tool}" for tool in tools)
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
         """Generate agent card for registry."""
-        input_schema = ProjectDocumentationInput.model_json_schema()
-        output_schema = ProjectDocumentationOutput.model_json_schema()
+        input_schema = DocumentationAgentInput.model_json_schema()
+        output_schema = DocumentationAgentOutput.model_json_schema()
         
         return AgentCard(
             agent_id=ProjectDocumentationAgent_v1.AGENT_ID,
@@ -568,19 +329,20 @@ Return ONLY the JSON response, no additional text."""
             categories=[ProjectDocumentationAgent_v1.CATEGORY.value],
             visibility=ProjectDocumentationAgent_v1.VISIBILITY.value,
             capability_profile={
-                "generates_documentation": True,
-                "simple_documentation": True,
-                "llm_powered": True,
-                "mcp_tools_integrated": True,
-                "creates_multiple_docs": True
+                "unified_discovery": True,
+                "yaml_templates": True,
+                "llm_documentation": True,
+                "clean_documentation": True,
+                "no_hardcoded_logic": True,
+                "maximum_agentic": True
             },
             metadata={
                 "callable_fn_path": f"{ProjectDocumentationAgent_v1.__module__}.{ProjectDocumentationAgent_v1.__name__}"
             }
         )
 
-    def get_input_schema(self) -> Type[ProjectDocumentationInput]:
-        return ProjectDocumentationInput
+    def get_input_schema(self) -> Type[DocumentationAgentInput]:
+        return DocumentationAgentInput
 
-    def get_output_schema(self) -> Type[ProjectDocumentationOutput]:
-        return ProjectDocumentationOutput 
+    def get_output_schema(self) -> Type[DocumentationAgentOutput]:
+        return DocumentationAgentOutput 

@@ -20,21 +20,33 @@ user_prompt: |
   **USER GOAL:** {{user_goal}}
   **PROJECT PATH:** {{project_path}}
   **PROJECT ID:** {{project_id}}
+  **CAPABILITY:** {{capability}}
 
   **PROJECT CONTEXT:**
   {{project_context}}
 
-  **DOCUMENTATION REQUIREMENTS:**
-  - Include API docs: {{include_api_docs}}
-  - Include user guide: {{include_user_guide}}
-  - Include dependency audit: {{include_dependency_audit}}
+  **DISCOVERED PROJECT STRUCTURE:**
+  ```json
+  {{discovery_results}}
+  ```
+
+  **DETECTED TECHNOLOGIES:**
+  ```json
+  {{technology_context}}
+  ```
+
+  **SETUP PREFERENCES:**
+  ```json
+  {{setup_preferences|tojson(indent=2)}}
+  ```
 
   **INSTRUCTIONS:**
-  1. Analyze the project structure, code, and purpose from the context
-  2. Determine the project type and documentation needs
-  3. Generate appropriate documentation files for the project
-  4. Create clear, professional content with proper formatting
-  5. Include setup instructions, usage examples, and best practices
+  Based on the discovered project structure and technologies, generate comprehensive documentation:
+
+  1. **Analyze Discovery Results**: Review the discovered files and project structure
+  2. **Determine Documentation Needs**: Based on detected technologies and project type
+  3. **Create Documentation Files**: Generate appropriate documentation for the project
+  4. **Follow User Preferences**: Respect the documentation preferences provided
 
   **RESPONSE FORMAT:**
   Return a JSON response with this exact structure:
@@ -42,6 +54,11 @@ user_prompt: |
   {
     "capability": "documentation",
     "plan_summary": "Brief description of documentation plan",
+    "discovered_project_type": "web_app/cli_tool/library/etc",
+    "documentation_decisions": {
+      "include_readme": "Main documentation file needed",
+      "include_api_docs": "API documentation based on preferences"
+    },
     "files_to_create": [
       {
         "path": "README.md",
@@ -71,7 +88,7 @@ user_prompt: |
       "Consider adding changelog"
     ],
     "confidence": 0.85,
-    "reasoning": "Explanation of documentation decisions"
+    "reasoning": "Explanation based on discovered project structure and preferences"
   }
   ```
 
@@ -86,6 +103,5 @@ user_prompt: |
   - Document APIs, functions, and key features
   - Use professional, clear writing style
 
-  Generate documentation that helps users understand, install, and use the project effectively.
-
+  **Let the LLM intelligently decide what documentation to create based on discovered patterns.**
   Return ONLY the JSON response, no additional text. 

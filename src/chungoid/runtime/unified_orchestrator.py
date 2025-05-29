@@ -262,7 +262,7 @@ class UnifiedOrchestrator:
         # 6. Enhanced Architecture Design - ENHANCED: Comprehensive technical blueprint design
         await self.execute_stage(
             stage_id="enhanced_architecture_design",
-            agent_id="EnhancedArchitectAgent_v1",
+            agent_id="ArchitectAgent_v1",
             inputs={
                 "user_goal": master_planner_input.user_goal,
                 "project_specifications": project_specs,

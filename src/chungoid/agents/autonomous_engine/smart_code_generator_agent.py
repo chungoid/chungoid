@@ -320,14 +320,31 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 sub_path="autonomous_engine"  # subdirectory where prompt is located
             )
             
-            # Prepare template variables for rendering
+            # Gather unified discovery results
+            try:
+                discovery_results = await self._universal_discovery(
+                    task_input.project_path or ".", 
+                    ["environment", "dependencies", "structure", "code_patterns"]
+                )
+                
+                technology_context = await self._universal_technology_discovery(
+                    task_input.project_path or "."
+                )
+            except Exception:
+                self.logger.warning("Could not use unified discovery, using fallback values")
+                discovery_results = "{}"
+                technology_context = "{}"
+            
+            # Prepare template variables for rendering (unified approach)
             template_vars = {
                 "user_goal": task_input.user_goal or task_input.task_description,
                 "project_path": task_input.project_path,
                 "project_context": project_context,
                 "project_id": task_input.project_id,
                 "target_file_path": task_input.target_file_path or "",
-                "programming_language": task_input.programming_language or "python"
+                "programming_language": task_input.programming_language or "python",
+                "discovery_results": discovery_results,
+                "technology_context": technology_context
             }
             
             # Render the user prompt template with variables

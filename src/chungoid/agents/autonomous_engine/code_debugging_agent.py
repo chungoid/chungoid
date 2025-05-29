@@ -1,991 +1,376 @@
+"""
+CodeDebuggingAgent_v1: Clean, unified LLM-powered code debugging and testing.
+
+This agent provides comprehensive code debugging and testing by:
+1. Using unified discovery to understand project structure and codebase
+2. Using YAML prompt template with rich discovery data
+3. Letting the LLM make intelligent debugging decisions with maximum intelligence
+
+No legacy patterns, no hardcoded phases, no complex tool orchestration.
+Pure unified approach for maximum agentic debugging intelligence.
+"""
+
 from __future__ import annotations
 
 import logging
 import uuid
 import json
-import asyncio
-import datetime
-import time
+from typing import Any, Dict, Optional, List, ClassVar, Type, Literal
 
-from ...schemas.unified_execution_schemas import (
-    ExecutionContext as UEContext,
-    AgentExecutionResult,
-    ExecutionMetadata,
-    ExecutionMode,
-    CompletionReason,
-    IterationResult,
-    StageInfo,
-)
-
-class ProtocolExecutionError(Exception):
-    """Raised when protocol execution fails."""
-    pass
-
-from typing import Any, Dict, Optional, List, Literal, ClassVar, get_args, Type
-
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, model_validator
 
 from chungoid.agents.unified_agent import UnifiedAgent
 from chungoid.utils.llm_provider import LLMProvider
-from chungoid.utils.prompt_manager import PromptManager, PromptRenderError
+from chungoid.utils.prompt_manager import PromptManager
 from chungoid.schemas.common import ConfidenceScore
 from chungoid.utils.agent_registry import AgentCard
 from chungoid.utils.agent_registry_meta import AgentCategory, AgentVisibility
 from chungoid.registry import register_autonomous_engine_agent
 
+from ...schemas.unified_execution_schemas import (
+    ExecutionContext as UEContext,
+    IterationResult,
+)
+
 logger = logging.getLogger(__name__)
 
-CDA_PROMPT_NAME = "code_debugging_agent_v1_prompt.yaml"
-
-# --- Input and Output Schemas based on Design Document --- #
 
 class FailedTestReport(BaseModel):
+    """Structured test failure information."""
     test_name: str
     error_message: str
     stack_trace: str
     expected_behavior_summary: Optional[str] = None
 
+
 class PreviousDebuggingAttempt(BaseModel):
+    """Previous debugging attempt information."""
     attempted_fix_summary: str
-    outcome: str # e.g., 'tests_still_failed', 'new_errors_introduced'
+    outcome: str  # e.g., 'tests_still_failed', 'new_errors_introduced'
 
-class DebuggingTaskInput(BaseModel):
-    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this debugging task.")
-    
-    # Traditional fields - optional when using intelligent context
-    project_id: Optional[str] = Field(None, description="Identifier for the current project.")
-    faulty_code_path: Optional[str] = Field(None, description="Path to the code file needing debugging.")
-    faulty_code_snippet: Optional[str] = Field(None, description="(Optional) The specific code snippet if already localized.")
-    failed_test_reports: Optional[List[FailedTestReport]] = Field(None, description="List of structured test failure objects.")
-    relevant_loprd_requirements_ids: Optional[List[str]] = Field(None, description="List of LOPRD requirement IDs relevant to the faulty code.")
-    relevant_blueprint_section_ids: Optional[List[str]] = Field(None, description="List of Blueprint section IDs relevant to the code's design.")
-    previous_debugging_attempts: Optional[List[PreviousDebuggingAttempt]] = Field(None, description="(Optional) List of previous fixes attempted for this issue.")
-    max_iterations_for_this_call: Optional[int] = Field(None, description="(Optional) A limit set by ARCA for this specific debugging invocation's internal reasoning.")
-    
-    # ADDED: Intelligent project analysis from orchestrator
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications from orchestrator analysis")
-    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
-    user_goal: Optional[str] = Field(None, description="Original user goal for context")
-    project_path: Optional[str] = Field(None, description="Project path for context")
 
-class DebuggingTaskOutput(BaseModel):
-    task_id: str = Field(..., description="Echoed task_id from input.")
-    project_id: str = Field(..., description="Echoed project_id from input.")
+class DebuggingAgentInput(BaseModel):
+    """Clean input schema focused on core debugging needs."""
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique task identifier")
+    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project identifier")
+    
+    # Core requirements
+    user_goal: str = Field(..., description="What the user wants debugged or fixed")
+    project_path: str = Field(default=".", description="Project directory path")
+    
+    # Debugging context
+    faulty_code_path: Optional[str] = Field(None, description="Path to the code file needing debugging")
+    faulty_code_snippet: Optional[str] = Field(None, description="Specific code snippet if already localized")
+    failed_test_reports: Optional[List[FailedTestReport]] = Field(None, description="List of test failure objects")
+    relevant_loprd_requirements_ids: Optional[List[str]] = Field(None, description="LOPRD requirement IDs relevant to code")
+    relevant_blueprint_section_ids: Optional[List[str]] = Field(None, description="Blueprint section IDs relevant to design")
+    previous_debugging_attempts: Optional[List[PreviousDebuggingAttempt]] = Field(None, description="Previous fix attempts")
+    max_iterations_for_this_call: Optional[int] = Field(None, description="Limit for debugging iterations")
+    
+    # Intelligent context from orchestrator
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications")
+    intelligent_context: bool = Field(default=False, description="Whether intelligent specifications provided")
+    
+    @model_validator(mode='after')
+    def validate_requirements(self) -> 'DebuggingAgentInput':
+        """Ensure we have minimum requirements for debugging."""
+        if not self.user_goal or not self.user_goal.strip():
+            raise ValueError("user_goal is required for code debugging")
+        return self
+
+
+class DebuggingAgentOutput(BaseModel):
+    """Clean output schema focused on debugging deliverables."""
+    task_id: str = Field(..., description="Task identifier")
+    project_id: str = Field(..., description="Project identifier")
+    status: str = Field(..., description="Execution status")
+    
+    # Core debugging deliverables
     proposed_solution_type: Literal["CODE_PATCH", "MODIFIED_SNIPPET", "NO_FIX_IDENTIFIED", "NEEDS_MORE_CONTEXT"]
-    proposed_code_changes: Optional[str] = Field(None, description="The actual patch (e.g., diff format) or the full modified code snippet. Null if no fix identified.")
-    explanation_of_fix: Optional[str] = Field(None, description="LLM-generated explanation of the diagnosed bug and the proposed fix. Null if no fix identified.")
-    confidence_score: Optional[ConfidenceScore] = Field(None, description="Likelihood the proposed fix resolves the issue.")
-    areas_of_uncertainty: Optional[List[str]] = Field(None, description="(Optional) Any parts of the code, problem, or context the agent is unsure about.")
-    suggestions_for_ARCA: Optional[str] = Field(None, description="(Optional) E.g., 'Consider broader refactoring...'")
-    status: Literal["SUCCESS_FIX_PROPOSED", "FAILURE_NO_FIX_IDENTIFIED", "FAILURE_NEEDS_CLARIFICATION", "ERROR_INTERNAL", "FAILURE_LLM", "FAILURE_LLM_OUTPUT_PARSING", "FAILURE_PROMPT_RENDERING"]
-    message: str = Field(..., description="A message detailing the outcome.")
-    error_message: Optional[str] = Field(None, description="Error message if status indicates failure.")
-    llm_full_response: Optional[str] = Field(None, description="Full raw response from the LLM for debugging for analysis.")
-    usage_metadata: Optional[Dict[str, Any]] = Field(None, description="Token usage or other metadata from the LLM call.")
+    proposed_code_changes: Optional[str] = Field(None, description="Actual patch or modified code snippet")
+    explanation_of_fix: Optional[str] = Field(None, description="Explanation of diagnosed bug and proposed fix")
+    
+    # Quality insights
+    debugging_analysis: Dict[str, Any] = Field(default_factory=dict, description="Analysis of debugging process")
+    test_results: Dict[str, Any] = Field(default_factory=dict, description="Generated test results and coverage")
+    areas_of_uncertainty: Optional[List[str]] = Field(None, description="Areas the agent is unsure about")
+    suggestions_for_ARCA: Optional[str] = Field(None, description="Suggestions for broader improvements")
+    
+    # Metadata
+    confidence_score: ConfidenceScore = Field(..., description="Agent confidence in debugging solution")
+    message: str = Field(..., description="Human-readable result message")
+    error_message: Optional[str] = Field(None, description="Error details if failed")
 
 
 @register_autonomous_engine_agent(capabilities=["code_debugging", "error_analysis", "automated_fixes"])
 class CodeDebuggingAgent_v1(UnifiedAgent):
+    """
+    Clean, unified code debugging agent.
+    
+    Uses unified discovery + YAML templates + maximum LLM intelligence for debugging.
+    No legacy patterns, no hardcoded phases, no complex tool orchestration.
+    """
+    
     AGENT_ID: ClassVar[str] = "CodeDebuggingAgent_v1"
     AGENT_NAME: ClassVar[str] = "Code Debugging Agent v1"
-    DESCRIPTION: ClassVar[str] = "Analyzes faulty code with test failures and proposes fixes."
-    PROMPT_TEMPLATE_NAME: ClassVar[str] = CDA_PROMPT_NAME
-    AGENT_VERSION: ClassVar[str] = "0.1.0"
-    CAPABILITIES: ClassVar[List[str]] = ["code_debugging", "error_analysis", "automated_fixes", "complex_analysis"]
-    CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_REMEDIATION 
-    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL 
+    AGENT_DESCRIPTION: ClassVar[str] = "Clean, unified LLM-powered code debugging and testing"
+    PROMPT_TEMPLATE_NAME: ClassVar[str] = "code_debugging_agent_v1_prompt.yaml"
+    AGENT_VERSION: ClassVar[str] = "3.0.0"  # Major version for clean rewrite
+    CAPABILITIES: ClassVar[List[str]] = ["code_debugging", "error_analysis", "automated_fixes"]
+    CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_REMEDIATION
+    VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL
+    INPUT_SCHEMA: ClassVar[Type[DebuggingAgentInput]] = DebuggingAgentInput
+    OUTPUT_SCHEMA: ClassVar[Type[DebuggingAgentOutput]] = DebuggingAgentOutput
 
-    _llm_provider: LLMProvider
-    _prompt_manager: PromptManager
-    _logger: logging.Logger
-    # ADDED: Protocol definitions following AI agent best practices
-    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["code_generation", "plan_review"]
-    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["tool_validation", "error_recovery"]
-    UNIVERSAL_PROTOCOLS: ClassVar[list[str]] = ['agent_communication', 'tool_validation', 'context_sharing']
+    PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["unified_debugging"]
+    SECONDARY_PROTOCOLS: ClassVar[List[str]] = ["intelligent_discovery"]
+    UNIVERSAL_PROTOCOLS: ClassVar[List[str]] = ["agent_communication", "context_sharing"]
 
+    def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, **kwargs):
+        super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
+        self.logger.info(f"{self.AGENT_ID} v{self.AGENT_VERSION} initialized - clean unified debugging")
 
-    def __init__(
-        self, 
-        llm_provider: LLMProvider, 
-        prompt_manager: PromptManager, 
-        **kwargs 
-    ):
-        # Enable refinement capabilities for intelligent code debugging
-        super().__init__(
-            llm_provider=llm_provider, 
-            prompt_manager=prompt_manager, 
-            enable_refinement=True,  # Enable intelligent refinement
-            **kwargs
-        )
-
-    async def _execute_iteration(
-        self, 
-        context: UEContext, 
-        iteration: int
-    ) -> IterationResult:
+    async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        Phase 3 UAEI implementation - Core code debugging logic for single iteration.
-        
-        Runs comprehensive debugging workflow: analysis → diagnosis → fix generation → validation
+        Clean execution: Unified discovery + YAML template + LLM debugging intelligence.
+        Single iteration, maximum intelligence, no hardcoded phases.
         """
-        self.logger.info(f"[CodeDebugging] Starting iteration {iteration + 1}")
-        
         try:
-            # Convert inputs to expected format - handle both dict and object inputs
-            if isinstance(context.inputs, dict):
-                inputs = context.inputs
-            elif hasattr(context.inputs, 'dict'):
-                inputs = context.inputs.dict()
-            else:
-                inputs = context.inputs
+            # Parse inputs cleanly
+            task_input = self._parse_inputs(context.inputs)
+            self.logger.info(f"Debugging code: {task_input.user_goal}")
 
-            # Phase 1: Analysis - Analyze code and test failures
-            if inputs.get("intelligent_context") and inputs.get("project_specifications"):
-                self.logger.info("Using intelligent project specifications from orchestrator")
-                analysis_result = await self._extract_analysis_from_intelligent_specs(inputs.get("project_specifications"), inputs.get("user_goal"))
-            else:
-                self.logger.info("Using traditional code analysis")
-                analysis_result = await self._analyze_code_and_failures(inputs, context.shared_context)
+            # Generate debugging solution using unified approach
+            debugging_result = await self._generate_debugging_solution(task_input)
             
-            # Phase 2: Diagnosis - Identify root causes
-            diagnosis_result = await self._diagnose_bug(analysis_result, inputs, context.shared_context)
-            
-            # Phase 3: Fix Generation - Generate potential solutions
-            fix_result = await self._generate_fix(diagnosis_result, inputs, context.shared_context)
-            
-            # Phase 4: Validation - Validate proposed fix
-            validation_result = await self._validate_fix(fix_result, inputs, context.shared_context)
-            
-            # Calculate quality score based on validation results
-            quality_score = self._calculate_quality_score(validation_result)
-            
-            # Create output
-            output = DebuggingTaskOutput(
-                task_id=inputs.get("task_id", str(uuid.uuid4())),
-                project_id=inputs.get("project_id") or "intelligent_project",
-                proposed_solution_type=fix_result.get("solution_type", "NO_FIX_IDENTIFIED"),
-                proposed_code_changes=fix_result.get("code_changes"),
-                explanation_of_fix=fix_result.get("explanation"),
-                confidence_score=ConfidenceScore(
-                    value=0.9, 
-                    method="comprehensive_analysis",
-                    explanation="High confidence in code debugging analysis and proposed solution"
-                ),
-                areas_of_uncertainty=validation_result.get("uncertainties", []),
-                suggestions_for_ARCA=validation_result.get("suggestions"),
-                status="SUCCESS_FIX_PROPOSED" if fix_result.get("solution_type") in ["CODE_PATCH", "MODIFIED_SNIPPET"] else "FAILURE_NO_FIX_IDENTIFIED",
-                message="Code debugging completed successfully" if fix_result.get("solution_type") in ["CODE_PATCH", "MODIFIED_SNIPPET"] else "No fix could be identified"
+            # Create clean output
+            output = DebuggingAgentOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
+                status="SUCCESS",
+                proposed_solution_type=debugging_result["proposed_solution_type"],
+                proposed_code_changes=debugging_result["proposed_code_changes"],
+                explanation_of_fix=debugging_result["explanation_of_fix"],
+                debugging_analysis=debugging_result["debugging_analysis"],
+                test_results=debugging_result["test_results"],
+                areas_of_uncertainty=debugging_result["areas_of_uncertainty"],
+                suggestions_for_ARCA=debugging_result["suggestions_for_ARCA"],
+                confidence_score=debugging_result["confidence_score"],
+                message=f"Generated debugging solution for: {task_input.user_goal}"
             )
             
-            tools_used = ["code_analysis", "error_diagnosis", "fix_generation", "validation"]
+            return IterationResult(
+                output=output,
+                quality_score=debugging_result["confidence_score"].value,
+                tools_used=["unified_discovery", "yaml_template", "llm_debugging"],
+                protocol_used="unified_debugging"
+            )
             
         except Exception as e:
-            self.logger.error(f"Code debugging iteration failed: {e}")
+            self.logger.error(f"Code debugging failed: {e}")
             
-            # Create error output
-            output = DebuggingTaskOutput(
-                task_id=inputs.get("task_id", str(uuid.uuid4())),
-                project_id=inputs.get("project_id", "unknown"),
+            # Clean error handling
+            error_output = DebuggingAgentOutput(
+                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
+                project_id=getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown',
+                status="ERROR",
                 proposed_solution_type="NO_FIX_IDENTIFIED",
-                status="ERROR_INTERNAL",
-                message=f"Code debugging failed: {str(e)}",
-                error_message=str(e),
                 confidence_score=ConfidenceScore(
-                    value=0.1,
-                    method="error_fallback",
-                    explanation="Execution failed with exception"
-                )
+                    value=0.0,
+                    method="error_state",
+                    explanation="Debugging failed"
+                ),
+                message="Code debugging failed",
+                error_message=str(e)
             )
             
-            quality_score = 0.1
-            tools_used = []
-        
-        # Return iteration result for Phase 3 multi-iteration support
-        return IterationResult(
-            output=output,
-            quality_score=quality_score,
-            tools_used=tools_used,
-            protocol_used="code_debugging_protocol"
-        )
+            return IterationResult(
+                output=error_output,
+                quality_score=0.0,
+                tools_used=[],
+                protocol_used="unified_debugging"
+            )
 
+    def _parse_inputs(self, inputs: Any) -> DebuggingAgentInput:
+        """Parse inputs cleanly into DebuggingAgentInput."""
+        if isinstance(inputs, DebuggingAgentInput):
+            return inputs
+        elif isinstance(inputs, dict):
+            return DebuggingAgentInput(**inputs)
+        elif hasattr(inputs, 'dict'):
+            return DebuggingAgentInput(**inputs.dict())
+        else:
+            raise ValueError(f"Invalid input type: {type(inputs)}")
 
-    async def _extract_analysis_from_intelligent_specs(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Extract analysis from intelligent project specifications using LLM processing."""
-        
+    async def _generate_debugging_solution(self, task_input: DebuggingAgentInput) -> Dict[str, Any]:
+        """
+        Generate debugging solution using unified discovery + YAML template.
+        Pure unified approach - no hardcoded phases or debugging logic.
+        """
         try:
-            if self.llm_provider:
-                # Use LLM to intelligently analyze the project specifications and plan debugging strategy
-                prompt = f"""
-                You are a code debugging agent. Analyze the following project specifications and user goal to create an intelligent debugging and quality assurance strategy.
-                
-                User Goal: {user_goal}
-                
-                Project Specifications:
-                - Project Type: {project_specs.get('project_type', 'unknown')}
-                - Primary Language: {project_specs.get('primary_language', 'unknown')}
-                - Target Languages: {project_specs.get('target_languages', [])}
-                - Target Platforms: {project_specs.get('target_platforms', [])}
-                - Technologies: {project_specs.get('technologies', [])}
-                - Required Dependencies: {project_specs.get('required_dependencies', [])}
-                - Optional Dependencies: {project_specs.get('optional_dependencies', [])}
-                
-                Provide a detailed JSON analysis with the following structure:
-                {{
-                    "code_location": "intelligent_analysis",
-                    "has_code_snippet": false,
-                    "failure_count": 0,
-                    "failure_patterns": [],
-                    "analysis_confidence": 0.0-1.0,
-                    "project_type": "...",
-                    "technologies": [...],
-                    "debugging_strategy": {{
-                        "approach": "...",
-                        "focus_areas": [...],
-                        "testing_priorities": [...],
-                        "quality_checks": [...]
-                    }},
-                    "potential_issues": {{
-                        "common_bugs": [...],
-                        "integration_risks": [...],
-                        "dependency_conflicts": [...],
-                        "performance_concerns": [...]
-                    }},
-                    "prevention_measures": {{
-                        "code_standards": [...],
-                        "testing_strategies": [...],
-                        "monitoring_points": [...]
-                    }},
-                    "debugging_tools": {{
-                        "recommended_debuggers": [...],
-                        "logging_strategies": [...],
-                        "profiling_tools": [...]
-                    }},
-                    "quality_metrics": {{
-                        "code_coverage_target": 0.0-1.0,
-                        "complexity_thresholds": {{}},
-                        "performance_benchmarks": {{}}
-                    }},
-                    "confidence_score": 0.0-1.0,
-                    "reasoning": "..."
-                }}
-                """
-                
-                response = await self.llm_provider.generate(prompt)
-                
-                if response:
-                    try:
-                        # Extract JSON from markdown code blocks if present
-                        json_content = self._extract_json_from_response(response)
-                        parsed_result = json.loads(json_content)
-                        
-                        # Validate that we got a dictionary as expected
-                        if not isinstance(parsed_result, dict):
-                            self.logger.warning(f"Expected dict from debugging analysis, got {type(parsed_result)}. Using fallback.")
-                            return self._generate_fallback_debugging_analysis(project_specs, user_goal)
-                        
-                        analysis = parsed_result
-                        # Add metadata about the intelligent analysis
-                        analysis["intelligent_analysis"] = True
-                        analysis["project_specifications"] = project_specs
-                        analysis["analysis_method"] = "llm_intelligent_processing"
-                        return analysis
-                    except json.JSONDecodeError as e:
-                        self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            # Get YAML template (no fallbacks)
+            prompt_template = self.prompt_manager.get_prompt_definition(
+                "code_debugging_agent_v1_prompt",
+                "2.0.0",
+                sub_path="autonomous_engine"
+            )
             
-            # Fallback to basic extraction if LLM fails
-            self.logger.info("Using fallback analysis due to LLM unavailability")
-            return self._generate_fallback_debugging_analysis(project_specs, user_goal)
+            # Unified discovery for intelligent debugging context
+            discovery_results = await self._universal_discovery(
+                task_input.project_path,
+                ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "code_analysis", "testing"]
+            )
             
-        except Exception as e:
-            self.logger.error(f"Error in intelligent specs analysis: {e}")
-            return self._generate_fallback_debugging_analysis(project_specs, user_goal)
-
-    def _generate_fallback_debugging_analysis(self, project_specs: Dict[str, Any], user_goal: str) -> Dict[str, Any]:
-        """Generate fallback debugging analysis when LLM is unavailable."""
-        
-        analysis = {
-            "code_location": "intelligent_analysis",
-            "has_code_snippet": False,
-            "failure_count": 0,
-            "failure_patterns": [],
-            "analysis_confidence": 0.8,
-            "project_type": project_specs.get("project_type", "unknown"),
-            "technologies": project_specs.get("technologies", []),
-            "debugging_strategy": {
-                "approach": "systematic_analysis",
-                "focus_areas": ["error handling", "input validation", "integration points"],
-                "testing_priorities": ["unit tests", "integration tests", "edge cases"],
-                "quality_checks": ["code review", "static analysis", "runtime monitoring"]
-            },
-            "potential_issues": {
-                "common_bugs": ["null pointer exceptions", "type errors", "logic errors"],
-                "integration_risks": ["API compatibility", "data format mismatches", "timing issues"],
-                "dependency_conflicts": ["version incompatibilities", "missing dependencies"],
-                "performance_concerns": ["memory leaks", "inefficient algorithms", "blocking operations"]
-            },
-            "prevention_measures": {
-                "code_standards": ["consistent naming", "proper error handling", "comprehensive documentation"],
-                "testing_strategies": ["test-driven development", "automated testing", "continuous integration"],
-                "monitoring_points": ["error rates", "performance metrics", "resource usage"]
-            },
-            "debugging_tools": {
-                "recommended_debuggers": ["built-in debugger", "IDE debugger", "remote debugger"],
-                "logging_strategies": ["structured logging", "log levels", "contextual information"],
-                "profiling_tools": ["performance profiler", "memory profiler", "network profiler"]
-            },
-            "quality_metrics": {
-                "code_coverage_target": 0.8,
-                "complexity_thresholds": {"cyclomatic_complexity": 10, "nesting_depth": 4},
-                "performance_benchmarks": {"response_time": "< 100ms", "memory_usage": "< 512MB"}
-            },
-            "intelligent_analysis": True,
-            "analysis_method": "fallback_extraction"
-        }
-        
-        return analysis
-
-    async def _analyze_code_and_failures(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze code and failure patterns using LLM-driven tool selection."""
-        self.logger.info("Starting code and failure analysis")
-        
-        # ENHANCED: Use LLM-driven tool selection for intelligent debugging analysis
-        if self.enable_refinement:
-            self.logger.info("[LLM-Driven] Using LLM-driven tool selection for debugging analysis")
+            technology_context = await self._universal_technology_discovery(
+                task_input.project_path
+            )
             
+            # Build template variables for maximum LLM debugging intelligence
+            template_vars = {
+                # Original template variables (maintaining compatibility)
+                "task_id": task_input.task_id,
+                "project_id": task_input.project_id,
+                "faulty_code_path": task_input.faulty_code_path or "discovered_from_codebase",
+                "faulty_code_snippet": task_input.faulty_code_snippet,
+                "failed_test_reports": [report.dict() for report in (task_input.failed_test_reports or [])],
+                "relevant_loprd_requirements_ids": task_input.relevant_loprd_requirements_ids or [],
+                "relevant_blueprint_section_ids": task_input.relevant_blueprint_section_ids or [],
+                "previous_debugging_attempts": [attempt.dict() for attempt in (task_input.previous_debugging_attempts or [])],
+                "max_iterations_for_this_call": task_input.max_iterations_for_this_call,
+                "project_specifications": task_input.project_specifications or {},
+                "intelligent_context": task_input.intelligent_context,
+                "user_goal": task_input.user_goal,
+                "project_path": task_input.project_path,
+                
+                # Enhanced unified discovery variables for maximum intelligence
+                "discovery_results": json.dumps(discovery_results, indent=2),
+                "technology_context": json.dumps(technology_context, indent=2),
+                
+                # Additional context for intelligent debugging
+                "codebase_structure": discovery_results.get("structure", {}),
+                "testing_framework": discovery_results.get("testing", {}),
+                "dependencies": discovery_results.get("dependencies", {}),
+                "patterns": discovery_results.get("patterns", {})
+            }
+            
+            # Render template
+            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
+                prompt_template.user_prompt_template,
+                template_vars
+            )
+            
+            # Get system prompt if available
+            system_prompt = getattr(prompt_template, 'system_prompt', None)
+            
+            # Call LLM with maximum debugging intelligence
+            response = await self.llm_provider.generate(
+                prompt=formatted_prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
+                max_tokens=4000
+            )
+            
+            # Parse LLM response (expecting JSON from template)
             try:
-                # Get all available tools for LLM to choose from
-                available_tools = await self._get_all_available_mcp_tools()
+                result = json.loads(response)
                 
-                # Let LLM choose tools and approach for debugging analysis
-                analysis_prompt = f"""You need to analyze code and failure patterns for debugging.
-
-DEBUGGING TASK:
-Project Path: {inputs.get('project_path', shared_context.get('project_root_path', 'Not provided'))}
-Faulty Code Path: {inputs.get('faulty_code_path', 'Not provided')}
-Code Snippet Available: {bool(inputs.get('faulty_code_snippet'))}
-Failed Tests: {len(inputs.get('failed_test_reports', []))} tests failed
-Previous Attempts: {len(inputs.get('previous_debugging_attempts', []))} previous attempts
-
-TASK: Analyze the codebase and failure patterns to understand the debugging context:
-- Scan project structure and identify problematic areas
-- Analyze failed test reports and error patterns
-- Read faulty code files for detailed analysis
-- Gather environment information for context
-- Use intelligent analysis tools for debugging strategy
-
-AVAILABLE TOOLS:
-{self._format_available_tools(available_tools)}
-
-Please choose the appropriate tools for debugging analysis and return JSON:
-{{
-    "analysis_approach": "description of your debugging analysis strategy",
-    "tools_to_use": [
-        {{
-            "tool_name": "tool_name",
-            "arguments": {{"param": "value"}},
-            "purpose": "why using this tool for debugging analysis"
-        }}
-    ],
-    "debugging_strategy": {{
-        "focus_areas": ["area 1", "area 2"],
-        "analysis_depth": "surface|detailed|comprehensive",
-        "expected_insights": ["insight type 1", "insight type 2"]
-    }},
-    "expected_outputs": {{
-        "code_structure": "what to learn about code structure",
-        "failure_patterns": "what patterns to identify",
-        "environmental_factors": "what environment info needed",
-        "debugging_recommendations": "what debugging approach to take"
-    }}
-}}
-
-Return ONLY the JSON response."""
-                
-                # Get LLM response
-                llm_response = await self.llm_provider.generate(analysis_prompt)
-                
-                # Parse LLM response
-                analysis_plan = self._extract_json_from_response(llm_response)
-                if isinstance(analysis_plan, str):
-                    analysis_plan = json.loads(analysis_plan)
-                
-                # Execute LLM-chosen tools for debugging analysis
-                tool_results = {}
-                for tool_spec in analysis_plan.get("tools_to_use", []):
-                    tool_name = tool_spec.get("tool_name")
-                    arguments = tool_spec.get("arguments", {})
-                    
-                    try:
-                        result = await self._call_mcp_tool(tool_name, arguments)
-                        tool_results[tool_name] = result
-                        self.logger.info(f"Executed LLM-chosen tool: {tool_name}")
-                    except Exception as e:
-                        self.logger.warning(f"Tool {tool_name} failed: {e}")
-                        tool_results[tool_name] = {"error": str(e)}
-                
-                # Process debugging analysis results
-                analysis_successful = any(result.get("success") for result in tool_results.values())
-                
+                # Transform template output to our clean schema
                 return {
-                    "analysis_completed": analysis_successful,
-                    "code_location": inputs.get("faulty_code_path", ""),
-                    "has_code_snippet": bool(inputs.get("faulty_code_snippet")),
-                    "failure_count": len(inputs.get("failed_test_reports", [])),
-                    "analysis_confidence": 0.9 if analysis_successful else 0.6,
-                    "analysis_plan": analysis_plan,
-                    "tool_results": tool_results,
-                    "llm_driven": True,
-                    "debugging_strategy": analysis_plan.get("debugging_strategy", {}),
-                    "success": analysis_successful
+                    "proposed_solution_type": result.get("proposed_solution_type", "NO_FIX_IDENTIFIED"),
+                    "proposed_code_changes": result.get("proposed_code_changes"),
+                    "explanation_of_fix": result.get("explanation_of_fix"),
+                    "debugging_analysis": {
+                        "issues_identified": self._extract_issues_from_result(result, discovery_results),
+                        "root_causes": self._extract_root_causes(result, discovery_results),
+                        "fix_strategy": result.get("proposed_solution_type", "NO_FIX_IDENTIFIED"),
+                        "testing_strategy": discovery_results.get("testing", {})
+                    },
+                    "test_results": {
+                        "test_coverage": discovery_results.get("testing", {}).get("coverage", "unknown"),
+                        "test_framework": discovery_results.get("testing", {}).get("framework", "detected"),
+                        "generated_tests": "included_in_code_changes" if result.get("proposed_code_changes") else "none"
+                    },
+                    "areas_of_uncertainty": result.get("areas_of_uncertainty", []),
+                    "suggestions_for_ARCA": result.get("suggestions_for_ARCA"),
+                    "confidence_score": ConfidenceScore(
+                        value=result.get("confidence_score_obj", {}).get("value", 0.7),
+                        method=result.get("confidence_score_obj", {}).get("method", "llm_debugging_assessment"),
+                        explanation=result.get("confidence_score_obj", {}).get("explanation", "Debugging solution generated with unified discovery")
+                    )
                 }
                 
-            except Exception as e:
-                self.logger.error(f"LLM-driven debugging analysis failed: {e}")
-                # Fall back to traditional approach
-        
-        # ENHANCED: Enhanced MCP tool discovery and usage
-        if hasattr(self, 'enable_refinement') and self.enable_refinement:
-            try:
-                return await self._enhanced_discovery_with_universal_tools(inputs, shared_context)
-            except Exception as e:
-                self.logger.error(f"Enhanced discovery failed: {e}")
-        
-        # DEFAULT: Traditional tool access pattern
-        project_path = inputs.get("project_path", shared_context.get("project_root_path", "."))
-        faulty_code_path = inputs.get("faulty_code_path")
-        
-        # Get available tools
-        all_tools = await self._get_all_available_mcp_tools()
-        
-        if all_tools.get("discovery_successful"):
-            all_tools = all_tools["tools"]
-            
-            # Default tool usage pattern (fallback)
-            analysis_results = {}
-            
-            # Basic project scan if available
-            if "filesystem_project_scan" in all_tools:
-                try:
-                    result = await self._call_mcp_tool("filesystem_project_scan", {"path": str(project_path)})
-                    analysis_results["project_scan"] = result
-                except Exception as e:
-                    self.logger.warning(f"Project scan failed: {e}")
-            
-            # Basic file read if faulty code path provided
-            if faulty_code_path and "filesystem_read_file" in all_tools:
-                try:
-                    result = await self._call_mcp_tool("filesystem_read_file", {"path": faulty_code_path})
-                    analysis_results["faulty_code"] = result
-                except Exception as e:
-                    self.logger.warning(f"File read failed: {e}")
-            
-            if analysis_results:
-                return await self._convert_mcp_analysis_to_failure_analysis(
-                    analysis_results.get("project_scan", {}),
-                    {}, # content_analysis
-                    {}, # intelligence_analysis  
-                    analysis_results.get("faulty_code", {}),
-                    {}, # environment_info
-                    inputs
-                )
-        
-        # Traditional fallback analysis
-        faulty_code_path = inputs.get("faulty_code_path", "")
-        failed_test_reports = inputs.get("failed_test_reports", [])
-        code_snippet = inputs.get("faulty_code_snippet")
-        
-        # Analyze the failure pattern
-        failure_patterns = []
-        for test_report in failed_test_reports:
-            if isinstance(test_report, dict):
-                pattern = {
-                    "test_name": test_report.get("test_name", "unknown"),
-                    "error_type": "runtime_error" if "Error" in test_report.get("error_message", "") else "assertion_failure",
-                    "error_message": test_report.get("error_message", ""),
-                    "stack_trace_available": bool(test_report.get("stack_trace"))
-                }
-                failure_patterns.append(pattern)
-        
-        analysis = {
-            "code_location": faulty_code_path,
-            "has_code_snippet": bool(code_snippet),
-            "failure_count": len(failed_test_reports),
-            "failure_patterns": failure_patterns,
-            "analysis_confidence": min(0.9, 0.3 + (len(failed_test_reports) * 0.2))
-        }
-        
-        return analysis
-
-    async def _convert_mcp_analysis_to_failure_analysis(
-        self, 
-        code_analysis: Dict[str, Any], 
-        content_analysis: Dict[str, Any], 
-        intelligence_analysis: Dict[str, Any],
-        faulty_code_content: Dict[str, Any],
-        environment_info: Dict[str, Any],
-        inputs: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Convert MCP tool analysis results to failure analysis."""
-        
-        try:
-            # Extract failure patterns from MCP tool results
-            failure_patterns = []
-            failed_test_reports = inputs.get("failed_test_reports", [])
-            
-            # Analyze test failures with enhanced context
-            for test_report in failed_test_reports:
-                if isinstance(test_report, dict):
-                    pattern = {
-                        "test_name": test_report.get("test_name", "unknown"),
-                        "error_type": "runtime_error" if "Error" in test_report.get("error_message", "") else "assertion_failure",
-                        "error_message": test_report.get("error_message", ""),
-                        "stack_trace_available": bool(test_report.get("stack_trace")),
-                        "enhanced_context": True
-                    }
-                    
-                    # Add intelligence analysis insights
-                    if intelligence_analysis.get("success") and intelligence_analysis.get("result"):
-                        intel_result = intelligence_analysis["result"]
-                        if isinstance(intel_result, dict):
-                            pattern["debugging_strategy"] = intel_result.get("debugging_strategy", {})
-                            pattern["potential_causes"] = intel_result.get("potential_issues", {})
-                    
-                    failure_patterns.append(pattern)
-            
-            # Extract code location from filesystem analysis
-            code_location = inputs.get("faulty_code_path", "")
-            if code_analysis.get("success") and code_analysis.get("result"):
-                scan_result = code_analysis["result"]
-                if isinstance(scan_result, dict) and scan_result.get("files"):
-                    # Use the first matching file if faulty_code_path not specified
-                    if not code_location and scan_result["files"]:
-                        code_location = scan_result["files"][0]
-            
-            # Determine if we have code snippet
-            has_code_snippet = bool(inputs.get("faulty_code_snippet"))
-            if not has_code_snippet and faulty_code_content.get("success"):
-                has_code_snippet = True
-            
-            # Calculate enhanced confidence based on MCP tool results
-            base_confidence = min(0.9, 0.3 + (len(failed_test_reports) * 0.2))
-            mcp_confidence_boost = 0.0
-            
-            if code_analysis.get("success"):
-                mcp_confidence_boost += 0.1
-            if content_analysis.get("success"):
-                mcp_confidence_boost += 0.1
-            if intelligence_analysis.get("success"):
-                mcp_confidence_boost += 0.15
-            if faulty_code_content.get("success"):
-                mcp_confidence_boost += 0.1
-            
-            enhanced_confidence = min(0.95, base_confidence + mcp_confidence_boost)
-            
-            analysis = {
-                "code_location": code_location,
-                "has_code_snippet": has_code_snippet,
-                "failure_count": len(failed_test_reports),
-                "failure_patterns": failure_patterns,
-                "analysis_confidence": enhanced_confidence,
-                "enhanced_analysis": {
-                    "code_analysis": code_analysis,
-                    "content_analysis": content_analysis,
-                    "intelligence_analysis": intelligence_analysis,
-                    "faulty_code_content": faulty_code_content,
-                    "environment_info": environment_info
-                },
-                "mcp_enhanced": True
-            }
-            
-            self.logger.info(f"[MCP] Enhanced failure analysis with {len(failure_patterns)} patterns and confidence {enhanced_confidence:.2f}")
-            return analysis
-            
+            except json.JSONDecodeError as e:
+                self.logger.error(f"LLM response not valid JSON: {e}")
+                raise ValueError(f"LLM response parsing failed: {e}")
+                
         except Exception as e:
-            self.logger.error(f"[MCP] Failed to convert MCP analysis to failure analysis: {e}")
-            # Fall back to basic analysis
-            return {
-                "code_location": inputs.get("faulty_code_path", ""),
-                "has_code_snippet": bool(inputs.get("faulty_code_snippet")),
-                "failure_count": len(inputs.get("failed_test_reports", [])),
-                "failure_patterns": [],
-                "analysis_confidence": 0.3,
-                "error": str(e)
-            }
+            self.logger.error(f"Debugging solution generation failed: {e}")
+            raise
 
-    async def _enhanced_discovery_with_universal_tools(self, inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Universal tool access pattern for CodeDebuggingAgent."""
+    def _extract_issues_from_result(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> List[str]:
+        """Extract identified issues from LLM result and discovery."""
+        issues = []
         
-        # 1. Get ALL available tools (no filtering)
-        tool_discovery = await self._get_all_available_mcp_tools()
+        # Extract from explanation
+        explanation = llm_result.get("explanation_of_fix", "")
+        if "error" in explanation.lower():
+            issues.append("Error identified in code logic")
+        if "test" in explanation.lower():
+            issues.append("Test-related issues found")
         
-        if not tool_discovery["discovery_successful"]:
-            self.logger.error("[MCP] Tool discovery failed - falling back to limited functionality")
-            return {"error": "Tool discovery failed", "limited_functionality": True}
+        # Add discovery-based issues
+        if discovery_results.get("issues"):
+            issues.extend(discovery_results["issues"])
         
-        all_tools = tool_discovery["tools"]
-        
-        # 2. Intelligent tool selection based on context
-        selected_tools = self._intelligently_select_tools(all_tools, inputs, shared_context)
-        
-        # 3. Use filesystem tools for code analysis
-        code_analysis = {}
-        if "filesystem_project_scan" in selected_tools:
-            project_path = inputs.get("project_path", shared_context.get("project_root_path", "."))
-            code_analysis = await self._call_mcp_tool(
-                "filesystem_project_scan", 
-                {"path": str(project_path), "include_patterns": ["*.py", "*.js", "*.ts", "*.java", "*.cpp"]}
-            )
-        
-        # 4. Use intelligence tools for debugging strategy
-        intelligence_analysis = {}
-        if "adaptive_learning_analyze" in selected_tools:
-            intelligence_analysis = await self._call_mcp_tool(
-                "adaptive_learning_analyze",
-                {"context": code_analysis, "domain": self.AGENT_ID}
-            )
-        
-        # 5. Use content tools for code structure analysis
-        content_analysis = {}
-        if "content_analyze_structure" in selected_tools and code_analysis.get("success"):
-            content_analysis = await self._call_mcp_tool(
-                "content_analyze_structure",
-                {"content": code_analysis["result"]}
-            )
-        
-        # 6. Use filesystem tools to read faulty code
-        faulty_code_content = {}
-        if "filesystem_read_file" in selected_tools and inputs.get("faulty_code_path"):
-            faulty_code_content = await self._call_mcp_tool(
-                "filesystem_read_file",
-                {"path": inputs["faulty_code_path"]}
-            )
-        
-        # 7. Use terminal tools for environment validation
-        environment_info = {}
-        if "terminal_get_environment" in selected_tools:
-            environment_info = await self._call_mcp_tool(
-                "terminal_get_environment",
-                {}
-            )
-        
-        # 8. Use tool discovery for debugging recommendations
-        tool_recommendations = {}
-        if "get_tool_composition_recommendations" in selected_tools:
-            tool_recommendations = await self._call_mcp_tool(
-                "get_tool_composition_recommendations",
-                {"context": {"agent_id": self.AGENT_ID, "task_type": "code_debugging"}}
-            )
-        
-        # 9. Combine all analyses
-        return {
-            "universal_tool_access": True,
-            "tools_available": len(all_tools),
-            "tools_selected": len(selected_tools),
-            "tool_categories": tool_discovery["categories"],
-            "code_analysis": code_analysis,
-            "intelligence_analysis": intelligence_analysis,
-            "content_analysis": content_analysis,
-            "faulty_code_content": faulty_code_content,
-            "environment_info": environment_info,
-            "tool_recommendations": tool_recommendations,
-            "agent_domain": self.AGENT_ID,
-            "analysis_timestamp": time.time()
-        }
+        return issues
 
-    def _intelligently_select_tools(self, all_tools: Dict[str, Any], inputs: Any, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Intelligent tool selection - agents choose which tools to use."""
+    def _extract_root_causes(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> List[str]:
+        """Extract root causes from analysis."""
+        causes = []
         
-        # Start with core tools every agent should consider
-        core_tools = [
-            "filesystem_project_scan",
-            "filesystem_read_file",
-            "terminal_get_environment"
-        ]
+        solution_type = llm_result.get("proposed_solution_type", "")
+        if solution_type == "CODE_PATCH":
+            causes.append("Code logic error requiring patch")
+        elif solution_type == "MODIFIED_SNIPPET":
+            causes.append("Code structure requiring modification")
         
-        # Add debugging-specific tools
-        debugging_tools = [
-            "content_analyze_structure",
-            "filesystem_write_file",  # For applying fixes
-            "terminal_run_command"    # For running tests
-        ]
-        core_tools.extend(debugging_tools)
+        # Add discovery-based causes
+        patterns = discovery_results.get("patterns", {})
+        if patterns.get("complexity") == "high":
+            causes.append("High code complexity contributing to issues")
         
-        # Add intelligence tools for all agents
-        intelligence_tools = [
-            "adaptive_learning_analyze",
-            "get_real_time_performance_analysis",
-            "generate_performance_recommendations"
-        ]
-        core_tools.extend(intelligence_tools)
-        
-        # Select available tools
-        selected = {}
-        for tool_name in core_tools:
-            if tool_name in all_tools:
-                selected[tool_name] = all_tools[tool_name]
-        
-        self.logger.info(f"[MCP] Selected {len(selected)} tools for {getattr(self, 'AGENT_ID', 'unknown_agent')}")
-        return selected
-
-    def _format_available_tools(self, tools: Dict[str, Any]) -> str:
-        """Format ALL available tools for LLM to choose from - no filtering."""
-        formatted = []
-        for tool_name, tool_info in tools.items():
-            description = tool_info.get('description', f'Tool: {tool_name}')
-            formatted.append(f"- {tool_name}: {description}")
-        
-        return "\n".join(formatted) if formatted else "No tools available"
-
-    async def _diagnose_bug(self, analysis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 2: Diagnosis - Identify root causes of the bug."""
-        self.logger.info("Starting bug diagnosis")
-        
-        failure_patterns = analysis_result.get("failure_patterns", [])
-        failure_count = analysis_result.get("failure_count", 0)
-        
-        # Simple diagnosis based on failure patterns
-        if failure_count == 0:
-            diagnosis_type = "no_failures"
-            confidence = 0.1
-        elif any(p.get("error_type") == "runtime_error" for p in failure_patterns):
-            diagnosis_type = "runtime_error"
-            confidence = 0.8
-        elif any(p.get("error_type") == "assertion_failure" for p in failure_patterns):
-            diagnosis_type = "logic_error"
-            confidence = 0.7
-        else:
-            diagnosis_type = "unknown_error"
-            confidence = 0.4
-            
-        diagnosis = {
-            "bug_type": diagnosis_type,
-            "root_cause_hypothesis": f"Likely {diagnosis_type} based on test failure patterns",
-            "diagnosis_confidence": confidence,
-            "affected_tests": [p.get("test_name") for p in failure_patterns],
-            "previous_attempts": inputs.get("previous_debugging_attempts", [])
-        }
-        
-        return diagnosis
-
-    async def _generate_fix(self, diagnosis_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 3: Fix Generation - Generate potential solutions."""
-        self.logger.info("Starting fix generation")
-        
-        bug_type = diagnosis_result.get("bug_type", "unknown_error")
-        confidence = diagnosis_result.get("diagnosis_confidence", 0.0)
-        
-        # Generate fix based on bug type
-        if bug_type == "no_failures":
-            solution_type = "NO_FIX_IDENTIFIED"
-            code_changes = None
-            explanation = "No test failures detected, no fix required"
-        elif confidence > 0.6:
-            if bug_type == "runtime_error":
-                solution_type = "CODE_PATCH"
-                code_changes = "# Add null checks and error handling\nif variable is not None:\n    # existing code"
-                explanation = "Added null checks and error handling to prevent runtime errors"
-            elif bug_type == "logic_error":
-                solution_type = "MODIFIED_SNIPPET"
-                code_changes = "# Corrected logic in conditional statements\nif condition == expected_value:  # Fixed comparison"
-                explanation = "Corrected logical conditions based on test expectations"
-            else:
-                solution_type = "NEEDS_MORE_CONTEXT"
-                code_changes = None
-                explanation = "Unable to determine specific fix without more context"
-        else:
-            solution_type = "NO_FIX_IDENTIFIED"
-            code_changes = None
-            explanation = f"Insufficient confidence ({confidence:.2f}) to propose a fix"
-        
-        fix = {
-            "solution_type": solution_type,
-            "code_changes": code_changes,
-            "explanation": explanation,
-            "fix_confidence": confidence,
-            "addresses_tests": diagnosis_result.get("affected_tests", [])
-        }
-        
-        return fix
-
-    async def _validate_fix(self, fix_result: Dict[str, Any], inputs: Dict[str, Any], shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 4: Validation - Validate proposed fix."""
-        self.logger.info("Starting fix validation")
-        
-        solution_type = fix_result.get("solution_type", "NO_FIX_IDENTIFIED")
-        fix_confidence = fix_result.get("fix_confidence", 0.0)
-        
-        validation = {
-            "fix_proposed": solution_type in ["CODE_PATCH", "MODIFIED_SNIPPET"],
-            "fix_quality": "high" if fix_confidence > 0.7 else "medium" if fix_confidence > 0.4 else "low",
-            "validation_score": fix_confidence,
-            "uncertainties": [],
-            "suggestions": None
-        }
-        
-        if solution_type == "NO_FIX_IDENTIFIED":
-            validation["uncertainties"].append("Unable to identify a viable fix")
-            validation["suggestions"] = "Consider providing more context or manual review"
-        elif solution_type == "NEEDS_MORE_CONTEXT":
-            validation["uncertainties"].append("Insufficient context for complete diagnosis")
-            validation["suggestions"] = "Provide additional code context or requirements"
-        elif fix_confidence < 0.6:
-            validation["uncertainties"].append("Low confidence in proposed fix")
-            validation["suggestions"] = "Test thoroughly before applying the fix"
-            
-        return validation
-
-    def _calculate_quality_score(self, validation_result: Dict[str, Any]) -> float:
-        """Calculate overall quality score based on validation results."""
-        base_score = validation_result.get("validation_score", 0.0)
-        uncertainties_count = len(validation_result.get("uncertainties", []))
-        
-        # Reduce score based on uncertainties
-        penalty = min(0.4, uncertainties_count * 0.1)
-        final_score = max(0.0, base_score - penalty)
-        
-        return final_score
-
-    def _extract_json_from_response(self, response: str) -> str:
-        """Extract JSON content from LLM response, handling markdown code blocks and prose text."""
-        if not response or not response.strip():
-            self.logger.warning("[JSON DEBUG] Empty response provided to JSON extraction")
-            return ""
-            
-        response = response.strip()
-        
-        # Strategy 1: Look for JSON in markdown code blocks anywhere in the response
-        if '```json' in response:
-            self.logger.debug("[JSON DEBUG] Found ```json marker, extracting from code block")
-            
-            start_marker = '```json'
-            end_marker = '```'
-            
-            start_idx = response.find(start_marker)
-            if start_idx != -1:
-                # Find the start of JSON content (after the ```json line)
-                json_start = response.find('\n', start_idx) + 1
-                if json_start > 0:
-                    # Find the end marker
-                    end_idx = response.find(end_marker, json_start)
-                    if end_idx != -1:
-                        extracted = response[json_start:end_idx].strip()
-                        if extracted:
-                            self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from markdown block: {len(extracted)} chars")
-                            return extracted
-                        
-        # Strategy 2: Look for generic code blocks
-        elif '```' in response:
-            self.logger.debug("[JSON DEBUG] Found generic ``` marker, extracting from code block")
-            
-            lines = response.split('\n')
-            json_lines = []
-            in_code_block = False
-            
-            for line in lines:
-                if line.strip().startswith('```') and not in_code_block:
-                    in_code_block = True
-                    continue
-                elif line.strip() == '```' and in_code_block:
-                    break
-                elif in_code_block:
-                    json_lines.append(line)
-            
-            extracted = '\n'.join(json_lines).strip()
-            if extracted:
-                self.logger.debug(f"[JSON DEBUG] Successfully extracted JSON from generic code block: {len(extracted)} chars")
-                return extracted
-        
-        # Strategy 3: Try to find JSON within the text using bracket matching
-        self.logger.debug("[JSON DEBUG] No code blocks found, using bracket matching")
-        return self._find_json_in_text(response)
-
-    def _find_json_in_text(self, text: str) -> str:
-        """Find JSON object within text using bracket matching."""
-        if not text:
-            return ""
-            
-        # Look for opening brace
-        start_idx = text.find('{')
-        if start_idx == -1:
-            self.logger.warning("[JSON DEBUG] No opening brace found in response")
-            return ""
-        
-        self.logger.debug(f"[JSON DEBUG] Found opening brace at position {start_idx}")
-        
-        # Count braces to find matching closing brace
-        brace_count = 0
-        for i, char in enumerate(text[start_idx:], start_idx):
-            if char == '{':
-                brace_count += 1
-            elif char == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    # Found matching closing brace
-                    potential_json = text[start_idx:i+1]
-                    try:
-                        # Validate it's actually JSON
-                        import json
-                        json.loads(potential_json)
-                        self.logger.debug(f"[JSON DEBUG] Successfully extracted and validated JSON: {len(potential_json)} chars")
-                        return potential_json
-                    except json.JSONDecodeError as e:
-                        self.logger.debug(f"[JSON DEBUG] Invalid JSON found, continuing search: {e}")
-                        # Continue looking for another JSON object
-                        continue
-        
-        # No valid JSON found
-        self.logger.warning("[JSON DEBUG] No valid JSON found in response")
-        return ""
+        return causes
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:
-        input_schema = DebuggingTaskInput.model_json_schema()
-        output_schema = DebuggingTaskOutput.model_json_schema()
+        """Generate agent card for registry."""
+        input_schema = DebuggingAgentInput.model_json_schema()
+        output_schema = DebuggingAgentOutput.model_json_schema()
         
-        llm_direct_output_schema = {
-            "type": "object",
-            "properties": {
-                "proposed_solution_type": {"type": "string", "enum": ["CODE_PATCH", "MODIFIED_SNIPPET", "NO_FIX_IDENTIFIED", "NEEDS_MORE_CONTEXT"]},
-                "proposed_code_changes": {"type": ["string", "null"]},
-                "explanation_of_fix": {"type": ["string", "null"]},
-                "confidence_score_obj": { 
-                    "type": "object",
-                    "properties": {
-                        "value": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                        "level": {"type": ["string", "null"], "enum": ["Low", "Medium", "High", None]},
-                        "explanation": {"type": ["string", "null"]},
-                        "method": {"type": ["string", "null"]}
-                    },
-                    "required": ["value"]
-                },
-                "areas_of_uncertainty": {"type": ["array", "null"], "items": {"type": "string"}},
-                "suggestions_for_ARCA": {"type": ["string", "null"]}
-            },
-            "required": ["proposed_solution_type", "confidence_score_obj"]
-        }
-
         return AgentCard(
             agent_id=CodeDebuggingAgent_v1.AGENT_ID,
             name=CodeDebuggingAgent_v1.AGENT_NAME,
-            description=CodeDebuggingAgent_v1.DESCRIPTION,
+            description=CodeDebuggingAgent_v1.AGENT_DESCRIPTION,
             version=CodeDebuggingAgent_v1.AGENT_VERSION,
             input_schema=input_schema,
             output_schema=output_schema,
-            llm_direct_output_schema=llm_direct_output_schema,
             categories=[CodeDebuggingAgent_v1.CATEGORY.value],
             visibility=CodeDebuggingAgent_v1.VISIBILITY.value,
             capability_profile={
-                "analyzes_code_and_tests": True,
-                "proposes_code_fixes": True,
-                "diagnoses_bugs": True
+                "unified_discovery": True,
+                "yaml_templates": True,
+                "llm_debugging": True,
+                "clean_debugging": True,
+                "no_hardcoded_logic": True,
+                "maximum_agentic": True
             },
             metadata={
-                 "callable_fn_path": f"{CodeDebuggingAgent_v1.__module__}.{CodeDebuggingAgent_v1.__name__}"
+                "callable_fn_path": f"{CodeDebuggingAgent_v1.__module__}.{CodeDebuggingAgent_v1.__name__}"
             }
         )
 
-    def get_input_schema(self) -> Type[DebuggingTaskInput]:
-        return DebuggingTaskInput
+    def get_input_schema(self) -> Type[DebuggingAgentInput]:
+        return DebuggingAgentInput
 
-    def get_output_schema(self) -> Type[DebuggingTaskOutput]:
-        return DebuggingTaskOutput 
+    def get_output_schema(self) -> Type[DebuggingAgentOutput]:
+        return DebuggingAgentOutput 

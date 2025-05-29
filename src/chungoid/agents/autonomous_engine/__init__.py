@@ -16,7 +16,7 @@ from chungoid.utils.agent_registry import AgentCard
 
 # Import agent classes - these will auto-register via @register_agent decorators
 from .automated_refinement_coordinator_agent import AutomatedRefinementCoordinatorAgent_v1
-from .architect_agent import EnhancedArchitectAgent_v1
+from .architect_agent import ArchitectAgent_v1
 from .requirements_tracer_agent import RequirementsTracerAgent_v1
 from .project_documentation_agent import ProjectDocumentationAgent_v1
 from .code_debugging_agent import CodeDebuggingAgent_v1
@@ -24,7 +24,7 @@ from .smart_code_generator_agent import SmartCodeGeneratorAgent_v1
 from .project_setup_agent import ProjectSetupAgent_v1
 
 # NEW: Consolidated Requirements & Risk Agent (replaces ProductAnalystAgent + ProactiveRiskAssessorAgent)
-from .requirements_risk_agent import RequirementsRiskAgent
+from .requirements_risk_agent import RequirementsRiskAgent_v1
 
 # Use TYPE_CHECKING to avoid circular import
 if TYPE_CHECKING:
@@ -32,10 +32,10 @@ if TYPE_CHECKING:
 
 AUTONOMOUS_ENGINE_AGENTS_WITH_CARDS: List[Type['UnifiedAgent']] = [
     # NEW: Consolidated agent replacing ProductAnalystAgent_v1 + ProactiveRiskAssessorAgent_v1
-    RequirementsRiskAgent,
+    RequirementsRiskAgent_v1,
     
     AutomatedRefinementCoordinatorAgent_v1,
-    EnhancedArchitectAgent_v1, 
+    ArchitectAgent_v1, 
     RequirementsTracerAgent_v1,
     ProjectDocumentationAgent_v1,
     CodeDebuggingAgent_v1,
@@ -67,9 +67,9 @@ def get_autonomous_engine_agent_cards() -> List[AgentCard]:
 __all__ = [
     "get_autonomous_engine_agent_cards",
     # REMOVED: "get_autonomous_engine_agent_fallback_map" - no longer needed
-    "RequirementsRiskAgent",
+    "RequirementsRiskAgent_v1",
     "AutomatedRefinementCoordinatorAgent_v1",
-    "EnhancedArchitectAgent_v1",
+    "ArchitectAgent_v1",
     "RequirementsTracerAgent_v1",
     "ProjectDocumentationAgent_v1",
     "CodeDebuggingAgent_v1",

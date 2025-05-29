@@ -20,22 +20,33 @@ user_prompt: |
   **USER GOAL:** {{user_goal}}
   **PROJECT PATH:** {{project_path}}
   **PROJECT ID:** {{project_id}}
+  **CAPABILITY:** {{capability}}
 
   **PROJECT CONTEXT:**
   {{project_context}}
 
-  **ENVIRONMENT REQUIREMENTS:**
-  - Environment types: {{environment_types}}
-  - Force recreate: {{force_recreate}}
-  - Install dependencies: {{install_dependencies}}
-  - Validate setup: {{validate_setup}}
+  **DISCOVERED PROJECT STRUCTURE:**
+  ```json
+  {{discovery_results}}
+  ```
+
+  **DETECTED TECHNOLOGIES:**
+  ```json
+  {{technology_context}}
+  ```
+
+  **SETUP PREFERENCES:**
+  ```json
+  {{setup_preferences|tojson(indent=2)}}
+  ```
 
   **INSTRUCTIONS:**
-  1. Analyze the project structure and requirements
-  2. Determine what development environments are needed
-  3. Create environment setup commands and scripts
-  4. Configure development tools and settings
-  5. Validate the environment setup
+  Based on the discovered project structure and technologies, determine and set up the appropriate development environments:
+
+  1. **Analyze Discovery Results**: Review the discovered files and project structure
+  2. **Determine Environment Needs**: Based on detected technologies, decide what environments to set up
+  3. **Create Environment Setup**: Generate commands and configuration files for the identified needs
+  4. **Follow User Preferences**: Respect the setup preferences provided
 
   **RESPONSE FORMAT:**
   Return a JSON response with this exact structure:
@@ -43,6 +54,11 @@ user_prompt: |
   {
     "capability": "environment",
     "plan_summary": "Brief description of environment setup plan",
+    "discovered_technologies": ["list", "of", "detected", "technologies"],
+    "environment_decisions": {
+      "python": "Setup virtual environment because Python files detected",
+      "nodejs": "Setup Node.js environment because package.json found"
+    },
     "files_to_create": [
       {
         "path": ".env.example",
@@ -73,7 +89,7 @@ user_prompt: |
       "Configure git hooks for quality"
     ],
     "confidence": 0.88,
-    "reasoning": "Explanation of environment setup decisions"
+    "reasoning": "Explanation based on discovered project structure and technologies"
   }
   ```
 
@@ -84,6 +100,5 @@ user_prompt: |
   - Create setup scripts for easy onboarding
   - Document environment requirements
 
-  Set up environments that enable productive development workflows.
-
+  **Let the LLM intelligently decide what environments to set up based on discovered patterns.**
   Return ONLY the JSON response, no additional text. 

@@ -20,21 +20,33 @@ user_prompt: |
   **USER GOAL:** {{user_goal}}
   **PROJECT PATH:** {{project_path}}
   **PROJECT ID:** {{project_id}}
+  **CAPABILITY:** {{capability}}
 
   **PROJECT CONTEXT:**
   {{project_context}}
 
-  **DEPENDENCY REQUIREMENTS:**
-  - Install production dependencies: {{install_production_deps}}
-  - Install development dependencies: {{install_dev_deps}}
-  - Perform security audit: {{perform_security_audit}}
+  **DISCOVERED PROJECT STRUCTURE:**
+  ```json
+  {{discovery_results}}
+  ```
+
+  **DETECTED TECHNOLOGIES:**
+  ```json
+  {{technology_context}}
+  ```
+
+  **SETUP PREFERENCES:**
+  ```json
+  {{setup_preferences|tojson(indent=2)}}
+  ```
 
   **INSTRUCTIONS:**
-  1. Analyze the project structure and identify required dependencies
-  2. Determine the appropriate package manager and dependency files
-  3. Create or update dependency configuration files
-  4. Install dependencies if requested
-  5. Perform security audit if requested
+  Based on the discovered dependencies and technologies, manage the project's dependency requirements:
+
+  1. **Analyze Discovered Dependencies**: Review what dependency files were found
+  2. **Determine Package Managers**: Based on detected technologies, decide which package managers to use
+  3. **Create/Update Dependency Files**: Generate or update appropriate dependency configuration
+  4. **Follow User Preferences**: Respect installation and security preferences
 
   **RESPONSE FORMAT:**
   Return a JSON response with this exact structure:
@@ -42,6 +54,14 @@ user_prompt: |
   {
     "capability": "dependencies",
     "plan_summary": "Brief description of dependency management plan",
+    "discovered_dependencies": {
+      "python": ["requirements.txt found"],
+      "javascript": ["package.json found"]
+    },
+    "dependency_decisions": {
+      "create_requirements_txt": "Python project needs requirements file",
+      "install_production": "Install production deps based on preferences"
+    },
     "files_to_create": [
       {
         "path": "requirements.txt",
@@ -67,7 +87,7 @@ user_prompt: |
       "Use dependency scanning tools"
     ],
     "confidence": 0.90,
-    "reasoning": "Explanation of dependency decisions"
+    "reasoning": "Explanation based on discovered dependency files and user preferences"
   }
   ```
 
@@ -78,6 +98,5 @@ user_prompt: |
   - Follow package manager best practices
   - Document dependency rationale
 
-  Manage dependencies that ensure project stability and security.
-
+  **Let the LLM intelligently decide what to do based on discovered patterns.**
   Return ONLY the JSON response, no additional text. 

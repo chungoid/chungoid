@@ -52,8 +52,8 @@ def initialize_all_agents() -> Dict[str, bool]:
         # - DependencyManagementAgent_v1 → ProjectSetupAgent_v1 (dependencies capability)
         # - ProductAnalystAgent_v1 + ProactiveRiskAssessorAgent_v1 → RequirementsRiskAgent
         
-        from chungoid.agents.autonomous_engine.requirements_risk_agent import RequirementsRiskAgent
-        from chungoid.agents.autonomous_engine.architect_agent import EnhancedArchitectAgent_v1
+        from chungoid.agents.autonomous_engine.requirements_risk_agent import RequirementsRiskAgent_v1
+        from chungoid.agents.autonomous_engine.architect_agent import ArchitectAgent_v1
         # NOTE: BlueprintToFlowAgent_v1 was consolidated into EnhancedArchitectAgent_v1
         from chungoid.agents.autonomous_engine.requirements_tracer_agent import RequirementsTracerAgent_v1
         from chungoid.agents.autonomous_engine.smart_code_generator_agent import SmartCodeGeneratorAgent_v1

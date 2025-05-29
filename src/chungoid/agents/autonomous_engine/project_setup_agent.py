@@ -320,21 +320,40 @@ class ProjectSetupAgent_v1(UnifiedAgent):
                     sub_path="autonomous_engine"  # subdirectory
                 )
                 
-                # Prepare context variables for template rendering
+                # Gather unified discovery results
+                discovery_results = await self._universal_discovery(
+                    task_input.project_path or ".", 
+                    ["environment", "dependencies", "structure"]
+                )
+                
+                technology_context = await self._universal_technology_discovery(
+                    task_input.project_path or "."
+                )
+                
+                # Prepare context variables for template rendering (unified approach)
                 template_vars = {
                     "user_goal": task_input.user_goal or "Project setup",
                     "project_path": task_input.project_path or "/unknown",
                     "project_id": task_input.project_id,
                     "project_context": project_context,
-                    "include_api_docs": task_input.include_api_docs,
-                    "include_user_guide": task_input.include_user_guide,
-                    "include_dependency_audit": task_input.include_dependency_audit,
-                    "install_dependencies": task_input.install_dependencies,
-                    "force_recreate": task_input.force_recreate,
-                    "auto_detect_dependencies": task_input.auto_detect_dependencies,
-                    "update_existing": task_input.update_existing,
-                    "include_dev_dependencies": task_input.include_dev_dependencies,
-                    "resolve_conflicts": task_input.resolve_conflicts
+                    "capability": task_input.capability,
+                    
+                    # Unified discovery results (JSON strings for templates)
+                    "discovery_results": json.dumps(discovery_results, indent=2),
+                    "technology_context": json.dumps(technology_context, indent=2),
+                    
+                    # Setup preferences (structured object for templates)
+                    "setup_preferences": {
+                        "include_api_docs": task_input.include_api_docs,
+                        "include_user_guide": task_input.include_user_guide,
+                        "include_dependency_audit": task_input.include_dependency_audit,
+                        "install_dependencies": task_input.install_dependencies,
+                        "force_recreate": task_input.force_recreate,
+                        "auto_detect_dependencies": task_input.auto_detect_dependencies,
+                        "update_existing": task_input.update_existing,
+                        "include_dev_dependencies": task_input.include_dev_dependencies,
+                        "resolve_conflicts": task_input.resolve_conflicts
+                    }
                 }
                 
                 # Render the user prompt template with variables
@@ -346,6 +365,7 @@ class ProjectSetupAgent_v1(UnifiedAgent):
                 self.logger.info(f"Using YAML prompt template: {template_name}")
                 return rendered_prompt
             except Exception:
+                self.logger.warning("Could not use unified discovery, falling back to basic template")
                 return self._get_universal_fallback_prompt(task_input, project_context)
                 
         except Exception as e:
