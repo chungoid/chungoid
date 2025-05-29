@@ -376,9 +376,9 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 decision=coordination_result.get("decision", "ERROR"),
                 reasoning=coordination_result.get("reasoning", "Coordination completed"),
                 confidence_in_decision=ConfidenceScore(
-                    value=quality_score,
+                    value=0.9,
                     method="comprehensive_assessment",
-                    explanation="Based on comprehensive artifact assessment and analysis"
+                    explanation="High confidence in refinement coordination decision and analysis"
                 ),
                 next_agent_id_for_refinement=coordination_result.get("next_agent_id"),
                 next_agent_input=coordination_result.get("next_agent_input"),

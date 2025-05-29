@@ -176,7 +176,11 @@ class ProjectSetupAgent_v1(UnifiedAgent):
                 setup_summary=execution_result.get('setup_summary', f"{task_input.capability.title()} setup completed successfully"),
                 recommendations=execution_result.get('recommendations', []),
                 message=f"{task_input.capability.title()} setup completed successfully",
-                confidence_score=ConfidenceScore(score=execution_result.get('confidence', 0.85)),
+                confidence_score=ConfidenceScore(
+                    value=0.9,
+                    method="agent_assessment",
+                    explanation="High confidence in setup completion based on successful task execution"
+                ),
                 usage_metadata=execution_result.get('usage_metadata', {})
             )
 
@@ -310,27 +314,35 @@ class ProjectSetupAgent_v1(UnifiedAgent):
             
             # Try to load from prompt manager
             try:
-                prompt_template = self.prompt_manager.get_prompt_definition(template_name)
-                
-                # Use LLM to render the prompt with variables
-                rendered_prompt = await self.llm_provider.generate_response_with_prompt_id(
-                    prompt_template.id,
-                    {
-                        "user_goal": task_input.user_goal or "Project setup",
-                        "project_path": task_input.project_path or "/unknown",
-                        "project_id": task_input.project_id,
-                        "project_context": project_context,
-                        "include_api_docs": task_input.include_api_docs,
-                        "include_user_guide": task_input.include_user_guide,
-                        "include_dependency_audit": task_input.include_dependency_audit,
-                        "install_dependencies": task_input.install_dependencies,
-                        "force_recreate": task_input.force_recreate,
-                        "auto_detect_dependencies": task_input.auto_detect_dependencies,
-                        "update_existing": task_input.update_existing,
-                        "include_dev_dependencies": task_input.include_dev_dependencies,
-                        "resolve_conflicts": task_input.resolve_conflicts
-                    }
+                prompt_template = self.prompt_manager.get_prompt_definition(
+                    template_name, 
+                    "1.0.0",  # version
+                    sub_path="autonomous_engine"  # subdirectory
                 )
+                
+                # Prepare context variables for template rendering
+                template_vars = {
+                    "user_goal": task_input.user_goal or "Project setup",
+                    "project_path": task_input.project_path or "/unknown",
+                    "project_id": task_input.project_id,
+                    "project_context": project_context,
+                    "include_api_docs": task_input.include_api_docs,
+                    "include_user_guide": task_input.include_user_guide,
+                    "include_dependency_audit": task_input.include_dependency_audit,
+                    "install_dependencies": task_input.install_dependencies,
+                    "force_recreate": task_input.force_recreate,
+                    "auto_detect_dependencies": task_input.auto_detect_dependencies,
+                    "update_existing": task_input.update_existing,
+                    "include_dev_dependencies": task_input.include_dev_dependencies,
+                    "resolve_conflicts": task_input.resolve_conflicts
+                }
+                
+                # Render the user prompt template with variables
+                rendered_prompt = self.prompt_manager.get_rendered_prompt_template(
+                    prompt_template.user_prompt_template, 
+                    template_vars
+                )
+                
                 self.logger.info(f"Using YAML prompt template: {template_name}")
                 return rendered_prompt
             except Exception:

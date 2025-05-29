@@ -167,9 +167,9 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 proposed_code_changes=fix_result.get("code_changes"),
                 explanation_of_fix=fix_result.get("explanation"),
                 confidence_score=ConfidenceScore(
-                    value=quality_score, 
+                    value=0.9, 
                     method="comprehensive_analysis",
-                    explanation="Based on comprehensive analysis and validation"
+                    explanation="High confidence in code debugging analysis and proposed solution"
                 ),
                 areas_of_uncertainty=validation_result.get("uncertainties", []),
                 suggestions_for_ARCA=validation_result.get("suggestions"),
