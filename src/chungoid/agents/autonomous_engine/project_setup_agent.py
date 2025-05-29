@@ -125,9 +125,9 @@ class ProjectSetupAgent_v1(UnifiedAgent):
 
     # Capability-specific prompt templates
     PROMPT_TEMPLATES: ClassVar[Dict[str, str]] = {
-        "documentation": "project_setup_documentation_prompt.yaml",
-        "dependencies": "project_setup_dependencies_prompt.yaml",
-        "environment": "project_setup_environment_prompt.yaml"
+        "documentation": "project_setup_documentation_prompt",
+        "dependencies": "project_setup_dependencies_prompt",
+        "environment": "project_setup_environment_prompt"
     }
 
     def __init__(self, llm_provider: LLMProvider, prompt_manager: PromptManager, **kwargs):
