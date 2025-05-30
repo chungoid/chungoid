@@ -315,102 +315,197 @@ class ArchitectAgent_v1(UnifiedAgent):
         return ArchitectAgentOutput
 
     async def _autonomous_project_exploration(self, task_input: ArchitectAgentInput) -> Dict[str, Any]:
-        """Use MCP tools to actually explore the project for architecture planning."""
+        """Use MCP tools to analyze the ACTUAL IMPLEMENTATION for architecture planning."""
         try:
             self.logger.info(f"EXPLORATION START: Analyzing project at {task_input.project_path}")
             exploration_start_time = datetime.datetime.now()
             
-            # **CRITICAL FIX**: Force fresh scan by bypassing cache  
-            list_result = await self._call_mcp_tool("filesystem_list_directory", {
-                "directory_path": task_input.project_path,
-                "project_path": task_input.project_path,
-                "recursive": True
-            })
-            
             project_info = {
                 "project_path": task_input.project_path,
-                "user_goal": task_input.user_goal,
                 "existing_files": [],
-                "project_type": "unknown",
-                "existing_docs": [],
                 "needs_docs_folder": True,
-                "exploration_timestamp": exploration_start_time.isoformat(),
-                "cache_bypassed": True
+                "existing_docs": [],
+                "implementation_files": [],
+                "project_type": "unknown",
+                "dependencies": [],
+                "entry_points": [],
+                "code_structure": {}
             }
-            
+
+            # STEP 1: Universal File Discovery
+            list_result = await self._call_mcp_tool("filesystem_list_directory", {
+                "directory_path": task_input.project_path,
+                "recursive": True,
+                "bypass_cache": getattr(task_input, 'cache_bypassed', False)
+            })
+
             if list_result.get("success"):
-                files = list_result.get("items", [])  # FIXED: MCP returns "items" not "files"
-                # Handle both dict and string file formats
-                file_names = []
-                for f in files:
-                    if isinstance(f, dict):
-                        # CRITICAL FIX: Use "path" first to preserve directory structure
-                        name = f.get("path", f.get("name", str(f)))
-                    else:
-                        name = str(f)
-                    file_names.append(name)
+                all_items = list_result.get("items", [])
+                file_names = [item["path"] for item in all_items if item["type"] == "file"]
                 
                 project_info["existing_files"] = file_names
                 self.logger.info(f"FILESYSTEM SCAN: Found {len(file_names)} files")
                 
-                # **ENHANCED LOGIC**: Better docs folder detection
-                docs_indicators = ["docs", "documentation", "doc"]
-                has_docs_folder = any(
-                    any(indicator in f.lower() for indicator in docs_indicators) 
-                    for f in file_names
-                )
-                project_info["needs_docs_folder"] = not has_docs_folder
+                # STEP 2: Universal Project Type Detection and Implementation Analysis
+                implementation_patterns = {
+                    "python": [".py", ".pyx", ".pyi"],
+                    "javascript": [".js", ".mjs", ".jsx"],
+                    "typescript": [".ts", ".tsx"],
+                    "rust": [".rs"],
+                    "go": [".go"],
+                    "cpp": [".cpp", ".cc", ".cxx", ".c", ".h", ".hpp"],
+                    "java": [".java"],
+                    "csharp": [".cs"],
+                    "php": [".php"],
+                    "ruby": [".rb"],
+                    "swift": [".swift"],
+                    "kotlin": [".kt"],
+                    "dart": [".dart"],
+                    "scala": [".scala"],
+                    "clojure": [".clj", ".cljs"],
+                    "elixir": [".ex", ".exs"],
+                    "haskell": [".hs"],
+                    "lua": [".lua"],
+                    "perl": [".pl", ".pm"],
+                    "r": [".r", ".R"],
+                    "matlab": [".m"],
+                    "shell": [".sh", ".bash", ".zsh", ".fish"]
+                }
                 
-                self.logger.info(f"DOCS FOLDER CHECK: Existing docs folder = {has_docs_folder}, Needs creation = {not has_docs_folder}")
+                config_patterns = [
+                    "package.json", "requirements.txt", "Cargo.toml", "go.mod", "pom.xml", 
+                    "build.gradle", "composer.json", "Gemfile", "Package.swift", "pubspec.yaml",
+                    "project.clj", "mix.exs", "stack.yaml", "Makefile", "CMakeLists.txt",
+                    "Dockerfile", "docker-compose.yml", ".env", "config.yaml", "config.json"
+                ]
                 
-                # **ENHANCED LOGIC**: Better existing docs detection
-                doc_file_patterns = ["readme", "architecture", "design", "spec", "goal", "overview", "api", "deployment", "security"]
-                potential_docs = [f for f in file_names if any(pattern in f.lower() for pattern in doc_file_patterns)]
+                # Detect project type and find implementation files
+                project_types_found = {}
+                implementation_files = []
+                config_files = []
                 
-                self.logger.info(f"EXISTING DOCS: Found {len(potential_docs)} potential documentation files: {potential_docs}")
+                for file_path in file_names:
+                    file_lower = file_path.lower()
+                    file_name = file_path.split('/')[-1].lower()
+                    
+                    # Check config files
+                    if any(pattern in file_name for pattern in config_patterns):
+                        config_files.append(file_path)
+                    
+                    # Check implementation files
+                    for proj_type, extensions in implementation_patterns.items():
+                        if any(file_lower.endswith(ext) for ext in extensions):
+                            if proj_type not in project_types_found:
+                                project_types_found[proj_type] = []
+                            project_types_found[proj_type].append(file_path)
+                            implementation_files.append(file_path)
                 
-                # Read existing documentation to understand context (limit to 3 files)
-                for i, filename in enumerate(potential_docs[:3]):
+                # Determine primary project type
+                if project_types_found:
+                    primary_type = max(project_types_found.keys(), key=lambda x: len(project_types_found[x]))
+                    project_info["project_type"] = primary_type
+                    self.logger.info(f"PROJECT TYPE: Detected {primary_type} with {len(project_types_found[primary_type])} files")
+                
+                project_info["implementation_files"] = implementation_files
+                self.logger.info(f"IMPLEMENTATION ANALYSIS: Found {len(implementation_files)} source code files")
+                
+                # STEP 3: Read Key Implementation Files
+                files_to_analyze = []
+                
+                # Prioritize entry points and main files
+                priority_files = []
+                for file_path in implementation_files + config_files:
+                    file_name = file_path.split('/')[-1].lower()
+                    if any(pattern in file_name for pattern in ['main', 'index', 'app', 'server', 'cli', '__init__', 'package.json', 'requirements.txt', 'cargo.toml']):
+                        priority_files.append(file_path)
+                
+                # Add top-level implementation files
+                top_level_impl = [f for f in implementation_files if '/' not in f.strip('./')]
+                
+                # Combine and dedupe, limit to avoid overwhelming the LLM
+                files_to_analyze = list(dict.fromkeys(priority_files + top_level_impl + config_files))[:8]
+                
+                self.logger.info(f"IMPLEMENTATION READING: Analyzing {len(files_to_analyze)} key files")
+                
+                # Read and analyze implementation files
+                for i, filename in enumerate(files_to_analyze):
                     try:
-                        self.logger.info(f"READING DOC {i+1}/3: {filename}")
+                        self.logger.info(f"READING IMPLEMENTATION {i+1}/{len(files_to_analyze)}: {filename}")
                         read_result = await self._call_mcp_tool("filesystem_read_file", {
                             "file_path": filename,
-                            "project_path": task_input.project_path
+                            "max_bytes": 5000  # Read more content for implementation analysis
                         })
+                        
                         if read_result.get("success"):
-                            content = read_result.get("content", "")[:1000]  # Truncate
-                            project_info["existing_docs"].append({
-                                "file": filename,
-                                "content": content,
-                                "size": len(content)
-                            })
-                            self.logger.info(f"READ SUCCESS: {filename} ({len(content)} chars)")
+                            content = read_result.get("content", "")
+                            if content and len(content.strip()) > 20:
+                                project_info["existing_docs"].append({
+                                    "file": filename,
+                                    "content": content,
+                                    "type": "implementation",
+                                    "size": len(content)
+                                })
+                                self.logger.info(f"READ SUCCESS: {filename} ({len(content)} chars)")
                         else:
                             self.logger.warning(f"READ FAILED: {filename} - {read_result.get('error', 'Unknown error')}")
                     except Exception as e:
                         self.logger.warning(f"READ EXCEPTION: {filename} - {e}")
+                
+                # STEP 4: Check for existing documentation (secondary priority)
+                docs_folder_exists = any("docs" in f.lower() for f in file_names if "/" not in f.strip("./"))
+                project_info["needs_docs_folder"] = not docs_folder_exists
+                self.logger.info(f"DOCS FOLDER CHECK: Existing docs folder = {docs_folder_exists}, Needs creation = {not docs_folder_exists}")
+                
+                # Read existing docs for context (but don't prioritize them)
+                doc_file_patterns = ["readme", "architecture", "design", "spec", "overview", "api", "deployment", "security"]
+                potential_docs = [f for f in file_names if any(pattern in f.lower() for pattern in doc_file_patterns)]
+                
+                if potential_docs:
+                    self.logger.info(f"EXISTING DOCS: Found {len(potential_docs)} documentation files for context")
+                    
+                    # Read a few existing docs for context (limit to 2 to focus on implementation)
+                    for i, filename in enumerate(potential_docs[:2]):
+                        try:
+                            self.logger.info(f"READING DOC CONTEXT {i+1}/2: {filename}")
+                            read_result = await self._call_mcp_tool("filesystem_read_file", {
+                                "file_path": filename,
+                                "max_bytes": 2000  # Less content for existing docs
+                            })
+                            
+                            if read_result.get("success"):
+                                content = read_result.get("content", "")
+                                if content and len(content.strip()) > 20:
+                                    project_info["existing_docs"].append({
+                                        "file": filename,
+                                        "content": content,
+                                        "type": "documentation",
+                                        "size": len(content)
+                                    })
+                                    self.logger.info(f"READ SUCCESS: {filename} ({len(content)} chars)")
+                        except Exception as e:
+                            self.logger.warning(f"READ EXCEPTION: {filename} - {e}")
             else:
                 self.logger.error(f"FILESYSTEM SCAN FAILED: {list_result.get('error', 'Unknown error')}")
             
             exploration_time = (datetime.datetime.now() - exploration_start_time).total_seconds()
             
-            # **COMPREHENSIVE STATE LOGGING**: Show complete current state
+            # COMPREHENSIVE STATE LOGGING: Show complete current state
             self.logger.info(f"EXPLORATION COMPLETE ({exploration_time:.2f}s):")
             self.logger.info(f"  PROJECT STATE SUMMARY:")
             self.logger.info(f"    • Total files found: {len(project_info['existing_files'])}")
+            self.logger.info(f"    • Project type: {project_info['project_type']}")
+            self.logger.info(f"    • Implementation files: {len(project_info['implementation_files'])}")
+            self.logger.info(f"    • Files analyzed: {len(project_info['existing_docs'])}")
             self.logger.info(f"    • Docs folder needed: {project_info['needs_docs_folder']}")
-            self.logger.info(f"    • Existing docs found: {len(project_info['existing_docs'])}")
             self.logger.info(f"    • Project path: {project_info['project_path']}")
-            self.logger.info(f"    • Cache bypassed: {project_info['cache_bypassed']}")
+            self.logger.info(f"    • Cache bypassed: {getattr(task_input, 'cache_bypassed', False)}")
             
-            if project_info['existing_files']:
-                sample_files = project_info['existing_files'][:5]
-                remaining_count = len(project_info['existing_files']) - 5
+            # Show sample files for debugging
+            sample_files = project_info['existing_files'][:5]
+            if sample_files:
                 self.logger.info(f"    • Sample files: {sample_files}")
-                if remaining_count > 0:
-                    self.logger.info(f"    • ... and {remaining_count} more files")
-            else:
-                self.logger.info(f"    • No files detected in project directory")
+                if len(project_info['existing_files']) > 5:
+                    self.logger.info(f"    • ... and {len(project_info['existing_files']) - 5} more files")
             
             return project_info
             
@@ -418,145 +513,110 @@ class ArchitectAgent_v1(UnifiedAgent):
             self.logger.error(f"EXPLORATION FAILED: {e}")
             return {
                 "project_path": task_input.project_path,
-                "user_goal": task_input.user_goal,
                 "existing_files": [],
                 "needs_docs_folder": True,
-                "error": str(e),
-                "exploration_timestamp": datetime.datetime.now().isoformat(),
-                "cache_bypassed": False
+                "existing_docs": [],
+                "implementation_files": [],
+                "project_type": "unknown",
+                "error": str(e)
             }
 
     async def _autonomous_architecture_generation(self, task_input: ArchitectAgentInput, project_info: Dict[str, Any]) -> Dict[str, Any]:
         """Use LLM to generate comprehensive architecture documentation content."""
         # Build comprehensive prompt for architecture generation
-        prompt = f"""Generate comprehensive, detailed architecture documentation for this project.
+        
+        # Separate implementation and documentation context
+        implementation_context = []
+        documentation_context = []
+        
+        for doc in project_info.get('existing_docs', []):
+            if doc.get('type') == 'implementation':
+                implementation_context.append(doc)
+            else:
+                documentation_context.append(doc)
+        
+        # Build implementation analysis section
+        implementation_analysis = ""
+        if implementation_context:
+            implementation_analysis = "IMPLEMENTATION ANALYSIS:\n"
+            for doc in implementation_context:
+                implementation_analysis += f"\n=== {doc['file']} ===\n{doc['content']}\n"
+        
+        # Build existing documentation context (if any)
+        existing_docs_context = ""
+        if documentation_context:
+            existing_docs_context = "\nEXISTING DOCUMENTATION CONTEXT:\n"
+            for doc in documentation_context:
+                existing_docs_context += f"\n--- {doc['file']} (current) ---\n{doc['content'][:500]}...\n"
+        
+        prompt = f"""Generate comprehensive, technical architecture documentation for this {project_info.get('project_type', 'software')} project based on implementation analysis.
 
 USER GOAL: {task_input.user_goal}
 
 PROJECT CONTEXT:
+- Project Type: {project_info.get('project_type', 'unknown')}
+- Total Files: {len(project_info.get('existing_files', []))}
+- Implementation Files: {len(project_info.get('implementation_files', []))}
 - Project Path: {project_info.get('project_path', '.')}
-- Existing Files: {', '.join(project_info.get('existing_files', []))}
 - Needs Docs Folder: {project_info.get('needs_docs_folder', True)}
 
-EXISTING DOCUMENTATION:
-{chr(10).join([f"- {doc['file']}: {doc['content'][:200]}..." for doc in project_info.get('existing_docs', [])])}
+{implementation_analysis}
 
-**CRITICAL REQUIREMENTS:**
-- Generate COMPREHENSIVE, DETAILED, PRODUCTION-QUALITY documentation
-- Each file should be substantial (minimum 800-1500 words each)
-- Include specific technical details, code examples, command snippets
-- Use professional documentation structure with clear sections
-- DO NOT generate generic templates - create specific, actionable content
-- ANALYZE the user goal and generate appropriate technology recommendations
-- TAILOR all content specifically to the user's stated goal and requirements
+{existing_docs_context}
 
-**README.md** (Target: 1200+ words) - Must include:
-- Comprehensive project overview and purpose based on user goal
-- Detailed installation instructions for the appropriate technology stack
-- Complete usage examples with relevant tools and commands for this specific project
-- Specific command-line examples with real parameters (if applicable)
-- Configuration options and settings relevant to the project type
-- Output interpretation guides with examples (if applicable)
-- Comprehensive troubleshooting section for the specific technology
-- Performance tuning recommendations for the chosen stack
-- Integration examples with relevant tools and services
+PROJECT STRUCTURE:
+Files found: {', '.join(project_info.get('existing_files', [])[:20])}{"..." if len(project_info.get('existing_files', [])) > 20 else ""}
 
-**docs/ARCHITECTURE.md** (Target: 1000+ words) - Must include:
-- Complete system architecture appropriate for the project type
-- Detailed module structure and class hierarchies for the chosen technology
-- Specific integration patterns for the project's requirements
-- Data flow diagrams and processing pipelines
-- UI/Interface architecture with appropriate libraries and frameworks
-- Display formatting and user interaction patterns
-- Performance optimization strategies for the specific use case
-- Concurrency and async processing design (if applicable)
-- Plugin/extension architecture for extensibility
-- Error handling and logging strategies
+TASK: Based on the IMPLEMENTATION ANALYSIS above, generate comprehensive, technical documentation that:
 
-**docs/API_DESIGN.md** (Target: 800+ words) - Must include:
-- Complete interface specification appropriate for the project type
-- Configuration file format with examples for the chosen technology
-- Detailed data structures and schemas for the project
-- Extension/plugin architecture with appropriate patterns
-- Internal API documentation for components
-- Event system and callback mechanisms (if applicable)
-- Data validation and sanitization appropriate for the domain
-- Configuration management patterns for the technology stack
+1. ANALYZES the actual code structure and functionality
+2. EXPLAINS the technical architecture based on what the code actually does
+3. DOCUMENTS the API, interfaces, and data flow found in the implementation
+4. PROVIDES deployment, security, and operational guidance specific to this implementation
+5. IDENTIFIES gaps and areas for improvement in the current implementation
 
-**docs/DEPLOYMENT.md** (Target: 700+ words) - Must include:
-- Step-by-step installation guide for the appropriate platform/OS
-- Complete containerization strategy (Docker, etc.) if relevant
-- Dependency management and tool installation for the chosen stack
-- Environment setup procedures for the technology
-- System requirements and compatibility for the project type
-- Package distribution strategy appropriate for the technology
-- CI/CD pipeline recommendations for the chosen stack
-- Production deployment considerations for the specific use case
-- Security hardening for the deployment environment
+Generate 5-8 comprehensive documentation files with detailed technical content (minimum 2000 characters each):
 
-**docs/SECURITY.md** (Target: 600+ words) - Must include:
-- Comprehensive security considerations for the specific project type
-- Legal and ethical guidelines relevant to the domain
-- Security implementation with code examples for the technology
-- Access control and authentication patterns (if applicable)
-- Privacy and data protection procedures for the use case
-- Audit logging and compliance requirements
-- Vulnerability management and disclosure protocols
-- Security best practices for the chosen technology stack
-
-**DYNAMIC CONTENT GENERATION:**
-- Analyze the user goal to determine appropriate technology stack
-- Generate architectural decisions based on the specific requirements
-- Create technology recommendations tailored to the project type
-- Identify risks specific to the domain and technology choices
-- Provide implementation guidance relevant to the chosen approach
-
-**FORMAT REQUIREMENTS:**
-- Return ONLY valid JSON without markdown wrapper
-- Use proper JSON escaping for newlines (\\n) and quotes (\\")
-- Each documentation section must be complete and detailed
-- Include code examples, command snippets, and configuration samples appropriate for the technology
-
-Return your response in this EXACT JSON structure:
+RESPONSE FORMAT (JSON):
 {{
     "documentation_files": {{
-        "README.md": "# [Project Name Based on User Goal]\\n\\n[COMPREHENSIVE CONTENT HERE - 1200+ words]",
-        "docs/ARCHITECTURE.md": "# System Architecture\\n\\n[COMPREHENSIVE CONTENT HERE - 1000+ words]",
-        "docs/API_DESIGN.md": "# Interface Design\\n\\n[COMPREHENSIVE CONTENT HERE - 800+ words]",
-        "docs/DEPLOYMENT.md": "# Deployment Guide\\n\\n[COMPREHENSIVE CONTENT HERE - 700+ words]",
-        "docs/SECURITY.md": "# Security Considerations\\n\\n[COMPREHENSIVE CONTENT HERE - 600+ words]"
+        "README.md": "# [Project Name]\\n\\n## Project Overview\\n[Comprehensive overview based on implementation analysis]\\n\\n## Architecture\\n[Technical architecture derived from code]\\n\\n## Installation\\n[Based on dependencies found]\\n\\n## Usage\\n[Based on entry points and APIs found]\\n\\n## Technical Details\\n[Deep technical analysis]...",
+        "docs/ARCHITECTURE.md": "# Architecture Documentation\\n\\n## System Design\\n[Based on actual code structure]\\n\\n## Components\\n[Actual modules and classes found]\\n\\n## Data Flow\\n[Based on implementation]\\n\\n## Integration Points\\n[APIs and interfaces found]...",
+        "docs/API_DOCUMENTATION.md": "# API Documentation\\n\\n## Endpoints\\n[Based on actual API code]\\n\\n## Request/Response Formats\\n[From implementation]\\n\\n## Authentication\\n[Security implementation found]...",
+        "docs/DEPLOYMENT.md": "# Deployment Guide\\n\\n## Prerequisites\\n[Based on dependencies found]\\n\\n## Environment Setup\\n[From configuration files]\\n\\n## Production Deployment\\n[Technical deployment guide]...",
+        "docs/SECURITY.md": "# Security Documentation\\n\\n## Security Measures\\n[Based on security code found]\\n\\n## Threat Model\\n[For this specific implementation]\\n\\n## Best Practices\\n[Implementation-specific]..."
     }},
     "architectural_decisions": [
-        {{"decision": "[Decision based on user goal]", "rationale": "[Why this decision fits the requirements]", "impact": "[Impact on the project]"}}
+        {{"decision": "[Technical decision found in code]", "rationale": "[Why this was implemented this way]", "impact": "[Effect on system]"}},
+        {{"decision": "[Another technical decision]", "rationale": "[Based on implementation]", "impact": "[System impact]"}}
     ],
     "technology_recommendations": {{
-        "primary_language": "[Language appropriate for user goal]",
-        "frameworks": ["[Frameworks relevant to the project]"],
-        "databases": ["[Databases suitable for the use case]"],
-        "deployment": "[Deployment strategy for this project type]"
+        "current_stack": "[Technologies actually used based on analysis]",
+        "frameworks": "[Frameworks found in implementation]",
+        "databases": "[Data storage found in code]",
+        "deployment": "[Deployment approach based on config]",
+        "improvements": "[Specific improvements based on analysis]"
     }},
     "risk_assessments": [
-        {{"risk": "[Risk specific to this project type]", "impact": "[Severity]", "mitigation": "[Mitigation strategy]"}}
-    ]
-}}"""
+        {{"risk": "[Actual risk found in implementation]", "impact": "High/Medium/Low", "mitigation": "[Specific mitigation for this codebase]"}},
+        {{"risk": "[Another implementation-specific risk]", "impact": "High/Medium/Low", "mitigation": "[Technical mitigation]"}}
+    ],
+    "blueprint_content": "# {project_info.get('project_type', 'Project').title()} Architecture Blueprint\\n\\nComprehensive technical blueprint based on implementation analysis: {task_input.user_goal}"
+}}
 
+CRITICAL: Generate COMPREHENSIVE, TECHNICAL content (minimum 2000 characters per file) that explains what the code ACTUALLY does, not generic boilerplate. Base ALL content on the implementation analysis provided above."""
+        
         self.logger.info("Generating comprehensive architecture documentation with enhanced LLM prompt...")
         
         try:
-            response = await self.llm_provider.generate(
+            # Call LLM with implementation-focused prompt
+            response = await self.llm_provider.generate_response(
                 prompt=prompt,
-                max_tokens=16000,  # Increased significantly for comprehensive content
-                temperature=0.2    # Slightly more creative while maintaining structure
+                agent_id=self.AGENT_ID,
+                iteration_context={"task": "implementation_based_architecture_generation"}
             )
             
-            # Validate LLM response with detailed error reporting
-            if not response:
-                raise ValueError(f"LLM provider returned None/empty response for architecture generation. Prompt length: {len(prompt)} chars")
-            
-            if not response.strip():
-                raise ValueError(f"LLM provider returned whitespace-only response for architecture generation. Response: '{response}'")
-            
-            if len(response.strip()) < 200:
+            if not response or len(response) < 1000:
                 raise ValueError(f"LLM response too short for architecture generation ({len(response)} chars). Expected substantial documentation content. Response: '{response}'")
             
             self.logger.info(f"LLM Response length: {len(response)} chars")
@@ -565,47 +625,32 @@ Return your response in this EXACT JSON structure:
             # Parse response with detailed error handling
             architecture_data = self._parse_llm_response(response, task_input, project_info)
             
-            if not architecture_data:
-                raise ValueError(f"_parse_llm_response returned None/empty data. Response length: {len(response)} chars")
-            
-            if not architecture_data.get("documentation_files"):
-                raise ValueError(f"No documentation_files in parsed response. Parsed data keys: {list(architecture_data.keys())}. Response: '{response}'")
-            
-            doc_files = architecture_data.get("documentation_files", {})
-            if not doc_files or len(doc_files) == 0:
-                raise ValueError(f"documentation_files is empty. Response: '{response}'")
-            
-            # Validate each documentation file with relaxed requirements
-            for file_path, content in doc_files.items():
-                if not content or not content.strip():
-                    raise ValueError(f"Documentation file '{file_path}' has empty content.")
+            # Validate the generated content quality
+            if "documentation_files" in architecture_data:
+                doc_files = architecture_data["documentation_files"]
+                total_chars = sum(len(content) for content in doc_files.values())
                 
-                # **RELAXED VALIDATION**: Accept content with 50+ chars instead of 100
-                # The comprehensive prompt should generate much longer content
-                if len(content.strip()) < 50:
-                    self.logger.warning(f"Documentation file '{file_path}' is short ({len(content)} chars) but accepted")
+                # Enhanced validation for comprehensive content
+                for file_path, content in doc_files.items():
+                    if not content or not content.strip():
+                        raise ValueError(f"Documentation file '{file_path}' has empty content.")
+                    
+                    # The comprehensive prompt should generate much longer content
+                    if len(content.strip()) < 50:
+                        self.logger.warning(f"Documentation file '{file_path}' is short ({len(content)} chars) but accepted")
+                    
+                    # Log content length for analysis
+                    self.logger.info(f"{file_path}: {len(content)} characters")
                 
-                # Log content length for analysis
-                self.logger.info(f"{file_path}: {len(content)} characters")
-            
-            self.logger.info(f"Architecture documentation generated: {len(doc_files)} files with total {sum(len(content) for content in doc_files.values())} characters")
-            return architecture_data
-            
+                self.logger.info(f"Architecture documentation generated: {len(doc_files)} files with total {total_chars} characters")
+                return architecture_data
+            else:
+                raise ValueError(f"LLM response missing 'documentation_files' key. Response: '{response}'")
+        
         except Exception as e:
-            error_msg = f"""ArchitectAgent architecture generation failed:
-
-ERROR: {e}
-
-PROMPT USED ({len(prompt)} chars):
-{prompt}
-
-INPUT CONTEXT:
-- User Goal: {task_input.user_goal}
-- Project Path: {project_info.get('project_path', 'unknown')}
-- Project Info: {project_info}
-"""
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
+            self.logger.error(f"Architecture generation failed: {e}")
+            # Return basic structure to allow system to continue
+            return self._add_metadata_to_response({"documentation_files": {}}, task_input, project_info)
 
     def _parse_llm_response(self, response: str, task_input: ArchitectAgentInput, project_info: Dict[str, Any]) -> Dict[str, Any]:
         """Parse LLM response with improved JSON extraction - prioritize comprehensive content."""
