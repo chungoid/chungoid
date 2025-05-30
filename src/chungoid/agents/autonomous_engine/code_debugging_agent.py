@@ -265,7 +265,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
             except Exception as e:
                 raise ValueError(f"Failed to format debugging prompt template: {e}. Missing variables or template content preview: {str(template_content)[:200]}...")
             
-            self.logger.info(f"🐛 AUTONOMOUS debugging/QA execution")
+            self.logger.info(f"AUTONOMOUS debugging/QA execution")
             
             # Let the agent work autonomously
             response = await self.llm_provider.generate(
@@ -289,8 +289,8 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
             if "debug" not in response_lower and "error" not in response_lower and "fix" not in response_lower and "test" not in response_lower:
                 raise ValueError(f"LLM response doesn't appear to contain debugging content (no 'debug', 'error', 'fix', or 'test' found). Response: '{response}'. User goal: {task_input.user_goal}")
             
-            self.logger.info(f"🐛 Debugging response: {len(response)} chars")
-            self.logger.info(f"🐛 Response preview: {response[:300]}...")
+            self.logger.info(f"Debugging response: {len(response)} chars")
+            self.logger.info(f"Response preview: {response[:300]}...")
             
             # Return expected structure for DebuggingAgentOutput - NO FALLBACKS
             return {

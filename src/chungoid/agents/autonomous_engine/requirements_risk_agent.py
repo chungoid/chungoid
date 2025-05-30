@@ -252,7 +252,7 @@ class RequirementsRiskAgent_v1(UnifiedAgent):
             except Exception as e:
                 raise ValueError(f"Failed to format requirements risk prompt template: {e}. Template content preview: {str(template_content)[:200]}...")
             
-            self.logger.info(f"📋 AUTONOMOUS Agent analyzing requirements and risks autonomously")
+            self.logger.info(f"AUTONOMOUS Agent analyzing requirements and risks autonomously")
             
             # Let the agent work autonomously
             response = await self.llm_provider.generate(

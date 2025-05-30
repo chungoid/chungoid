@@ -526,7 +526,7 @@ START EXECUTING NOW - USE YOUR MCP TOOLS TO SET UP THIS PROJECT.
             if not hasattr(self, 'mcp_tools') or not self.mcp_tools:
                 raise ValueError("MCP tools not available or empty in ProjectSetupAgent")
             
-            self.logger.info(f"🚀 AUTONOMOUS project setup execution")
+            self.logger.info(f"AUTONOMOUS project setup execution")
             
             # Let the agent work autonomously
             response = await self.llm_provider.generate(
@@ -551,8 +551,8 @@ START EXECUTING NOW - USE YOUR MCP TOOLS TO SET UP THIS PROJECT.
             if not any(keyword in response_lower for keyword in setup_keywords):
                 raise ValueError(f"LLM response doesn't appear to contain project setup content (none of {setup_keywords} found). Response: '{response}'. User goal: {task_input.user_goal}")
             
-            self.logger.info(f"🚀 Project setup response: {len(response)} chars")
-            self.logger.info(f"🚀 Response preview: {response[:300]}...")
+            self.logger.info(f"Project setup response: {len(response)} chars")
+            self.logger.info(f"Response preview: {response[:300]}...")
             
             # Return expected structure for ProjectSetupAgentOutput - NO FALLBACKS
             return {
