@@ -26,6 +26,7 @@ from typing import Any, ClassVar, List, Optional, Dict, Type, Union, Callable
 from enum import Enum
 import inspect
 from functools import wraps
+from pathlib import Path
 
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
@@ -47,6 +48,175 @@ __all__ = ["UnifiedAgent", "JsonValidationConfig", "JsonExtractionStrategy", "Un
 
 
 # ========================================
+# EFFICIENT DISCOVERY SERVICE - BIG BANG PERFORMANCE FIX
+# ========================================
+
+class EfficientDiscoveryService:
+    """
+    PERFORMANCE FIX: Single scan + in-memory pattern matching
+    
+    Replaces 52+ individual filesystem_glob_search calls with:
+    1. ONE directory scan using filesystem_list_directory
+    2. Cached file list in memory  
+    3. Fast in-memory pattern matching
+    4. Cache invalidation only when needed
+    """
+    
+    def __init__(self):
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_timestamps: Dict[str, float] = {}
+        self._cache_ttl = 300  # 5 minutes TTL
+    
+    async def discover_files_by_patterns(
+        self,
+        project_path: str,
+        patterns: List[str],
+        recursive: bool = True,
+        call_mcp_tool_func: Callable = None
+    ) -> Dict[str, List[str]]:
+        """Discover files matching patterns using cached directory scan."""
+        
+        if not call_mcp_tool_func:
+            return {pattern: [] for pattern in patterns}
+        
+        # Performance optimization: single directory scan instead of 52+ individual searches
+        file_list = await self._get_cached_file_list(project_path, call_mcp_tool_func, recursive)
+        
+        # Match patterns in memory using file list
+        results = {}
+        for pattern in patterns:
+            matching_files = [f for f in file_list if self._match_pattern(f, pattern)]
+            results[pattern] = matching_files
+        
+        return results
+    
+    async def _get_cached_file_list(
+        self, 
+        project_path: str, 
+        call_mcp_tool_func: Callable,
+        recursive: bool = True,
+        force_refresh: bool = False
+    ) -> List[str]:
+        """Get file list from cache or scan directory once - FIXED VERSION."""
+        # Get logger instance for this method since this is a standalone service class
+        import logging
+        logger_instance = logging.getLogger(__name__)
+        
+        cache_key = f"{project_path}:{recursive}"
+        current_time = time.time()
+        
+        # CRITICAL FIX: Properly handle force_refresh by clearing cache FIRST
+        if force_refresh:
+            # Immediately clear cache when force_refresh is requested
+            self.clear_cache(project_path)
+            logger_instance.info(f"DISCOVERY_SERVICE: Force refresh - cleared cache for {project_path}")
+        
+        # Check cache validity AFTER potential clearing
+        cache_valid = (cache_key in self._cache and 
+                      cache_key in self._cache_timestamps and
+                      current_time - self._cache_timestamps[cache_key] < self._cache_ttl)
+        
+        if cache_valid and not force_refresh:
+            files = self._cache[cache_key].get("files", [])
+            logger_instance.info(f"PERFORMANCE_BOOST: Cache HIT: {len(files)} files from cache for {project_path}")
+            return files
+        
+        # Determine refresh reason for logging
+        if force_refresh:
+            reason = "FORCED_REFRESH"
+        elif not cache_valid:
+            reason = "CACHE_EXPIRED" if cache_key in self._cache else "CACHE_MISS"
+        else:
+            reason = "UNKNOWN"
+        
+        # Enhanced logic: Use cache coordination for proper refresh
+        try:
+            # Try to import cache coordinator
+            try:
+                from ..utils.cache_coordination_fix import coordinate_cache_refresh
+                
+                logger_instance.info(f"DISCOVERY_SERVICE: Using coordinated refresh - Reason: {reason}")
+                
+                # Use coordinated cache refresh instead of direct MCP call
+                result = await coordinate_cache_refresh(
+                    project_path,
+                    call_mcp_tool_func,
+                    discovery_service=self,
+                    reason=f"discovery_{reason.lower()}"
+                )
+                
+            except ImportError:
+                # This should not happen anymore since we implemented the module
+                logger_instance.error("DISCOVERY_SERVICE: Cache coordination module missing - this should not happen")
+                result = await call_mcp_tool_func("filesystem_list_directory", {
+                    "directory_path": project_path,
+                    "recursive": recursive,
+                    "include_files": True,
+                    "include_directories": False,
+                    "max_depth": 10,
+                    "_force_refresh": force_refresh,
+                    "_cache_bust": current_time
+                })
+            
+            if result and result.get("success"):
+                files = []
+                items = result.get("items", [])
+                
+                for item in items:
+                    if item.get("type") == "file":
+                        # Store both absolute and relative paths
+                        if "path" in item:
+                            files.append(item["path"])
+                        if "relative_path" in item:
+                            files.append(item["relative_path"])
+                
+                # Cache the results
+                self._cache[cache_key] = {"files": files}
+                self._cache_timestamps[cache_key] = current_time
+                
+                logger_instance.info(f"DISCOVERY_SERVICE: Successfully cached {len(files)} files for {project_path}")
+                return files
+            else:
+                error_msg = result.get('error', 'Unknown error') if result else 'No result returned'
+                logger_instance.error(f"DISCOVERY_SERVICE: Directory scan failed for {project_path}: {error_msg}")
+                
+        except Exception as e:
+            logger_instance.error(f"DISCOVERY_SERVICE: Directory scan exception for {project_path}: {e}")
+        
+        # Return empty list on any failure
+        return []
+    
+    def _match_pattern(self, file_path: str, pattern: str) -> bool:
+        """Fast in-memory pattern matching."""
+        if not file_path or not pattern:
+            return False
+        
+        # Extract filename for pattern matching
+        filename = Path(file_path).name
+        
+        # Use fnmatch for glob patterns
+        if "*" in pattern or "?" in pattern:
+            return fnmatch.fnmatch(filename.lower(), pattern.lower())
+        
+        # Simple substring match for non-glob patterns  
+        return pattern.lower() in filename.lower()
+    
+    def clear_cache(self, project_path: Optional[str] = None):
+        """Clear cache for specific project or all projects."""
+        if project_path:
+            keys_to_remove = [k for k in self._cache.keys() if k.startswith(project_path)]
+            for key in keys_to_remove:
+                self._cache.pop(key, None)
+                self._cache_timestamps.pop(key, None)
+        else:
+            self._cache.clear()
+            self._cache_timestamps.clear()
+
+# Global service instance
+_discovery_service = EfficientDiscoveryService()
+
+
+# ========================================
 # CONSOLIDATED INFRASTRUCTURE
 # ========================================
 
@@ -60,33 +230,20 @@ class UniversalPatternMatcher:
         recursive: bool = False,
         call_mcp_tool_func: Callable = None
     ) -> Dict[str, List[str]]:
-        """Universal file discovery using patterns with MCP tool integration."""
-        if not call_mcp_tool_func:
-            return {}
+        """
+        PERFORMANCE FIX: Use efficient discovery service instead of individual searches.
         
-        discovered_files = {}
-        for pattern in patterns:
-            try:
-                result = await call_mcp_tool_func("filesystem_glob_search", {
-                    "path": project_path,
-                    "pattern": pattern,
-                    "recursive": recursive
-                })
-                
-                if result.get("success") and result.get("matches"):
-                    discovered_files[pattern] = result["matches"]
-                    
-            except Exception:
-                pass  # Silent failure for individual patterns
-        
-        return discovered_files
+        OLD: 52+ individual filesystem_glob_search calls
+        NEW: 1 directory scan + in-memory pattern matching
+        """
+        return await _discovery_service.discover_files_by_patterns(
+            project_path, patterns, recursive, call_mcp_tool_func
+        )
     
     @staticmethod
     def match_pattern(file_path: str, pattern: str) -> bool:
         """Single pattern matching implementation."""
-        if "*" in pattern:
-            return fnmatch.fnmatch(file_path.lower(), pattern.lower())
-        return pattern.lower() in file_path.lower()
+        return _discovery_service._match_pattern(file_path, pattern)
     
     @staticmethod
     def categorize_by_patterns(item_name: str, category_patterns: Dict[str, List[str]]) -> str:
@@ -193,6 +350,10 @@ class UnifiedAgent(BaseModel, ABC):
     
     # Model configuration
     model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    # Iteration tracking for performance optimization
+    iteration_cache: Dict[str, Any] = Field(default_factory=dict, description="Per-execution iteration cache")
+    current_execution_id: Optional[str] = Field(default=None, description="Current execution identifier")
     
     # CONSOLIDATED TOOL MANAGEMENT SYSTEM
     TOOL_CATEGORIES: ClassVar[Dict[str, Any]] = {
@@ -302,75 +463,174 @@ class UnifiedAgent(BaseModel, ABC):
         context: ExecutionContext,
         mode: ExecutionMode = ExecutionMode.OPTIMAL
     ) -> AgentExecutionResult:
-        """Main UAEI execution entry point - orchestrates multi-iteration execution."""
+        """Optimized agent execution with unified iteration management."""
+        
         start_time = time.time()
+        iteration_results: List[IterationResult] = []
+        
+        # Initialize execution tracking to prevent repetitive discovery
+        execution_id = f"{self.AGENT_ID}_{int(time.time() * 1000)}"
+        self.current_execution_id = execution_id
+        self.iteration_cache.clear()  # Fresh cache for new execution
+        
+        self.logger.info(f"[UNIFIED] Starting execution {execution_id} with mode {mode.value}")
+        
+        # PERFORMANCE FIX: Do discovery ONCE per execution, not per iteration
+        if "discovery_results" not in self.iteration_cache:
+            self.logger.info(f"[PERFORMANCE] Performing discovery for execution {execution_id}")
+            self.iteration_cache["discovery_start_time"] = time.time()
+        
         max_iterations = self._determine_max_iterations(context, mode)
         
-        self.logger.info(f"[UAEI] Starting execution: agent={self.AGENT_ID}, mode={mode.value}")
-        
-        iteration_results = []
-        tools_utilized = set()
-        completion_reason = CompletionReason.ERROR_OCCURRED
-        final_output = None
-        
-        try:
-            for iteration in range(max_iterations):
-                iteration_result = await self._execute_iteration(context, iteration)
-                iteration_results.append(iteration_result)
+        # Enhanced iteration loop with completion assessment
+        for iteration in range(1, max_iterations + 1):
+            try:
+                self.logger.info(f"[UNIFIED] Iteration {iteration}/{max_iterations}")
                 
-                tools_utilized.update(iteration_result.tools_used)
-                final_output = iteration_result.output
+                # Execute iteration with performance optimization
+                result = await self._execute_iteration_optimized(context, iteration)
+                iteration_results.append(result)
                 
-                completion_assessment = self._assess_completion(
-                    iteration_results, context, iteration + 1, max_iterations
-                )
+                # Enhanced completion assessment
+                completion = self._assess_completion(iteration_results, context, iteration, max_iterations)
                 
-                if completion_assessment.is_complete:
-                    completion_reason = completion_assessment.reason
+                if completion.is_complete:
+                    self.logger.info(f"[UNIFIED] Early completion after {iteration} iterations: {completion.reason}")
                     break
-        
-        except Exception as execution_error:
-            self.logger.error(f"[UAEI] Execution failed: {execution_error}")
-            completion_reason = CompletionReason.ERROR_OCCURRED
-            
-            if not iteration_results:
-                final_output = {"error": str(execution_error)}
-                iteration_results = [IterationResult(
-                    output=final_output,
-                    quality_score=0.1,
+                
+                # Log iteration quality
+                self.logger.info(f"[UNIFIED] Iteration {iteration} quality: {result.quality_score:.3f}")
+                
+            except Exception as e:
+                self.logger.error(f"[UNIFIED] Iteration {iteration} failed: {e}")
+                
+                # Create error result
+                error_result = IterationResult(
+                    output={"error": str(e), "iteration": iteration},
+                    quality_score=0.0,
                     tools_used=[],
                     protocol_used="error_handling"
-                )]
-        
-        # Calculate results
+                )
+                iteration_results.append(error_result)
+                
+                # Decide whether to continue or fail
+                if iteration >= max_iterations * 0.8:  # Fail if we're near the end
+                    break
+
+        # Performance logging
         execution_time = time.time() - start_time
-        quality_scores = [r.quality_score for r in iteration_results]
-        final_quality_score = max(quality_scores) if quality_scores else 0.1
+        discovery_time = self.iteration_cache.get("discovery_total_time", 0)
         
-        best_iteration = max(iteration_results, key=lambda r: r.quality_score) if iteration_results else None
-        protocol_used = best_iteration.protocol_used if best_iteration else "unknown"
+        self.logger.info(f"[PERFORMANCE] Execution {execution_id} completed:")
+        self.logger.info(f"[PERFORMANCE] - Total time: {execution_time:.2f}s")
+        self.logger.info(f"[PERFORMANCE] - Discovery time: {discovery_time:.2f}s")
+        self.logger.info(f"[PERFORMANCE] - Iterations: {len(iteration_results)}")
         
-        execution_metadata = ExecutionMetadata(
-            mode=mode,
-            protocol_used=protocol_used,
-            execution_time=execution_time,
-            iterations_planned=max_iterations,
-            tools_utilized=list(tools_utilized)
-        )
+        # Build final result
+        final_result = self._build_final_result(iteration_results, context, execution_time)
         
-        result = AgentExecutionResult(
-            output=final_output,
-            execution_metadata=execution_metadata,
+        # Clear execution state
+        self.current_execution_id = None
+        self.iteration_cache.clear()
+        
+        return final_result
+
+    async def _execute_iteration_optimized(self, context: ExecutionContext, iteration: int) -> IterationResult:
+        """Execute iteration with discovery caching optimization."""
+        
+        # **CRITICAL FIX**: Check cache bypass flag from context
+        cache_bypassed = getattr(context, 'cache_bypassed', False) or context.shared_context.get('cache_bypassed', False)
+        force_refresh = cache_bypassed or (iteration > 1)  # Force refresh after first iteration
+        
+        # Check if we've already done discovery for this execution AND it's not bypassed
+        if "discovery_results" not in self.iteration_cache or force_refresh:
+            # Discovery needed - either first iteration or cache bypass requested
+            discovery_start = time.time()
+            
+            if force_refresh:
+                self.logger.info(f"[PERFORMANCE] Force refresh discovery for iteration {iteration} (cache_bypassed={cache_bypassed})")
+            else:
+                self.logger.info(f"[PERFORMANCE] Initial discovery for execution {self.current_execution_id}")
+            
+            # Clear existing cache entries to force fresh data
+            if force_refresh and "discovery_results" in self.iteration_cache:
+                self.iteration_cache.pop("discovery_results", None)
+                self.iteration_cache.pop("technology_discovery", None)
+                self.logger.info("[CACHE] Cleared existing discovery cache for fresh scan")
+            
+            # Cache the discovery results for the entire execution
+            try:
+                if hasattr(self, '_universal_discovery'):
+                    discovery_results = await self._universal_discovery(
+                        context.shared_context.get("project_root_path", "."),
+                        ["environment", "dependencies", "structure", "patterns"]
+                    )
+                    self.iteration_cache["discovery_results"] = discovery_results
+                    
+                if hasattr(self, '_universal_technology_discovery'):
+                    tech_discovery = await self._universal_technology_discovery(
+                        context.shared_context.get("project_root_path", ".")
+                    )
+                    self.iteration_cache["technology_discovery"] = tech_discovery
+                    
+            except Exception as e:
+                self.logger.warning(f"Discovery failed, using empty cache: {e}")
+                self.iteration_cache["discovery_results"] = {}
+                self.iteration_cache["technology_discovery"] = {}
+            
+            discovery_time = time.time() - discovery_start
+            self.iteration_cache["discovery_total_time"] = discovery_time
+            
+            self.logger.info(f"[PERFORMANCE] Discovery completed in {discovery_time:.2f}s for execution {self.current_execution_id}")
+        else:
+            # Subsequent iterations - use cached discovery only if not bypassed
+            self.logger.info(f"[PERFORMANCE] Using cached discovery for iteration {iteration}")
+        
+        # Now call the original _execute_iteration with cached context
+        return await self._execute_iteration(context, iteration)
+
+    def _build_final_result(self, iteration_results: List[IterationResult], context: ExecutionContext, execution_time: float) -> AgentExecutionResult:
+        """Build the final result from all iterations."""
+        
+        if not iteration_results:
+            return AgentExecutionResult(
+                output={"error": "No iterations completed"},
+                execution_metadata=ExecutionMetadata(
+                    mode=ExecutionMode.OPTIMAL,
+                    protocol_used="unified",
+                    execution_time=execution_time,
+                    iterations_planned=0,
+                    tools_utilized=[]
+                ),
+                iterations_completed=0,
+                completion_reason=CompletionReason.ERROR_OCCURRED,
+                quality_score=0.0,
+                protocol_used="unified",
+                error_details="No iterations completed"
+            )
+        
+        # Get the best result based on quality score
+        best_result = max(iteration_results, key=lambda r: r.quality_score)
+        
+        # Aggregate tools used across iterations
+        all_tools_used = []
+        for result in iteration_results:
+            all_tools_used.extend(result.tools_used)
+        
+        return AgentExecutionResult(
+            output=best_result.output,
+            execution_metadata=ExecutionMetadata(
+                mode=ExecutionMode.OPTIMAL,
+                protocol_used=best_result.protocol_used,
+                execution_time=execution_time,
+                iterations_planned=len(iteration_results),
+                tools_utilized=list(set(all_tools_used))
+            ),
             iterations_completed=len(iteration_results),
-            completion_reason=completion_reason,
-            quality_score=final_quality_score,
-            protocol_used=protocol_used,
-            error_details=str(final_output.get("error")) if isinstance(final_output, dict) and "error" in final_output else None
+            completion_reason=CompletionReason.QUALITY_THRESHOLD_MET,
+            quality_score=best_result.quality_score,
+            protocol_used=best_result.protocol_used
         )
-        
-        self.logger.info(f"[UAEI] Execution completed: quality={final_quality_score:.3f}")
-        
-        return result
 
     def _determine_max_iterations(self, context: ExecutionContext, mode: ExecutionMode) -> int:
         """Determine maximum iterations based on execution mode and config."""
@@ -454,38 +714,56 @@ class UnifiedAgent(BaseModel, ABC):
                 return self._generate_registry_response(tool_name, arguments)
             
             # Check if tool is available and import
+            from ..mcp_tools import __all__ as available_tools
+            if actual_tool_name not in available_tools:
+                # FAIL LOUDLY: Don't mask missing tools with placeholders
+                error_msg = f"MCP tool '{actual_tool_name}' is not available in the tools registry. Available tools: {len(available_tools)} total. This indicates a missing tool implementation or import issue."
+                self.logger.error(f"[MCP] Tool not available: {error_msg}")
+                raise RuntimeError(f"MCP_TOOL_NOT_AVAILABLE: {error_msg}")
+            
+            import chungoid.mcp_tools as mcp_module
+            
+            # FAIL LOUDLY: Don't catch getattr failures
             try:
-                from ..mcp_tools import __all__ as available_tools
-                if actual_tool_name not in available_tools:
-                    return self._generate_placeholder_response(tool_name, tool_info)
-                
-                import chungoid.mcp_tools as mcp_module
                 tool_func = getattr(mcp_module, actual_tool_name)
-                
-                # Convert arguments
-                converted_args = self._convert_tool_arguments(tool_name, actual_tool_name, arguments)
-                
-                # Execute tool
+            except AttributeError as e:
+                error_msg = f"MCP tool '{actual_tool_name}' is listed in __all__ but not actually available in module. This indicates an import/export mismatch."
+                self.logger.error(f"[MCP] Tool import failed: {error_msg}")
+                raise RuntimeError(f"MCP_TOOL_IMPORT_FAILED: {error_msg}") from e
+            
+            # Convert arguments
+            converted_args = self._convert_tool_arguments(tool_name, actual_tool_name, arguments)
+            
+            # FAIL LOUDLY: Don't mask tool execution failures
+            try:
                 if asyncio.iscoroutinefunction(tool_func):
                     result = await tool_func(**converted_args)
                 else:
                     result = tool_func(**converted_args)
+            except Exception as e:
+                error_msg = f"MCP tool '{actual_tool_name}' execution failed with arguments {converted_args}. Error: {str(e)}"
+                self.logger.error(f"[MCP] Tool execution failed: {error_msg}")
+                raise RuntimeError(f"MCP_TOOL_EXECUTION_FAILED: {error_msg}") from e
+            
+            # Ensure consistent response format
+            if isinstance(result, dict):
+                if "success" not in result and "error" not in result:
+                    result["success"] = True
+                result["tool_name"] = tool_name
+                return result
+            else:
+                return {"success": True, "result": result, "tool_name": tool_name}
                 
-                # Ensure consistent response format
-                if isinstance(result, dict):
-                    if "success" not in result and "error" not in result:
-                        result["success"] = True
-                    result["tool_name"] = tool_name
-                    return result
-                else:
-                    return {"success": True, "result": result, "tool_name": tool_name}
-                    
-            except Exception:
-                return self._generate_placeholder_response(tool_name, tool_info)
-        
         except Exception as e:
-            self.logger.error(f"[MCP] Tool call failed: {tool_name} - {e}")
-            return {"success": False, "error": str(e), "tool_name": tool_name}
+            # FAIL LOUDLY: Re-raise all exceptions instead of masking with placeholders
+            if "MCP_TOOL_" in str(e):
+                # These are our explicit MCP errors, re-raise as-is
+                raise
+            else:
+                # Unexpected errors get wrapped with context
+                error_msg = f"Unexpected error in MCP tool '{tool_name}' call: {str(e)}"
+                self.logger.error(f"[MCP] Unexpected error: {error_msg}")
+                raise RuntimeError(f"MCP_UNEXPECTED_ERROR: {error_msg}") from e
 
     def _get_tool_category_and_info(self, tool_name: str) -> Dict[str, Any]:
         """Get tool category and related information from centralized configuration."""
@@ -504,15 +782,13 @@ class UnifiedAgent(BaseModel, ABC):
         }
 
     def _generate_placeholder_response(self, tool_name: str, tool_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate appropriate placeholder response."""
-        return {
-            "success": True,
-            "result": tool_info["placeholder_data"],
-            "tool_name": tool_name,
-            "placeholder": True,
-            "category": tool_info["category"],
-            "message": f"Placeholder response for {tool_name}"
-        }
+        """
+        DEPRECATED: Placeholder responses are no longer used - system now FAILS LOUDLY.
+        This method is kept for backwards compatibility but should not be called.
+        """
+        error_msg = f"Attempted to generate placeholder response for '{tool_name}' - this is deprecated. System should FAIL LOUDLY instead of using placeholders."
+        self.logger.error(f"[MCP] Deprecated placeholder call: {error_msg}")
+        raise RuntimeError(f"DEPRECATED_PLACEHOLDER_RESPONSE: {error_msg}")
 
     def _generate_registry_response(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Generate registry tool responses."""
@@ -537,6 +813,18 @@ class UnifiedAgent(BaseModel, ABC):
         """Convert arguments based on tool aliases and parameter mappings."""
         converted_arguments = arguments.copy()
         
+        # CRITICAL FIX: Filter out cache coordination arguments that are not meant for actual tools
+        # These are internal parameters used by the cache system, not tool parameters
+        cache_args_to_remove = [
+            '_force_refresh', '_cache_bust', '_coordinated_refresh', 
+            '_force_verification', '_cache_bypass', '_internal_call',
+            'force_refresh', 'cache_bust', 'bypass_cache', 'timestamp'  # Also remove non-underscore versions
+        ]
+        for cache_arg in cache_args_to_remove:
+            if cache_arg in converted_arguments:
+                self.logger.debug(f"[MCP] Filtering cache argument {cache_arg} from tool call {actual_tool_name}")
+                converted_arguments.pop(cache_arg)
+        
         # Universal parameter mapping
         if "working_directory" in converted_arguments and "project_path" not in converted_arguments:
             converted_arguments["project_path"] = converted_arguments.pop("working_directory")
@@ -560,6 +848,115 @@ class UnifiedAgent(BaseModel, ABC):
     # UNIVERSAL INHERITANCE METHODS
     # Project-agnostic methods for ALL 9 agents
     # ========================================
+
+    def clear_discovery_cache(self, reason: str = "manual") -> None:
+        """Enhanced cache clearing with coordination and detailed logging."""
+        try:
+            # Clear agent-level iteration cache
+            cleared_iterations = len(self.iteration_cache)
+            self.iteration_cache.clear()
+            
+            # Clear discovery service cache if available
+            cleared_discovery = 0
+            try:
+                if hasattr(self, '_discovery_service') and self._discovery_service:
+                    # Get cache size before clearing
+                    cache_size = len(getattr(self._discovery_service, '_cache', {}))
+                    self._discovery_service.clear_cache()
+                    cleared_discovery = cache_size
+                elif '_discovery_service' in globals():
+                    cache_size = len(getattr(globals()['_discovery_service'], '_cache', {}))
+                    globals()['_discovery_service'].clear_cache()
+                    cleared_discovery = cache_size
+            except Exception as e:
+                self.logger.warning(f"CACHE_CLEAR: Failed to clear discovery service cache: {e}")
+            
+            # Clear any other caches if available
+            try:
+                from ..utils.cache_coordination_fix import clear_all_coordinated_caches
+                clear_all_coordinated_caches(
+                    discovery_service=getattr(self, '_discovery_service', None) or 
+                                    globals().get('_discovery_service')
+                )
+            except ImportError:
+                pass
+            
+            self.logger.info(f"CACHE_CLEAR: Cleared caches - iterations: {cleared_iterations}, "
+                           f"discovery: {cleared_discovery}, reason: {reason}")
+            
+        except Exception as e:
+            self.logger.error(f"CACHE_CLEAR: Failed to clear caches: {e}")
+
+    async def verify_project_state_after_operations(self, project_path: str, expected_files: List[str] = None) -> Dict[str, Any]:
+        """Enhanced project state verification with coordinated cache refresh."""
+        try:
+            # Use cache coordination for verification if available
+            try:
+                from ..utils.cache_coordination_fix import coordinate_cache_refresh
+                
+                self.logger.info("STATE_VERIFICATION: Starting coordinated verification")
+                
+                # Force coordinated cache refresh
+                verification_result = await coordinate_cache_refresh(
+                    project_path,
+                    self._call_mcp_tool,
+                    discovery_service=getattr(self, '_discovery_service', None) or 
+                                    globals().get('_discovery_service'),
+                    reason="post_operation_verification"
+                )
+                
+            except ImportError:
+                # Fallback to direct MCP call
+                self.logger.warning("STATE_VERIFICATION: Cache coordination not available, using direct verification")
+                verification_result = await self._call_mcp_tool("filesystem_list_directory", {
+                    "directory_path": project_path,
+                    "recursive": True,
+                    "include_files": True,
+                    "include_directories": True,
+                    "_force_verification": True,
+                    "_cache_bust": time.time()
+                })
+            
+            if not verification_result.get("success"):
+                error_msg = verification_result.get('error', 'Unknown error')
+                self.logger.error(f"STATE_VERIFICATION: Failed to scan project: {error_msg}")
+                return {"verified": False, "error": error_msg}
+            
+            # Extract file information
+            found_files = []
+            items = verification_result.get("items", [])
+            for item in items:
+                if item.get("type") == "file":
+                    relative_path = item.get("relative_path", item.get("name", ""))
+                    if relative_path:
+                        found_files.append(relative_path)
+            
+            # Verify expected files if provided
+            missing_files = []
+            if expected_files:
+                missing_files = [f for f in expected_files if not any(f in found for found in found_files)]
+                if missing_files:
+                    self.logger.warning(f"STATE_VERIFICATION: Missing expected files: {missing_files}")
+                else:
+                    self.logger.info(f"STATE_VERIFICATION: All expected files found: {len(expected_files)} files")
+            
+            verification_data = {
+                "verified": True,
+                "total_files": len(found_files),
+                "found_files": found_files,
+                "project_path": project_path,
+                "timestamp": time.time(),
+                "expected_files": expected_files or [],
+                "missing_files": missing_files
+            }
+            
+            self.logger.info(f"STATE_VERIFICATION: Complete - {len(found_files)} files detected, "
+                           f"{len(missing_files)} missing")
+            return verification_data
+            
+        except Exception as e:
+            self.logger.error(f"STATE_VERIFICATION: Exception during verification: {e}")
+            return {"verified": False, "error": str(e)}
 
     @universal_error_handler("Technology Discovery", {"primary_language": "unknown", "frameworks": [], "deployment": []})
     async def _universal_technology_discovery(self, project_path: str) -> Dict[str, Any]:
@@ -711,7 +1108,8 @@ Provide enhanced content following current best practices:"""
         context_file = f".chungoid/pipeline_context/{stage_name}_output.json"
         
         stage_output = await self._call_mcp_tool("filesystem_read_file", {
-            "file_path": context_file
+            "file_path": context_file,
+            "project_path": "."  # Use current project directory
         })
         
         if stage_output.get("success"):
@@ -724,14 +1122,16 @@ Provide enhanced content following current best practices:"""
     async def _save_stage_context(self, stage_name: str, outputs: Dict[str, Any]) -> bool:
         """Save this stage's outputs for subsequent stages."""
         await self._call_mcp_tool("filesystem_create_directory", {
-            "directory_path": ".chungoid/pipeline_context"
+            "directory_path": ".chungoid/pipeline_context",
+            "project_path": "."  # Use current project directory
         })
         
         context_file = f".chungoid/pipeline_context/{stage_name}_output.json"
         
         save_result = await self._call_mcp_tool("filesystem_write_file", {
             "file_path": context_file,
-            "content": json.dumps(outputs, indent=2, default=str)
+            "content": json.dumps(outputs, indent=2, default=str),
+            "project_path": "."  # Use current project directory
         })
         
         return save_result.get("success", False)

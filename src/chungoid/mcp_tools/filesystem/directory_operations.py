@@ -27,6 +27,24 @@ from chungoid.utils.project_type_detection import ProjectTypeDetectionService
 logger = logging.getLogger(__name__)
 
 
+def _safe_relative_path(path: Path, root: Path) -> str:
+    """
+    Safely compute relative path without throwing ValueError.
+    
+    Args:
+        path: The path to make relative
+        root: The root path to make it relative to
+        
+    Returns:
+        str: Relative path if possible, otherwise absolute path
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        # Path is not relative to root, return absolute path
+        return str(path)
+
+
 def _ensure_project_context(project_path: Optional[str] = None, project_id: Optional[str] = None) -> Path:
     """
     Ensures project context is set for directory operations.
@@ -195,7 +213,11 @@ async def filesystem_list_directory(
                         is_file = item.is_file()
                         is_dir = item.is_dir()
                         
-                        # Filter by type
+                        # FIRST: Handle recursion (before filtering) to ensure subdirectories are scanned
+                        if recursive and is_dir and current_depth < max_depth:
+                            _scan_directory(item, current_depth + 1)
+                        
+                        # SECOND: Apply filtering for inclusion in results
                         if is_file and not include_files:
                             continue
                         if is_dir and not include_directories:
@@ -206,10 +228,13 @@ async def filesystem_list_directory(
                             if item.suffix.lower() not in [ext.lower() for ext in file_extensions]:
                                 continue
                         
+                        # Calculate relative path safely
+                        relative_path = _safe_relative_path(item, project_root)
+                        
                         item_info = {
                             "name": item.name,
                             "path": str(item),
-                            "relative_path": str(item.relative_to(project_root)),
+                            "relative_path": relative_path,
                             "type": "file" if is_file else "directory",
                             "size_bytes": stat.st_size if is_file else 0,
                             "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
@@ -228,10 +253,6 @@ async def filesystem_list_directory(
                             total_directories += 1
                             
                         items.append(item_info)
-                        
-                        # Recurse into directories if recursive
-                        if recursive and is_dir and current_depth < max_depth:
-                            _scan_directory(item, current_depth + 1)
                             
                     except (PermissionError, OSError) as e:
                         logger.warning(f"Cannot access {item}: {e}")
@@ -246,6 +267,9 @@ async def filesystem_list_directory(
         # Sort items by type then name
         items.sort(key=lambda x: (x["type"], x["name"]))
         
+        # Calculate relative path safely for the main directory
+        directory_relative_path = _safe_relative_path(resolved_path, project_root)
+        
         result = {
             "success": True,
             "items": items,
@@ -253,7 +277,7 @@ async def filesystem_list_directory(
             "total_directories": total_directories,
             "total_size_bytes": total_size_bytes,
             "directory_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": directory_relative_path,
             "recursive": recursive,
             "max_depth": max_depth,
             "project_path": str(project_root)
@@ -308,7 +332,7 @@ async def filesystem_create_directory(
                 return {
                     "success": True,
                     "directory_path": str(resolved_path),
-                    "relative_path": str(resolved_path.relative_to(project_root)),
+                    "relative_path": _safe_relative_path(resolved_path, project_root),
                     "already_exists": True,
                     "project_path": str(project_root)
                 }
@@ -333,7 +357,7 @@ async def filesystem_create_directory(
         result = {
             "success": True,
             "directory_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "already_exists": False,
             "created_parents": create_parents,
             "permissions": permissions,
@@ -347,7 +371,7 @@ async def filesystem_create_directory(
         return {
             "success": True,
             "directory_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "already_exists": True,
             "project_path": str(project_root)
         }
@@ -484,7 +508,7 @@ async def filesystem_delete_directory(
         result = {
             "success": True,
             "deleted_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "was_empty": is_empty,
             "recursive": recursive,
             "total_files_deleted": total_files,
@@ -568,7 +592,7 @@ async def filesystem_project_scan(
         result = {
             "success": True,
             "scan_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "project_path": str(project_root)
         }
         

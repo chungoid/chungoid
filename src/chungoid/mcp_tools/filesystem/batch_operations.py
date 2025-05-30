@@ -30,6 +30,24 @@ from chungoid.utils.execution_state_persistence import ResumableExecutionService
 logger = logging.getLogger(__name__)
 
 
+def _safe_relative_path(path: Path, root: Path) -> str:
+    """
+    Safely compute relative path without throwing ValueError.
+    
+    Args:
+        path: The path to make relative
+        root: The root path to make it relative to
+        
+    Returns:
+        str: Relative path if possible, otherwise absolute path
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        # Path is not relative to root, return absolute path
+        return str(path)
+
+
 def _ensure_project_context(project_path: Optional[str] = None, project_id: Optional[str] = None) -> Path:
     """
     Ensures project context is set for batch operations.
@@ -420,8 +438,8 @@ async def filesystem_backup_restore(
                             full_path = Path(target_path)
                         
                         if full_path.exists():
-                            # Add to archive with relative path
-                            arcname = str(full_path.relative_to(project_root))
+                            # Add to archive with project-relative path
+                            arcname = _safe_relative_path(full_path, project_root)
                             tar.add(full_path, arcname=arcname, recursive=True)
                             
             elif backup_format == "zip":
@@ -436,12 +454,12 @@ async def filesystem_backup_restore(
                         
                         if full_path.exists():
                             if full_path.is_file():
-                                arcname = str(full_path.relative_to(project_root))
+                                arcname = _safe_relative_path(full_path, project_root)
                                 zf.write(full_path, arcname)
                             elif full_path.is_dir():
                                 for file_path in full_path.rglob("*"):
                                     if file_path.is_file():
-                                        arcname = str(file_path.relative_to(project_root))
+                                        arcname = _safe_relative_path(file_path, project_root)
                                         zf.write(file_path, arcname)
             else:
                 return {
@@ -688,8 +706,8 @@ async def filesystem_template_expansion(
             "success": True,
             "template_path": str(template_file),
             "output_path": str(output_file),
-            "template_relative": str(template_file.relative_to(project_root)),
-            "output_relative": str(output_file.relative_to(project_root)),
+            "template_relative": _safe_relative_path(template_file, project_root),
+            "output_relative": _safe_relative_path(output_file, project_root),
             "template_format": template_format,
             "variables_used": list(variables.keys()),
             "output_size_bytes": output_size,

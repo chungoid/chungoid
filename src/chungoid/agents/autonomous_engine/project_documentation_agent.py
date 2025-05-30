@@ -171,28 +171,52 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
             )
 
     def _parse_inputs(self, inputs: Any) -> DocumentationAgentInput:
-        """Parse inputs cleanly into DocumentationAgentInput."""
-        if isinstance(inputs, DocumentationAgentInput):
-            return inputs
-        elif isinstance(inputs, dict):
-            return DocumentationAgentInput(**inputs)
-        elif hasattr(inputs, 'dict'):
-            return DocumentationAgentInput(**inputs.dict())
-        else:
-            raise ValueError(f"Invalid input type: {type(inputs)}")
+        """Parse inputs cleanly into DocumentationAgentInput with detailed validation."""
+        try:
+            if isinstance(inputs, DocumentationAgentInput):
+                # Validate existing input object
+                if not inputs.user_goal or not inputs.user_goal.strip():
+                    raise ValueError("DocumentationAgentInput has empty or whitespace user_goal")
+                return inputs
+            elif isinstance(inputs, dict):
+                # Validate required fields before creation
+                if 'user_goal' not in inputs:
+                    raise ValueError("Missing required field 'user_goal' in input dictionary")
+                if not inputs['user_goal'] or not inputs['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return DocumentationAgentInput(**inputs)
+            elif hasattr(inputs, 'dict'):
+                input_dict = inputs.dict()
+                if 'user_goal' not in input_dict:
+                    raise ValueError("Missing required field 'user_goal' in input object")
+                if not input_dict['user_goal'] or not input_dict['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return DocumentationAgentInput(**input_dict)
+            else:
+                raise ValueError(f"Invalid input type: {type(inputs)}. Expected DocumentationAgentInput, dict, or object with dict() method. Received: {inputs}")
+        except Exception as e:
+            raise ValueError(f"Input parsing failed for ProjectDocumentationAgent: {e}. Input received: {inputs}")
 
     async def _generate_documentation(self, task_input: DocumentationAgentInput) -> Dict[str, Any]:
         """
-        Generate documentation using unified discovery + YAML template.
+        Generate documentation using unified discovery + YAML template with detailed validation.
         Pure unified approach - no hardcoded phases or documentation logic.
         """
         try:
-            # Get YAML template (no fallbacks)
+            # Validate prompt template access
             prompt_template = self.prompt_manager.get_prompt_definition(
                 "project_documentation_agent_v1_prompt",
                 "1.0.0",
                 sub_path="autonomous_engine"
             )
+            
+            if not prompt_template:
+                raise ValueError("Failed to load documentation prompt template - returned None/empty")
+            
+            if not hasattr(prompt_template, 'user_prompt_template'):
+                raise ValueError(f"Prompt template missing 'user_prompt_template' attribute. Available attributes: {dir(prompt_template)}")
             
             # Unified discovery for intelligent documentation context
             discovery_results = await self._universal_discovery(
@@ -200,9 +224,15 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "code_analysis"]
             )
             
+            if not discovery_results:
+                raise ValueError("Universal discovery returned None/empty results")
+            
             technology_context = await self._universal_technology_discovery(
                 task_input.project_path
             )
+            
+            if not technology_context:
+                raise ValueError("Technology discovery returned None/empty results")
             
             # Build template variables for maximum LLM documentation intelligence
             template_vars = {
@@ -224,11 +254,14 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 "intelligent_context": task_input.intelligent_context
             }
             
-            # Render template
-            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
-                prompt_template.user_prompt_template,
-                template_vars
-            )
+            # Render template with validation
+            try:
+                formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
+                    prompt_template.user_prompt_template,
+                    template_vars
+                )
+            except Exception as e:
+                raise ValueError(f"Failed to render documentation prompt template: {e}. Template variables: {list(template_vars.keys())}")
             
             # Get system prompt if available
             system_prompt = getattr(prompt_template, 'system_prompt', None)
@@ -241,43 +274,89 @@ class ProjectDocumentationAgent_v1(UnifiedAgent):
                 max_tokens=4000
             )
             
-            # Parse LLM response (expecting JSON from template)
+            # Detailed response validation
+            if not response:
+                raise ValueError(f"LLM provider returned None/empty response for documentation. Prompt length: {len(formatted_prompt)} chars. User goal: {task_input.user_goal}")
+            
+            if not response.strip():
+                raise ValueError(f"LLM provider returned whitespace-only response for documentation. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            if len(response.strip()) < 50:
+                raise ValueError(f"LLM documentation response too short ({len(response)} chars). Expected substantial documentation content. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            # Parse LLM response (expecting JSON from template) - NO FALLBACKS
             try:
-                result = json.loads(response)
+                json_str = self._extract_json_from_response(response)
+                if not json_str:
+                    raise ValueError(f"No JSON found in documentation response. Response: '{response}'")
                 
-                # Transform template output to our clean schema
-                documentation_files = {}
-                doc_files = result.get("documentation_files", [])
-                
-                for doc in doc_files:
-                    file_path = doc.get("path", "README.md")
-                    content = doc.get("content", "")
-                    documentation_files[file_path] = content
-                
-                return {
-                    "documentation_files": documentation_files,
-                    "documentation_summary": self._create_documentation_summary(result, discovery_results),
-                    "documentation_recommendations": result.get("recommendations", []),
-                    "project_analysis": {
-                        "project_type": technology_context.get("primary_language", "unknown"),
-                        "complexity": discovery_results.get("complexity_assessment", "moderate"),
-                        "documentation_scope": len(documentation_files),
-                        "discovered_patterns": discovery_results.get("patterns", {})
-                    },
-                    "confidence_score": ConfidenceScore(
-                        value=result.get("confidence", 0.85),
-                        method="llm_documentation_assessment",
-                        explanation=result.get("reasoning", "Documentation generated successfully with unified discovery")
-                    )
-                }
-                
+                result = json.loads(json_str)
+                if not isinstance(result, dict):
+                    raise ValueError(f"Parsed JSON is not a dictionary: {type(result)}. JSON: '{json_str}'")
+                    
             except json.JSONDecodeError as e:
-                self.logger.error(f"LLM response not valid JSON: {e}")
-                raise ValueError(f"LLM response parsing failed: {e}")
+                raise ValueError(f"Failed to parse JSON from documentation response: {e}. JSON string: '{json_str}'. Full response: '{response}'")
+            except Exception as e:
+                raise ValueError(f"Failed to extract/parse JSON from documentation response: {e}. Response: '{response}'")
+            
+            # Transform template output to our clean schema
+            documentation_files = {}
+            doc_files = result.get("documentation_files", [])
+            
+            if not doc_files:
+                raise ValueError(f"No documentation_files in parsed response. Result keys: {list(result.keys())}. Response: '{response}'")
+            
+            for doc in doc_files:
+                if not isinstance(doc, dict):
+                    raise ValueError(f"Documentation file entry is not a dict: {type(doc)}. Entry: {doc}")
                 
+                file_path = doc.get("path", "README.md")
+                content = doc.get("content", "")
+                
+                if not content or not content.strip():
+                    raise ValueError(f"Documentation file '{file_path}' has empty content. Doc entry: {doc}")
+                
+                documentation_files[file_path] = content
+            
+            if not documentation_files:
+                raise ValueError(f"No valid documentation files extracted. Result: {result}")
+            
+            return {
+                "documentation_files": documentation_files,
+                "documentation_summary": self._create_documentation_summary(result, discovery_results),
+                "documentation_recommendations": result.get("recommendations", []),
+                "project_analysis": {
+                    "project_type": technology_context.get("primary_language", "unknown"),
+                    "complexity": discovery_results.get("complexity_assessment", "moderate"),
+                    "documentation_scope": len(documentation_files),
+                    "discovered_patterns": discovery_results.get("patterns", {})
+                },
+                "confidence_score": ConfidenceScore(
+                    value=result.get("confidence", 0.85),
+                    method="llm_documentation_assessment",
+                    explanation=result.get("reasoning", "Documentation generated successfully with unified discovery")
+                )
+            }
+            
         except Exception as e:
-            self.logger.error(f"Documentation generation failed: {e}")
-            raise
+            error_msg = f"""ProjectDocumentationAgent documentation generation failed:
+
+ERROR: {e}
+
+INPUT CONTEXT:
+- User Goal: {task_input.user_goal}
+- Project Path: {task_input.project_path}
+- Project ID: {task_input.project_id}
+- Include API Docs: {task_input.include_api_docs}
+- Include User Guide: {task_input.include_user_guide}
+- Include Dependency Audit: {task_input.include_dependency_audit}
+
+DOCUMENTATION CONTEXT:
+- Project Specifications: {task_input.project_specifications}
+- Intelligent Context: {task_input.intelligent_context}
+"""
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def _create_documentation_summary(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> str:
         """Create a comprehensive documentation summary from LLM result and discovery."""

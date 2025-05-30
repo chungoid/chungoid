@@ -39,36 +39,18 @@ class SmartCodeGeneratorInput(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this code generation task.")
     project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project ID for context.")
     
-    # Core fields - simplified
-    user_goal: Optional[str] = Field(None, description="What the user wants to build")
-    project_path: Optional[str] = Field(None, description="Where to build it")
+    # Core autonomous inputs
+    user_goal: str = Field(..., description="What the user wants to build")
+    project_path: str = Field(default=".", description="Project directory to generate code in")
     
-    # Traditional fields for backward compatibility
-    task_description: Optional[str] = Field(None, description="Core description of the code to be generated.")
-    target_file_path: Optional[str] = Field(None, description="Intended relative path of the file to be created.")
-    programming_language: Optional[str] = Field(None, description="Target programming language.")
-    
-    # Context fields from other agents
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Project specs from orchestrator")
-    intelligent_context: bool = Field(default=False, description="Whether intelligent project specifications are provided")
-    target_languages: Optional[List[str]] = Field(None, description="Target programming languages")
-    technologies: Optional[List[str]] = Field(None, description="Project technologies")
-    requirements_context: Optional[Dict[str, Any]] = Field(None, description="Requirements from previous stage")
-    architecture_context: Optional[Dict[str, Any]] = Field(None, description="Architecture from previous stage")
-    risk_context: Optional[Dict[str, Any]] = Field(None, description="Risk assessment from previous stage")
+    # Optional context (no micromanagement)
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Optional project context")
     
     @model_validator(mode='after')
     def check_minimum_requirements(self) -> 'SmartCodeGeneratorInput':
-        """Ensure we have minimum info to generate code."""
-        
-        # Need either user_goal or task_description
-        if not self.user_goal and not self.task_description:
-            raise ValueError("Either user_goal or task_description is required")
-        
-        # Default project_path if not provided
-        if not self.project_path:
-            self.project_path = "."
-        
+        """Ensure we have minimum requirements for autonomous code generation."""
+        if not self.user_goal or not self.user_goal.strip():
+            raise ValueError("user_goal is required for autonomous code generation")
         return self
 
 class SmartCodeGeneratorOutput(BaseModel):
@@ -108,76 +90,122 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
         super().__init__(llm_provider=llm_provider, prompt_manager=prompt_manager, **kwargs)
 
     def _convert_pydantic_to_dict(self, obj: Any) -> Any:
-        """Recursively convert Pydantic objects to dictionaries."""
-        if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
-            # This is a Pydantic object
-            return obj.dict()
-        elif isinstance(obj, dict):
-            # Recursively process dictionary values
-            return {key: self._convert_pydantic_to_dict(value) for key, value in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            # Recursively process list/tuple items
-            return [self._convert_pydantic_to_dict(item) for item in obj]
-        else:
-            # Return as-is for primitive types
-            return obj
+        """Recursively convert Pydantic objects to dictionaries with validation."""
+        try:
+            if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
+                # This is a Pydantic object
+                result = obj.dict()
+                if not isinstance(result, dict):
+                    raise ValueError(f"Pydantic object.dict() returned non-dict: {type(result)}")
+                return result
+            elif isinstance(obj, dict):
+                # Recursively process dictionary values
+                return {key: self._convert_pydantic_to_dict(value) for key, value in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                # Recursively process list/tuple items
+                return [self._convert_pydantic_to_dict(item) for item in obj]
+            else:
+                # Return as-is for primitive types
+                return obj
+        except Exception as e:
+            raise ValueError(f"Failed to convert Pydantic object to dict: {e}. Object type: {type(obj)}, Object: {obj}")
 
     async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        Dead simple execution: Let the LLM understand the project and generate code.
-        No complex phases, just LLM + MCP tools.
+        AUTONOMOUS CODE GENERATION: Actually use MCP tools to explore and generate code.
         """
         try:
-            # Convert inputs - handle both dict and Pydantic objects
-            if isinstance(context.inputs, dict):
-                # Convert any nested Pydantic objects to dicts
-                converted_inputs = self._convert_pydantic_to_dict(context.inputs)
-                task_input = SmartCodeGeneratorInput(**converted_inputs)
-            elif hasattr(context.inputs, 'dict'):
-                # Direct Pydantic object
-                task_input = SmartCodeGeneratorInput(**context.inputs.dict())
-            else:
-                task_input = context.inputs
-
-            self.logger.info(f"Starting simple code generation for: {task_input.user_goal or task_input.task_description}")
-
-            # 1. Gather project context using MCP tools
-            project_context = await self._gather_project_context(task_input)
+            # Convert inputs with detailed validation
+            if not context or not hasattr(context, 'inputs'):
+                raise ValueError("ExecutionContext is missing or has no 'inputs' attribute")
             
-            # 2. Let LLM generate code using main prompt template
-            generation_result = await self._generate_code_with_llm(task_input, project_context)
+            if not context.inputs:
+                raise ValueError("ExecutionContext.inputs is None or empty")
             
-            # 3. Create simple output
+            # Detailed input conversion and validation
+            try:
+                if isinstance(context.inputs, dict):
+                    # Validate required fields
+                    if 'user_goal' not in context.inputs:
+                        raise ValueError("Missing required field 'user_goal' in input dictionary")
+                    if not context.inputs['user_goal'] or not context.inputs['user_goal'].strip():
+                        raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                    
+                    converted_inputs = self._convert_pydantic_to_dict(context.inputs)
+                    task_input = SmartCodeGeneratorInput(**converted_inputs)
+                elif hasattr(context.inputs, 'dict'):
+                    input_dict = context.inputs.dict()
+                    if 'user_goal' not in input_dict:
+                        raise ValueError("Missing required field 'user_goal' in input object")
+                    if not input_dict['user_goal'] or not input_dict['user_goal'].strip():
+                        raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                    
+                    task_input = SmartCodeGeneratorInput(**input_dict)
+                else:
+                    # Fallback assignment
+                    if not hasattr(context.inputs, 'user_goal'):
+                        raise ValueError(f"Input object missing 'user_goal' attribute. Type: {type(context.inputs)}")
+                    
+                    task_input = context.inputs
+                    
+                    # Validate the task_input
+                    if not task_input.user_goal or not task_input.user_goal.strip():
+                        raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                        
+            except Exception as e:
+                raise ValueError(f"Input parsing/validation failed for SmartCodeGeneratorAgent: {e}. Context inputs type: {type(context.inputs)}, Context inputs: {context.inputs}")
+
+            self.logger.info(f"🚀 AUTONOMOUS CODE GENERATION: {task_input.user_goal}")
+
+            # STEP 1: Actually explore the project using MCP tools
+            project_info = await self._autonomous_project_exploration(task_input)
+            
+            # STEP 2: Generate code content using LLM
+            code_content = await self._autonomous_code_generation(task_input, project_info)
+            
+            # STEP 3: Actually create files using MCP tools
+            created_files = await self._autonomous_file_creation(task_input, code_content)
+            
+            # STEP 4: Create concrete output with validation
+            if not created_files:
+                raise ValueError(f"No files were created. User goal: {task_input.user_goal}")
+            
             output = SmartCodeGeneratorOutput(
                 task_id=task_input.task_id,
                 project_id=task_input.project_id,
-                status="SUCCESS" if generation_result["success"] else "FAILURE",
-                generated_files=generation_result.get("files", []),
+                status="SUCCESS",
+                generated_files=created_files,
                 confidence_score=ConfidenceScore(
                     value=0.9,
-                    method="llm_self_assessment",
-                    explanation="High confidence in code generation quality and completeness"
-                ),
-                error_message=generation_result.get("error")
+                    method="autonomous_mcp_execution",
+                    explanation=f"Successfully generated {len(created_files)} files using MCP tools"
+                )
             )
+            
+            self.logger.info(f"✅ AUTONOMOUS SUCCESS: Created {len(created_files)} files")
             
             return IterationResult(
                 output=output,
-                quality_score=generation_result.get("confidence", 0.8),
-                tools_used=["llm_analysis", "mcp_file_operations"],
-                protocol_used="simple_code_generation"
+                quality_score=0.9,
+                tools_used=["mcp_filesystem", "llm_generation", "autonomous_execution"],
+                protocol_used="autonomous_code_generation"
             )
             
         except Exception as e:
-            self.logger.error(f"Code generation failed: {e}")
-            
-            # Safe error output
-            task_id = getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4())
-            project_id = getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown'
+            error_msg = f"""SmartCodeGeneratorAgent execution failed:
+
+ERROR: {e}
+
+CONTEXT:
+- Iteration: {iteration}
+- Input Type: {type(context.inputs) if context and hasattr(context, 'inputs') else 'No context/inputs'}
+- Input Value: {context.inputs if context and hasattr(context, 'inputs') else 'No context/inputs'}
+"""
+            self.logger.error(error_msg)
             
             error_output = SmartCodeGeneratorOutput(
-                task_id=task_id,
-                project_id=project_id,
+                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
+                project_id=getattr(task_input, 'project_id', 'unknown') if 'task_input' in locals() else 'unknown',
                 status="ERROR",
                 generated_files=[],
                 error_message=str(e)
@@ -187,330 +215,322 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 output=error_output,
                 quality_score=0.0,
                 tools_used=[],
-                protocol_used="simple_code_generation"
+                protocol_used="autonomous_code_generation"
             )
 
-    async def _gather_project_context(self, task_input: SmartCodeGeneratorInput) -> str:
-        """
-        Simple method: Gather all relevant project context for the LLM.
-        "Learn about the fuckin' project" - scan files, read docs, understand context.
-        """
-        self.logger.info(f"Gathering project context from: {task_input.project_path}")
-        
-        context_parts = []
-        
-        # Add user goal/task description
-        if task_input.user_goal:
-            context_parts.append(f"User Goal: {task_input.user_goal}")
-        elif task_input.task_description:
-            context_parts.append(f"Task: {task_input.task_description}")
-        
-        # Add project specifications if available
-        if task_input.project_specifications:
-            context_parts.append(f"Project Specifications: {json.dumps(task_input.project_specifications, indent=2)}")
-        
-        # Add context from previous stages
-        if task_input.requirements_context:
-            context_parts.append(f"Requirements Context: {json.dumps(task_input.requirements_context, indent=2)}")
-        if task_input.architecture_context:
-            context_parts.append(f"Architecture Context: {json.dumps(task_input.architecture_context, indent=2)}")
-        if task_input.risk_context:
-            context_parts.append(f"Risk Context: {json.dumps(task_input.risk_context, indent=2)}")
-        
-        # Scan project directory with MCP tools
+    async def _autonomous_project_exploration(self, task_input: SmartCodeGeneratorInput) -> Dict[str, Any]:
+        """Use MCP tools to actually explore the project."""
         try:
+            self.logger.info(f"🔍 Exploring project: {task_input.project_path}")
+            
+            # Use MCP tools to list directory contents
             list_result = await self._call_mcp_tool("filesystem_list_directory", {
-                "directory_path": task_input.project_path
+                "directory_path": task_input.project_path,
+                "project_path": task_input.project_path
             })
+            
+            project_info = {
+                "project_path": task_input.project_path,
+                "user_goal": task_input.user_goal,
+                "existing_files": [],
+                "project_type": "unknown",
+                "documentation": []
+            }
             
             if list_result.get("success"):
                 files = list_result.get("files", [])
-                if files:
-                    context_parts.append(f"Existing files in {task_input.project_path}: {files}")
-                    
-                    # Read key documentation files
-                    for file_info in files[:10]:  # Limit to first 10 files
-                        filename = file_info.get("name", "") if isinstance(file_info, dict) else str(file_info)
-                        
-                        # Read documentation files
-                        if any(pattern in filename.lower() for pattern in [
-                            "readme", "blueprint", "spec", "requirements", "architecture", "design", "plan"
-                        ]) and filename.endswith(('.md', '.txt', '.json')):
-                            try:
-                                file_result = await self._call_mcp_tool("filesystem_read_file", {
-                                    "file_path": f"{task_input.project_path}/{filename}"
-                                })
-                                if file_result.get("success"):
-                                    content = file_result.get("content", "")
-                                    # Truncate very long files
-                                    if len(content) > 2000:
-                                        content = content[:2000] + "... [truncated]"
-                                    context_parts.append(f"--- {filename} ---\n{content}")
-                            except Exception as e:
-                                self.logger.warning(f"Could not read {filename}: {e}")
-                else:
-                    context_parts.append(f"Project directory {task_input.project_path} is empty or newly created")
-            else:
-                context_parts.append(f"Could not scan project directory: {list_result.get('error', 'unknown error')}")
+                project_info["existing_files"] = [f.get("name", str(f)) if isinstance(f, dict) else str(f) for f in files]
                 
-        except Exception as e:
-            self.logger.warning(f"Error scanning project directory: {e}")
-            context_parts.append(f"Error scanning project directory: {str(e)}")
-        
-        return "\n\n".join(context_parts)
-
-    async def _generate_code_with_llm(self, task_input: SmartCodeGeneratorInput, project_context: str) -> Dict[str, Any]:
-        """
-        Main method: Use YAML prompt template + project context to let LLM generate code.
-        LLM returns structured instructions for files to create, we execute with MCP tools.
-        """
-        try:
-            # Get main prompt from YAML template (or fallback)
-            main_prompt = await self._get_main_prompt(task_input, project_context)
+                # Read key documentation files
+                for file_info in files[:5]:  # Limit to avoid overwhelming
+                    filename = file_info.get("name", "") if isinstance(file_info, dict) else str(file_info)
+                    
+                    if any(doc in filename.lower() for doc in ["readme", "goal", "spec", "requirements"]):
+                        try:
+                            read_result = await self._call_mcp_tool("filesystem_read_file", {
+                                "file_path": filename,
+                                "project_path": task_input.project_path
+                            })
+                            if read_result.get("success"):
+                                content = read_result.get("content", "")[:1000]  # Truncate
+                                project_info["documentation"].append({
+                                    "file": filename,
+                                    "content": content
+                                })
+                                self.logger.info(f"📄 Read documentation: {filename}")
+                        except Exception as e:
+                            self.logger.warning(f"Could not read {filename}: {e}")
             
-            # Let LLM run the show
-            self.logger.info("Generating code with LLM...")
+            self.logger.info(f"📊 Project exploration complete: {len(project_info['existing_files'])} files found")
+            return project_info
+            
+        except Exception as e:
+            self.logger.error(f"Project exploration failed: {e}")
+            return {
+                "project_path": task_input.project_path,
+                "user_goal": task_input.user_goal,
+                "existing_files": [],
+                "error": str(e)
+            }
+
+    async def _autonomous_code_generation(self, task_input: SmartCodeGeneratorInput, project_info: Dict[str, Any]) -> str:
+        """Use LLM to generate actual code content with detailed validation."""
+        # Build comprehensive prompt
+        prompt = f"""Generate complete, working Python code for this project.
+
+USER GOAL: {task_input.user_goal}
+
+PROJECT CONTEXT:
+- Project Path: {project_info.get('project_path', '.')}
+- Existing Files: {', '.join(project_info.get('existing_files', []))}
+
+DOCUMENTATION FOUND:
+{chr(10).join([f"- {doc['file']}: {doc['content'][:200]}..." for doc in project_info.get('documentation', [])])}
+
+REQUIREMENTS:
+1. Generate COMPLETE, working Python code (not pseudocode)
+2. Include all necessary imports and dependencies
+3. Add proper error handling and logging
+4. Include command-line argument parsing if needed
+5. Make code production-ready and executable
+6. Follow Python best practices (PEP 8, type hints, docstrings)
+
+Return ONLY the Python code, no markdown formatting or explanations."""
+
+        self.logger.info("🧠 Generating code with LLM...")
+        
+        try:
             response = await self.llm_provider.generate(
-                prompt=main_prompt,
-                max_tokens=6000,
+                prompt=prompt,
+                max_tokens=4000,
                 temperature=0.1
             )
             
+            # Detailed LLM response validation
             if not response:
-                return {"success": False, "error": "No response from LLM"}
+                raise ValueError(f"LLM provider returned None/empty response for code generation. Prompt length: {len(prompt)} chars. User goal: {task_input.user_goal}")
             
-            # Try to parse structured response (LLM should return JSON with file instructions)
-            try:
-                # LLM should return JSON with files to create
-                llm_instructions = json.loads(response)
-                self.logger.info(f"LLM provided structured instructions for {len(llm_instructions.get('files', []))} files")
-                
-                # Execute LLM's file creation instructions using MCP tools
-                generated_files = await self._execute_file_instructions(
-                    llm_instructions, 
-                    task_input.project_path
-                )
-                
-                return {
-                    "success": True,
-                    "files": generated_files,
-                    "confidence": llm_instructions.get("confidence", 0.8),
-                    "llm_response": response
-                }
-                
-            except json.JSONDecodeError:
-                # Fallback: treat response as single file content
-                self.logger.info("LLM response not JSON, treating as single file content")
-                return await self._fallback_single_file(response, task_input)
-                
-        except Exception as e:
-            self.logger.error(f"LLM code generation failed: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def _get_main_prompt(self, task_input: SmartCodeGeneratorInput, project_context: str) -> str:
-        """
-        Get the main prompt template from YAML and inject project context.
-        Falls back to built-in prompt if YAML not available.
-        """
-        try:
-            # Try to get prompt from YAML template
-            prompt_template = self.prompt_manager.get_prompt_definition(
-                "smart_code_generator_agent_v1_prompt",  # prompt_name from YAML id field
-                "0.2.0",  # prompt_version from YAML version field
-                sub_path="autonomous_engine"  # subdirectory where prompt is located
-            )
+            if not response.strip():
+                raise ValueError(f"LLM provider returned whitespace-only response for code generation. Response: '{response}'. User goal: {task_input.user_goal}")
             
-            # Gather unified discovery results
-            try:
-                discovery_results = await self._universal_discovery(
-                    task_input.project_path or ".", 
-                    ["environment", "dependencies", "structure", "code_patterns"]
-                )
-                
-                technology_context = await self._universal_technology_discovery(
-                    task_input.project_path or "."
-                )
-            except Exception:
-                self.logger.warning("Could not use unified discovery, using fallback values")
-                discovery_results = "{}"
-                technology_context = "{}"
+            if len(response.strip()) < 50:
+                raise ValueError(f"LLM code response too short for meaningful code ({len(response)} chars). Expected substantial Python code. Response: '{response}'. User goal: {task_input.user_goal}")
             
-            # Prepare template variables for rendering (unified approach)
-            template_vars = {
-                "user_goal": task_input.user_goal or task_input.task_description,
-                "project_path": task_input.project_path,
-                "project_context": project_context,
-                "project_id": task_input.project_id,
-                "target_file_path": task_input.target_file_path or "",
-                "programming_language": task_input.programming_language or "python",
-                "discovery_results": discovery_results,
-                "technology_context": technology_context
-            }
+            # Validate it looks like code
+            response_lower = response.lower()
+            if "import " not in response_lower and "def " not in response_lower and "class " not in response_lower:
+                raise ValueError(f"LLM response doesn't appear to contain Python code (no 'import', 'def', or 'class' found). Response: '{response}'. User goal: {task_input.user_goal}")
             
-            # Render the user prompt template with variables
-            rendered_prompt = self.prompt_manager.get_rendered_prompt_template(
-                prompt_template.user_prompt_template,
-                template_vars
-            )
+            self.logger.info(f"📝 Code generated: {len(response)} characters")
+            self.logger.info(f"📝 Code preview: {response[:200]}...")
             
-            self.logger.info("Using YAML prompt template")
-            return rendered_prompt
+            return response.strip()
             
         except Exception as e:
-            self.logger.warning(f"Could not load YAML prompt template: {e}, using built-in fallback")
-            
-            # Built-in fallback prompt
-            return f"""You are a code generation agent. Generate complete, working code for this project.
+            error_msg = f"""SmartCodeGeneratorAgent code generation failed:
 
-PROJECT CONTEXT:
-{project_context}
+ERROR: {e}
 
-INSTRUCTIONS:
-1. Analyze the project context, user goal, and any existing documentation
-2. Determine what files need to be created or modified
-3. Generate complete, production-ready code for each file
-4. Return a JSON response with this exact structure:
+PROMPT USED ({len(prompt)} chars):
+{prompt}
 
-{{
-    "files": [
-        {{
-            "path": "relative/file/path.py",
-            "content": "complete file content here",
-            "description": "what this file does"
-        }}
-    ],
-    "confidence": 0.85,
-    "reasoning": "explanation of your approach and decisions"
-}}
+INPUT CONTEXT:
+- User Goal: {task_input.user_goal}
+- Project Path: {task_input.project_path}
+- Project Info: {project_info}
+"""
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
-REQUIREMENTS:
-- Generate COMPLETE, working code (not pseudocode or templates)
-- Include proper imports, error handling, and documentation
-- Follow best practices for the target language
-- Code must be syntactically correct and runnable
-- If architect documentation exists, follow their specifications
-- Include comprehensive docstrings and comments
-- Implement proper logging and error handling
-
-TARGET: {task_input.target_file_path or "Create appropriate files"}
-LANGUAGE: {task_input.programming_language or "python"}
-
-Return ONLY the JSON response, no additional text."""
-
-    async def _execute_file_instructions(self, instructions: Dict[str, Any], project_path: str) -> List[Dict[str, Any]]:
-        """
-        Execute the LLM's file creation instructions using MCP tools.
-        """
-        generated_files = []
-        files_to_create = instructions.get("files", [])
+    async def _autonomous_file_creation(self, task_input: SmartCodeGeneratorInput, code_content: str) -> List[Dict[str, Any]]:
+        """Actually create files using MCP tools with detailed validation."""
+        if not code_content or not code_content.strip():
+            raise ValueError(f"Cannot create file with empty code content. User goal: {task_input.user_goal}")
         
-        self.logger.info(f"Executing file creation instructions for {len(files_to_create)} files")
+        created_files = []
         
-        for file_instruction in files_to_create:
-            file_path = file_instruction.get("path", "")
-            content = file_instruction.get("content", "")
-            description = file_instruction.get("description", "")
-            
-            if not file_path or not content:
-                self.logger.warning(f"Skipping incomplete file instruction: {file_instruction}")
-                continue
-                
-            try:
-                # Ensure path is relative and safe
-                safe_path = str(Path(file_path)).replace("..", "")
-                full_path = Path(project_path) / safe_path
-                
-                # Create directory if needed
-                full_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Write file using MCP tools
-                write_result = await self._call_mcp_tool("filesystem_write_file", {
-                    "file_path": str(full_path),
-                    "content": content
-                })
-                
-                if write_result.get("success"):
-                    generated_files.append({
-                        "file_path": safe_path,
-                        "full_path": str(full_path),
-                        "content_length": len(content),
-                        "description": description,
-                        "status": "success"
-                    })
-                    self.logger.info(f"✓ Generated: {safe_path} ({len(content)} chars)")
-                else:
-                    generated_files.append({
-                        "file_path": safe_path,
-                        "status": "error",
-                        "error": write_result.get("error", "Write failed")
-                    })
-                    self.logger.error(f"✗ Failed to write: {safe_path}")
-                    
-            except Exception as e:
-                self.logger.error(f"Error creating file {file_path}: {e}")
-                generated_files.append({
-                    "file_path": file_path,
-                    "status": "error", 
-                    "error": str(e)
-                })
+        # Determine appropriate filename
+        filename = self._determine_filename(task_input)
+        if not filename or not filename.strip():
+            raise ValueError(f"Failed to determine filename for code. User goal: {task_input.user_goal}")
         
-        return generated_files
-
-    async def _fallback_single_file(self, response: str, task_input: SmartCodeGeneratorInput) -> Dict[str, Any]:
-        """
-        Fallback when LLM doesn't return structured JSON - treat response as single file content.
-        """
+        # Clean up code content
+        clean_content = self._clean_code_response(code_content)
+        
+        if not clean_content or len(clean_content.strip()) < 20:
+            raise ValueError(f"Code content too short after cleaning ({len(clean_content)} chars). Original: '{code_content}'. Cleaned: '{clean_content}'. User goal: {task_input.user_goal}")
+        
+        self.logger.info(f"💾 Creating file: {filename}")
+        
         try:
-            # Determine filename from context
-            if task_input.target_file_path:
-                filename = task_input.target_file_path
-            elif task_input.user_goal:
-                # Simple heuristic based on goal
-                goal_lower = task_input.user_goal.lower()
-                if "cli" in goal_lower:
-                    filename = "main.py"
-                elif "web" in goal_lower or "api" in goal_lower:
-                    filename = "app.py"
-                elif "script" in goal_lower:
-                    filename = "script.py"
-                else:
-                    filename = "main.py"
-            else:
-                filename = "generated_code.py"
-            
-            # Clean up response (remove markdown formatting if present)
-            content = self._clean_code_response(response)
-            
-            full_path = Path(task_input.project_path) / filename
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            
+            # Use MCP tools to write the file
             write_result = await self._call_mcp_tool("filesystem_write_file", {
-                "file_path": str(full_path),
-                "content": content
+                "file_path": filename,
+                "content": clean_content,
+                "project_path": task_input.project_path
             })
             
-            if write_result.get("success"):
-                self.logger.info(f"✓ Generated fallback file: {filename}")
-                return {
-                    "success": True,
-                    "files": [{
-                        "file_path": filename,
-                        "full_path": str(full_path),
-                        "content_length": len(content),
-                        "description": "Generated code file (fallback)",
-                        "status": "success"
-                    }],
-                    "confidence": 0.7
-                }
-            else:
-                return {"success": False, "error": "Failed to write fallback file"}
-                
+            if not write_result:
+                raise ValueError(f"MCP tool returned None/empty result for file creation. Filename: {filename}")
+            
+            if not write_result.get("success"):
+                error_msg = write_result.get("error", "Unknown MCP tool error")
+                raise ValueError(f"MCP tool failed to create {filename}: {error_msg}. Write result: {write_result}")
+            
+            created_files.append({
+                "file_path": filename,
+                "full_path": f"{task_input.project_path}/{filename}",
+                "content_length": len(clean_content),
+                "description": f"Generated {filename} for: {task_input.user_goal}",
+                "status": "success"
+            })
+            self.logger.info(f"✅ Successfully created: {filename} ({len(clean_content)} chars)")
+            
+            # Also create a basic requirements.txt if needed
+            if "import " in clean_content and not any("requirements" in f.get("file_path", "") for f in created_files):
+                req_file = await self._create_requirements_file(task_input, clean_content)
+                if req_file:
+                    created_files.append(req_file)
+            
+            if not created_files:
+                raise ValueError(f"No files were created successfully. User goal: {task_input.user_goal}")
+            
+            return created_files
+            
         except Exception as e:
-            return {"success": False, "error": f"Fallback generation failed: {str(e)}"}
+            error_msg = f"""SmartCodeGeneratorAgent file creation failed:
+
+ERROR: {e}
+
+CONTEXT:
+- Filename: {filename}
+- Content length: {len(clean_content)} chars
+- User goal: {task_input.user_goal}
+- Project path: {task_input.project_path}
+
+CONTENT PREVIEW:
+{clean_content[:500]}
+"""
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+
+    async def _create_requirements_file(self, task_input: SmartCodeGeneratorInput, code_content: str):
+        """Create a basic requirements.txt file."""
+        # Basic requirements based on common imports
+        requirements = []
+        if "requests" in code_content:
+            requirements.append("requests")
+        if "numpy" in code_content:
+            requirements.append("numpy")
+        if "pandas" in code_content:
+            requirements.append("pandas")
+        if "click" in code_content:
+            requirements.append("click")
+        if "rich" in code_content:
+            requirements.append("rich")
+        
+        if requirements:
+            req_content = "\n".join(requirements) + "\n"
+        else:
+            req_content = "# Add your project dependencies here\n"
+        
+        write_result = await self._call_mcp_tool("filesystem_write_file", {
+            "file_path": "requirements.txt",
+            "content": req_content,
+            "project_path": task_input.project_path
+        })
+        
+        if write_result.get("success"):
+            self.logger.info("📦 Created requirements.txt")
+            return {
+                "file_path": "requirements.txt",
+                "full_path": f"{task_input.project_path}/requirements.txt",
+                "description": "Basic requirements file",
+                "status": "success"
+            }
+        else:
+            error_msg = write_result.get("error", "Unknown error")
+            self.logger.error(f"Failed to create requirements.txt: {error_msg}")
+            return None
+
+    def _determine_filename(self, task_input: SmartCodeGeneratorInput) -> str:
+        """
+        Determine the filename for the generated code based on context.
+        """        
+        # Infer filename from user goal and language
+        language = "python"  # Default for autonomous mode
+        
+        if task_input.user_goal:
+            goal_lower = task_input.user_goal.lower()
+            
+            # Language-specific filename patterns
+            if language.lower() == "python":
+                if "cli" in goal_lower or "command" in goal_lower or "scanner" in goal_lower:
+                    return "main.py"
+                elif "web" in goal_lower or "api" in goal_lower or "server" in goal_lower:
+                    return "app.py"
+                elif "script" in goal_lower:
+                    return "script.py"
+                else:
+                    return "main.py"
+            elif language.lower() == "javascript":
+                if "web" in goal_lower or "frontend" in goal_lower:
+                    return "app.js"
+                elif "server" in goal_lower or "backend" in goal_lower:
+                    return "server.js"
+                else:
+                    return "index.js"
+            elif language.lower() == "java":
+                return "Main.java"
+            elif language.lower() == "cpp" or language.lower() == "c++":
+                return "main.cpp"
+            elif language.lower() == "c":
+                return "main.c"
+            else:
+                return f"main.{language.lower()}"
+        
+        # Fallback based on language
+        if language.lower() == "python":
+            return "main.py"
+        elif language.lower() == "javascript":
+            return "index.js"
+        elif language.lower() == "java":
+            return "Main.java"
+        else:
+            return f"main.{language.lower()}"
 
     def _clean_code_response(self, response: str) -> str:
-        """Remove markdown formatting from LLM response to get clean code."""
+        """Remove markdown formatting and extract code from LLM response."""
         response = response.strip()
+        
+        # First, try to extract from JSON if it looks like JSON
+        if response.startswith('{') and response.endswith('}'):
+            try:
+                json_data = json.loads(response)
+                
+                # Look for the generated_code field (YAML template format)
+                if "generated_code" in json_data:
+                    code_content = json_data["generated_code"]
+                    self.logger.info("Extracted code from 'generated_code' field in JSON response")
+                    return code_content
+                
+                # Look for other common code fields
+                code_fields = ["code", "content", "source", "implementation", "program", "script"]
+                for field in code_fields:
+                    if field in json_data and isinstance(json_data[field], str):
+                        self.logger.info(f"Extracted code from '{field}' field in JSON response")
+                        return json_data[field]
+                
+                # Look for any string field that contains code-like patterns
+                for key, value in json_data.items():
+                    if isinstance(value, str) and len(value) > 50:
+                        # Check for code-like patterns
+                        if any(pattern in value for pattern in ["import ", "def ", "class ", "function", "var ", "const ", "#include", "public class"]):
+                            self.logger.info(f"Found code-like content in '{key}' field")
+                            return value
+                            
+            except json.JSONDecodeError:
+                self.logger.warning("Response looks like JSON but failed to parse, trying markdown extraction")
         
         # Remove markdown code blocks
         if response.startswith('```'):
@@ -562,4 +582,59 @@ Return ONLY the JSON response, no additional text."""
         return SmartCodeGeneratorInput
 
     def get_output_schema(self) -> Type[SmartCodeGeneratorOutput]:
-        return SmartCodeGeneratorOutput 
+        return SmartCodeGeneratorOutput
+
+    async def _generate_smart_code(self, task_input: SmartCodeGeneratorAgentInput) -> Dict[str, Any]:
+        """
+        AUTONOMOUS CODE GENERATION
+        No hardcoded logic - agent analyzes project and decides what code to generate
+        """
+        try:
+            # Get autonomous code generation prompt
+            prompt_template = self.prompt_manager.get_prompt_definition(
+                "smart_code_generator_agent_v1_prompt",
+                "1.0.0",
+                sub_path="autonomous_engine"
+            )
+            
+            # Build context for autonomous code generation
+            context_parts = []
+            context_parts.append(f"User Goal: {task_input.user_goal}")
+            context_parts.append(f"Project Path: {task_input.project_path}")
+            
+            if task_input.project_specifications:
+                context_parts.append(f"Project Specifications: {json.dumps(task_input.project_specifications, indent=2)}")
+            
+            context_data = "\n".join(context_parts)
+            
+            # AUTONOMOUS EXECUTION: Let the agent decide what code to generate
+            # Available MCP tools: filesystem_*, text_editor_*, web_search, etc.
+            formatted_prompt = prompt_template["content"].format(
+                context_data=context_data,
+                available_mcp_tools=", ".join(self.mcp_tools.keys())
+            )
+            
+            self.logger.info(f"[AUTONOMOUS] Agent generating code autonomously")
+            
+            # Let the agent work autonomously
+            response = await self._call_llm_with_retry(
+                messages=[{"role": "user", "content": formatted_prompt}],
+                max_tokens=16000,  # Larger for code generation
+                temperature=0.1
+            )
+            
+            return {
+                "status": "success",
+                "code_generation_result": response,
+                "agent_mode": "autonomous",
+                "user_goal": task_input.user_goal,
+                "project_path": task_input.project_path
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Autonomous code generation failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "agent_mode": "autonomous_failed"
+            } 

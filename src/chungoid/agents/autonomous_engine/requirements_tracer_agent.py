@@ -175,28 +175,52 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
             )
 
     def _parse_inputs(self, inputs: Any) -> TracerAgentInput:
-        """Parse inputs cleanly into TracerAgentInput."""
-        if isinstance(inputs, TracerAgentInput):
-            return inputs
-        elif isinstance(inputs, dict):
-            return TracerAgentInput(**inputs)
-        elif hasattr(inputs, 'dict'):
-            return TracerAgentInput(**inputs.dict())
-        else:
-            raise ValueError(f"Invalid input type: {type(inputs)}")
+        """Parse inputs cleanly into TracerAgentInput with detailed validation."""
+        try:
+            if isinstance(inputs, TracerAgentInput):
+                # Validate existing input object
+                if not inputs.user_goal or not inputs.user_goal.strip():
+                    raise ValueError("TracerAgentInput has empty or whitespace user_goal")
+                return inputs
+            elif isinstance(inputs, dict):
+                # Validate required fields before creation
+                if 'user_goal' not in inputs:
+                    raise ValueError("Missing required field 'user_goal' in input dictionary")
+                if not inputs['user_goal'] or not inputs['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return TracerAgentInput(**inputs)
+            elif hasattr(inputs, 'dict'):
+                input_dict = inputs.dict()
+                if 'user_goal' not in input_dict:
+                    raise ValueError("Missing required field 'user_goal' in input object")
+                if not input_dict['user_goal'] or not input_dict['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return TracerAgentInput(**input_dict)
+            else:
+                raise ValueError(f"Invalid input type: {type(inputs)}. Expected TracerAgentInput, dict, or object with dict() method. Received: {inputs}")
+        except Exception as e:
+            raise ValueError(f"Input parsing failed for RequirementsTracerAgent: {e}. Input received: {inputs}")
 
     async def _generate_traceability_analysis(self, task_input: TracerAgentInput) -> Dict[str, Any]:
         """
-        Generate traceability analysis using unified discovery + YAML template.
+        Generate traceability analysis using unified discovery + YAML template with detailed validation.
         Pure unified approach - no hardcoded phases or traceability logic.
         """
         try:
-            # Get YAML template (no fallbacks)
+            # Validate prompt template access
             prompt_template = self.prompt_manager.get_prompt_definition(
                 "requirements_tracer_agent_v1_prompt",
                 "0.2.0",
                 sub_path="autonomous_engine"
             )
+            
+            if not prompt_template:
+                raise ValueError("Failed to load traceability prompt template - returned None/empty")
+            
+            if not hasattr(prompt_template, 'user_prompt_template'):
+                raise ValueError(f"Prompt template missing 'user_prompt_template' attribute. Available attributes: {dir(prompt_template)}")
             
             # Unified discovery for intelligent traceability context
             discovery_results = await self._universal_discovery(
@@ -204,14 +228,23 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "architecture"]
             )
             
+            if not discovery_results:
+                raise ValueError("Universal discovery returned None/empty results")
+            
             technology_context = await self._universal_technology_discovery(
                 task_input.project_path
             )
+            
+            if not technology_context:
+                raise ValueError("Technology discovery returned None/empty results")
             
             # Build artifacts from discovery for template compatibility
             artifacts_analysis = await self._build_artifacts_from_discovery(
                 task_input, discovery_results, technology_context
             )
+            
+            if not artifacts_analysis:
+                raise ValueError("Artifacts analysis building returned None/empty data")
             
             # Build template variables for maximum LLM traceability intelligence
             template_vars = {
@@ -237,11 +270,14 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 "intelligent_context": task_input.intelligent_context
             }
             
-            # Render template
-            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
-                prompt_template.user_prompt_template,
-                template_vars
-            )
+            # Render template with validation
+            try:
+                formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
+                    prompt_template.user_prompt_template,
+                    template_vars
+                )
+            except Exception as e:
+                raise ValueError(f"Failed to render traceability prompt template: {e}. Template variables: {list(template_vars.keys())}")
             
             # Get system prompt if available
             system_prompt = getattr(prompt_template, 'system_prompt', None)
@@ -254,38 +290,80 @@ class RequirementsTracerAgent_v1(UnifiedAgent):
                 max_tokens=2048
             )
             
-            # Parse LLM response (expecting JSON from template)
+            # Detailed response validation
+            if not response:
+                raise ValueError(f"LLM provider returned None/empty response for traceability. Prompt length: {len(formatted_prompt)} chars. User goal: {task_input.user_goal}")
+            
+            if not response.strip():
+                raise ValueError(f"LLM provider returned whitespace-only response for traceability. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            if len(response.strip()) < 50:
+                raise ValueError(f"LLM traceability response too short ({len(response)} chars). Expected substantial traceability analysis. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            # Validate response content quality
+            response_lower = response.lower()
+            traceability_keywords = ["traceability", "requirement", "implementation", "coverage", "mapping", "analysis"]
+            if not any(keyword in response_lower for keyword in traceability_keywords):
+                raise ValueError(f"LLM response doesn't appear to contain traceability content (none of {traceability_keywords} found). Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            # Parse LLM response (expecting JSON from template) - NO FALLBACKS
             try:
-                result = json.loads(response)
+                json_str = self._extract_json_from_response(response)
+                if not json_str:
+                    raise ValueError(f"No JSON found in traceability response. Response: '{response}'")
                 
-                # Transform template output to our clean schema
-                return {
-                    "traceability_report_md": result.get("traceability_report_md", ""),
-                    "requirements_coverage": self._extract_requirements_coverage(result, discovery_results),
-                    "gap_analysis": self._extract_gap_analysis(result, discovery_results),
-                    "traceability_matrix": self._extract_traceability_matrix(result, discovery_results),
-                    "coverage_metrics": self._calculate_coverage_metrics(result, discovery_results),
-                    "quality_assessment": {
-                        "overall_quality": result.get("assessment_confidence", {}).get("level", "Medium"),
-                        "completeness": discovery_results.get("completeness_assessment", "moderate"),
-                        "accuracy": result.get("assessment_confidence", {}).get("value", 0.7),
-                        "methodology": "unified_discovery_with_llm_analysis"
-                    },
-                    "recommendations": self._extract_recommendations(result, discovery_results),
-                    "confidence_score": ConfidenceScore(
-                        value=result.get("assessment_confidence", {}).get("value", 0.7),
-                        method="llm_traceability_assessment",
-                        explanation=result.get("assessment_confidence", {}).get("explanation", "Traceability analysis completed with unified discovery")
-                    )
-                }
-                
+                result = json.loads(json_str)
+                if not isinstance(result, dict):
+                    raise ValueError(f"Parsed JSON is not a dictionary: {type(result)}. JSON: '{json_str}'")
+                    
             except json.JSONDecodeError as e:
-                self.logger.error(f"LLM response not valid JSON: {e}")
-                raise ValueError(f"LLM response parsing failed: {e}")
-                
+                raise ValueError(f"Failed to parse JSON from traceability response: {e}. JSON string: '{json_str}'. Full response: '{response}'")
+            except Exception as e:
+                raise ValueError(f"Failed to extract/parse JSON from traceability response: {e}. Response: '{response}'")
+            
+            # Validate required fields in result
+            if not result.get("traceability_report_md"):
+                raise ValueError(f"Missing 'traceability_report_md' in parsed response. Result keys: {list(result.keys())}. Response: '{response}'")
+            
+            # Transform template output to our clean schema
+            return {
+                "traceability_report_md": result.get("traceability_report_md", ""),
+                "requirements_coverage": self._extract_requirements_coverage(result, discovery_results),
+                "gap_analysis": self._extract_gap_analysis(result, discovery_results),
+                "traceability_matrix": self._extract_traceability_matrix(result, discovery_results),
+                "coverage_metrics": self._calculate_coverage_metrics(result, discovery_results),
+                "quality_assessment": {
+                    "overall_quality": result.get("assessment_confidence", {}).get("level", "Medium"),
+                    "completeness": discovery_results.get("completeness_assessment", "moderate"),
+                    "accuracy": result.get("assessment_confidence", {}).get("value", 0.7),
+                    "methodology": "unified_discovery_with_llm_analysis"
+                },
+                "recommendations": self._extract_recommendations(result, discovery_results),
+                "confidence_score": ConfidenceScore(
+                    value=result.get("assessment_confidence", {}).get("value", 0.7),
+                    method="llm_traceability_assessment",
+                    explanation=result.get("assessment_confidence", {}).get("explanation", "Traceability analysis completed with unified discovery")
+                )
+            }
+            
         except Exception as e:
-            self.logger.error(f"Traceability analysis failed: {e}")
-            raise
+            error_msg = f"""RequirementsTracerAgent traceability generation failed:
+
+ERROR: {e}
+
+INPUT CONTEXT:
+- User Goal: {task_input.user_goal}
+- Project Path: {task_input.project_path}
+- Traceability Scope: {task_input.traceability_scope}
+- Source Focus: {task_input.source_focus}
+- Target Focus: {task_input.target_focus}
+
+TRACEABILITY CONTEXT:
+- Project Specifications: {task_input.project_specifications}
+- Intelligent Context: {task_input.intelligent_context}
+"""
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
     async def _build_artifacts_from_discovery(
         self, 

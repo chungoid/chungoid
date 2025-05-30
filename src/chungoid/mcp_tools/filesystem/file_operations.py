@@ -29,6 +29,24 @@ from chungoid.utils.execution_state_persistence import ResumableExecutionService
 logger = logging.getLogger(__name__)
 
 
+def _safe_relative_path(path: Path, root: Path) -> str:
+    """
+    Safely compute relative path without throwing ValueError.
+    
+    Args:
+        path: The path to make relative
+        root: The root path to make it relative to
+        
+    Returns:
+        str: Relative path if possible, otherwise absolute path
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        # Path is not relative to root, return absolute path
+        return str(path)
+
+
 def _ensure_project_context(project_path: Optional[str] = None, project_id: Optional[str] = None) -> Path:
     """
     Ensures project context is set for file operations.
@@ -225,7 +243,7 @@ async def filesystem_read_file(
             "encoding": encoding,
             "size_bytes": file_size,
             "file_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "metadata": metadata,
             "project_path": str(project_root),
             "project_id": project_id
@@ -341,7 +359,7 @@ async def filesystem_write_file(
         result = {
             "success": True,
             "file_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "size_bytes": content_bytes,
             "encoding": encoding,
             "backup_path": str(backup_path) if backup_path else None,
@@ -447,8 +465,8 @@ async def filesystem_copy_file(
             "success": True,
             "source_path": str(source),
             "destination_path": str(destination),
-            "source_relative": str(source.relative_to(project_root)),
-            "destination_relative": str(destination.relative_to(project_root)),
+            "source_relative": _safe_relative_path(source, project_root),
+            "destination_relative": _safe_relative_path(destination, project_root),
             "size_bytes": source_size,
             "preserved_metadata": preserve_metadata,
             "overwrite": overwrite and destination.exists(),
@@ -534,8 +552,8 @@ async def filesystem_move_file(
             "success": True,
             "source_path": str(source),
             "destination_path": str(destination),
-            "source_relative": source_path if not os.path.isabs(source_path) else str(source.relative_to(project_root)),
-            "destination_relative": destination_path if not os.path.isabs(destination_path) else str(destination.relative_to(project_root)),
+            "source_relative": _safe_relative_path(source, project_root),
+            "destination_relative": _safe_relative_path(destination, project_root),
             "size_bytes": source_size,
             "overwrite": overwrite and destination.exists(),
             "project_path": str(project_root)
@@ -614,7 +632,7 @@ async def filesystem_safe_delete(
         result = {
             "success": True,
             "deleted_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "size_bytes": file_size,
             "backup_path": str(backup_path) if backup_path else None,
             "backup_created": backup_path is not None,
@@ -720,7 +738,7 @@ async def filesystem_get_file_info(
         file_info = {
             "success": True,
             "file_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "name": resolved_path.name,
             "extension": resolved_path.suffix,
             "size_bytes": stat.st_size,
@@ -873,7 +891,7 @@ async def filesystem_search_files(
                         match_found = False
                         match_info = {
                             "file_path": str(item),
-                            "relative_path": str(item.relative_to(project_root)),
+                            "relative_path": _safe_relative_path(item, project_root),
                             "name": item.name,
                             "size_bytes": item.stat().st_size,
                             "modified_time": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
@@ -941,7 +959,7 @@ async def filesystem_search_files(
             "pattern": pattern,
             "search_type": search_type,
             "directory_path": str(resolved_path),
-            "relative_path": str(resolved_path.relative_to(project_root)),
+            "relative_path": _safe_relative_path(resolved_path, project_root),
             "case_sensitive": case_sensitive,
             "recursive": recursive,
             "max_results": max_results,

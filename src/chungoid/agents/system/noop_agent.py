@@ -154,43 +154,88 @@ class NoOpAgent_v1(UnifiedAgent):
         context: UEContext, 
         iteration: int
     ) -> IterationResult:
-        """Phase 3 UAEI implementation - Core no-op logic for single iteration."""
-        self.logger.info(f"[NoOp] Starting iteration {iteration + 1}")
+        """Execute a single iteration of the no-op agent with detailed validation."""
+        start_time = time.time()
         
         try:
-            # Convert inputs to proper type
-            if isinstance(context.inputs, dict):
-                task_input = NoOpInput(**context.inputs)
-            elif isinstance(context.inputs, NoOpInput):
-                task_input = context.inputs
-            else:
-                # Fallback for other types
-                task_input = NoOpInput(
-                    passthrough_data=getattr(context.inputs, 'passthrough_data', None)
-                )
+            # Validate execution context
+            if not context:
+                raise ValueError("ExecutionContext is None - cannot execute NoopAgent")
+            
+            if not hasattr(context, 'inputs'):
+                raise ValueError("ExecutionContext missing 'inputs' attribute - cannot execute NoopAgent")
+            
+            if context.inputs is None:
+                raise ValueError("ExecutionContext.inputs is None - cannot execute NoopAgent")
+            
+            # Parse inputs with detailed validation
+            try:
+                if isinstance(context.inputs, NoOpInput):
+                    task_input = context.inputs
+                elif isinstance(context.inputs, dict):
+                    # NoOpInput only has passthrough_data field - no validation needed for optional field
+                    task_input = NoOpInput(**context.inputs)
+                elif hasattr(context.inputs, 'dict'):
+                    input_dict = context.inputs.dict()
+                    task_input = NoOpInput(**input_dict)
+                else:
+                    # Fallback for other types - NoOpInput can handle any data
+                    task_input = NoOpInput(
+                        passthrough_data=getattr(context.inputs, 'passthrough_data', context.inputs)
+                    )
+                        
+            except Exception as e:
+                raise ValueError(f"Input parsing/validation failed for NoOpAgent: {e}. Context inputs type: {type(context.inputs)}, Context inputs: {context.inputs}")
 
-            # Execute no-op operation
-            output = await self._legacy_execute_impl(task_input, context.shared_context)
+            execution_time = time.time() - start_time
             
-            quality_score = 1.0
-            tools_used = []
+            # Validate execution time is reasonable
+            if execution_time < 0:
+                raise ValueError(f"Invalid execution time: {execution_time}. Time calculation error.")
             
-        except Exception as e:
-            self.logger.error(f"NoOp execution failed: {str(e)}")
-            
-            # Create error output
+            # Create validated output
             output = NoOpOutput(
-                message=f"NoOp execution failed: {str(e)}",
-                passthrough_data=None
+                message=f"NoOpAgent executed successfully in {execution_time:.3f}s for iteration {iteration}",
+                passthrough_data=task_input.passthrough_data
             )
             
-            quality_score = 0.1
-            tools_used = []
-        
-        # Return iteration result for Phase 3 multi-iteration support
-        return IterationResult(
-            output=output,
-            quality_score=quality_score,
-            tools_used=tools_used,
-            protocol_used="simple_operations"
-        ) 
+            self.logger.info(f"NoOpAgent completed iteration {iteration} successfully: time={execution_time:.3f}s")
+            
+            return IterationResult(
+                output=output,
+                quality_score=1.0,  # Perfect score for successful no-op
+                tools_used=["input_validation", "execution_timing"],
+                protocol_used="enhanced_noop"
+            )
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_msg = f"""NoOpAgent execution failed:
+
+ERROR: {e}
+
+CONTEXT:
+- Iteration: {iteration}
+- Execution Time: {execution_time:.3f}s
+- Input Type: {type(context.inputs) if context and hasattr(context, 'inputs') else 'No context/inputs'}
+- Input Value: {context.inputs if context and hasattr(context, 'inputs') else 'No context/inputs'}
+
+VALIDATION DETAILS:
+- Context Available: {context is not None}
+- Context Has Inputs: {hasattr(context, 'inputs') if context else False}
+- Inputs Not None: {context.inputs is not None if context and hasattr(context, 'inputs') else False}
+"""
+            self.logger.error(error_msg)
+            
+            # Clean error handling with validated fallback
+            error_output = NoOpOutput(
+                message=f"NoOpAgent execution failed: {str(e)}",
+                passthrough_data=getattr(task_input, 'passthrough_data', None) if 'task_input' in locals() else None
+            )
+            
+            return IterationResult(
+                output=error_output,
+                quality_score=0.0,
+                tools_used=["error_handling"],
+                protocol_used="enhanced_noop"
+            ) 

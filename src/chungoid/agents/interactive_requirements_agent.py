@@ -123,86 +123,126 @@ class InteractiveRequirementsAgent(UnifiedAgent):
 
     async def _execute_iteration(self, context: UEContext, iteration: int) -> IterationResult:
         """
-        Simple requirements gathering iteration: gather project context + let LLM gather requirements.
+        Simple requirements gathering iteration with detailed validation.
         """
         start_time = datetime.datetime.now()
         
         try:
-            self.logger.info(f"Starting simple requirements gathering for: {context.inputs.get('user_goal', 'Unknown project')}")
+            # Validate execution context
+            if not context:
+                raise ValueError("ExecutionContext is None - cannot execute InteractiveRequirementsAgent")
             
-            # Convert context inputs to our input model
-            context_dict = self._convert_pydantic_to_dict(context.inputs)
-            task_input = InteractiveRequirementsInput(**context_dict)
+            if not hasattr(context, 'inputs'):
+                raise ValueError("ExecutionContext missing 'inputs' attribute - cannot execute InteractiveRequirementsAgent")
+            
+            if not context.inputs:
+                raise ValueError("ExecutionContext.inputs is None or empty - cannot execute InteractiveRequirementsAgent")
+            
+            self.logger.info(f"Starting simple requirements gathering for iteration {iteration}")
+            
+            # Convert context inputs to our input model with detailed validation
+            try:
+                if isinstance(context.inputs, InteractiveRequirementsInput):
+                    task_input = context.inputs
+                elif isinstance(context.inputs, dict):
+                    # Validate required fields
+                    if 'project_path' not in context.inputs:
+                        raise ValueError("Missing required field 'project_path' in input dictionary")
+                    if not context.inputs['project_path'] or not context.inputs['project_path'].strip():
+                        raise ValueError("Field 'project_path' cannot be empty or whitespace")
+                    
+                    context_dict = self._convert_pydantic_to_dict(context.inputs)
+                    task_input = InteractiveRequirementsInput(**context_dict)
+                elif hasattr(context.inputs, 'dict'):
+                    input_dict = context.inputs.dict()
+                    if 'project_path' not in input_dict:
+                        raise ValueError("Missing required field 'project_path' in input object")
+                    if not input_dict['project_path'] or not input_dict['project_path'].strip():
+                        raise ValueError("Field 'project_path' cannot be empty or whitespace")
+                    
+                    task_input = InteractiveRequirementsInput(**input_dict)
+                else:
+                    raise ValueError(f"Invalid input type: {type(context.inputs)}. Expected InteractiveRequirementsInput, dict, or object with dict() method. Received: {context.inputs}")
+                    
+                # Final validation of task_input
+                if not task_input.project_path or not task_input.project_path.strip():
+                    raise ValueError("Field 'project_path' cannot be empty or whitespace")
+                        
+            except Exception as e:
+                raise ValueError(f"Input parsing/validation failed for InteractiveRequirementsAgent: {e}. Context inputs type: {type(context.inputs)}, Context inputs: {context.inputs}")
             
             # 1. Gather project context using MCP tools
             project_context = await self._gather_project_context(task_input)
             
+            if not project_context or not project_context.strip():
+                raise ValueError(f"Failed to gather project context or context is empty. Project path: {task_input.project_path}")
+            
             # 2. Let LLM gather requirements (conversation or auto-generate)
             gathering_result = await self._gather_requirements_with_llm(task_input, project_context)
             
-            # 3. Build output
+            if not gathering_result:
+                raise ValueError(f"Requirements gathering returned None/empty result. Project path: {task_input.project_path}")
+            
+            if not gathering_result.get("success"):
+                error_msg = gathering_result.get("error", "Unknown requirements gathering error")
+                raise ValueError(f"Requirements gathering failed: {error_msg}. Project path: {task_input.project_path}")
+            
+            # 3. Build output with validation
             execution_time = (datetime.datetime.now() - start_time).total_seconds()
             
-            if gathering_result["success"]:
-                output = InteractiveRequirementsOutput(
-                    task_id=task_input.task_id,
-                    project_id=task_input.project_id,
-                    status="SUCCESS",
-                    enhanced_goal_file=gathering_result.get("enhanced_goal_file"),
-                    conversation_turns=gathering_result.get("conversation_turns", 0),
-                    requirements_gathered=gathering_result.get("requirements_gathered", {}),
-                    requirements_summary=gathering_result.get("requirements_summary", "Requirements gathering completed"),
-                    recommendations=gathering_result.get("recommendations", []),
-                    confidence_level=gathering_result.get("confidence_level", 0.8),
-                    message=f"Requirements gathering completed successfully in {execution_time:.1f}s",
-                    total_gathering_time=execution_time
+            if execution_time < 0:
+                raise ValueError(f"Invalid execution time: {execution_time}. Time calculation error.")
+            
+            output = InteractiveRequirementsOutput(
+                task_id=task_input.task_id,
+                project_id=task_input.project_id,
+                status="SUCCESS",
+                enhanced_goal_file=gathering_result.get("enhanced_goal_file"),
+                conversation_turns=gathering_result.get("conversation_turns", 0),
+                requirements_gathered=gathering_result.get("requirements_gathered", {}),
+                requirements_summary=gathering_result.get("requirements_summary", "Requirements gathering completed"),
+                recommendations=gathering_result.get("recommendations", []),
+                confidence_level=gathering_result.get("confidence_level", 0.8),
+                message=f"Requirements gathering completed successfully in {execution_time:.1f}s",
+                total_gathering_time=execution_time
+            )
+            
+            self.logger.info("Requirements gathering completed successfully")
+            return IterationResult(
+                iteration_number=iteration,
+                completion_reason=CompletionReason.SUCCESS,
+                agent_output=output,
+                execution_metadata=ExecutionMetadata(
+                    mode=ExecutionMode.SINGLE_PASS,
+                    protocol_used="simple_requirements_gathering",
+                    execution_time=execution_time,
+                    iterations_planned=1,
+                    tools_utilized=[]
                 )
-                
-                self.logger.info("Requirements gathering completed successfully")
-                return IterationResult(
-                    iteration_number=iteration,
-                    completion_reason=CompletionReason.SUCCESS,
-                    agent_output=output,
-                    execution_metadata=ExecutionMetadata(
-                        mode=ExecutionMode.SINGLE_PASS,
-                        protocol_used="simple_requirements_gathering",
-                        execution_time=execution_time,
-                        iterations_planned=1,
-                        tools_utilized=[]
-                    )
-                )
-            else:
-                error_msg = gathering_result.get("error", "Requirements gathering failed")
-                output = InteractiveRequirementsOutput(
-                    task_id=task_input.task_id,
-                    project_id=task_input.project_id,
-                    status="FAILURE",
-                    requirements_summary="Requirements gathering failed",
-                    message=f"Requirements gathering failed: {error_msg}",
-                    error_message=error_msg
-                )
-                
-                self.logger.error(f"Requirements gathering failed: {error_msg}")
-                return IterationResult(
-                    iteration_number=iteration,
-                    completion_reason=CompletionReason.ERROR,
-                    agent_output=output,
-                    execution_metadata=ExecutionMetadata(
-                        mode=ExecutionMode.SINGLE_PASS,
-                        protocol_used="simple_requirements_gathering",
-                        execution_time=execution_time,
-                        iterations_planned=1,
-                        tools_utilized=[]
-                    )
-                )
+            )
                 
         except Exception as e:
             execution_time = (datetime.datetime.now() - start_time).total_seconds()
-            self.logger.error(f"Requirements gathering iteration failed: {e}", exc_info=True)
+            error_msg = f"""InteractiveRequirementsAgent execution failed:
+
+ERROR: {e}
+
+CONTEXT:
+- Iteration: {iteration}
+- Execution Time: {execution_time:.3f}s
+- Input Type: {type(context.inputs) if context and hasattr(context, 'inputs') else 'No context/inputs'}
+- Input Value: {context.inputs if context and hasattr(context, 'inputs') else 'No context/inputs'}
+
+REQUIREMENTS GATHERING DETAILS:
+- Project Path: {getattr(task_input, 'project_path', 'Unknown') if 'task_input' in locals() else 'Not parsed'}
+- User Goal: {getattr(task_input, 'user_goal', 'Unknown') if 'task_input' in locals() else 'Not parsed'}
+- Interactive Mode: {getattr(task_input, 'interactive_mode', 'Unknown') if 'task_input' in locals() else 'Not parsed'}
+"""
+            self.logger.error(error_msg)
             
             output = InteractiveRequirementsOutput(
-                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())),
-                project_id=getattr(task_input, 'project_id', str(uuid.uuid4())),
+                task_id=getattr(task_input, 'task_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
+                project_id=getattr(task_input, 'project_id', str(uuid.uuid4())) if 'task_input' in locals() else str(uuid.uuid4()),
                 status="ERROR",
                 requirements_summary="Requirements gathering encountered an error",
                 message=f"Requirements gathering error: {str(e)}",
@@ -330,12 +370,19 @@ class InteractiveRequirementsAgent(UnifiedAgent):
 
     async def _gather_requirements_with_llm(self, task_input: InteractiveRequirementsInput, project_context: str) -> Dict[str, Any]:
         """
-        Main method: Use YAML prompt template + project context to let LLM gather requirements.
+        Main method: Use YAML prompt template + project context to let LLM gather requirements with detailed validation.
         Either through conversation or auto-generation.
         """
         try:
-            # Get main prompt from YAML template (or fallback)
+            # Validate inputs
+            if not project_context or not project_context.strip():
+                raise ValueError(f"Project context is empty or whitespace. Cannot gather requirements without context. Project path: {task_input.project_path}")
+            
+            # Get main prompt from YAML template - NO FALLBACKS
             main_prompt = await self._get_main_prompt(task_input, project_context)
+            
+            if not main_prompt or not main_prompt.strip():
+                raise ValueError(f"Failed to get main prompt from YAML template or prompt is empty. Project path: {task_input.project_path}")
             
             # Let LLM run the show
             self.logger.info("Gathering requirements with LLM...")
@@ -345,99 +392,84 @@ class InteractiveRequirementsAgent(UnifiedAgent):
                 temperature=0.7
             )
             
+            # Detailed LLM response validation
             if not response:
-                return {"success": False, "error": "No response from LLM"}
+                raise ValueError(f"LLM provider returned None/empty response for requirements gathering. Prompt length: {len(main_prompt)} chars. Project path: {task_input.project_path}")
             
-            # Try to parse structured response 
+            if not response.strip():
+                raise ValueError(f"LLM provider returned whitespace-only response for requirements gathering. Response: '{response}'. Project path: {task_input.project_path}")
+            
+            if len(response.strip()) < 50:
+                raise ValueError(f"LLM requirements response too short ({len(response)} chars). Expected substantial requirements analysis. Response: '{response}'. Project path: {task_input.project_path}")
+            
+            # Validate response content quality
+            response_lower = response.lower()
+            requirements_keywords = ["requirement", "specification", "feature", "functionality", "goal", "objective"]
+            if not any(keyword in response_lower for keyword in requirements_keywords):
+                raise ValueError(f"LLM response doesn't appear to contain requirements content (none of {requirements_keywords} found). Response: '{response}'. Project path: {task_input.project_path}")
+            
+            # Parse structured response - NO FALLBACKS, FAIL LOUDLY
             try:
                 requirements_result = json.loads(response)
-                self.logger.info(f"LLM provided structured requirements")
+                if not isinstance(requirements_result, dict):
+                    raise ValueError(f"LLM response is not a valid JSON dictionary: {type(requirements_result)}. Response: '{response}'")
+                    
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Failed to parse LLM response as JSON for requirements gathering: {e}. Response: '{response}'. Project path: {task_input.project_path}")
+            except Exception as e:
+                raise ValueError(f"Failed to process LLM response for requirements gathering: {e}. Response: '{response}'. Project path: {task_input.project_path}")
                 
-                # Execute any file operations (like writing enhanced goal file)
-                execution_results = await self._execute_requirements_plan(requirements_result, task_input)
-                
-                return {
-                    "success": True,
-                    **execution_results,
-                    "llm_response": response
-                }
-                
-            except json.JSONDecodeError:
-                # Fallback: treat response as requirements text
-                self.logger.info("LLM response not JSON, treating as requirements text")
-                return await self._fallback_requirements_processing(response, task_input)
-                
+            self.logger.info(f"LLM provided structured requirements")
+            
+            # Execute any file operations (like writing enhanced goal file)
+            execution_results = await self._execute_requirements_plan(requirements_result, task_input)
+            
+            return {
+                "success": True,
+                **execution_results,
+                "llm_response": response
+            }
+            
         except Exception as e:
-            self.logger.error(f"LLM requirements gathering failed: {e}")
-            return {"success": False, "error": str(e)}
+            error_msg = f"""InteractiveRequirementsAgent LLM requirements gathering failed:
+
+ERROR: {e}
+
+INPUT CONTEXT:
+- Project Path: {task_input.project_path}
+- User Goal: {task_input.user_goal}
+- Interactive Mode: {task_input.interactive_mode}
+- Auto Generate: {task_input.auto_generate}
+
+LLM CONTEXT:
+- Project Context Length: {len(project_context) if project_context else 0} chars
+- Project Context Preview: {project_context[:300] if project_context else 'None'}...
+"""
+            self.logger.error(error_msg)
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     async def _get_main_prompt(self, task_input: InteractiveRequirementsInput, project_context: str) -> str:
         """
         Get the main prompt template from YAML and inject project context.
-        Falls back to built-in prompt if YAML not available.
+        NO FALLBACKS - fail if YAML not available.
         """
-        try:
-            # Try to get prompt from YAML template
-            prompt_template = await self.prompt_manager.get_prompt(
-                self.PROMPT_TEMPLATE_NAME,
-                {
-                    "user_goal": task_input.user_goal or "Gather project requirements",
-                    "project_path": task_input.project_path,
-                    "project_context": project_context,
-                    "interactive_mode": task_input.interactive_mode,
-                    "auto_generate": task_input.auto_generate,
-                    "max_conversation_turns": task_input.max_conversation_turns
-                }
-            )
-            self.logger.info("Using YAML prompt template")
-            return prompt_template
-            
-        except Exception as e:
-            self.logger.warning(f"Could not load YAML prompt template: {e}, using built-in fallback")
-            
-            # Built-in fallback prompt
-            mode_instruction = "conduct an interactive conversation to gather requirements" if task_input.interactive_mode else "automatically generate comprehensive requirements"
-            
-            return f"""You are an expert requirements gathering agent. Analyze the project and {mode_instruction}.
-
-PROJECT CONTEXT:
-{project_context}
-
-INSTRUCTIONS:
-1. Analyze the existing project structure, goal files, and code samples
-2. Understand what the user wants to build and why
-3. {"Conduct a natural conversation to gather detailed requirements" if task_input.interactive_mode else "Generate comprehensive project requirements automatically"}
-4. Create or enhance the project goal file with structured specifications
-5. Return a JSON response with this exact structure:
-
-{{
-    "requirements_gathered": {{
-        "project_purpose": "What problem this project solves",
-        "target_audience": "Who will use this software",
-        "main_features": ["List of core features"],
-        "technical_requirements": {{
-            "primary_language": "Main programming language",
-            "frameworks": ["Required frameworks"],
-            "dependencies": ["Key dependencies"],
-            "platforms": ["Target platforms"]
-        }},
-        "success_criteria": ["How success will be measured"]
-    }},
-    "conversation_approach": "{('interactive' if task_input.interactive_mode else 'auto_generate')}",
-    "conversation_turns": {task_input.max_conversation_turns if task_input.interactive_mode else 0},
-    "goal_file_content": "Complete YAML content for enhanced goal file",
-    "requirements_summary": "Brief summary of what was gathered",
-    "recommendations": ["Next steps for the project"],
-    "confidence_level": 0.85
-}}
-
-{"CONVERSATION MODE: Ask thoughtful questions to understand the project better. Be conversational and helpful." if task_input.interactive_mode else "AUTO-GENERATION MODE: Create comprehensive requirements based on the project context."}
-
-USER GOAL: {task_input.user_goal or "Gather comprehensive project requirements"}
-PROJECT PATH: {task_input.project_path}
-INTERACTIVE MODE: {task_input.interactive_mode}
-
-Return ONLY the JSON response, no additional text."""
+        # Get prompt from YAML template - NO FALLBACKS
+        prompt_template = await self.prompt_manager.get_prompt(
+            self.PROMPT_TEMPLATE_NAME,
+            {
+                "user_goal": task_input.user_goal or "Gather project requirements",
+                "project_path": task_input.project_path,
+                "project_context": project_context,
+                "interactive_mode": task_input.interactive_mode,
+                "auto_generate": task_input.auto_generate,
+                "max_conversation_turns": task_input.max_conversation_turns
+            }
+        )
+        self.logger.info("Using YAML prompt template")
+        return prompt_template
 
     async def _execute_requirements_plan(self, requirements_result: Dict[str, Any], task_input: InteractiveRequirementsInput) -> Dict[str, Any]:
         """
@@ -474,49 +506,6 @@ Return ONLY the JSON response, no additional text."""
         except Exception as e:
             self.logger.error(f"Requirements plan execution failed: {e}")
             return results
-
-    async def _fallback_requirements_processing(self, response: str, task_input: InteractiveRequirementsInput) -> Dict[str, Any]:
-        """
-        Fallback when LLM doesn't return structured JSON - extract requirements from text.
-        """
-        try:
-            # Simple fallback - create basic goal file from response
-            goal_file_path = task_input.goal_file_path or os.path.join(task_input.project_path, "goal.txt")
-            
-            # Create simple goal file content
-            goal_content = f"""# Project Requirements
-
-## Generated by Interactive Requirements Agent
-
-{response}
-
-## Additional Information
-- Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- Project path: {task_input.project_path}
-- User goal: {task_input.user_goal or 'Not specified'}
-"""
-            
-            # Write goal file
-            write_result = await self._call_mcp_tool("filesystem_write_file", {
-                "file_path": goal_file_path,
-                "content": goal_content
-            })
-            
-            enhanced_goal_file = goal_file_path if write_result.get("success") else None
-            
-            return {
-                "success": True,
-                "requirements_gathered": {"fallback_requirements": response},
-                "conversation_turns": 1,
-                "requirements_summary": "Requirements processed with fallback method",
-                "recommendations": ["Review and refine the generated requirements"],
-                "confidence_level": 0.6,
-                "enhanced_goal_file": enhanced_goal_file
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Fallback requirements processing failed: {e}")
-            return {"success": False, "error": f"Fallback processing failed: {str(e)}"}
 
     @staticmethod
     def get_agent_card_static() -> AgentCard:

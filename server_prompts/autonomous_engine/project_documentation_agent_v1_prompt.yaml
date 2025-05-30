@@ -139,4 +139,4 @@ output_schema:
 
 model_settings:
   temperature: 0.3
-  max_tokens: 4000 
+  max_tokens: 16000

@@ -172,28 +172,52 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
             )
 
     def _parse_inputs(self, inputs: Any) -> CoordinatorAgentInput:
-        """Parse inputs cleanly into CoordinatorAgentInput."""
-        if isinstance(inputs, CoordinatorAgentInput):
-            return inputs
-        elif isinstance(inputs, dict):
-            return CoordinatorAgentInput(**inputs)
-        elif hasattr(inputs, 'dict'):
-            return CoordinatorAgentInput(**inputs.dict())
-        else:
-            raise ValueError(f"Invalid input type: {type(inputs)}")
+        """Parse inputs cleanly into CoordinatorAgentInput with detailed validation."""
+        try:
+            if isinstance(inputs, CoordinatorAgentInput):
+                # Validate existing input object
+                if not inputs.user_goal or not inputs.user_goal.strip():
+                    raise ValueError("CoordinatorAgentInput has empty or whitespace user_goal")
+                return inputs
+            elif isinstance(inputs, dict):
+                # Validate required fields before creation
+                if 'user_goal' not in inputs:
+                    raise ValueError("Missing required field 'user_goal' in input dictionary")
+                if not inputs['user_goal'] or not inputs['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return CoordinatorAgentInput(**inputs)
+            elif hasattr(inputs, 'dict'):
+                input_dict = inputs.dict()
+                if 'user_goal' not in input_dict:
+                    raise ValueError("Missing required field 'user_goal' in input object")
+                if not input_dict['user_goal'] or not input_dict['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return CoordinatorAgentInput(**input_dict)
+            else:
+                raise ValueError(f"Invalid input type: {type(inputs)}. Expected CoordinatorAgentInput, dict, or object with dict() method. Received: {inputs}")
+        except Exception as e:
+            raise ValueError(f"Input parsing failed for AutomatedRefinementCoordinatorAgent: {e}. Input received: {inputs}")
 
     async def _generate_coordination_decision(self, task_input: CoordinatorAgentInput) -> Dict[str, Any]:
         """
-        Generate coordination decision using unified discovery + YAML template.
+        Generate coordination decision using unified discovery + YAML template with detailed validation.
         Pure unified approach - no hardcoded phases or decision logic.
         """
         try:
-            # Get YAML template (no fallbacks)
+            # Validate prompt template access
             prompt_template = self.prompt_manager.get_prompt_definition(
                 "automated_refinement_coordinator_agent_v1_prompt",
                 "0.2.0",
                 sub_path="autonomous_engine"
             )
+            
+            if not prompt_template:
+                raise ValueError("Failed to load coordination prompt template - returned None/empty")
+            
+            if not hasattr(prompt_template, 'user_prompt_template'):
+                raise ValueError(f"Prompt template missing 'user_prompt_template' attribute. Available attributes: {dir(prompt_template)}")
             
             # Unified discovery for intelligent coordination context
             discovery_results = await self._universal_discovery(
@@ -201,14 +225,23 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "progress"]
             )
             
+            if not discovery_results:
+                raise ValueError("Universal discovery returned None/empty results")
+            
             technology_context = await self._universal_technology_discovery(
                 task_input.project_path
             )
+            
+            if not technology_context:
+                raise ValueError("Technology discovery returned None/empty results")
             
             # Build project state from discovery
             project_state = await self._build_project_state_from_discovery(
                 task_input, discovery_results, technology_context
             )
+            
+            if not project_state:
+                raise ValueError("Project state building returned None/empty state")
             
             # Build template variables for maximum LLM coordination intelligence
             template_vars = {
@@ -232,11 +265,14 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 "project_specifications": task_input.project_specifications or {}
             }
             
-            # Render template
-            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
-                prompt_template.user_prompt_template,
-                template_vars
-            )
+            # Render template with validation
+            try:
+                formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
+                    prompt_template.user_prompt_template,
+                    template_vars
+                )
+            except Exception as e:
+                raise ValueError(f"Failed to render coordination prompt template: {e}. Template variables: {list(template_vars.keys())}")
             
             # Get system prompt if available
             system_prompt = getattr(prompt_template, 'system_prompt', None)
@@ -249,36 +285,67 @@ class AutomatedRefinementCoordinatorAgent_v1(UnifiedAgent):
                 max_tokens=3000
             )
             
-            # Parse LLM response (expecting JSON from template)
+            # Detailed response validation
+            if not response:
+                raise ValueError(f"LLM provider returned None/empty response for coordination. Prompt length: {len(formatted_prompt)} chars. User goal: {task_input.user_goal}")
+            
+            if not response.strip():
+                raise ValueError(f"LLM provider returned whitespace-only response for coordination. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            if len(response.strip()) < 50:
+                raise ValueError(f"LLM coordination response too short ({len(response)} chars). Expected substantial coordination decision. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            # Parse LLM response (expecting JSON from template) - NO FALLBACKS
             try:
-                result = json.loads(response)
+                json_str = self._extract_json_from_response(response)
+                if not json_str:
+                    raise ValueError(f"No JSON found in coordination response. Response: '{response}'")
                 
-                # Transform template output to our clean schema
-                return {
-                    "coordination_decision": result.get("decision_outcome", "PROCEED_TO_NEXT_STAGE"),
-                    "coordination_reasoning": result.get("decision_rationale", ""),
-                    "next_actions": self._extract_next_actions(result),
-                    "project_status_assessment": {
-                        "current_status": project_state.get("overall_status", "active"),
-                        "recommended_status": result.get("next_overall_project_status", "active_development"),
-                        "confidence": result.get("decision_confidence", {})
-                    },
-                    "quality_gates_status": discovery_results.get("quality_assessment", {}),
-                    "refinement_recommendations": result.get("feedback_for_refinement_agents", []),
-                    "confidence_score": ConfidenceScore(
-                        value=result.get("decision_confidence", {}).get("value", 0.8),
-                        method=result.get("decision_confidence", {}).get("level", "llm_coordination"),
-                        explanation=result.get("decision_confidence", {}).get("reasoning", "Coordination decision generated successfully")
-                    )
-                }
-                
+                result = json.loads(json_str)
+                if not isinstance(result, dict):
+                    raise ValueError(f"Parsed JSON is not a dictionary: {type(result)}. JSON: '{json_str}'")
+                    
             except json.JSONDecodeError as e:
-                self.logger.error(f"LLM response not valid JSON: {e}")
-                raise ValueError(f"LLM response parsing failed: {e}")
-                
+                raise ValueError(f"Failed to parse JSON from coordination response: {e}. JSON string: '{json_str}'. Full response: '{response}'")
+            except Exception as e:
+                raise ValueError(f"Failed to extract/parse JSON from coordination response: {e}. Response: '{response}'")
+            
+            # Transform template output to our clean schema
+            return {
+                "coordination_decision": result.get("decision_outcome", "PROCEED_TO_NEXT_STAGE"),
+                "coordination_reasoning": result.get("decision_rationale", ""),
+                "next_actions": self._extract_next_actions(result),
+                "project_status_assessment": {
+                    "current_status": project_state.get("overall_status", "active"),
+                    "recommended_status": result.get("next_overall_project_status", "active_development"),
+                    "confidence": result.get("decision_confidence", {})
+                },
+                "quality_gates_status": discovery_results.get("quality_assessment", {}),
+                "refinement_recommendations": result.get("feedback_for_refinement_agents", []),
+                "confidence_score": ConfidenceScore(
+                    value=result.get("decision_confidence", {}).get("value", 0.8),
+                    method=result.get("decision_confidence", {}).get("level", "llm_coordination"),
+                    explanation=result.get("decision_confidence", {}).get("reasoning", "Coordination decision generated successfully")
+                )
+            }
+            
         except Exception as e:
-            self.logger.error(f"Coordination decision generation failed: {e}")
-            raise
+            error_msg = f"""AutomatedRefinementCoordinatorAgent coordination generation failed:
+
+ERROR: {e}
+
+INPUT CONTEXT:
+- User Goal: {task_input.user_goal}
+- Project Path: {task_input.project_path}
+- Current Cycle ID: {task_input.current_cycle_id}
+- Coordination Focus: {task_input.coordination_focus}
+
+COORDINATION CONTEXT:
+- Project Specifications: {task_input.project_specifications}
+- Intelligent Context: {task_input.intelligent_context}
+"""
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
     async def _build_project_state_from_discovery(
         self, 

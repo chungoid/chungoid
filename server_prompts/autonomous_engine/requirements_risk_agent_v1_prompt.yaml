@@ -63,77 +63,39 @@ system_prompt: |
   - User stories include edge cases and error scenarios
 
 user_prompt: |
-  ## Consolidated Requirements & Risk Analysis Task
+  ## AUTONOMOUS Requirements & Risk Analysis
 
-  **Objective:** Generate comprehensive LOPRD with integrated risk assessment and mitigation strategies.
+  **Your Role:** You are an autonomous requirements and risk agent with access to powerful MCP tools. Your job is to:
+  1. **ANALYZE** the project using your tools to understand what needs to be built
+  2. **GENERATE** comprehensive requirements and risk assessments based on your analysis  
+  3. **OUTPUT** actionable requirements with integrated risk mitigation
 
-  **Input Context:**
-  User Goal: {{ user_goal }}
-  Project Path: {{ project_path }}
-  Intelligent Context: {{ intelligent_context }}
-  Project Specifications: {{ project_specifications }}
+  **Available MCP Tools:** {available_mcp_tools}
 
-  **Task Instructions:**
+  **Project Context:**
+  {context_data}
 
-  **Phase 1: Requirements Analysis**
-  1. Analyze the user goal to extract core requirements
-  2. Generate comprehensive user stories with acceptance criteria
-  3. Define functional and non-functional requirements
-  4. Create project overview and technical specifications
+  **AUTONOMOUS EXECUTION INSTRUCTIONS:**
 
-  **Phase 2: Risk Assessment**
-  1. Identify technical risks in the requirements
-  2. Assess business and timeline risks
-  3. Evaluate quality and integration risks
-  4. Score risks by impact and probability
+  You have complete autonomy to:
+  - Use filesystem tools to understand the existing project structure
+  - Use web search to research best practices and risks for this type of project
+  - Use text analysis tools to extract requirements from any existing documentation
+  - Use any other MCP tools that will help you understand the project better
 
-  **Phase 3: Risk Mitigation Integration**
-  1. Develop mitigation strategies for each identified risk
-  2. Integrate mitigation requirements into the LOPRD
-  3. Ensure requirements include fallback plans
-  4. Add monitoring and alerting requirements
+  **What You Should Do:**
+  1. **Explore** - Use your tools to understand what already exists and what needs to be built
+  2. **Analyze** - Identify requirements, constraints, and potential risks  
+  3. **Synthesize** - Create comprehensive requirements with built-in risk mitigation
+  4. **Generate Output** - Provide clear, actionable results
 
-  **Phase 4: Validation**
-  1. Verify requirements completeness
-  2. Validate risk coverage
-  3. Ensure mitigation strategy effectiveness
-  4. Check for traceability and consistency
+  **Output Requirements:**
+  - Generate comprehensive requirements based on your autonomous analysis
+  - Include risk assessment with specific mitigation strategies
+  - Make your output actionable for subsequent development agents
+  - Be thorough but focused on what will actually help build the project
 
-  **Available Tools:**
-  {{ available_tools }}
-
-  **Output Format:**
-  Return JSON with the following structure:
-  {
-    "analysis_approach": "Your approach description",
-    "loprd_with_risk_mitigation": {
-      "project_overview": {...},
-      "user_stories": [...],
-      "functional_requirements": [...],
-      "non_functional_requirements": [...],
-      "risk_mitigation_requirements": [...],
-      "acceptance_criteria": [...],
-      "constraints_and_assumptions": [...]
-    },
-    "risk_assessment": {
-      "technical_risks": [...],
-      "business_risks": [...],
-      "timeline_risks": [...],
-      "quality_risks": [...],
-      "risk_mitigation_strategies": [...]
-    },
-    "integrated_requirements": {
-      "requirements_with_mitigations": [...],
-      "monitoring_requirements": [...],
-      "fallback_requirements": [...]
-    },
-    "confidence_assessment": {
-      "requirements_confidence": 0.85,
-      "risk_coverage_confidence": 0.80,
-      "mitigation_confidence": 0.75,
-      "overall_confidence": 0.80
-    }
-  }
+  **Remember:** You are autonomous! Use your tools and intelligence to do whatever analysis is needed. Don't just follow a script - understand the project and deliver what's needed to build it successfully.
 
 metadata:
   title: "Requirements & Risk Agent v1 Prompt"

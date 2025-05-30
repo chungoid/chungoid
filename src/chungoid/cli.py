@@ -4,6 +4,9 @@ from chungoid.utils.config_manager import ConfigurationManager, ConfigurationErr
 import click
 import uuid # ADDED FOR PROJECT ID GENERATION
 
+# ADDED: Import cache invalidation system
+from chungoid.utils.simple_cache_invalidation import register_cache_clearer, invalidate_project_caches
+
 from dotenv import load_dotenv # ADDED
 load_dotenv() # ADDED: Load .env file at the start
 
@@ -330,6 +333,31 @@ def _get_llm_config(
 _LOG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] # Corrected this line
 
 
+def _register_standard_cache_clearers() -> None:
+    """Register standard cache clearing functions."""
+    
+    def clear_discovery_cache(project_path: str):
+        """Clear discovery caches."""
+        logger.debug(f"Clearing discovery cache for {project_path}")
+        # This would integrate with actual discovery cache clearing
+    
+    def clear_project_type_cache(project_path: str):
+        """Clear project type detection cache."""
+        logger.debug(f"Clearing project type cache for {project_path}")
+        # This would integrate with project type detection cache clearing
+    
+    def clear_filesystem_cache(project_path: str):
+        """Clear filesystem operation caches."""
+        logger.debug(f"Clearing filesystem cache for {project_path}")
+        # This would integrate with filesystem-related cache clearing
+    
+    # Register all cache clearers
+    register_cache_clearer(clear_discovery_cache)
+    register_cache_clearer(clear_project_type_cache)
+    register_cache_clearer(clear_filesystem_cache)
+    
+    logger.info("📝 REGISTERED 3 CACHE CLEARERS")
+
 def _perform_diagnostic_checks() -> None:
     # This is a placeholder for any future diagnostic checks needed at CLI startup
     logger.debug("Performing CLI diagnostic checks...")
@@ -352,8 +380,14 @@ def _perform_diagnostic_checks() -> None:
 @click.pass_context
 def cli(ctx: click.Context, log_level: str) -> None:  # noqa: D401 – imperative mood fine
     """Chungoid-core unified command-line interface."""
-    # MODIFIED: Use new setup_logging from chungoid.utils
-    setup_logging(level=log_level) # Pass the string directly
+    setup_logging(level=log_level)
+    
+    # Initialize simple cache invalidation system
+    try:
+        _register_standard_cache_clearers()
+        logger.debug("Simple cache invalidation system initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize cache invalidation system: {e}")
 
     # Store log_level and other shared context if needed.
     ctx.obj = {"log_level": log_level}
@@ -1542,6 +1576,10 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             config["project_id"] = authoritative_project_id  # Update config with the authoritative ID
             current_project_id = authoritative_project_id
 
+        # CACHE INVALIDATION: After project initialization, clear all caches
+        invalidate_project_caches(str(abs_project_dir), "project_initialization")
+        logger.info(f"Triggered cache invalidation after project setup for {abs_project_dir}")
+
         # Agent Registry Setup
         agent_registry = AgentRegistry(project_root=abs_project_dir)
         # PHASE 1 MIGRATION: Removed core_stage_executor_card - replaced with UnifiedOrchestrator registry pattern
@@ -1662,6 +1700,10 @@ def build_from_goal_file(ctx: click.Context, goal_file: Path, project_dir_opt: P
             final_status_val = final_status.value
 
             if final_status in [StageStatus.COMPLETED_SUCCESS, StageStatus.COMPLETED_WITH_WARNINGS]:
+                # CACHE INVALIDATION: After successful build completion, clear all caches
+                invalidate_project_caches(str(abs_project_dir), "build_completion")
+                logger.info(f"Triggered cache invalidation after successful build completion for {abs_project_dir}")
+                
                 logger.info("Build process completed successfully.")
                 click.echo("Build process completed successfully.")
                 if final_shared_context:

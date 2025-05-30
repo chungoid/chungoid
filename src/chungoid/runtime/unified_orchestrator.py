@@ -151,12 +151,11 @@ class UnifiedOrchestrator:
         master_planner_input: MasterPlannerInput
     ) -> None:
         """
-        UAEI Phase-1: Enhanced goal execution with proper goal analysis.
-        Analyzes any goal content to extract real project specifications,
-        then executes relevant agents with the actual project information.
+        AUTONOMOUS EXECUTION: Let agents decide what to do
+        NO MORE MICROMANAGEMENT - agents analyze and act autonomously
         """
         
-        self.logger.info(f"[UAEI] Executing enhanced goal flow: {master_planner_input.user_goal[:100]}...")
+        self.logger.info(f"[AUTONOMOUS] Starting autonomous execution for: {master_planner_input.user_goal[:100]}...")
         
         # Update shared context
         self.shared_context.update({
@@ -169,182 +168,69 @@ class UnifiedOrchestrator:
         if master_planner_input.initial_context:
             self.shared_context.update(master_planner_input.initial_context)
         
-        # UAEI Phase-1: Enhanced flow with proper goal analysis
+        # AUTONOMOUS EXECUTION: Let each agent analyze and decide what to do
         
-        # 1. Goal analysis - ENHANCED: Direct YAML parsing (NO AGENT CALLS)
-        self.logger.info("[UAEI] Analyzing goal content directly (no agent interaction)")
-        
-        # Extract intelligent project information from goal content directly
-        project_specs = await self._extract_project_specifications(
-            goal_content=master_planner_input.user_goal,
-            analysis_result=None  # No agent result needed
-        )
-        
-        # === PHASE 1: ANALYSIS & REQUIREMENTS ===
-        
-        # 1. Environment setup - ENHANCED: Use extracted project information
+        # 1. Project Setup - Let agent decide if it needs environment, dependencies, or documentation
         await self.execute_stage(
-            stage_id="environment_bootstrap",
+            stage_id="autonomous_project_setup",
             agent_id="ProjectSetupAgent_v1",
             inputs={
-                "capability": "environment",
                 "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,  # Pass intelligent analysis!
                 "project_path": self.shared_context.get("project_root_path", "."),
-                "intelligent_context": True  # Signal that this is intelligent input
+                # NO capability specification - agent decides autonomously
             },
-            max_iterations=self._get_max_iterations("environment_bootstrap", 15)
+            max_iterations=self._get_max_iterations("autonomous_project_setup", 5)
         )
 
-        # 2. Dependency management - ENHANCED: Use extracted project information
+        # 2. Requirements Analysis - Let agent decide what analysis is needed
         await self.execute_stage(
-            stage_id="dependency_management",
-            agent_id="ProjectSetupAgent_v1",
+            stage_id="autonomous_requirements",
+            agent_id="RequirementsRiskAgent_v1", 
             inputs={
-                "capability": "dependencies",
+                "user_goal": master_planner_input.user_goal,
                 "project_path": self.shared_context.get("project_root_path", "."),
-                "auto_detect_dependencies": True,
-                "install_dependencies": True,
-                "resolve_conflicts": True,
-                "include_dev_dependencies": True,
-                "update_existing": False,
-                "project_specifications": project_specs,  # Pass intelligent analysis!
-                "intelligent_context": True,  # Signal that this is intelligent input
-                "user_goal": master_planner_input.user_goal
+                # NO prescriptive requirements - agent analyzes autonomously
             },
-            max_iterations=self._get_max_iterations("dependency_management", 12)
+            max_iterations=self._get_max_iterations("autonomous_requirements", 5)
         )
 
-        # 3. Product Analysis - ENHANCED: Analyze requirements and scope
+        # 3. Architecture Design - Let agent decide architecture approach
         await self.execute_stage(
-            stage_id="product_analysis",
-            agent_id="RequirementsRiskAgent",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", ".")
-            },
-            max_iterations=self._get_max_iterations("product_analysis", 20)
-        )
-
-        # 4. Requirements Tracing - ENHANCED: Advanced requirement linkage mapping
-        await self.execute_stage(
-            stage_id="requirements_tracing",
-            agent_id="RequirementsTracerAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Use intelligent context for seamless workflow
-                "project_path": self.shared_context.get("project_root_path", ".")
-            },
-            max_iterations=self._get_max_iterations("requirements_tracing", 20)
-        )
-
-        # 5. Project Documentation - ENHANCED: Generate comprehensive documentation before architecture
-        await self.execute_stage(
-            stage_id="project_documentation_early",
-            agent_id="ProjectDocumentationAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,
-                "project_path": self.shared_context.get("project_root_path", "."),
-                "documentation_phase": "early_requirements",
-                "include_requirements_doc": True,
-                "include_initial_specs": True
-            },
-            max_iterations=self._get_max_iterations("project_documentation_early", 15)
-        )
-
-        # === PHASE 2: ARCHITECTURE & DESIGN ===
-
-        # 6. Enhanced Architecture Design - ENHANCED: Comprehensive technical blueprint design
-        await self.execute_stage(
-            stage_id="enhanced_architecture_design",
+            stage_id="autonomous_architecture", 
             agent_id="ArchitectAgent_v1",
             inputs={
                 "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Use intelligent context for seamless workflow
                 "project_path": self.shared_context.get("project_root_path", "."),
-                "output_blueprint_files": True,  # Generate blueprint files to filesystem
-                "generate_execution_plan": True,  # Generate execution plan for implementation
-                "output_directory": "./blueprints/"  # Output location for blueprint files
+                # NO architecture specifications - agent designs autonomously
             },
-            max_iterations=self._get_max_iterations("enhanced_architecture_design", 25)
+            max_iterations=self._get_max_iterations("autonomous_architecture", 5)
         )
 
-        # === PHASE 3: IMPLEMENTATION ===
-
-        # 7. Code Generation - ENHANCED: Generate actual project code files with FULL CONTEXT
+        # 4. Code Generation - Let agent decide what code needs to be generated
         await self.execute_stage(
-            stage_id="code_generation",
+            stage_id="autonomous_code_generation",
             agent_id="SmartCodeGeneratorAgent_v1",
             inputs={
                 "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
                 "project_path": self.shared_context.get("project_root_path", "."),
-                "project_id": master_planner_input.project_id or "intelligent_project",
-                "programming_language": project_specs.get("primary_language", "python"),
-                "target_languages": project_specs.get("target_languages", ["python"]),
-                "technologies": project_specs.get("technologies", []),
-                # ENHANCED: Pass outputs from all prior analysis stages for better context
-                "requirements_context": self.shared_context.get("outputs", {}).get("requirements_tracing"),
-                "architecture_context": self.shared_context.get("outputs", {}).get("enhanced_architecture_design"),  # Updated reference
-                "risk_context": self.shared_context.get("outputs", {}).get("product_analysis")  # Updated reference to stage 3
+                # NO code specifications - agent generates what's needed
             },
-            max_iterations=self._get_max_iterations("code_generation", 30)
-        )
-
-        # 8. Code Debugging - ENHANCED: Analyze and improve code quality IMMEDIATELY after generation
-        await self.execute_stage(
-            stage_id="code_debugging",
-            agent_id="CodeDebuggingAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", ".")
-            },
-            max_iterations=self._get_max_iterations("code_debugging", 28)
-        )
-
-        # 9. Project Documentation - ENHANCED: Generate comprehensive documentation of FINAL system
-        await self.execute_stage(
-            stage_id="project_documentation",
-            agent_id="ProjectSetupAgent_v1",
-            inputs={
-                "capability": "documentation",
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", "."),
-                "include_api_docs": True,
-                "include_user_guide": True,
-                "include_dependency_audit": True
-            },
-            max_iterations=self._get_max_iterations("project_documentation", 16)
-        )
-
-        # === PHASE 4: QUALITY ASSURANCE ===
-
-        # 10. Automated Refinement Coordination - ENHANCED: Coordinate final improvements
-        await self.execute_stage(
-            stage_id="automated_refinement",
-            agent_id="AutomatedRefinementCoordinatorAgent_v1",
-            inputs={
-                "user_goal": master_planner_input.user_goal,
-                "project_specifications": project_specs,
-                "intelligent_context": True,  # Keep intelligent mode - fix the implementation instead
-                "project_path": self.shared_context.get("project_root_path", "."),
-                "project_id": master_planner_input.project_id or "intelligent_project"
-            },
-            max_iterations=self._get_max_iterations("automated_refinement", 35)
+            max_iterations=self._get_max_iterations("autonomous_code_generation", 5)
         )
         
-        self.logger.info("[UAEI] Optimized autonomous development pipeline completed with 10 stages")
+        # 5. Quality Assurance - Let agent decide what testing/QA is needed
+        await self.execute_stage(
+            stage_id="autonomous_quality_assurance",
+            agent_id="CodeDebuggingAgent_v1", 
+            inputs={
+                "user_goal": master_planner_input.user_goal,
+                "project_path": self.shared_context.get("project_root_path", "."),
+                # NO QA specifications - agent decides testing approach
+            },
+            max_iterations=self._get_max_iterations("autonomous_quality_assurance", 5)
+        )
+
+        self.logger.info(f"[AUTONOMOUS] Autonomous execution completed for: {master_planner_input.user_goal[:100]}")
 
     # ------------------------------------------------------------------
     async def run(

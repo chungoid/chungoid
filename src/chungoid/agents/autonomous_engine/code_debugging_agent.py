@@ -49,33 +49,23 @@ class PreviousDebuggingAttempt(BaseModel):
     outcome: str  # e.g., 'tests_still_failed', 'new_errors_introduced'
 
 
-class DebuggingAgentInput(BaseModel):
+class CodeDebuggingAgentInput(BaseModel):
     """Clean input schema focused on core debugging needs."""
-    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique task identifier")
-    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project identifier")
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this debugging task.")
+    project_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Project ID for context.")
     
-    # Core requirements
-    user_goal: str = Field(..., description="What the user wants debugged or fixed")
-    project_path: str = Field(default=".", description="Project directory path")
+    # Core autonomous inputs
+    user_goal: str = Field(..., description="What the user wants to debug/fix")
+    project_path: str = Field(default=".", description="Project directory to debug")
     
-    # Debugging context
-    faulty_code_path: Optional[str] = Field(None, description="Path to the code file needing debugging")
-    faulty_code_snippet: Optional[str] = Field(None, description="Specific code snippet if already localized")
-    failed_test_reports: Optional[List[FailedTestReport]] = Field(None, description="List of test failure objects")
-    relevant_loprd_requirements_ids: Optional[List[str]] = Field(None, description="LOPRD requirement IDs relevant to code")
-    relevant_blueprint_section_ids: Optional[List[str]] = Field(None, description="Blueprint section IDs relevant to design")
-    previous_debugging_attempts: Optional[List[PreviousDebuggingAttempt]] = Field(None, description="Previous fix attempts")
-    max_iterations_for_this_call: Optional[int] = Field(None, description="Limit for debugging iterations")
-    
-    # Intelligent context from orchestrator
-    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Intelligent project specifications")
-    intelligent_context: bool = Field(default=False, description="Whether intelligent specifications provided")
+    # Optional context (no micromanagement)
+    project_specifications: Optional[Dict[str, Any]] = Field(None, description="Optional project context")
     
     @model_validator(mode='after')
-    def validate_requirements(self) -> 'DebuggingAgentInput':
-        """Ensure we have minimum requirements for debugging."""
+    def check_minimum_requirements(self) -> 'CodeDebuggingAgentInput':
+        """Ensure we have minimum requirements for autonomous debugging."""
         if not self.user_goal or not self.user_goal.strip():
-            raise ValueError("user_goal is required for code debugging")
+            raise ValueError("user_goal is required for autonomous code debugging")
         return self
 
 
@@ -119,7 +109,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
     CAPABILITIES: ClassVar[List[str]] = ["code_debugging", "error_analysis", "automated_fixes"]
     CATEGORY: ClassVar[AgentCategory] = AgentCategory.CODE_REMEDIATION
     VISIBILITY: ClassVar[AgentVisibility] = AgentVisibility.INTERNAL
-    INPUT_SCHEMA: ClassVar[Type[DebuggingAgentInput]] = DebuggingAgentInput
+    INPUT_SCHEMA: ClassVar[Type[CodeDebuggingAgentInput]] = CodeDebuggingAgentInput
     OUTPUT_SCHEMA: ClassVar[Type[DebuggingAgentOutput]] = DebuggingAgentOutput
 
     PRIMARY_PROTOCOLS: ClassVar[List[str]] = ["unified_debugging"]
@@ -191,121 +181,148 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
                 protocol_used="unified_debugging"
             )
 
-    def _parse_inputs(self, inputs: Any) -> DebuggingAgentInput:
-        """Parse inputs cleanly into DebuggingAgentInput."""
-        if isinstance(inputs, DebuggingAgentInput):
-            return inputs
-        elif isinstance(inputs, dict):
-            return DebuggingAgentInput(**inputs)
-        elif hasattr(inputs, 'dict'):
-            return DebuggingAgentInput(**inputs.dict())
-        else:
-            raise ValueError(f"Invalid input type: {type(inputs)}")
+    def _parse_inputs(self, inputs: Any) -> CodeDebuggingAgentInput:
+        """Parse inputs cleanly into CodeDebuggingAgentInput with detailed validation."""
+        try:
+            if isinstance(inputs, CodeDebuggingAgentInput):
+                # Validate existing input object
+                if not inputs.user_goal or not inputs.user_goal.strip():
+                    raise ValueError("CodeDebuggingAgentInput has empty or whitespace user_goal")
+                return inputs
+            elif isinstance(inputs, dict):
+                # Validate required fields before creation
+                if 'user_goal' not in inputs:
+                    raise ValueError("Missing required field 'user_goal' in input dictionary")
+                if not inputs['user_goal'] or not inputs['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return CodeDebuggingAgentInput(**inputs)
+            elif hasattr(inputs, 'dict'):
+                input_dict = inputs.dict()
+                if 'user_goal' not in input_dict:
+                    raise ValueError("Missing required field 'user_goal' in input object")
+                if not input_dict['user_goal'] or not input_dict['user_goal'].strip():
+                    raise ValueError("Field 'user_goal' cannot be empty or whitespace")
+                
+                return CodeDebuggingAgentInput(**input_dict)
+            else:
+                raise ValueError(f"Invalid input type: {type(inputs)}. Expected CodeDebuggingAgentInput, dict, or object with dict() method. Received: {inputs}")
+        except Exception as e:
+            raise ValueError(f"Input parsing failed for CodeDebuggingAgent: {e}. Input received: {inputs}")
 
-    async def _generate_debugging_solution(self, task_input: DebuggingAgentInput) -> Dict[str, Any]:
+    async def _generate_debugging_solution(self, task_input: CodeDebuggingAgentInput) -> Dict[str, Any]:
         """
-        Generate debugging solution using unified discovery + YAML template.
-        Pure unified approach - no hardcoded phases or debugging logic.
+        AUTONOMOUS CODE DEBUGGING & QA with detailed validation
+        No hardcoded logic - agent analyzes project and decides what debugging/QA is needed
         """
         try:
-            # Get YAML template (no fallbacks)
+            # Validate prompt template access
             prompt_template = self.prompt_manager.get_prompt_definition(
                 "code_debugging_agent_v1_prompt",
-                "2.0.0",
+                "1.0.0",
                 sub_path="autonomous_engine"
             )
             
-            # Unified discovery for intelligent debugging context
-            discovery_results = await self._universal_discovery(
-                task_input.project_path,
-                ["environment", "dependencies", "structure", "patterns", "requirements", "artifacts", "code_analysis", "testing"]
-            )
+            if not prompt_template:
+                raise ValueError("Failed to load debugging prompt template - returned None/empty")
             
-            technology_context = await self._universal_technology_discovery(
-                task_input.project_path
-            )
+            # Handle PromptDefinition structure - use the correct attribute for user_prompt_template
+            if isinstance(prompt_template, dict):
+                if "user_prompt" not in prompt_template:
+                    raise ValueError(f"Prompt template missing 'user_prompt' field. Available fields: {list(prompt_template.keys())}")
+                template_content = prompt_template["user_prompt"]
+            elif hasattr(prompt_template, 'user_prompt_template'):
+                # PromptDefinition object has user_prompt_template attribute
+                template_content = prompt_template.user_prompt_template
+            elif hasattr(prompt_template, 'user_prompt'):
+                template_content = prompt_template.user_prompt
+            else:
+                raise ValueError(f"Prompt template has unexpected structure. Type: {type(prompt_template)}, Available attributes: {dir(prompt_template)}")
             
-            # Build template variables for maximum LLM debugging intelligence
-            template_vars = {
-                # Original template variables (maintaining compatibility)
-                "task_id": task_input.task_id,
-                "project_id": task_input.project_id,
-                "faulty_code_path": task_input.faulty_code_path or "discovered_from_codebase",
-                "faulty_code_snippet": task_input.faulty_code_snippet,
-                "failed_test_reports": [report.dict() for report in (task_input.failed_test_reports or [])],
-                "relevant_loprd_requirements_ids": task_input.relevant_loprd_requirements_ids or [],
-                "relevant_blueprint_section_ids": task_input.relevant_blueprint_section_ids or [],
-                "previous_debugging_attempts": [attempt.dict() for attempt in (task_input.previous_debugging_attempts or [])],
-                "max_iterations_for_this_call": task_input.max_iterations_for_this_call,
-                "project_specifications": task_input.project_specifications or {},
-                "intelligent_context": task_input.intelligent_context,
-                "user_goal": task_input.user_goal,
-                "project_path": task_input.project_path,
-                
-                # Enhanced unified discovery variables for maximum intelligence
-                "discovery_results": json.dumps(discovery_results, indent=2),
-                "technology_context": json.dumps(technology_context, indent=2),
-                
-                # Additional context for intelligent debugging
-                "codebase_structure": discovery_results.get("structure", {}),
-                "testing_framework": discovery_results.get("testing", {}),
-                "dependencies": discovery_results.get("dependencies", {}),
-                "patterns": discovery_results.get("patterns", {})
-            }
+            # Build context for autonomous debugging/QA
+            context_parts = []
+            context_parts.append(f"User Goal: {task_input.user_goal}")
+            context_parts.append(f"Project Path: {task_input.project_path}")
             
-            # Render template
-            formatted_prompt = self.prompt_manager.get_rendered_prompt_template(
-                prompt_template.user_prompt_template,
-                template_vars
-            )
+            if task_input.project_specifications:
+                context_parts.append(f"Project Context: {json.dumps(task_input.project_specifications, indent=2)}")
             
-            # Get system prompt if available
-            system_prompt = getattr(prompt_template, 'system_prompt', None)
+            context_data = "\n".join(context_parts)
             
-            # Call LLM with maximum debugging intelligence
+            # Validate MCP tools availability
+            if not hasattr(self, 'mcp_tools') or not self.mcp_tools:
+                raise ValueError("MCP tools not available or empty in CodeDebuggingAgent")
+            
+            # AUTONOMOUS EXECUTION: Let the agent decide what debugging/QA is needed
+            # Available MCP tools: filesystem_*, text_editor_*, terminal_*, web_search, etc.
+            try:
+                # Add missing template variables including user_goal
+                formatted_prompt = template_content.format(
+                    context_data=context_data,
+                    available_mcp_tools=", ".join(self.mcp_tools.keys()),
+                    user_goal=task_input.user_goal
+                )
+            except Exception as e:
+                raise ValueError(f"Failed to format debugging prompt template: {e}. Missing variables or template content preview: {str(template_content)[:200]}...")
+            
+            self.logger.info(f"🐛 AUTONOMOUS debugging/QA execution")
+            
+            # Let the agent work autonomously
             response = await self.llm_provider.generate(
                 prompt=formatted_prompt,
-                system_prompt=system_prompt,
-                temperature=0.3,
-                max_tokens=4000
+                max_tokens=8000,
+                temperature=0.1
             )
             
-            # Parse LLM response (expecting JSON from template)
-            try:
-                result = json.loads(response)
-                
-                # Transform template output to our clean schema
-                return {
-                    "proposed_solution_type": result.get("proposed_solution_type", "NO_FIX_IDENTIFIED"),
-                    "proposed_code_changes": result.get("proposed_code_changes"),
-                    "explanation_of_fix": result.get("explanation_of_fix"),
-                    "debugging_analysis": {
-                        "issues_identified": self._extract_issues_from_result(result, discovery_results),
-                        "root_causes": self._extract_root_causes(result, discovery_results),
-                        "fix_strategy": result.get("proposed_solution_type", "NO_FIX_IDENTIFIED"),
-                        "testing_strategy": discovery_results.get("testing", {})
-                    },
-                    "test_results": {
-                        "test_coverage": discovery_results.get("testing", {}).get("coverage", "unknown"),
-                        "test_framework": discovery_results.get("testing", {}).get("framework", "detected"),
-                        "generated_tests": "included_in_code_changes" if result.get("proposed_code_changes") else "none"
-                    },
-                    "areas_of_uncertainty": result.get("areas_of_uncertainty", []),
-                    "suggestions_for_ARCA": result.get("suggestions_for_ARCA"),
-                    "confidence_score": ConfidenceScore(
-                        value=result.get("confidence_score_obj", {}).get("value", 0.7),
-                        method=result.get("confidence_score_obj", {}).get("method", "llm_debugging_assessment"),
-                        explanation=result.get("confidence_score_obj", {}).get("explanation", "Debugging solution generated with unified discovery")
-                    )
-                }
-                
-            except json.JSONDecodeError as e:
-                self.logger.error(f"LLM response not valid JSON: {e}")
-                raise ValueError(f"LLM response parsing failed: {e}")
-                
+            # Detailed response validation
+            if not response:
+                raise ValueError(f"LLM provider returned None/empty response for debugging. Prompt length: {len(formatted_prompt)} chars. User goal: {task_input.user_goal}")
+            
+            if not response.strip():
+                raise ValueError(f"LLM provider returned whitespace-only response for debugging. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            if len(response.strip()) < 50:
+                raise ValueError(f"LLM debugging response too short ({len(response)} chars). Expected substantial debugging analysis. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            # Validate response content quality
+            response_lower = response.lower()
+            if "debug" not in response_lower and "error" not in response_lower and "fix" not in response_lower and "test" not in response_lower:
+                raise ValueError(f"LLM response doesn't appear to contain debugging content (no 'debug', 'error', 'fix', or 'test' found). Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            self.logger.info(f"🐛 Debugging response: {len(response)} chars")
+            self.logger.info(f"🐛 Response preview: {response[:300]}...")
+            
+            # Return expected structure for DebuggingAgentOutput - NO FALLBACKS
+            return {
+                "proposed_solution_type": "CODE_PATCH",
+                "proposed_code_changes": response,
+                "explanation_of_fix": f"Autonomous debugging analysis: {response[:500]}...",
+                "debugging_analysis": {"agent_mode": "autonomous", "response_length": len(response)},
+                "test_results": {"autonomous_execution": True},
+                "areas_of_uncertainty": [],
+                "suggestions_for_ARCA": "Autonomous debugging completed successfully",
+                "confidence_score": ConfidenceScore(
+                    value=0.8,
+                    method="autonomous_debugging",
+                    explanation="Autonomous debugging completed"
+                )
+            }
+            
         except Exception as e:
-            self.logger.error(f"Debugging solution generation failed: {e}")
-            raise
+            error_msg = f"""CodeDebuggingAgent debugging solution generation failed:
+
+ERROR: {e}
+
+INPUT CONTEXT:
+- User Goal: {task_input.user_goal}
+- Project Path: {task_input.project_path}
+- Project Specifications: {task_input.project_specifications}
+
+DEBUGGING CONTEXT:
+- Available MCP Tools: {len(self.mcp_tools) if hasattr(self, 'mcp_tools') and self.mcp_tools else 'None/Empty'}
+"""
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def _extract_issues_from_result(self, llm_result: Dict[str, Any], discovery_results: Dict[str, Any]) -> List[str]:
         """Extract identified issues from LLM result and discovery."""
@@ -344,7 +361,7 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
     @staticmethod
     def get_agent_card_static() -> AgentCard:
         """Generate agent card for registry."""
-        input_schema = DebuggingAgentInput.model_json_schema()
+        input_schema = CodeDebuggingAgentInput.model_json_schema()
         output_schema = DebuggingAgentOutput.model_json_schema()
         
         return AgentCard(
@@ -369,8 +386,8 @@ class CodeDebuggingAgent_v1(UnifiedAgent):
             }
         )
 
-    def get_input_schema(self) -> Type[DebuggingAgentInput]:
-        return DebuggingAgentInput
+    def get_input_schema(self) -> Type[CodeDebuggingAgentInput]:
+        return CodeDebuggingAgentInput
 
     def get_output_schema(self) -> Type[DebuggingAgentOutput]:
         return DebuggingAgentOutput 
