@@ -346,7 +346,7 @@ CONTEXT:
                             self.logger.info(f"READING IMPLEMENTATION {i+1}/{len(files_to_analyze)}: {filename}")
                             read_result = await self._call_mcp_tool("filesystem_read_file", {
                                 "file_path": filename,
-                                "max_bytes": 4000  # Read substantial content for implementation analysis
+                                "max_size_mb": 4  # Read substantial content for implementation analysis (4MB limit)
                             })
                             
                             if read_result.get("success"):
@@ -377,7 +377,7 @@ CONTEXT:
                             self.logger.info(f"READING DOC CONTEXT {i+1}/2: {filename}")
                             read_result = await self._call_mcp_tool("filesystem_read_file", {
                                 "file_path": filename,
-                                "max_bytes": 1500  # Less content for docs
+                                "max_size_mb": 1  # Less content for docs (1MB limit)
                             })
                             
                             if read_result.get("success"):
@@ -496,10 +496,10 @@ Return ONLY the {project_type} code, no markdown formatting or explanations."""
         self.logger.info("CODE GENERATION: Generating implementation-focused code with LLM...")
         
         try:
-            response = await self.llm_provider.generate_response(
+            response = await self.llm_provider.generate(
                 prompt=prompt,
-                agent_id=self.AGENT_ID,
-                iteration_context={"task": "implementation_based_code_generation"}
+                temperature=0.1,
+                max_tokens=16000
             )
             
             # Enhanced LLM response validation

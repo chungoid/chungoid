@@ -277,7 +277,7 @@ class RequirementsRiskAgent_v1(UnifiedAgent):
             if not any(keyword in response_lower for keyword in analysis_keywords):
                 raise ValueError(f"LLM response doesn't appear to contain requirements/risk analysis content (none of {analysis_keywords} found). Response: '{response}'. User goal: {task_input.user_goal}")
             
-            self.logger.info(f"📋 Requirements analysis response: {len(response)} chars")
+            self.logger.info(f"Requirements analysis response: {len(response)} chars")
             
             # Return structured results expected by output schema
             return {
