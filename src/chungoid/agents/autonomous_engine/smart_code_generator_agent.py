@@ -155,7 +155,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             except Exception as e:
                 raise ValueError(f"Input parsing/validation failed for SmartCodeGeneratorAgent: {e}. Context inputs type: {type(context.inputs)}, Context inputs: {context.inputs}")
 
-            self.logger.info(f"🚀 AUTONOMOUS CODE GENERATION: {task_input.user_goal}")
+            self.logger.info(f"AUTONOMOUS CODE GENERATION: {task_input.user_goal}")
 
             # STEP 1: Actually explore the project using MCP tools
             project_info = await self._autonomous_project_exploration(task_input)
@@ -164,7 +164,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
             code_content = await self._autonomous_code_generation(task_input, project_info)
             
             # STEP 3: Actually create files using MCP tools
-            created_files = await self._autonomous_file_creation(task_input, code_content)
+            created_files = await self._autonomous_file_creation(task_input, code_content, project_info)
             
             # STEP 4: Create concrete output with validation
             if not created_files:
@@ -182,7 +182,7 @@ class SmartCodeGeneratorAgent_v1(UnifiedAgent):
                 )
             )
             
-            self.logger.info(f"✅ AUTONOMOUS SUCCESS: Created {len(created_files)} files")
+            self.logger.info(f"AUTONOMOUS SUCCESS: Created {len(created_files)} files")
             
             return IterationResult(
                 output=output,
@@ -219,94 +219,290 @@ CONTEXT:
             )
 
     async def _autonomous_project_exploration(self, task_input: SmartCodeGeneratorInput) -> Dict[str, Any]:
-        """Use MCP tools to actually explore the project."""
+        """Use MCP tools to analyze the ACTUAL IMPLEMENTATION for intelligent code generation."""
         try:
-            self.logger.info(f"🔍 Exploring project: {task_input.project_path}")
-            
-            # Use MCP tools to list directory contents
-            list_result = await self._call_mcp_tool("filesystem_list_directory", {
-                "directory_path": task_input.project_path,
-                "project_path": task_input.project_path
-            })
+            self.logger.info(f"EXPLORATION START: Analyzing project at {task_input.project_path}")
+            exploration_start_time = datetime.datetime.now()
             
             project_info = {
                 "project_path": task_input.project_path,
                 "user_goal": task_input.user_goal,
                 "existing_files": [],
+                "implementation_files": [],
                 "project_type": "unknown",
-                "documentation": []
+                "dependencies": [],
+                "entry_points": [],
+                "code_structure": {},
+                "existing_docs": [],
+                "needs_requirements": True
             }
-            
+
+            # STEP 1: Universal File Discovery
+            list_result = await self._call_mcp_tool("filesystem_list_directory", {
+                "directory_path": task_input.project_path,
+                "recursive": True,
+                "bypass_cache": getattr(task_input, 'cache_bypassed', False)
+            })
+
             if list_result.get("success"):
-                files = list_result.get("files", [])
-                project_info["existing_files"] = [f.get("name", str(f)) if isinstance(f, dict) else str(f) for f in files]
+                all_items = list_result.get("items", [])
+                file_names = [item["path"] for item in all_items if item["type"] == "file"]
                 
-                # Read key documentation files
-                for file_info in files[:5]:  # Limit to avoid overwhelming
-                    filename = file_info.get("name", "") if isinstance(file_info, dict) else str(file_info)
+                project_info["existing_files"] = file_names
+                self.logger.info(f"FILESYSTEM SCAN: Found {len(file_names)} files")
+                
+                # STEP 2: Universal Project Type Detection and Implementation Analysis
+                implementation_patterns = {
+                    "python": [".py", ".pyx", ".pyi"],
+                    "javascript": [".js", ".mjs", ".jsx"],
+                    "typescript": [".ts", ".tsx"],
+                    "rust": [".rs"],
+                    "go": [".go"],
+                    "cpp": [".cpp", ".cc", ".cxx", ".c", ".h", ".hpp"],
+                    "java": [".java"],
+                    "csharp": [".cs"],
+                    "php": [".php"],
+                    "ruby": [".rb"],
+                    "swift": [".swift"],
+                    "kotlin": [".kt"],
+                    "dart": [".dart"],
+                    "scala": [".scala"],
+                    "clojure": [".clj", ".cljs"],
+                    "elixir": [".ex", ".exs"],
+                    "haskell": [".hs"],
+                    "lua": [".lua"],
+                    "perl": [".pl", ".pm"],
+                    "r": [".r", ".R"],
+                    "matlab": [".m"],
+                    "shell": [".sh", ".bash", ".zsh", ".fish"]
+                }
+                
+                config_patterns = [
+                    "package.json", "requirements.txt", "Cargo.toml", "go.mod", "pom.xml", 
+                    "build.gradle", "composer.json", "Gemfile", "Package.swift", "pubspec.yaml",
+                    "project.clj", "mix.exs", "stack.yaml", "Makefile", "CMakeLists.txt",
+                    "Dockerfile", "docker-compose.yml", ".env", "config.yaml", "config.json"
+                ]
+                
+                # Detect project type and find implementation files
+                project_types_found = {}
+                implementation_files = []
+                config_files = []
+                
+                for file_path in file_names:
+                    file_lower = file_path.lower()
+                    file_name = file_path.split('/')[-1].lower()
                     
-                    if any(doc in filename.lower() for doc in ["readme", "goal", "spec", "requirements"]):
+                    # Check config files
+                    if any(pattern in file_name for pattern in config_patterns):
+                        config_files.append(file_path)
+                        if "requirements.txt" in file_name:
+                            project_info["needs_requirements"] = False
+                    
+                    # Check implementation files
+                    for proj_type, extensions in implementation_patterns.items():
+                        if any(file_lower.endswith(ext) for ext in extensions):
+                            if proj_type not in project_types_found:
+                                project_types_found[proj_type] = []
+                            project_types_found[proj_type].append(file_path)
+                            implementation_files.append(file_path)
+                
+                # Determine primary project type
+                if project_types_found:
+                    primary_type = max(project_types_found.keys(), key=lambda x: len(project_types_found[x]))
+                    project_info["project_type"] = primary_type
+                    self.logger.info(f"PROJECT TYPE: Detected {primary_type} with {len(project_types_found[primary_type])} files")
+                else:
+                    # Fallback to python for new projects
+                    project_info["project_type"] = "python"
+                    self.logger.info("PROJECT TYPE: Defaulting to python for new project")
+                
+                project_info["implementation_files"] = implementation_files
+                self.logger.info(f"IMPLEMENTATION ANALYSIS: Found {len(implementation_files)} source code files")
+                
+                # STEP 3: Read Key Implementation Files for Context
+                files_to_analyze = []
+                
+                # Prioritize existing implementation files for context
+                if implementation_files:
+                    # Read existing implementation to understand patterns and extend
+                    priority_files = []
+                    for file_path in implementation_files + config_files:
+                        file_name = file_path.split('/')[-1].lower()
+                        if any(pattern in file_name for pattern in ['main', 'index', 'app', 'server', 'cli', '__init__', 'package.json', 'requirements.txt', 'cargo.toml']):
+                            priority_files.append(file_path)
+                    
+                    # Add some top-level implementation files
+                    top_level_impl = [f for f in implementation_files if '/' not in f.strip('./')]
+                    
+                    # Combine and dedupe, limit to reasonable number
+                    files_to_analyze = list(dict.fromkeys(priority_files + top_level_impl + config_files))[:6]
+                    
+                    self.logger.info(f"IMPLEMENTATION READING: Analyzing {len(files_to_analyze)} existing files for context")
+                    
+                    # Read and analyze implementation files
+                    for i, filename in enumerate(files_to_analyze):
                         try:
+                            self.logger.info(f"READING IMPLEMENTATION {i+1}/{len(files_to_analyze)}: {filename}")
                             read_result = await self._call_mcp_tool("filesystem_read_file", {
                                 "file_path": filename,
-                                "project_path": task_input.project_path
+                                "max_bytes": 4000  # Read substantial content for implementation analysis
                             })
+                            
                             if read_result.get("success"):
-                                content = read_result.get("content", "")[:1000]  # Truncate
-                                project_info["documentation"].append({
-                                    "file": filename,
-                                    "content": content
-                                })
-                                self.logger.info(f"📄 Read documentation: {filename}")
+                                content = read_result.get("content", "")
+                                if content and len(content.strip()) > 20:
+                                    project_info["existing_docs"].append({
+                                        "file": filename,
+                                        "content": content,
+                                        "type": "implementation",
+                                        "size": len(content)
+                                    })
+                                    self.logger.info(f"READ SUCCESS: {filename} ({len(content)} chars)")
+                            else:
+                                self.logger.warning(f"READ FAILED: {filename} - {read_result.get('error', 'Unknown error')}")
                         except Exception as e:
-                            self.logger.warning(f"Could not read {filename}: {e}")
+                            self.logger.warning(f"READ EXCEPTION: {filename} - {e}")
+                
+                # STEP 4: Read Documentation for Additional Context (but don't prioritize)
+                doc_file_patterns = ["readme", "goal", "spec", "requirements", "architecture", "design"]
+                potential_docs = [f for f in file_names if any(pattern in f.lower() for pattern in doc_file_patterns)]
+                
+                if potential_docs:
+                    self.logger.info(f"DOCUMENTATION CONTEXT: Found {len(potential_docs)} documentation files")
+                    
+                    # Read a few docs for context (limit to 2 to focus on implementation)
+                    for i, filename in enumerate(potential_docs[:2]):
+                        try:
+                            self.logger.info(f"READING DOC CONTEXT {i+1}/2: {filename}")
+                            read_result = await self._call_mcp_tool("filesystem_read_file", {
+                                "file_path": filename,
+                                "max_bytes": 1500  # Less content for docs
+                            })
+                            
+                            if read_result.get("success"):
+                                content = read_result.get("content", "")
+                                if content and len(content.strip()) > 20:
+                                    project_info["existing_docs"].append({
+                                        "file": filename,
+                                        "content": content,
+                                        "type": "documentation", 
+                                        "size": len(content)
+                                    })
+                                    self.logger.info(f"READ SUCCESS: {filename} ({len(content)} chars)")
+                        except Exception as e:
+                            self.logger.warning(f"READ EXCEPTION: {filename} - {e}")
+            else:
+                self.logger.error(f"FILESYSTEM SCAN FAILED: {list_result.get('error', 'Unknown error')}")
             
-            self.logger.info(f"📊 Project exploration complete: {len(project_info['existing_files'])} files found")
+            exploration_time = (datetime.datetime.now() - exploration_start_time).total_seconds()
+            
+            # COMPREHENSIVE STATE LOGGING
+            self.logger.info(f"EXPLORATION COMPLETE ({exploration_time:.2f}s):")
+            self.logger.info(f"  PROJECT STATE SUMMARY:")
+            self.logger.info(f"    • Total files found: {len(project_info['existing_files'])}")
+            self.logger.info(f"    • Project type: {project_info['project_type']}")
+            self.logger.info(f"    • Implementation files: {len(project_info['implementation_files'])}")
+            self.logger.info(f"    • Files analyzed: {len(project_info['existing_docs'])}")
+            self.logger.info(f"    • Needs requirements: {project_info['needs_requirements']}")
+            self.logger.info(f"    • Project path: {project_info['project_path']}")
+            
             return project_info
             
         except Exception as e:
-            self.logger.error(f"Project exploration failed: {e}")
+            self.logger.error(f"EXPLORATION FAILED: {e}")
             return {
                 "project_path": task_input.project_path,
                 "user_goal": task_input.user_goal,
                 "existing_files": [],
+                "implementation_files": [],
+                "project_type": "python",
+                "existing_docs": [],
                 "error": str(e)
             }
 
     async def _autonomous_code_generation(self, task_input: SmartCodeGeneratorInput, project_info: Dict[str, Any]) -> str:
-        """Use LLM to generate actual code content with detailed validation."""
-        # Build comprehensive prompt
-        prompt = f"""Generate complete, working Python code for this project.
+        """Use LLM to generate code content based on implementation analysis."""
+        
+        # Separate implementation and documentation context
+        implementation_context = []
+        documentation_context = []
+        
+        for doc in project_info.get('existing_docs', []):
+            if doc.get('type') == 'implementation':
+                implementation_context.append(doc)
+            else:
+                documentation_context.append(doc)
+        
+        # Build implementation analysis section
+        implementation_analysis = ""
+        if implementation_context:
+            implementation_analysis = "EXISTING IMPLEMENTATION ANALYSIS:\n"
+            for doc in implementation_context:
+                implementation_analysis += f"\n=== {doc['file']} ===\n{doc['content']}\n"
+        
+        # Build documentation context (if any)
+        existing_docs_context = ""
+        if documentation_context:
+            existing_docs_context = "\nDOCUMENTATION CONTEXT:\n"
+            for doc in documentation_context:
+                existing_docs_context += f"\n--- {doc['file']} ---\n{doc['content'][:300]}...\n"
+        
+        # Determine what kind of code to generate based on project analysis
+        project_type = project_info.get('project_type', 'python')
+        has_implementation = len(implementation_context) > 0
+        
+        if has_implementation:
+            task_type = "EXTEND_EXISTING"
+            generation_instruction = "EXTEND and IMPROVE the existing implementation"
+        else:
+            task_type = "CREATE_NEW"
+            generation_instruction = "CREATE a new implementation"
+        
+        # Build comprehensive prompt based on implementation analysis
+        prompt = f"""Generate complete, production-ready {project_type} code for this project.
 
 USER GOAL: {task_input.user_goal}
 
 PROJECT CONTEXT:
+- Project Type: {project_info.get('project_type', 'unknown')}
+- Total Files: {len(project_info.get('existing_files', []))}
+- Implementation Files: {len(project_info.get('implementation_files', []))}
+- Task Type: {task_type}
 - Project Path: {project_info.get('project_path', '.')}
-- Existing Files: {', '.join(project_info.get('existing_files', []))}
 
-DOCUMENTATION FOUND:
-{chr(10).join([f"- {doc['file']}: {doc['content'][:200]}..." for doc in project_info.get('documentation', [])])}
+{implementation_analysis}
+
+{existing_docs_context}
+
+TASK: {generation_instruction} based on the analysis above.
 
 REQUIREMENTS:
-1. Generate COMPLETE, working Python code (not pseudocode)
-2. Include all necessary imports and dependencies
-3. Add proper error handling and logging
-4. Include command-line argument parsing if needed
-5. Make code production-ready and executable
-6. Follow Python best practices (PEP 8, type hints, docstrings)
+1. **{task_type} APPROACH**: {'Analyze existing code patterns and extend/improve them' if has_implementation else 'Create new implementation following best practices'}
+2. **COMPLETE IMPLEMENTATION**: Generate working, executable code (not pseudocode)
+3. **TECHNOLOGY CONSISTENCY**: Use {project_type} and follow its conventions
+4. **PRODUCTION READY**: Include proper error handling, logging, and documentation
+5. **INTEGRATION**: {'Maintain compatibility with existing code structure' if has_implementation else 'Create well-structured, modular code'}
+6. **BEST PRACTICES**: Follow {project_type} coding standards and patterns
 
-Return ONLY the Python code, no markdown formatting or explanations."""
+{'EXTEND THE EXISTING CODEBASE by:' if has_implementation else 'CREATE NEW CODEBASE with:'}
+- {'Adding new functionality to existing modules' if has_implementation else 'Proper module structure and organization'}
+- {'Improving existing implementations' if has_implementation else 'Clean, readable code architecture'}
+- {'Maintaining existing code style and patterns' if has_implementation else 'Comprehensive error handling and logging'}
+- {'Adding missing features or fixing issues' if has_implementation else 'Command-line interface (if applicable)'}
 
-        self.logger.info("🧠 Generating code with LLM...")
+Return ONLY the {project_type} code, no markdown formatting or explanations."""
+
+        self.logger.info("CODE GENERATION: Generating implementation-focused code with LLM...")
         
         try:
-            response = await self.llm_provider.generate(
+            response = await self.llm_provider.generate_response(
                 prompt=prompt,
-                max_tokens=4000,
-                temperature=0.1
+                agent_id=self.AGENT_ID,
+                iteration_context={"task": "implementation_based_code_generation"}
             )
             
-            # Detailed LLM response validation
+            # Enhanced LLM response validation
             if not response:
                 raise ValueError(f"LLM provider returned None/empty response for code generation. Prompt length: {len(prompt)} chars. User goal: {task_input.user_goal}")
             
@@ -314,15 +510,30 @@ Return ONLY the Python code, no markdown formatting or explanations."""
                 raise ValueError(f"LLM provider returned whitespace-only response for code generation. Response: '{response}'. User goal: {task_input.user_goal}")
             
             if len(response.strip()) < 50:
-                raise ValueError(f"LLM code response too short for meaningful code ({len(response)} chars). Expected substantial Python code. Response: '{response}'. User goal: {task_input.user_goal}")
+                raise ValueError(f"LLM code response too short for meaningful code ({len(response)} chars). Expected substantial {project_type} code. Response: '{response}'. User goal: {task_input.user_goal}")
             
-            # Validate it looks like code
+            # Validate it looks like code based on project type
             response_lower = response.lower()
-            if "import " not in response_lower and "def " not in response_lower and "class " not in response_lower:
-                raise ValueError(f"LLM response doesn't appear to contain Python code (no 'import', 'def', or 'class' found). Response: '{response}'. User goal: {task_input.user_goal}")
+            validation_keywords = {
+                "python": ["import ", "def ", "class ", "if __name__"],
+                "javascript": ["function", "const ", "let ", "import", "require"],
+                "typescript": ["function", "const ", "let ", "import", "interface", "type"],
+                "rust": ["fn ", "use ", "struct", "impl"],
+                "go": ["func ", "package ", "import"],
+                "java": ["class ", "public ", "import"],
+                "cpp": ["#include", "int main", "class ", "namespace"],
+                "csharp": ["class ", "using ", "namespace"],
+                "php": ["<?php", "function", "class"],
+                "ruby": ["def ", "class ", "require"],
+                "shell": ["#!/bin/", "function", "if ["]
+            }
             
-            self.logger.info(f"📝 Code generated: {len(response)} characters")
-            self.logger.info(f"📝 Code preview: {response[:200]}...")
+            expected_keywords = validation_keywords.get(project_type, ["import ", "def ", "class "])
+            if not any(keyword in response_lower for keyword in expected_keywords):
+                raise ValueError(f"LLM response doesn't appear to contain {project_type} code (no expected keywords found). Expected: {expected_keywords}. Response: '{response}'. User goal: {task_input.user_goal}")
+            
+            self.logger.info(f"CODE GENERATED: {len(response)} characters of {project_type} code")
+            self.logger.info(f"CODE PREVIEW: {response[:200]}...")
             
             return response.strip()
             
@@ -342,15 +553,15 @@ INPUT CONTEXT:
             self.logger.error(error_msg)
             raise ValueError(error_msg)
 
-    async def _autonomous_file_creation(self, task_input: SmartCodeGeneratorInput, code_content: str) -> List[Dict[str, Any]]:
-        """Actually create files using MCP tools with detailed validation."""
+    async def _autonomous_file_creation(self, task_input: SmartCodeGeneratorInput, code_content: str, project_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Actually create files using MCP tools with implementation-focused intelligence."""
         if not code_content or not code_content.strip():
             raise ValueError(f"Cannot create file with empty code content. User goal: {task_input.user_goal}")
         
         created_files = []
         
-        # Determine appropriate filename
-        filename = self._determine_filename(task_input)
+        # Determine appropriate filename based on project analysis
+        filename = self._determine_filename_smart(task_input, project_info)
         if not filename or not filename.strip():
             raise ValueError(f"Failed to determine filename for code. User goal: {task_input.user_goal}")
         
@@ -360,14 +571,13 @@ INPUT CONTEXT:
         if not clean_content or len(clean_content.strip()) < 20:
             raise ValueError(f"Code content too short after cleaning ({len(clean_content)} chars). Original: '{code_content}'. Cleaned: '{clean_content}'. User goal: {task_input.user_goal}")
         
-        self.logger.info(f"💾 Creating file: {filename}")
+        self.logger.info(f"FILE CREATION: Creating {filename} ({len(clean_content)} chars)")
         
         try:
             # Use MCP tools to write the file
             write_result = await self._call_mcp_tool("filesystem_write_file", {
                 "file_path": filename,
-                "content": clean_content,
-                "project_path": task_input.project_path
+                "content": clean_content
             })
             
             if not write_result:
@@ -382,15 +592,14 @@ INPUT CONTEXT:
                 "full_path": f"{task_input.project_path}/{filename}",
                 "content_length": len(clean_content),
                 "description": f"Generated {filename} for: {task_input.user_goal}",
-                "status": "success"
+                "status": "success",
+                "project_type": project_info.get("project_type", "unknown")
             })
-            self.logger.info(f"✅ Successfully created: {filename} ({len(clean_content)} chars)")
+            self.logger.info(f"FILE CREATED: {filename} ({len(clean_content)} chars)")
             
-            # Also create a basic requirements.txt if needed
-            if "import " in clean_content and not any("requirements" in f.get("file_path", "") for f in created_files):
-                req_file = await self._create_requirements_file(task_input, clean_content)
-                if req_file:
-                    created_files.append(req_file)
+            # Create additional files based on project type and needs
+            additional_files = await self._create_additional_files(task_input, project_info, clean_content)
+            created_files.extend(additional_files)
             
             if not created_files:
                 raise ValueError(f"No files were created successfully. User goal: {task_input.user_goal}")
@@ -407,6 +616,7 @@ CONTEXT:
 - Content length: {len(clean_content)} chars
 - User goal: {task_input.user_goal}
 - Project path: {task_input.project_path}
+- Project type: {project_info.get('project_type', 'unknown')}
 
 CONTENT PREVIEW:
 {clean_content[:500]}
@@ -414,90 +624,220 @@ CONTENT PREVIEW:
             self.logger.error(error_msg)
             raise ValueError(error_msg)
 
-    async def _create_requirements_file(self, task_input: SmartCodeGeneratorInput, code_content: str):
-        """Create a basic requirements.txt file."""
-        # Basic requirements based on common imports
-        requirements = []
-        if "requests" in code_content:
-            requirements.append("requests")
-        if "numpy" in code_content:
-            requirements.append("numpy")
-        if "pandas" in code_content:
-            requirements.append("pandas")
-        if "click" in code_content:
-            requirements.append("click")
-        if "rich" in code_content:
-            requirements.append("rich")
+    def _determine_filename_smart(self, task_input: SmartCodeGeneratorInput, project_info: Dict[str, Any]) -> str:
+        """Determine filename based on project analysis and type detection."""
+        project_type = project_info.get("project_type", "python")
+        existing_files = project_info.get("existing_files", [])
         
-        if requirements:
-            req_content = "\n".join(requirements) + "\n"
+        # Check if we're extending existing files or creating new ones
+        has_implementation = len(project_info.get("implementation_files", [])) > 0
+        
+        if has_implementation:
+            # Find the main implementation file to extend or create a complementary file
+            impl_files = project_info.get("implementation_files", [])
+            main_files = [f for f in impl_files if any(pattern in f.lower() for pattern in ['main', 'app', 'index', 'server', 'cli'])]
+            
+            if main_files:
+                # Create a complementary file or module
+                base_name = main_files[0].split('.')[0]
+                if project_type == "python":
+                    return f"{base_name}_enhanced.py"
+                elif project_type == "javascript":
+                    return f"{base_name}_enhanced.js"
+                else:
+                    return f"{base_name}_enhanced.{self._get_extension(project_type)}"
+        
+        # Create new main file based on project type and user goal
+        goal_lower = task_input.user_goal.lower() if task_input.user_goal else ""
+        
+        if project_type == "python":
+            if "cli" in goal_lower or "command" in goal_lower or "scanner" in goal_lower:
+                return "main.py"
+            elif "web" in goal_lower or "api" in goal_lower or "server" in goal_lower:
+                return "app.py"
+            elif "test" in goal_lower:
+                return "test_main.py"
+            else:
+                return "main.py"
+        elif project_type == "javascript":
+            if "web" in goal_lower or "frontend" in goal_lower:
+                return "app.js"
+            elif "server" in goal_lower or "backend" in goal_lower:
+                return "server.js"
+            else:
+                return "index.js"
+        elif project_type == "typescript":
+            if "web" in goal_lower or "frontend" in goal_lower:
+                return "app.ts"
+            elif "server" in goal_lower or "backend" in goal_lower:
+                return "server.ts"
+            else:
+                return "index.ts"
         else:
-            req_content = "# Add your project dependencies here\n"
+            return f"main.{self._get_extension(project_type)}"
+
+    def _get_extension(self, project_type: str) -> str:
+        """Get file extension for project type."""
+        extensions = {
+            "python": "py",
+            "javascript": "js",
+            "typescript": "ts",
+            "rust": "rs",
+            "go": "go",
+            "java": "java",
+            "cpp": "cpp",
+            "csharp": "cs",
+            "php": "php",
+            "ruby": "rb",
+            "swift": "swift",
+            "kotlin": "kt",
+            "dart": "dart",
+            "scala": "scala",
+            "shell": "sh"
+        }
+        return extensions.get(project_type, "txt")
+
+    async def _create_additional_files(self, task_input: SmartCodeGeneratorInput, project_info: Dict[str, Any], main_content: str) -> List[Dict[str, Any]]:
+        """Create additional files based on project needs."""
+        additional_files = []
+        project_type = project_info.get("project_type", "python")
         
-        write_result = await self._call_mcp_tool("filesystem_write_file", {
-            "file_path": "requirements.txt",
-            "content": req_content,
-            "project_path": task_input.project_path
-        })
+        # Create requirements file if needed and it's a Python project
+        if project_type == "python" and project_info.get("needs_requirements", True):
+            req_file = await self._create_requirements_file_smart(task_input, main_content)
+            if req_file:
+                additional_files.append(req_file)
         
-        if write_result.get("success"):
-            self.logger.info("📦 Created requirements.txt")
-            return {
+        # Create package.json if needed and it's a JavaScript/TypeScript project
+        elif project_type in ["javascript", "typescript"] and not any("package.json" in f for f in project_info.get("existing_files", [])):
+            package_file = await self._create_package_json(task_input, project_info)
+            if package_file:
+                additional_files.append(package_file)
+        
+        return additional_files
+
+    async def _create_requirements_file_smart(self, task_input: SmartCodeGeneratorInput, code_content: str):
+        """Create an intelligent requirements.txt file based on actual imports."""
+        # Analyze imports in the code
+        requirements = set()
+        
+        lines = code_content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('import ') or line.startswith('from '):
+                # Extract package names from imports
+                if 'import ' in line:
+                    parts = line.split('import ')
+                    if len(parts) > 1:
+                        package = parts[1].split()[0].split('.')[0]
+                        # Map common packages to their pip names
+                        pip_mappings = {
+                            'requests': 'requests',
+                            'numpy': 'numpy',
+                            'pandas': 'pandas',
+                            'flask': 'Flask',
+                            'django': 'Django',
+                            'rich': 'rich',
+                            'click': 'click',
+                            'asyncio': '',  # Built-in
+                            'json': '',     # Built-in
+                            'os': '',       # Built-in
+                            'sys': '',      # Built-in
+                            'datetime': '', # Built-in
+                            'typing': '',   # Built-in
+                            'nmap': 'python-nmap',
+                            'subprocess': '' # Built-in
+                        }
+                        
+                        if package in pip_mappings and pip_mappings[package]:
+                            requirements.add(pip_mappings[package])
+        
+        # Add common requirements based on user goal
+        goal_lower = task_input.user_goal.lower() if task_input.user_goal else ""
+        if "cli" in goal_lower or "command" in goal_lower:
+            requirements.add("click>=8.0.0")
+        if "web" in goal_lower or "api" in goal_lower:
+            requirements.add("flask>=2.0.0")
+        if "scanner" in goal_lower or "network" in goal_lower:
+            requirements.add("python-nmap>=0.7.1")
+            requirements.add("requests>=2.28.0")
+        
+        if not requirements:
+            return None  # Don't create empty requirements file
+        
+        requirements_content = '\n'.join(sorted(requirements)) + '\n'
+        
+        try:
+            write_result = await self._call_mcp_tool("filesystem_write_file", {
                 "file_path": "requirements.txt",
-                "full_path": f"{task_input.project_path}/requirements.txt",
-                "description": "Basic requirements file",
-                "status": "success"
-            }
-        else:
-            error_msg = write_result.get("error", "Unknown error")
-            self.logger.error(f"Failed to create requirements.txt: {error_msg}")
+                "content": requirements_content
+            })
+            
+            if write_result.get("success"):
+                self.logger.info("CREATED requirements.txt with intelligent dependencies")
+                return {
+                    "file_path": "requirements.txt",
+                    "full_path": f"{task_input.project_path}/requirements.txt",
+                    "content_length": len(requirements_content),
+                    "description": "Intelligent requirements file based on code analysis",
+                    "status": "success"
+                }
+            else:
+                error_msg = write_result.get("error", "Unknown error")
+                self.logger.error(f"Failed to create requirements.txt: {error_msg}")
+                return None
+        except Exception as e:
+            self.logger.error(f"Exception creating requirements.txt: {e}")
             return None
 
-    def _determine_filename(self, task_input: SmartCodeGeneratorInput) -> str:
-        """
-        Determine the filename for the generated code based on context.
-        """        
-        # Infer filename from user goal and language
-        language = "python"  # Default for autonomous mode
+    async def _create_package_json(self, task_input: SmartCodeGeneratorInput, project_info: Dict[str, Any]):
+        """Create a basic package.json for JavaScript/TypeScript projects."""
+        project_name = task_input.project_path.split('/')[-1] or "my-project"
         
-        if task_input.user_goal:
-            goal_lower = task_input.user_goal.lower()
+        package_content = {
+            "name": project_name,
+            "version": "1.0.0",
+            "description": task_input.user_goal or "Generated project",
+            "main": "index.js",
+            "scripts": {
+                "start": "node index.js",
+                "dev": "nodemon index.js",
+                "test": "jest"
+            },
+            "dependencies": {},
+            "devDependencies": {
+                "nodemon": "^2.0.0",
+                "jest": "^28.0.0"
+            }
+        }
+        
+        # Add dependencies based on user goal
+        goal_lower = task_input.user_goal.lower() if task_input.user_goal else ""
+        if "web" in goal_lower or "api" in goal_lower:
+            package_content["dependencies"]["express"] = "^4.18.0"
+        if "database" in goal_lower or "mongo" in goal_lower:
+            package_content["dependencies"]["mongoose"] = "^6.0.0"
+        
+        package_json_content = json.dumps(package_content, indent=2)
+        
+        try:
+            write_result = await self._call_mcp_tool("filesystem_write_file", {
+                "file_path": "package.json",
+                "content": package_json_content
+            })
             
-            # Language-specific filename patterns
-            if language.lower() == "python":
-                if "cli" in goal_lower or "command" in goal_lower or "scanner" in goal_lower:
-                    return "main.py"
-                elif "web" in goal_lower or "api" in goal_lower or "server" in goal_lower:
-                    return "app.py"
-                elif "script" in goal_lower:
-                    return "script.py"
-                else:
-                    return "main.py"
-            elif language.lower() == "javascript":
-                if "web" in goal_lower or "frontend" in goal_lower:
-                    return "app.js"
-                elif "server" in goal_lower or "backend" in goal_lower:
-                    return "server.js"
-                else:
-                    return "index.js"
-            elif language.lower() == "java":
-                return "Main.java"
-            elif language.lower() == "cpp" or language.lower() == "c++":
-                return "main.cpp"
-            elif language.lower() == "c":
-                return "main.c"
-            else:
-                return f"main.{language.lower()}"
-        
-        # Fallback based on language
-        if language.lower() == "python":
-            return "main.py"
-        elif language.lower() == "javascript":
-            return "index.js"
-        elif language.lower() == "java":
-            return "Main.java"
-        else:
-            return f"main.{language.lower()}"
+            if write_result.get("success"):
+                self.logger.info("CREATED package.json with intelligent dependencies")
+                return {
+                    "file_path": "package.json",
+                    "full_path": f"{task_input.project_path}/package.json",
+                    "content_length": len(package_json_content),
+                    "description": "Package configuration for JavaScript/TypeScript project",
+                    "status": "success"
+                }
+        except Exception as e:
+            self.logger.error(f"Exception creating package.json: {e}")
+            return None
 
     def _clean_code_response(self, response: str) -> str:
         """Remove markdown formatting and extract code from LLM response."""
@@ -584,7 +924,7 @@ CONTENT PREVIEW:
     def get_output_schema(self) -> Type[SmartCodeGeneratorOutput]:
         return SmartCodeGeneratorOutput
 
-    async def _generate_smart_code(self, task_input: SmartCodeGeneratorAgentInput) -> Dict[str, Any]:
+    async def _generate_smart_code(self, task_input: SmartCodeGeneratorInput) -> Dict[str, Any]:
         """
         AUTONOMOUS CODE GENERATION
         No hardcoded logic - agent analyzes project and decides what code to generate
